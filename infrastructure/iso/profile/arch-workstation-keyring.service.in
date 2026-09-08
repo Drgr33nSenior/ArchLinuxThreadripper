@@ -1,0 +1,14 @@
+[Unit]
+Description=Trust the explicitly selected live-media package signing key
+Requires=pacman-init.service
+After=pacman-init.service
+ConditionPathExists=/run/archiso
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/pacman-key --add /etc/arch-workstation-iso/signing-key.asc
+ExecStart=/usr/bin/pacman-key --lsign-key @FINGERPRINT@
+
+[Install]
+WantedBy=multi-user.target

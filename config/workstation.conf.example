@@ -1,0 +1,74 @@
+# Non-secret post-install workstation configuration.
+LLM_DATA_DIR=/srv/ai/vllm/models
+LLM_LISTEN=127.0.0.1:8000
+LLM_SHM_SIZE=8g
+# Used by `workstationctl profile`; server selects balanced for comparison.
+DEFAULT_TUNED_PROFILE=ai
+MAKE_JOBS=24
+MEMORY_HEAVY_JOBS=16
+# Job counts above are ceilings, not fixed concurrency. Reserve RAM for the
+# desktop/VM plus each link; recalculate before each large build.
+BUILD_RESERVE_MIB=16384
+BUILD_JOB_MIB=2048
+BUILD_HEAVY_JOB_MIB=4096
+BUILD_LINK_MIB=8192
+BUILD_LINK_JOBS=1
+CCACHE_MAX_SIZE=100G
+# CCACHE_DIRECTORY defaults to the invoking user's XDG cache/workstation/ccache.
+# A literal absolute path may be configured. Never share it by running as root.
+EXPECTED_GPU_COUNT=2
+EXPECTED_GPU_MODEL=R9700
+# Native llama.cpp HIP build provider. `arch` accepts only official Arch ROCm
+# packages. The AUR provider is an explicit, reviewed ROCm 10 experiment.
+ROCM_SDK_PROVIDER=arch
+
+# Client-side local agents. Generate on the Mac/IDE host; nothing is installed,
+# launched or exposed by configuration. Preference: Qwen Code, DSH, Hermes.
+# The loopback URL requires an owner-established authenticated tunnel first.
+# Never put credentials here; launch reads WORKSTATION_AGENT_API_KEY from env.
+AGENT_HARNESS=qwen
+AGENT_BASE_URL=http://127.0.0.1:18000/v1
+AGENT_MODEL=Qwen3.8-27B-FP8
+AGENT_CONTEXT_TOKENS=32768
+AGENT_MAX_OUTPUT_TOKENS=4096
+
+# Applies to the pinned llama.cpp tools, not SGLang, wheels or other engines.
+# Context remains the previous CLI default. Bench has no context-size switch.
+LLAMA_CONTEXT_SIZE=2048
+LLAMA_BATCH_SIZE=2048
+LLAMA_UBATCH_SIZE=512
+LLAMA_FLASH_ATTN=auto
+LLAMA_BENCH_PROMPT_TOKENS=512
+LLAMA_BENCH_GENERATION_TOKENS=128
+LLAMA_BENCH_REPETITIONS=3
+
+# Offline resource plan: choose complete discovered SMT groups, never CPU IDs.
+# Recollect hardware and regenerate after the four-DIMM upgrade.
+RESOURCE_RESERVED_CORES=3
+RESOURCE_HOST_RESERVE_MIB=12288
+RESOURCE_KUBE_RESERVE_MIB=4096
+RESOURCE_EVICTION_MIB=2048
+
+# Optional explicit single-node session control. No cluster contact until a
+# session command is selected; switch/restore also require root and --execute.
+# Set context/node to the actual reviewed non-production target before use.
+# SESSION_CONTEXT=reviewed-kube-context
+# SESSION_NODE=actual-node-name
+# SESSION_ENVIRONMENT=dev
+SESSION_NAMESPACE=ai-home-lab
+SESSION_AI_DEPLOYMENT=sglang
+SESSION_GAME_DEPLOYMENT=parent-steam-headless
+SESSION_TIMEOUT_SECONDS=300
+SESSION_STREAMING_PATH=sunshine
+
+# Gaming candidate only; these settings do not qualify or enable a Deployment.
+# Generate sunshine.env for the existing Kustomize ConfigMap with `sunshine profile`.
+# x11 matches the candidate's XFCE/Xorg session but is a CPU-copy capture fallback.
+# Vulkan Video requires a separately qualified DMA-BUF capture path (kms/wlr/kwin).
+SUNSHINE_ENCODER=vaapi
+SUNSHINE_CAPTURE=x11
+SUNSHINE_OUTPUT_NAME=
+SUNSHINE_HEVC_MODE=0
+SUNSHINE_AV1_MODE=0
+SUNSHINE_VK_TUNE=2
+SUNSHINE_VAAPI_STRICT_RC_BUFFER=disabled

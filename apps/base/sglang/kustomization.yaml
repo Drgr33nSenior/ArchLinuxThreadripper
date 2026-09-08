@@ -1,0 +1,24 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: [deployment.yaml, service.yaml, pvc.yaml]
+configMapGenerator:
+  - name: sglang-profile
+    literals:
+      # Explicit one-card option; default/dual-gpu selects Qwen3.8 instead.
+      # Populate this revision directory before enabling the offline workload.
+      - MODEL_PATH=/models/Qwen3.5-9B/c202236235762e1c871ad0ccb60c8ee5ba337b9a
+      - MODEL_REPOSITORY=Qwen/Qwen3.5-9B
+      - MODEL_REVISION=c202236235762e1c871ad0ccb60c8ee5ba337b9a
+      - SERVED_MODEL_NAME=Qwen3.5-9B
+      - MODEL_DTYPE=bfloat16
+      - REASONING_PARSER=qwen3
+      - TOOL_CALL_PARSER=qwen3_coder
+      - TENSOR_PARALLEL=1
+      - CONTEXT_LENGTH=4096
+      - MEM_FRACTION_STATIC=0.80
+      - MAX_RUNNING_REQUESTS=2
+      # AMD's ROCm 10 Radeon settings override the image's AITER/MLA defaults.
+      - ATTENTION_BACKEND=triton
+      - SGLANG_USE_AITER=false
+      - SGLANG_USE_AITER_AR=false
+      - SGLANG_ROCM_FUSED_DECODE_MLA=false

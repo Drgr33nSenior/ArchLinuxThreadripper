@@ -1,0 +1,99 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sglang
+  annotations:
+    ai-home-lab.local/qualification: pending-rocm10-target-and-model-validation
+spec:
+  replicas: 0
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app.kubernetes.io/name: sglang}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: sglang}
+    spec:
+      automountServiceAccountToken: false
+      priorityClassName: interactive-ai-priority
+      terminationGracePeriodSeconds: 120
+      nodeSelector: {ai-home-lab.local/gfx: gfx1201, kubernetes.io/arch: amd64, kubernetes.io/os: linux}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: sglang
+          # Keep aligned with SGLANG_ROCM_IMAGE in versions.lock. A resolved
+          # vendor image is a candidate, not permission to enable the workload.
+          image: docker.io/rocm/sgl-dev:v0.5.15.post1-ubuntu24.04-py3.14-rocm10.0.0@sha256:51f63a2d201ca944a43b8f1a18ac7da73ed9f6743c45bb82bbc40b44e6cf18d2
+          command: [python3, -m, sglang.launch_server]
+          workingDir: /tmp
+          args:
+            - --model-path
+            - $(MODEL_PATH)
+            - --revision
+            - $(MODEL_REVISION)
+            - --served-model-name
+            - $(SERVED_MODEL_NAME)
+            - --dtype
+            - $(MODEL_DTYPE)
+            - --reasoning-parser
+            - $(REASONING_PARSER)
+            - --tool-call-parser
+            - $(TOOL_CALL_PARSER)
+            - --tp
+            - $(TENSOR_PARALLEL)
+            # The checkpoint config selects BF16 or serialized blockwise FP8.
+            # Do not force AWQ onto either of the reviewed Qwen checkpoints.
+            - --context-length
+            - $(CONTEXT_LENGTH)
+            - --mem-fraction-static
+            - $(MEM_FRACTION_STATIC)
+            - --max-running-requests
+            - $(MAX_RUNNING_REQUESTS)
+            - --attention-backend
+            - $(ATTENTION_BACKEND)
+            - --host
+            - 0.0.0.0
+            - --port
+            - '30000'
+          envFrom: [{configMapRef: {name: sglang-profile}}]
+          env:
+            - {name: HF_HUB_OFFLINE, value: '1'}
+            - {name: HF_HOME, value: /cache/huggingface}
+            - {name: XDG_CACHE_HOME, value: /cache/xdg}
+            - {name: TRITON_CACHE_DIR, value: /cache/triton}
+            - {name: TORCHINDUCTOR_CACHE_DIR, value: /cache/torchinductor}
+            - {name: HOME, value: /tmp}
+          ports: [{name: api, containerPort: 30000}]
+          resources:
+            requests: {cpu: '20', memory: 32Gi, amd.com/gpu: '1'}
+            limits: {cpu: '20', memory: 32Gi, amd.com/gpu: '1'}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          startupProbe:
+            httpGet: {path: /health, port: api}
+            periodSeconds: 10
+            failureThreshold: 180
+          readinessProbe:
+            httpGet: {path: /health, port: api}
+            periodSeconds: 10
+            timeoutSeconds: 3
+          volumeMounts:
+            - {name: models, mountPath: /models, readOnly: true}
+            - {name: cache, mountPath: /cache}
+            - {name: shm, mountPath: /dev/shm}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: models
+          persistentVolumeClaim: {claimName: llm-models}
+        - name: cache
+          persistentVolumeClaim: {claimName: sglang-hf-cache}
+        - name: shm
+          emptyDir: {medium: Memory, sizeLimit: 16Gi}
+        - name: tmp
+          emptyDir: {sizeLimit: 4Gi}

@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "provenance": {
+    "image_digest": "REPLACE_WITH_REGISTRY_MANIFEST_DIGEST",
+    "sunshine_version": "2026.906.222525",
+    "mesa_version": "RECORD_FROM_IMAGE",
+    "kernel": "RECORD_FROM_TARGET",
+    "gpu_bdf": "RECORD_INSIDE_ALLOCATION",
+    "game_revision": "RECORD_GAME_AND_REPLAY_HASH",
+    "game_settings": "RECORD_RESOLUTION_PRESET_AND_FPS_CAP",
+    "client": "RECORD_DEVICE_OS_MOONLIGHT_VERSION_AND_DECODER",
+    "network": "RECORD_LINK_AND_PATH",
+    "capture": "RECORD_ACTUAL_BACKEND_AND_CONNECTOR",
+    "codec": "RECORD_H264_HEVC_OR_AV1_AND_BIT_DEPTH",
+    "resolution": "1920x1080",
+    "fps": 60,
+    "bitrate_mbps": 30,
+    "cache": "warm",
+    "warmup_seconds": 120,
+    "sample_seconds": 300,
+    "background_workload": "RECORD_AI_AND_BUILD_STATE"
+  },
+  "profile": {"encoder": "vaapi", "vk_tune": 2, "vaapi_strict_rc_buffer": "disabled"},
+  "runs": [
+    {"frame_p99_ms": null, "encode_p95_ms": null, "decode_p95_ms": null, "dropped_frames_pct": null, "gpu_power_w": null},
+    {"frame_p99_ms": null, "encode_p95_ms": null, "decode_p95_ms": null, "dropped_frames_pct": null, "gpu_power_w": null},
+    {"frame_p99_ms": null, "encode_p95_ms": null, "decode_p95_ms": null, "dropped_frames_pct": null, "gpu_power_w": null}
+  ]
+}

@@ -1,0 +1,19 @@
+---
+# A caller must supply a dedicated clone inventory. This play never restores the
+# primary VM merely because it shares a lab configuration file.
+- name: Restore and validate a K3s etcd snapshot on a detached clone
+  hosts: k3s_servers
+  become: true
+  gather_facts: false
+  vars:
+    k3s_restore_test: true
+  pre_tasks:
+    - name: Wait for the explicitly selected detached clone
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+      tags: [always]
+    - name: Gather facts after the detached clone is reachable
+      ansible.builtin.setup:
+      tags: [always]
+  roles:
+    - role: k3s

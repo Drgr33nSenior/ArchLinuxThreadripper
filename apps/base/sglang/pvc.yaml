@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: llm-models}
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests: {storage: 200Gi}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: sglang-hf-cache
+  annotations:
+    ai-home-lab.local/capacity-note: advisory-request-not-local-path-filesystem-quota
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests: {storage: 16Gi}

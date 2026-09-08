@@ -1,0 +1,6 @@
+# Explicit optional host desktop and AMD local-gaming additions; enable multilib first.
+# These are not required for a graphics session inside a qualified gaming workload.
+gnome gdm gnome-keyring tuned-ppd
+mesa lib32-mesa vulkan-radeon lib32-vulkan-radeon
+steam gamescope gamemode lib32-gamemode mangohud lib32-mangohud
+virt-manager virt-viewer

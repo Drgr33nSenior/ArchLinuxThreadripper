@@ -1,0 +1,4 @@
+# Download only; verify SHA256 before rendering. No helm repo mutation needed.
+CHART_VERSION=v1.5.1
+CHART_URL=https://rocm.github.io/gpu-operator/charts/gpu-operator-charts-v1.5.1.tgz
+CHART_SHA256=efbd23fe2297350ac23dedf1b916874138f57dd2796b444d1a7f241eaaefc6a8

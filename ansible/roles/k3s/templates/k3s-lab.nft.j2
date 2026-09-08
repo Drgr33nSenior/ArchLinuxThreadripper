@@ -1,0 +1,31 @@
+# This file owns only the k3s_lab_guard table. Do not flush global rulesets.
+# Add-if-absent, delete and recreate are one nft transaction, including on reruns.
+# Deleting the owned table also removes named sets; flush table leaves them behind.
+add table inet k3s_lab_guard
+delete table inet k3s_lab_guard
+table inet k3s_lab_guard {
+  set management_v4 { type ipv4_addr; flags interval; elements = { {{ k3s_management_cidr }} } }
+  chain dmz_pre_dnat {
+    # This runs before nat prerouting (-100), so no later DNAT can make an
+    # otherwise-public service reachable through the DMZ interface.
+    type filter hook prerouting priority -150; policy accept;
+    ct state established,related accept
+    iifname "{{ k3s_dmz_interface }}" tcp dport 443 accept
+    iifname "{{ k3s_dmz_interface }}" ip protocol icmp icmp type { destination-unreachable, time-exceeded, parameter-problem } accept
+    iifname "{{ k3s_dmz_interface }}" icmpv6 type { destination-unreachable, packet-too-big, time-exceeded, parameter-problem, echo-request, echo-reply, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert } accept
+    iifname "{{ k3s_dmz_interface }}" drop
+  }
+  chain input {
+    # Defense in depth after routing; normal K3s filter chains run later.
+    type filter hook input priority -150; policy accept;
+    ct state established,related accept
+    iifname "lo" accept
+    iifname "{{ k3s_management_interface }}" ip saddr @management_v4 tcp dport { 22, 6443, 10250 } accept
+    iifname "{{ k3s_management_interface }}" ip saddr @management_v4 udp dport 8472 accept
+    iifname "{{ k3s_management_interface }}" drop
+    iifname "{{ k3s_dmz_interface }}" tcp dport 443 accept
+    iifname "{{ k3s_dmz_interface }}" ip protocol icmp icmp type { destination-unreachable, time-exceeded, parameter-problem } accept
+    iifname "{{ k3s_dmz_interface }}" icmpv6 type { destination-unreachable, packet-too-big, time-exceeded, parameter-problem, echo-request, echo-reply, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert } accept
+    iifname "{{ k3s_dmz_interface }}" drop
+  }
+}

@@ -1,0 +1,18 @@
+---
+- name: Configure an explicitly selected Arch bare-metal home lab
+  hosts: ai_lab_baremetal
+  become: true
+  gather_facts: true
+  serial: 1
+  pre_tasks:
+    - name: Require the supported host and explicit lab lifecycle
+      ansible.builtin.assert:
+        that:
+          - lab_environment | default('unmapped') in ['dev', 'tst', 'int']
+          - ansible_facts.distribution == 'Archlinux'
+          - ansible_facts.architecture == 'x86_64'
+          - ansible_play_hosts_all | length == 1
+        fail_msg: This profile is for one explicitly mapped Arch lab host, never the existing EL9 VM.
+  roles:
+    - role: arch_host
+    - role: k3s_baremetal

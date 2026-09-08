@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# Guarded Arch Linux live-ISO bootstrap entry point.
+set -Eeuo pipefail
+IFS=$'\n\t'
+export LC_ALL=C
+
+BOOTSTRAP_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+readonly BOOTSTRAP_ROOT
+# shellcheck source=../lib/common.sh
+# shellcheck disable=SC1091
+[[ -r "$BOOTSTRAP_ROOT/lib/common.sh" ]] && source "$BOOTSTRAP_ROOT/lib/common.sh"
+# shellcheck source=../lib/bootstrap/common.sh
+# shellcheck disable=SC1091
+source "$BOOTSTRAP_ROOT/lib/bootstrap/common.sh"
+# shellcheck source=../lib/bootstrap/config.sh
+# shellcheck disable=SC1091
+source "$BOOTSTRAP_ROOT/lib/bootstrap/config.sh"
+# shellcheck source=../lib/bootstrap/preflight.sh
+# shellcheck disable=SC1091
+source "$BOOTSTRAP_ROOT/lib/bootstrap/preflight.sh"
+# shellcheck source=../lib/bootstrap/install.sh
+# shellcheck disable=SC1091
+source "$BOOTSTRAP_ROOT/lib/bootstrap/install.sh"
+# shellcheck source=../lib/bootstrap/verify.sh
+# shellcheck disable=SC1091
+source "$BOOTSTRAP_ROOT/lib/bootstrap/verify.sh"
+# shellcheck source=lib/bootstrap/package.sh
+source "$BOOTSTRAP_ROOT/lib/bootstrap/package.sh"
+
+usage() {
+  cat <<'USAGE'
+Usage: bootstrap-arch [--config FILE] [--boot-package FILE] [--dry-run|--execute] <preflight|install|verify>
+
+The installer only accepts two immutable /dev/disk/by-id paths.  `install`
+defaults to a dry run. `--execute install` destroys both approved disks after
+all checks and confirmation of both fully resolved paths and serials.
+`--dry-run` never formats, mounts, or writes disks.
+
+Configuration is a strict KEY=VALUE file. See config/install.conf.example.
+USAGE
+}
+
+main() {
+  local config_file='' action='' mode=''
+  BOOTSTRAP_DRY_RUN=1
+  BOOTSTRAP_BOOT_PACKAGE=/var/cache/arch-workstation/boot.pkg.tar.zst
+  while (($#)); do
+    case "$1" in
+      --config)
+        (($# >= 2)) || { bootstrap_die '--config needs a path'; return 2; }
+        config_file=$2; shift 2 ;;
+      --boot-package)
+        (($# >= 2)) || { bootstrap_die '--boot-package needs a path'; return 2; }
+        BOOTSTRAP_BOOT_PACKAGE=$2; shift 2 ;;
+      --dry-run|--execute)
+        [[ -z $mode || $mode == "$1" ]] || { bootstrap_die 'choose only one of --dry-run and --execute'; return 2; }
+        mode=$1
+        [[ $1 != --execute ]] || BOOTSTRAP_DRY_RUN=0
+        export BOOTSTRAP_DRY_RUN
+        shift ;;
+      -h|--help) usage; return 0 ;;
+      preflight|install|verify)
+        [[ -z $action ]] || { bootstrap_die 'only one action is allowed'; return 2; }
+        action=$1; shift ;;
+      *) bootstrap_die "unknown argument: $1"; return 2 ;;
+    esac
+  done
+  [[ -n $action ]] || { usage >&2; return 2; }
+  [[ $mode != --execute || $action == install ]] || { bootstrap_die '--execute is only valid for install'; return 2; }
+  [[ -n $config_file ]] || { bootstrap_die '--config is required'; return 2; }
+  bootstrap_load_config "$config_file" || return 1
+
+  case "$action" in
+    preflight) bootstrap_preflight ;;
+    install) bootstrap_install ;;
+    verify) bootstrap_verify ;;
+  esac
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then main "$@"; fi

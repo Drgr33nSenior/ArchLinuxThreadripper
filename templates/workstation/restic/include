@@ -1,0 +1,4 @@
+# Review before enabling the timers. K3s VM disks require the separate cold-backup workflow.
+/etc
+/home
+/var/lib/sbctl

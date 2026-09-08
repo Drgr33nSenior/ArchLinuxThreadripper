@@ -1,0 +1,89 @@
+# Immutable external-input lock. Refresh values only through a reviewed change.
+LOCK_FORMAT=1
+LOCK_DATE=2026-08-27
+ALMALINUX_IMAGE_NAME=AlmaLinux-9-GenericCloud-9.8-20260810.x86_64.qcow2
+ALMALINUX_IMAGE_URL=https://repo.almalinux.org/almalinux/9/cloud/x86_64/images/AlmaLinux-9-GenericCloud-9.8-20260810.x86_64.qcow2
+ALMALINUX_IMAGE_SHA256=6bdab6376d46d42e4203ace3733efafc7c5d37c7cb443a6cc74750097002d74b
+ALMALINUX_CHECKSUM_URL=https://repo.almalinux.org/almalinux/9/cloud/x86_64/images/CHECKSUM
+ALMALINUX_CHECKSUM_SIGNATURE_URL=https://repo.almalinux.org/almalinux/9/cloud/x86_64/images/CHECKSUM.asc
+ALMALINUX_SIGNING_FINGERPRINT=BF18AC2876178908D6E71267D36CB86CB86B3716
+# K3s replacement: same Kubernetes minor/patch as the previous RKE2 pin.
+# Binary digest matches release checksums and GitHub asset metadata (2026-09-06).
+K3S_VERSION=v1.35.7+k3s1
+K3S_BINARY_SHA256=5fc25309c53031e0cf03f7ee85f6f60969381ff3649039ffda19e30f5c26947a
+K3S_MINOR=1.35
+K3S_SELINUX_RPM_VERSION=1.6-1.el9
+K3S_SELINUX_RPM_SHA256=23d0095a766b89317d2bdbe8773825987db7221e48743417930a994ca1096793
+K3S_RPM_GPG_KEY_URL=https://rpm.rancher.io/public.key
+K3S_RPM_GPG_KEY_SHA256=7d2415f7fc532c365c8874bfad966566daaa0d04a9a5ba14d1db6080a9c12629
+K3S_RPM_GPG_FINGERPRINT=C8CFF216455126E9B9C918BE925EA29AE257814A
+CERT_MANAGER_VERSION=v1.21.1
+CERT_MANAGER_MANIFEST_URL=https://github.com/cert-manager/cert-manager/releases/download/v1.21.1/cert-manager.yaml
+CERT_MANAGER_MANIFEST_SHA256=5f6a499b8c1857d57f560f536e0dcc830914b45c420899fe7ad0692c8624e408
+LOCAL_PATH_PROVISIONER_VERSION=v0.0.37
+LOCAL_PATH_PROVISIONER_MANIFEST_URL=https://raw.githubusercontent.com/rancher/local-path-provisioner/v0.0.37/deploy/local-path-storage.yaml
+LOCAL_PATH_PROVISIONER_MANIFEST_SHA256=9781b39c24f3f651bd6d6e41b561e04e4904bbdb6d4f8c7a6009df3a702dcd65
+LOCAL_PATH_HELPER_IMAGE=docker.io/library/busybox:1.37.0@sha256:9db7b59979c38555a39def84a31fb98b5296952f9e3afd4f6f11f05b07adfab0
+LLM_SCALER_IMAGE=docker.io/intel/llm-scaler-vllm:1.4@sha256:e96ac887e90b06d45dc3e6766a1eff6c32e2e5ba9146336569c309dfc0e828b0
+OMZ_REPOSITORY=https://github.com/ohmyzsh/ohmyzsh.git
+OMZ_COMMIT=146461f7c6d95f4ba1220559d66eb113418b40a8
+JETBRAINS_TOOLBOX_VERSION=3.7.2.87231
+JETBRAINS_TOOLBOX_URL=https://download.jetbrains.com/toolbox/jetbrains-toolbox-3.7.2.87231.tar.gz
+JETBRAINS_TOOLBOX_SHA256=f5a01f0b23843120c5137ae98b701c424761f813d8cfcd7965dad5c3c84bd396
+PARU_AUR_REPOSITORY=https://aur.archlinux.org/paru.git
+PARU_AUR_COMMIT=329be2113c590046cb29858c23d9b96a8d7bd586
+LINUX_GIT_AUR_REPOSITORY=https://aur.archlinux.org/linux-git.git
+LINUX_GIT_AUR_COMMIT=c783913866ae402948c9becf6ea60c52a50f8204
+LINUX_GIT_SOURCE_REPOSITORY=torvalds/linux
+LINUX_GIT_SOURCE_COMMIT=73e3f0710014fe6d4ed98cfc02292f6121db7558
+AWS_SSM_AUR_REPOSITORY=https://aur.archlinux.org/aws-session-manager-plugin.git
+AWS_SSM_AUR_COMMIT=aa93839e62d2eb14ebfdd4eb38a538d5172c2674
+# AMD migration source inputs inspected 2026-09-04. These are candidates, not a
+# claim that a full ROCm package set has been built or accepted on this machine.
+ROCM_THEROCK_REPOSITORY=https://github.com/ROCm/TheRock.git
+ROCM_THEROCK_COMMIT=b927c1865f37fa7bbecf5c7e35dee41b02afbb4f
+ROCM_LLAMA_CPP_REPOSITORY=https://github.com/ggml-org/llama.cpp.git
+ROCM_LLAMA_CPP_COMMIT=427291b5b34cd914a31b3fd3b61a68f6184f4b9f
+# ROCm 10 candidates reviewed 2026-09-07; no target runtime qualification implied.
+# The source checksum below is declared by the reviewed AUR recipe; the large
+# AMD archive was not downloaded during the repository-only validation.
+ROCM_AUR_REPOSITORY=https://aur.archlinux.org/rocm-gfx120x-bin.git
+ROCM_AUR_PACKAGE=rocm-gfx120x-bin
+ROCM_AUR_PACKAGE_VERSION=10.0.0-2
+ROCM_AUR_COMMIT=ccac18259575a393b402ea90cd9ef3552081721e
+ROCM_AUR_PKGBUILD_SHA256=578d394a3f82f4006fca1707a2bed85ffc9774b4ca24e75e723399ae52dbb4d8
+ROCM_AUR_SOURCE_URL=https://stable.repo.amd.com/rocm/core/tarball/therock-dist-linux-gfx120X-all-10.0.0.tar.gz
+ROCM_AUR_SOURCE_SHA256=eb99db434a1738fd83b0c3b933146cdb76418f35fcf4647743fbdfef76e8c71f
+# Public registry index, linux/amd64 manifest and config bytes were verified.
+SGLANG_ROCM_IMAGE=docker.io/rocm/sgl-dev:v0.5.15.post1-ubuntu24.04-py3.14-rocm10.0.0@sha256:51f63a2d201ca944a43b8f1a18ac7da73ed9f6743c45bb82bbc40b44e6cf18d2
+SGLANG_ROCM_INDEX_DIGEST=sha256:13171073ebf66fee0a1473d43ae8080cc7f8500fa213ddf1507f158fbb6dd63a
+SGLANG_ROCM_CONFIG_DIGEST=sha256:8474934b5049db5e3dbd9ee220e41b9d1a397a25ca0daac8a0b38850f2478495
+# Model choices reviewed 2026-09-08. Revisions resolved from official HF repos;
+# weights were not downloaded. Stage these revisions, not moving main branches.
+SGLANG_DUAL_MODEL_REPOSITORY=Qwen/Qwen3.8-27B-FP8
+SGLANG_DUAL_MODEL_REVISION=017b9c7af6b5689d5dd426a76e0bc077eb5ca20a
+SGLANG_SINGLE_MODEL_REPOSITORY=Qwen/Qwen3.5-9B
+SGLANG_SINGLE_MODEL_REVISION=c202236235762e1c871ad0ccb60c8ee5ba337b9a
+# Streaming recipe inputs checked 2026-09-08. linux/amd64 base pulled by digest;
+# Sunshine release asset downloaded and hashed. Neither is hardware qualification.
+STEAM_HEADLESS_BASE_IMAGE=docker.io/josh5/steam-headless@sha256:f6bd0f5d88c6a5160fe765f61af9b33702b01cde45717b89f9ff390f104882dd
+STEAM_HEADLESS_REVIEWED_SOURCE=096fc4b1c09288b105b2eada7c386d41a51efc08
+SUNSHINE_VERSION=2026.906.222525
+SUNSHINE_COMMIT=cb72dffa3233c5815cd5ba88f09f049dd679ba75
+SUNSHINE_DEBIAN_SHA256=c87f226920ad83055a898be1f0c7540307593e92d8b0baf1f076909758db8ca0
+# Matched amd64/i386 Mesa userspace from signed Debian trixie-backports.
+SUNSHINE_MESA_DEBIAN_VERSION=26.1.2-1~bpo13+1
+# CPU-only RAG pilot inputs reviewed 2026-09-08. Registry config revision matches
+# the source commit; runtime, first-admin bootstrap and retrieval remain unqualified.
+OPEN_WEBUI_VERSION=0.11.3
+OPEN_WEBUI_COMMIT=2a960a59fe1dbbd35282f0556b3666d81102e781
+OPEN_WEBUI_IMAGE=ghcr.io/open-webui/open-webui:v0.11.3@sha256:9cd136effce6bb12a6a1988a35ab3b82cb40c48a6768fceeb17c83baf7cfac9c
+RAG_EMBEDDING_REPOSITORY=Qwen/Qwen3-Embedding-0.6B
+RAG_EMBEDDING_REVISION=97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3
+# Per-file SHA-256 inputs: apps/overlays/rag/SHA256SUMS (safetensors, no pickle).
+# Client harness schemas reviewed 2026-09-08. These pins are not a claim that
+# clients were installed or qualified. Qwen commit is the npm 0.23.0 gitHead.
+QWEN_CODE_VERSION=0.23.0
+QWEN_CODE_COMMIT=98a9c964158697dd5631d15a62174684ff7bbb53
+DSH_COMMIT=c389f96bf3a9b6807cb71ed6bdad5849be0df6d8
+HERMES_AGENT_COMMIT=13fb5e1eceba51fc45a48b5d95a357e144d42689

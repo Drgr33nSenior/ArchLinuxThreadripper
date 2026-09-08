@@ -1,0 +1,547 @@
+---
+- name: Inspect the previous RKE2 data location without reading its contents
+  ansible.builtin.stat:
+    path: /var/lib/rancher/rke2
+    get_checksum: false
+    get_mime: false
+  register: k3s_previous_rke2
+  tags: [always]
+
+- name: Refuse to convert an existing RKE2 guest in place
+  ansible.builtin.assert:
+    that: [not k3s_previous_rke2.stat.exists]
+    fail_msg: Create a separate K3s guest and migrate workloads; RKE2 data is not a K3s upgrade.
+  tags: [always]
+
+- name: Validate EL9 and exact K3s release
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.distribution in ['AlmaLinux', 'Rocky', 'RedHat', 'OracleLinux']
+      - ansible_facts.distribution_major_version == '9'
+      - k3s_version is match('^v[0-9]+\\.[0-9]+\\.[0-9]+\\+k3s[0-9]+$')
+      - k3s_selinux_rpm_version is match('^[0-9]+[.][0-9]+-[0-9]+[.]el9$')
+      - k3s_binary_sha256 is match('^[a-f0-9]{64}$')
+      - k3s_selinux_rpm_sha256 is match('^[a-f0-9]{64}$')
+      - k3s_management_interface != k3s_dmz_interface
+      - k3s_admin_user is match('^[a-z_][a-z0-9_-]{0,31}$')
+    fail_msg: >-
+      This lab requires an EL9 guest, distinct management/DMZ interfaces, and
+      an exact K3s release. Do not use a floating channel or public API IP.
+
+- name: Validate or derive cluster DNS from the Service CIDR
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/python3
+      - -c
+      - >-
+        import ipaddress, sys;
+        network = ipaddress.IPv4Network(sys.argv[1], strict=True);
+        address = ipaddress.IPv4Address(sys.argv[2]) if sys.argv[2] else network.network_address + 10;
+        assert network.network_address < address < network.broadcast_address, 'DNS must be a usable Service CIDR address';
+        assert address != network.network_address + 1, 'DNS must not use the Kubernetes API service address';
+        print(address)
+      - "{{ k3s_service_cidr }}"
+      - "{{ k3s_cluster_dns }}"
+  register: k3s_cluster_dns_check
+  changed_when: false
+
+- name: Use the validated cluster DNS address
+  ansible.builtin.set_fact:
+    k3s_cluster_dns: "{{ k3s_cluster_dns_check.stdout }}"
+  when: not ansible_check_mode
+
+- name: Confirm the administrator has set a local sudo password
+  ansible.builtin.command: "passwd --status {{ k3s_admin_user }}"
+  register: k3s_admin_password_status
+  changed_when: false
+
+- name: Refuse provisioning before a local sudo password exists
+  ansible.builtin.assert:
+    that:
+      - k3s_admin_password_status.stdout.split()[1] in ['P', 'PS']
+    fail_msg: >-
+      Set the guest administrator password interactively before provisioning;
+      the temporary passwordless bootstrap grant has not been removed.
+
+- name: Install password-required administrator sudo policy
+  ansible.builtin.copy:
+    dest: /etc/sudoers.d/90-k3s-admin
+    content: "{{ k3s_admin_user }} ALL=(ALL) ALL\n"
+    owner: root
+    group: root
+    mode: '0440'
+    validate: /usr/sbin/visudo -cf %s
+
+- name: Remove one-time passwordless bootstrap sudo policy
+  ansible.builtin.file:
+    path: /etc/sudoers.d/80-k3s-bootstrap
+    state: absent
+
+- name: Install prerequisites
+  ansible.builtin.dnf:
+    name:
+      - ca-certificates
+      - chrony
+      - container-selinux
+      - curl
+      - gnupg2
+      - iptables
+      - NetworkManager
+      - nftables
+      - policycoreutils-python-utils
+      - qemu-guest-agent
+      - sudo
+      - xfsprogs
+    state: present
+
+- name: Keep SELinux enforcing
+  ansible.builtin.lineinfile:
+    path: /etc/selinux/config
+    regexp: '^SELINUX='
+    line: SELINUX=enforcing
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Apply SELinux enforcing mode now
+  ansible.builtin.command: setenforce 1
+  changed_when: false
+
+- name: Configure NetworkManager to ignore CNI interfaces
+  ansible.builtin.template:
+    src: NetworkManager-k3s.conf.j2
+    dest: /etc/NetworkManager/conf.d/k3s-cni.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Reload NetworkManager configuration
+
+- name: Download the pinned K3s RPM signing certificate
+  ansible.builtin.get_url:
+    url: "{{ k3s_rpm_gpg_key_url }}"
+    dest: "{{ k3s_rpm_gpg_key_path }}"
+    checksum: "sha256:{{ k3s_rpm_gpg_key_sha256 }}"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Verify locked K3s RPM signing fingerprint
+  ansible.builtin.command: "gpg --show-keys --with-colons {{ k3s_rpm_gpg_key_path }}"
+  register: k3s_rpm_gpg_fingerprint_check
+  changed_when: false
+
+- name: Assert locked K3s RPM signing fingerprint
+  ansible.builtin.assert:
+    that:
+      - k3s_rpm_gpg_fingerprint_check.stdout_lines | select('match', '^pub:') | list | length == 1
+      - k3s_rpm_gpg_fingerprint_check.stdout_lines | select('match', '^fpr:') | list | length > 0
+      - (k3s_rpm_gpg_fingerprint_check.stdout_lines | select('match', '^fpr:') | first).split(':')[9] | upper == k3s_rpm_gpg_fingerprint | upper
+    fail_msg: K3s RPM signing key does not match the reviewed lock-file fingerprint.
+
+- name: Import verified K3s RPM signing key
+  ansible.builtin.rpm_key:
+    state: present
+    key: "{{ k3s_rpm_gpg_key_path }}"
+
+# Keep firewalld in place throughout package/key validation and policy setup.
+# Apply only our table; never restart nftables (ExecStop can flush global rules).
+- name: Create the owned nftables configuration directory
+  ansible.builtin.file:
+    path: /etc/nftables
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Install narrow nftables policy
+  ansible.builtin.template:
+    src: k3s-lab.nft.j2
+    dest: /etc/nftables/k3s-lab.nft
+    owner: root
+    group: root
+    mode: '0600'
+  register: k3s_firewall_policy
+
+- name: Install the owned firewall persistence unit
+  ansible.builtin.copy:
+    src: k3s-lab-firewall.service
+    dest: /etc/systemd/system/k3s-lab-firewall.service
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Create network and SSH firewall dependency directories
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item }}.service.d"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  loop: [NetworkManager, sshd]
+
+- name: Require the firewall before network configuration and SSH startup
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/{{ item }}.service.d/10-k3s-firewall.conf"
+    content: "[Unit]\nRequires=k3s-lab-firewall.service\nAfter=k3s-lab-firewall.service\n"
+    owner: root
+    group: root
+    mode: '0644'
+  loop: [NetworkManager, sshd]
+
+- name: Validate the owned nftables policy before enabling its service
+  ansible.builtin.command: nft -c -f /etc/nftables/k3s-lab.nft
+  changed_when: false
+
+- name: Apply the owned firewall table atomically before disabling firewalld
+  ansible.builtin.command: nft -f /etc/nftables/k3s-lab.nft
+  changed_when: k3s_firewall_policy.changed
+
+- name: Enable only the owned firewall persistence unit
+  ansible.builtin.systemd_service:
+    name: k3s-lab-firewall
+    daemon_reload: true
+    enabled: true
+    state: started
+
+- name: Verify the replacement firewall exists before disabling firewalld
+  ansible.builtin.command: nft list table inet k3s_lab_guard
+  changed_when: false
+
+- name: Collect service state before disabling firewalld
+  ansible.builtin.service_facts:
+
+- name: Stop and disable installed firewalld after the replacement is active
+  ansible.builtin.systemd_service:
+    name: firewalld
+    enabled: false
+    state: stopped
+  when: "'firewalld.service' in ansible_facts.services"
+
+- name: Verify the owned firewall survived the firewalld handover
+  ansible.builtin.command: nft list table inet k3s_lab_guard
+  changed_when: false
+
+- name: Refresh service state after disabling firewalld
+  ansible.builtin.service_facts:
+
+- name: Assert firewalld is not active
+  ansible.builtin.assert:
+    that:
+      - "'firewalld.service' not in ansible_facts.services or ansible_facts.services['firewalld.service'].state != 'running'"
+    fail_msg: firewalld must be stopped before Flannel/K3s is started.
+
+- name: Create a protected cache for the pinned SELinux package
+  ansible.builtin.file:
+    path: /var/cache/k3s-workstation
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+
+- name: Download the checksum-pinned K3s SELinux RPM
+  ansible.builtin.get_url:
+    url: "https://rpm.rancher.io/k3s/stable/common/centos/9/noarch/k3s-selinux-{{ k3s_selinux_rpm_version }}.noarch.rpm"
+    dest: "/var/cache/k3s-workstation/k3s-selinux-{{ k3s_selinux_rpm_version }}.noarch.rpm"
+    checksum: "sha256:{{ k3s_selinux_rpm_sha256 }}"
+    owner: root
+    group: root
+    mode: '0600'
+
+- name: Install the pinned K3s SELinux policy
+  ansible.builtin.dnf:
+    name: "/var/cache/k3s-workstation/k3s-selinux-{{ k3s_selinux_rpm_version }}.noarch.rpm"
+    state: present
+    disable_gpg_check: false
+    install_weak_deps: false
+
+- name: Read the installed K3s SELinux policy release
+  ansible.builtin.command:
+    argv: [rpm, -q, --queryformat, '%{VERSION}-%{RELEASE}', k3s-selinux]
+  register: k3s_installed_selinux_version
+  changed_when: false
+
+- name: Assert the installed K3s SELinux policy is the locked release
+  ansible.builtin.assert:
+    that:
+      - k3s_installed_selinux_version.stdout == k3s_selinux_rpm_version
+    fail_msg: The installed K3s SELinux policy differs from the lock; review the package change explicitly.
+
+- name: Install pinned K3s server
+  ansible.builtin.get_url:
+    url: "https://github.com/k3s-io/k3s/releases/download/{{ k3s_version }}/k3s"
+    dest: /usr/local/bin/k3s
+    checksum: "sha256:{{ k3s_binary_sha256 }}"
+    owner: root
+    group: root
+    mode: '0755'
+  notify: Restart K3s server
+
+- name: Verify the installed K3s release
+  ansible.builtin.command: /usr/local/bin/k3s --version
+  register: k3s_installed_version
+  changed_when: false
+
+- name: Assert the installed K3s is the locked release
+  ansible.builtin.assert:
+    that:
+      - "('k3s version ' ~ k3s_version ~ ' ') in k3s_installed_version.stdout"
+    fail_msg: K3s runtime differs from the reviewed lock file.
+
+- name: Install the K3s service without running an upstream installer
+  ansible.builtin.copy:
+    src: k3s.service
+    dest: /etc/systemd/system/k3s.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Restart K3s server
+
+- name: Create K3s service dependency directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/k3s.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Require the owned firewall before starting K3s
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/k3s.service.d/10-firewall.conf
+    content: "[Unit]\nRequires=k3s-lab-firewall.service\nAfter=k3s-lab-firewall.service\n"
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Restart K3s server
+
+- name: Reload systemd after installing K3s firewall dependency
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
+- name: Persist Kubernetes networking prerequisites
+  ansible.builtin.copy:
+    dest: /etc/sysctl.d/60-k3s.conf
+    content: |
+      net.ipv4.ip_forward = 1
+      net.bridge.bridge-nf-call-iptables = 1
+      net.bridge.bridge-nf-call-ip6tables = 1
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Load bridge filtering before applying its sysctls
+  ansible.builtin.command: modprobe br_netfilter
+  changed_when: false
+
+- name: Apply the owned Kubernetes sysctl file
+  ansible.builtin.command: sysctl --load=/etc/sysctl.d/60-k3s.conf
+  changed_when: false
+
+- name: Create local-path mountpoint
+  ansible.builtin.file:
+    path: "{{ k3s_storage_path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+
+- name: Mount dedicated data disk for local-path volumes
+  ansible.builtin.command: "findmnt --noheadings --mountpoint {{ k3s_storage_path }}"
+  register: k3s_storage_mount
+  changed_when: false
+  failed_when: false
+
+- name: Resolve the expected virtio data device
+  ansible.builtin.command: "readlink -f {{ k3s_data_device }}"
+  register: k3s_data_device_resolved
+  changed_when: false
+
+- name: Assert data device is a virtio by-id symlink
+  ansible.builtin.assert:
+    that:
+      - k3s_data_device is match('^/dev/disk/by-id/virtio-k3s-data$')
+      - k3s_data_device_resolved.stdout is match('^/dev/vd[a-z]+$')
+    fail_msg: The K3s data disk must be the expected virtio by-id device.
+
+- name: Refuse to overwrite a non-XFS data disk
+  ansible.builtin.command: "blkid --output value --match-tag TYPE {{ k3s_data_device }}"
+  register: k3s_data_disk_type
+  changed_when: false
+  failed_when: k3s_data_disk_type.rc not in [0, 2]
+
+- name: Assert the data disk is unused or already XFS
+  ansible.builtin.assert:
+    that:
+      - k3s_data_disk_type.rc == 2 or k3s_data_disk_type.stdout == 'xfs'
+    fail_msg: /dev/vdb is not an unused or XFS-formatted dedicated K3s data disk.
+
+- name: Check unused data disk has no mounted filesystem
+  ansible.builtin.command: "findmnt --noheadings --source {{ k3s_data_device_resolved.stdout }}"
+  register: k3s_data_device_mount
+  changed_when: false
+  failed_when: false
+  when: k3s_data_disk_type.rc == 2
+
+- name: List children of unused data disk
+  ansible.builtin.command: "lsblk --noheadings --paths --output NAME {{ k3s_data_device_resolved.stdout }}"
+  register: k3s_data_device_children
+  changed_when: false
+  when: k3s_data_disk_type.rc == 2
+
+- name: Inspect unused data disk for wipefs signatures
+  ansible.builtin.command: "wipefs --noheadings --output TYPE {{ k3s_data_device_resolved.stdout }}"
+  register: k3s_data_device_wipefs
+  changed_when: false
+  failed_when: false
+  when: k3s_data_disk_type.rc == 2
+
+- name: Refuse to format mounted, partitioned, or signed data disk
+  ansible.builtin.assert:
+    that:
+      - k3s_data_device_mount.rc != 0
+      - k3s_data_device_children.stdout_lines | length == 1
+      - k3s_data_device_wipefs.stdout | trim | length == 0
+    fail_msg: >-
+      The expected unused K3s data disk is mounted, has child devices, or has
+      a wipefs signature; refuse to overwrite it.
+  when: k3s_data_disk_type.rc == 2
+
+- name: Format unused dedicated data disk as XFS
+  ansible.builtin.command: "mkfs.xfs -f {{ k3s_data_device }}"
+  when: k3s_data_disk_type.rc == 2
+
+- name: Read the XFS data disk UUID
+  ansible.builtin.command: "blkid --output value --match-tag UUID {{ k3s_data_device }}"
+  register: k3s_data_disk_uuid
+  changed_when: false
+
+- name: Assert the data disk UUID is available
+  ansible.builtin.assert:
+    that: [k3s_data_disk_uuid.stdout | length > 0]
+    fail_msg: The dedicated K3s data disk does not have a UUID.
+
+- name: Persist dedicated data disk mount
+  ansible.builtin.lineinfile:
+    path: /etc/fstab
+    regexp: '^[^#\s]+\s+{{ k3s_storage_path }}(?:\s|$)'
+    line: "UUID={{ k3s_data_disk_uuid.stdout }} {{ k3s_storage_path }} xfs defaults,noatime 0 2"
+    create: true
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Mount dedicated data disk when not mounted
+  ansible.builtin.command: mount {{ k3s_storage_path }}
+  when: k3s_storage_mount.rc != 0
+
+- name: Read the mounted local-path backing device
+  ansible.builtin.command: "findmnt --noheadings --output SOURCE --target {{ k3s_storage_path }}"
+  register: k3s_storage_mount_source
+  changed_when: false
+
+- name: Resolve the mounted local-path backing device
+  ansible.builtin.command: "readlink -f {{ k3s_storage_mount_source.stdout | trim }}"
+  register: k3s_storage_mount_source_resolved
+  changed_when: false
+
+- name: Assert local-path uses the expected dedicated virtio data disk
+  ansible.builtin.assert:
+    that:
+      - k3s_storage_mount_source_resolved.stdout == k3s_data_device_resolved.stdout
+    fail_msg: The local-path mountpoint is not backed by the expected virtio data disk.
+
+- name: Reapply restrictive local-path mountpoint mode after source verification
+  ansible.builtin.file:
+    path: "{{ k3s_storage_path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+
+- name: Check mounted local-path storage is empty before first recursive relabel
+  ansible.builtin.command: "find {{ k3s_storage_path }} -mindepth 1 -maxdepth 1 -print -quit"
+  register: k3s_storage_first_entry
+  changed_when: false
+
+- name: Recursively apply SELinux context only to fresh or empty first mount
+  ansible.builtin.command: "restorecon -RFv {{ k3s_storage_path }}"
+  register: k3s_storage_recursive_restorecon
+  changed_when: k3s_storage_recursive_restorecon.stdout | trim | length > 0
+  when:
+    - k3s_storage_mount.rc != 0
+    - k3s_data_disk_type.rc == 2 or k3s_storage_first_entry.stdout | trim | length == 0
+
+- name: Apply SELinux context to local-path mount root on subsequent runs
+  ansible.builtin.command: "restorecon -Fv {{ k3s_storage_path }}"
+  register: k3s_storage_root_restorecon
+  changed_when: k3s_storage_root_restorecon.stdout | trim | length > 0
+  when: >-
+    k3s_storage_mount.rc == 0 or
+    (k3s_data_disk_type.rc != 2 and k3s_storage_first_entry.stdout | trim | length != 0)
+
+- name: Configure K3s before first start
+  ansible.builtin.file:
+    path: /etc/rancher/k3s
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+
+- name: Write K3s configuration
+  ansible.builtin.template:
+    src: config.yaml.j2
+    dest: /etc/rancher/k3s/config.yaml
+    owner: root
+    group: root
+    mode: '0600'
+  notify: Restart K3s server
+
+- name: Configure explicit Pod Security admission before first start
+  ansible.builtin.copy:
+    src: pod-security.yaml
+    dest: /etc/rancher/k3s/pod-security.yaml
+    owner: root
+    group: root
+    mode: '0600'
+  notify: Restart K3s server
+
+- name: Apply queued handlers after firewall and K3s configuration are ready
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable guest agent
+  ansible.builtin.systemd_service:
+    name: qemu-guest-agent
+    enabled: true
+    state: started
+
+- name: Enable K3s
+  ansible.builtin.systemd_service:
+    name: k3s
+    enabled: true
+
+- name: Start K3s after its pinned configuration is present
+  ansible.builtin.systemd_service:
+    name: k3s
+    state: started
+  tags: [k3s]
+  when: not (k3s_restore_test | bool)
+
+- name: Save compressed etcd snapshot for lifecycle operation
+  ansible.builtin.command:
+    cmd: /usr/local/bin/k3s etcd-snapshot save --name lifecycle
+  changed_when: true
+  when: k3s_take_lifecycle_snapshot | bool
+  tags: [etcd_snapshot]
+
+- name: Require a detached clone for restore tests
+  ansible.builtin.assert:
+    that:
+      - k3s_restore_snapshot is defined
+      - k3s_restore_snapshot | length > 0
+    fail_msg: A detached clone inventory and explicit snapshot path are required.
+  when: k3s_restore_test | bool
+  tags: [restore_test]
+
+- name: Run detached clone restore procedure
+  ansible.builtin.import_tasks: restore.yml
+  when: k3s_restore_test | bool
+  tags: [restore_test]

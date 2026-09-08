@@ -1,0 +1,18 @@
+# K3s v1.35 kubelet drop-in. This is emitted only for an explicit full-SMT
+# reservation; do not hand-edit a CPUManager checkpoint to migrate policy.
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+cpuManagerPolicy: static
+cpuManagerPolicyOptions:
+  full-pcpus-only: "true"
+  strict-cpu-reservation: "true"
+{% if lab_cpu_manager_cache_alignment | bool %}
+  prefer-align-cpus-by-uncorecache: "true"
+{% endif %}
+reservedSystemCPUs: {{ lab_reserved_system_cpus | to_json }}
+topologyManagerPolicy: restricted
+topologyManagerScope: pod
+{% if lab_cpu_manager_cache_alignment | bool %}
+featureGates:
+  CPUManagerPolicyBetaOptions: true
+{% endif %}

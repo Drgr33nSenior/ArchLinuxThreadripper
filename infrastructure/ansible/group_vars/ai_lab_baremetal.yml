@@ -1,0 +1,31 @@
+---
+# Non-secret input contract. Override locally; do not infer network intent.
+lab_node_ip: ''
+lab_management_cidr: ''
+lab_cluster_cidr: ''
+lab_service_cidr: ''
+lab_cluster_dns: ''
+lab_network_interface: ''
+lab_tls_sans: []
+lab_hardware_report: ''
+lab_manage_service: false
+lab_network_reviewed: false
+lab_restart_approved: false
+lab_expected_gpu_count: 2
+lab_expected_gfx: gfx1201
+# Exact runtime package is built from infrastructure/packages/k3s/PKGBUILD.
+lab_k3s_data_dir: /var/lib/rancher/k3s
+lab_system_reserved_memory: 12Gi
+lab_kube_reserved_memory: 4Gi
+lab_system_reserved_cpu: '4'
+lab_kube_reserved_cpu: '2'
+lab_eviction_memory: 2Gi
+# Empty preserves the existing shared-pool kubelet behaviour. When set, this
+# must enumerate whole online SMT sibling groups from the current observation.
+lab_cpu_manager_policy: none
+lab_reserved_system_cpus: ''
+lab_cpu_manager_cache_alignment: false
+lab_enable_dkms_signing: false
+lab_module_trust_verified: false
+lab_module_key_path: /etc/kernel/keys/module-signing.key
+lab_module_certificate_path: /etc/kernel/keys/module-signing.der

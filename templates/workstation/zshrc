@@ -1,0 +1,27 @@
+# Source this from ~/.zshrc after setting ZSH to the pinned checkout.
+export ZSH="$HOME/.local/share/oh-my-zsh"
+ZSH_THEME=''
+DISABLE_AUTO_UPDATE=true
+zstyle ':omz:update' mode disabled
+ZSH_COMPDUMP="${XDG_CACHE_HOME:-$HOME/.cache}/zsh/zcompdump-$ZSH_VERSION"
+mkdir -p -- "${ZSH_COMPDUMP:h}"
+fpath=(/usr/share/zsh/site-functions $fpath)
+plugins=(git sudo extract colored-man-pages command-not-found fzf podman kubectl helm)
+source "$ZSH/oh-my-zsh.sh"
+
+# Packaged plugins are outside Oh My Zsh's plugin search path.
+source /usr/share/zsh/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh
+
+# Load AWS's Bash-only completion only when explicitly requested.
+aws-bash-completion() {
+  autoload -Uz bashcompinit
+  bashcompinit
+  source /usr/bin/aws_zsh_completer.sh
+  unfunction aws-bash-completion
+}
+
+PROMPT='%F{cyan}%n@%m%f:%F{blue}%~%f %# '
+RPROMPT=''
+
+# Keep syntax highlighting last.
+source /usr/share/zsh/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh

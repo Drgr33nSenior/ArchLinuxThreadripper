@@ -1,0 +1,17 @@
+[options]
+Architecture = x86_64
+SigLevel = Required DatabaseOptional
+LocalFileSigLevel = Required
+ParallelDownloads = 5
+GPGDir = @KEYRING@
+
+[core]
+Server = https://archive.archlinux.org/repos/@SNAPSHOT@/$repo/os/$arch
+[extra]
+Server = https://archive.archlinux.org/repos/@SNAPSHOT@/$repo/os/$arch
+[multilib]
+Server = https://archive.archlinux.org/repos/@SNAPSHOT@/$repo/os/$arch
+
+[arch-workstation]
+SigLevel = Required
+Server = file://@REPO@

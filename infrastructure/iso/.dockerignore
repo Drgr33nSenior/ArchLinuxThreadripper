@@ -1,0 +1,9 @@
+# This directory, not the repository root, is the only Docker build context.
+**
+!versions.lock
+!docker
+docker/**
+!docker/Dockerfile
+!docker/setup.sh
+!docker/entrypoint.sh
+!docker/pacstrap.sh

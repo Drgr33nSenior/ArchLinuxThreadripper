@@ -1,0 +1,7 @@
+ALL_config="/etc/mkinitcpio.conf"
+ALL_kver="/boot/vmlinuz-linux-lts"
+PRESETS=('default' 'recovery')
+default_uki="/efi/EFI/Linux/arch-linux-lts.efi"
+default_options="--cmdline /etc/kernel/cmdline"
+recovery_uki="/efi/EFI/Linux/arch-recovery.efi"
+recovery_options="--cmdline /etc/kernel/cmdline.recovery"

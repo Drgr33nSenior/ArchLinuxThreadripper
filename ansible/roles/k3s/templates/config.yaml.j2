@@ -1,0 +1,33 @@
+write-kubeconfig-mode: "0600"
+node-name: "{{ k3s_node_name }}"
+node-ip: "{{ k3s_node_ip }}"
+node-external-ip: "{{ k3s_node_external_ip }}"
+bind-address: "{{ k3s_bind_address }}"
+advertise-address: "{{ k3s_advertise_address }}"
+tls-san:
+{% for san in k3s_tls_sans %}
+  - "{{ san }}"
+{% endfor %}
+cluster-cidr: "{{ k3s_cluster_cidr }}"
+service-cidr: "{{ k3s_service_cidr }}"
+cluster-dns: "{{ k3s_cluster_dns }}"
+flannel-backend: vxlan
+flannel-iface: "{{ k3s_management_interface }}"
+disable-network-policy: false
+# The VM uses the separately pinned local-path provisioner on its data disk.
+disable:
+  - local-storage
+secrets-encryption: true
+selinux: true
+# Keep etcd for the VM's existing lifecycle snapshot/restore commands.
+cluster-init: true
+kube-apiserver-arg:
+  - admission-control-config-file=/etc/rancher/k3s/pod-security.yaml
+kubelet-arg:
+  - cgroup-driver=systemd
+  - fail-swap-on=true
+etcd-snapshot-schedule-cron: "{{ k3s_snapshot_schedule }}"
+etcd-snapshot-retention: {{ k3s_snapshot_retention }}
+etcd-snapshot-compress: true
+kube-proxy-arg:
+  - "nodeport-addresses={{ k3s_management_cidr }}"

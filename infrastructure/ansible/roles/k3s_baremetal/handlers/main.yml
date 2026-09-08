@@ -1,0 +1,8 @@
+---
+- name: Restart approved K3s server
+  ansible.builtin.systemd_service:
+    name: k3s
+    state: restarted
+  when:
+    - lab_manage_service | bool
+    - lab_restart_approved | bool

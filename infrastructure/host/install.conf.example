@@ -1,0 +1,30 @@
+# Consumed by the existing bin/bootstrap-arch. Never store credentials here.
+HOSTNAME=ai-home-lab
+HOST_PROFILE=headless
+# Persistent AI policy: performance governor/boost and reduced idle latency.
+# Higher idle power/heat; use balanced for the baseline comparison or rollback.
+TUNED_PROFILE=accelerator-performance
+USERNAME=developer
+LOCALE=en_GB.UTF-8
+KEYMAP=uk
+TIMEZONE=Europe/London
+PRIMARY_DISK=/dev/disk/by-id/nvme-REPLACE_PRIMARY_9100_PRO
+SECONDARY_DISK=/dev/disk/by-id/nvme-REPLACE_SECONDARY_9100_PRO
+PRIMARY_DISK_SERIAL=REPLACE_PRIMARY_SERIAL
+SECONDARY_DISK_SERIAL=REPLACE_SECONDARY_SERIAL
+RAID_NAME=home-lab
+RAID_DEVICE=/dev/md0
+LUKS_NAME=crypt_root
+ESP_SIZE_MIB=2048
+RAID_CHUNK_KIB=512
+# --pbkdf-memory is a maximum, not a guarantee. Inspect actual calibration.
+LUKS_ITER_TIME_MS=5000
+LUKS_MEMORY_KIB=4194304
+LUKS_PARALLEL=4
+BOOT_UNLOCK=tpm2-pin
+ALLOW_DISCARDS=true
+PRIMARY_ESP_MOUNT=/efi
+SECONDARY_ESP_MOUNT=/efi2
+ENABLE_SSH=false
+ENABLE_BLUETOOTH=false
+ENABLE_PRINTING=false

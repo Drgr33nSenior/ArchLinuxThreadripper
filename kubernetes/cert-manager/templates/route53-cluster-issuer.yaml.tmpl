@@ -1,0 +1,24 @@
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-production-route53
+spec:
+  acme:
+    email: "__ACME_EMAIL__"
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-production-route53-account
+    solvers:
+      - selector:
+          dnsZones:
+            - "__DOMAIN__"
+        dns01:
+          route53:
+            region: "__AWS_REGION__"
+            hostedZoneID: "__ROUTE53_ZONE_ID__"
+            accessKeyIDSecretRef:
+              name: route53-dns01-credentials
+              key: access-key-id
+            secretAccessKeySecretRef:
+              name: route53-dns01-credentials
+              key: secret-access-key

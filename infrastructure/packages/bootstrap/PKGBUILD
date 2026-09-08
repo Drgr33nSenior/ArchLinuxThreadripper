@@ -1,0 +1,91 @@
+# Canonical template. prepare-source.sh fills only these three literal pins after
+# hashing the archive containing this template, avoiding a circular source hash.
+# shellcheck shell=bash disable=SC2034,SC2154
+_source_digest='@SOURCE_SHA256@'
+_source_version='@PACKAGE_VERSION@'
+_source_epoch='@SOURCE_DATE_EPOCH@'
+pkgbase='arch-workstation-bootstrap'
+pkgname=(arch-workstation-bootstrap arch-workstation-boot arch-workstation-backup)
+[[ $_source_digest =~ ^[a-f0-9]{64}$ && $_source_version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ \
+  && $_source_epoch =~ ^[0-9]{10}$ ]] || return 1
+export SOURCE_DATE_EPOCH=$_source_epoch
+pkgver=$_source_version.s${_source_digest:0:12}
+pkgrel=1
+arch=('any')
+license=('LicenseRef-Unspecified')
+makedepends=('libarchive')
+options=('!debug' '!strip')
+source=('bootstrap-source.tar.gz')
+sha256sums=("$_source_digest")
+
+_lock_value() {
+  awk -F= -v key="$2" '$1==key {n++; value=$2} END {if(n!=1 || value=="") exit 1; print value}' "$1"
+}
+
+verify() {
+  local canonical rendered
+  # makepkg verifies the pinned archive checksum before this source-authentication
+  # hook. Compare the consumed recipe with the archived template's exact rendering.
+  canonical=$(bsdtar -xOf "$startdir/bootstrap-source.tar.gz" project/infrastructure/packages/bootstrap/PKGBUILD) || return 1
+  rendered=$(printf '%s\n' "$canonical" | sed \
+    -e "s/^_source_digest='@SOURCE_SHA256@'$/_source_digest='$_source_digest'/" \
+    -e "s/^_source_version='@PACKAGE_VERSION@'$/_source_version='$_source_version'/" \
+    -e "s/^_source_epoch='@SOURCE_DATE_EPOCH@'$/_source_epoch='$_source_epoch'/") || return 1
+  cmp -s <(printf '%s\n' "$rendered") "$startdir/PKGBUILD" || return 1
+  # source.lock is an optional human-readable export, not a makepkg prerequisite.
+  # A standard makepkg --source archive therefore remains self-contained.
+  if [[ -e $startdir/source.lock || -L $startdir/source.lock ]]; then
+    [[ -f $startdir/source.lock && ! -L $startdir/source.lock ]] || return 1
+    [[ $(_lock_value "$startdir/source.lock" SOURCE_SHA256) == "$_source_digest" \
+      && $(_lock_value "$startdir/source.lock" PACKAGE_VERSION) == "$_source_version" \
+      && $(_lock_value "$startdir/source.lock" SOURCE_DATE_EPOCH) == "$_source_epoch" ]] || return 1
+  fi
+}
+
+prepare() {
+  [[ $(_lock_value "$srcdir/project/infrastructure/iso/versions.lock" BOOTSTRAP_PACKAGE_VERSION) == "$_source_version" \
+    && $(_lock_value "$srcdir/project/infrastructure/iso/versions.lock" SOURCE_DATE_EPOCH) == "$_source_epoch" ]] || return 1
+  cmp "$srcdir/project/source.files" "$srcdir/project/infrastructure/packages/bootstrap/source.files" || return 1
+  (cd "$srcdir/project" && sha256sum --check --strict SOURCE-MANIFEST.sha256) || return 1
+}
+
+package_arch-workstation-bootstrap() {
+  pkgdesc='Guarded Arch live-media workstation installer and recovery documentation'
+  depends=('bash' 'arch-install-scripts' 'cryptsetup' 'mdadm' 'xfsprogs' 'dosfstools'
+    'gptfdisk' 'pciutils' 'jq' 'sbsigntools' 'efibootmgr' 'gnupg' 'libarchive')
+  local path
+  while IFS= read -r path; do
+    install -Dm644 "$srcdir/project/$path" "$pkgdir/usr/lib/arch-workstation-bootstrap/$path"
+  done < "$srcdir/project/source.files"
+  install -Dm644 "$srcdir/project/SOURCE-MANIFEST.sha256" "$pkgdir/usr/lib/arch-workstation-bootstrap/SOURCE-MANIFEST.sha256"
+  chmod 755 "$pkgdir/usr/lib/arch-workstation-bootstrap/bin/"*
+  install -Dm755 "$srcdir/project/infrastructure/packages/bootstrap/launch-bootstrap" "$pkgdir/usr/bin/bootstrap-arch"
+  install -Dm755 "$srcdir/project/infrastructure/packages/bootstrap/launch-live" "$pkgdir/usr/bin/arch-workstation-live"
+  install -Dm644 "$srcdir/project/infrastructure/packages/bootstrap/LICENSE-NOTICE" "$pkgdir/usr/share/licenses/arch-workstation-bootstrap/LICENSE-NOTICE"
+}
+
+package_arch-workstation-boot() {
+  pkgdesc='Signed UKI backup-ESP synchronization for an installed workstation'
+  depends=('bash' 'coreutils' 'util-linux' 'sbctl' 'sbsigntools')
+  install -Dm644 "$srcdir/project/lib/common.sh" "$pkgdir/usr/lib/arch-workstation-bootstrap/common.sh"
+  install -Dm755 "$srcdir/project/templates/arch/uki-sync" "$pkgdir/usr/lib/arch-workstation-bootstrap/uki-sync"
+  install -Dm644 "$srcdir/project/templates/arch/zzz-bootstrap-uki-sync.hook" "$pkgdir/usr/share/libalpm/hooks/zzz-bootstrap-uki-sync.hook"
+  install -Dm644 "$srcdir/project/infrastructure/packages/bootstrap/LICENSE-NOTICE" "$pkgdir/usr/share/licenses/arch-workstation-boot/LICENSE-NOTICE"
+  # No install scriptlet, key enrollment, service activation or UKI regeneration.
+}
+
+package_arch-workstation-backup() {
+  pkgdesc='Opt-in workstation Restic helper, policy and systemd units'
+  depends=('bash' 'coreutils' 'util-linux' 'restic')
+  backup=('etc/restic/workstation.include' 'etc/restic/workstation.exclude')
+  local file
+  install -Dm755 "$srcdir/project/templates/workstation/restic/workstation-restic" "$pkgdir/usr/lib/arch-workstation-backup/run"
+  for file in workstation-restic@.service workstation-restic-backup.timer workstation-restic-retention.timer; do
+    install -Dm644 "$srcdir/project/templates/workstation/restic/$file" "$pkgdir/usr/lib/systemd/system/$file"
+  done
+  for file in include exclude; do
+    install -Dm644 "$srcdir/project/templates/workstation/restic/$file" "$pkgdir/etc/restic/workstation.$file"
+  done
+  install -Dm644 "$srcdir/project/infrastructure/packages/bootstrap/LICENSE-NOTICE" "$pkgdir/usr/share/licenses/arch-workstation-backup/LICENSE-NOTICE"
+  # No repository credentials, installation scriptlet, timer enablement or backup.
+}

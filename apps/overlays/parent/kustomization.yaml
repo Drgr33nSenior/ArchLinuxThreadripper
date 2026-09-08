@@ -1,0 +1,12 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: ai-home-lab
+namePrefix: parent-
+resources: [../../base/steam-headless]
+patches:
+  - path: profile.yaml
+  - target: {kind: Service, name: steam-headless}
+    patch: |-
+      - op: replace
+        path: /spec/selector/ai-home-lab.local~1profile
+        value: parent

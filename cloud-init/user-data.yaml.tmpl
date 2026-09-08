@@ -1,0 +1,30 @@
+#cloud-config
+hostname: __LAB_NAME__
+manage_etc_hosts: true
+users:
+  - name: __ADMIN_USER__
+    groups: [wheel]
+    shell: /bin/bash
+    ssh_authorized_keys:
+      - >-
+        __SSH_PUBLIC_KEY__
+ssh_pwauth: false
+disable_root: true
+package_update: false
+packages:
+  - qemu-guest-agent
+  - chrony
+write_files:
+  # One known bootstrap grant lets the operator set a local sudo password.
+  # Ansible verifies that password exists, installs a password-required policy,
+  # and removes this exact file before provisioning completes.
+  - path: /etc/sudoers.d/80-k3s-bootstrap
+    owner: root:root
+    permissions: '0440'
+    content: |
+      __ADMIN_USER__ ALL=(ALL) NOPASSWD:ALL
+runcmd:
+  - [ systemctl, enable, --now, qemu-guest-agent.service ]
+  - [ systemctl, enable, --now, chronyd.service ]
+  - [ systemctl, enable, fstrim.timer ]
+final_message: "Cloud-init completed; provision K3s only through the host Ansible playbook."

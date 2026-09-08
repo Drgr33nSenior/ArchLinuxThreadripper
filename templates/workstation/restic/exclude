@@ -1,0 +1,10 @@
+# Credentials and rebuildable caches are intentionally excluded.
+/etc/credstore
+/etc/credstore.encrypted
+/home/*/.aws/sso/cache
+/home/*/.cache
+/home/*/.local/share/containers/storage
+/home/*/.local/share/Steam/steamapps
+/home/*/.steam
+/home/*/.var/app/com.valvesoftware.Steam/data/Steam/steamapps
+/srv/ai/vllm/models

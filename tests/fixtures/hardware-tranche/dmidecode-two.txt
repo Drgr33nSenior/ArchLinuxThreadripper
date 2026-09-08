@@ -1,0 +1,15 @@
+Handle 0x0040, DMI type 17, 92 bytes
+Memory Device
+	Size: 64 GB
+	Locator: DIMM_A1
+	Bank Locator: P0 CHANNEL A
+	Speed: 5600 MT/s
+	Configured Memory Speed: 4800 MT/s
+
+Handle 0x0041, DMI type 17, 92 bytes
+Memory Device
+	Size: 64 GB
+	Locator: DIMM_B1
+	Bank Locator: P0 CHANNEL B
+	Speed: 5600 MT/s
+	Configured Memory Speed: 4800 MT/s

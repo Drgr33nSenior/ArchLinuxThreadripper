@@ -1,0 +1,9 @@
+---
+- name: Reload NetworkManager configuration
+  ansible.builtin.command: nmcli general reload
+  changed_when: false
+
+- name: Restart K3s server
+  ansible.builtin.systemd_service:
+    name: k3s
+    state: restarted

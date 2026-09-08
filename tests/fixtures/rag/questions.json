@@ -1,0 +1,10 @@
+[
+  {"id":"recovery-kernel","question":"Does the installer ISO use a kernel compiled for my Threadripper?","sources":["docs/AI-PERFORMANCE.md"],"expected":"No. The ISO remains generic; native builds run after installation."},
+  {"id":"memory-pools","question":"Do the two 32 GiB R9700 cards provide a single 64 GiB VRAM pool?","sources":["docs/AI-PERFORMANCE.md"],"expected":"No. Separate pools; placement and capacity need measurement."},
+  {"id":"literal-sdk","question":"What does ROCM_SDK_PROVIDER=arch select?","sources":["docs/ROCM.md","docs/AI-PERFORMANCE.md"],"expected":"The official Arch ROCm package path, not the experimental AUR provider."},
+  {"id":"rocm-version","question":"Which ROCm version is in this project's SGLang candidate?","sources":["docs/HOME-LAB.md"],"expected":"ROCm 10.0.0; a pinned candidate, not proof of target qualification."},
+  {"id":"measured-speed","question":"What trained memory speed did the physical workstation report?","sources":["docs/AI-PERFORMANCE.md"],"expected":"Unknown. Expected DIMM specifications are not a measured trained speed.","must_abstain":true},
+  {"id":"invented-gain","question":"By what measured percentage did these native builds improve my R9700 decoding?","sources":["docs/AI-PERFORMANCE.md"],"expected":"No local performance improvement has been established.","must_abstain":true},
+  {"id":"storage-quota","question":"Will a local-path PVC request stop cache writes exactly at its requested size?","sources":["docs/HOME-LAB.md"],"expected":"No. Requested capacity is not a filesystem quota."},
+  {"id":"handover","question":"Can I reserve the second physical GPU merely with HIP_VISIBLE_DEVICES=1?","sources":["docs/HOME-LAB.md"],"expected":"No. Use actual exclusive allocation and verify the assigned device."}
+]

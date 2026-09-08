@@ -1,0 +1,20 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: steam-headless}
+spec:
+  selector:
+    matchLabels: {ai-home-lab.local/profile: kids}
+  template:
+    metadata:
+      labels: {ai-home-lab.local/profile: kids}
+    spec:
+      containers:
+        - name: steam-headless
+          env:
+            - {name: STEAM_ARGS, value: '-tenfoot'}
+            - name: SUNSHINE_USER
+              valueFrom:
+                secretKeyRef: {name: kids-gaming-credentials, key: username}
+            - name: SUNSHINE_PASS
+              valueFrom:
+                secretKeyRef: {name: kids-gaming-credentials, key: sunshine-password}

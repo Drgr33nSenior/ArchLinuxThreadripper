@@ -1,0 +1,53 @@
+---
+# This task file is only imported by k3s-restore-test.yml. It intentionally
+# refuses a node unless the caller names that clone and confirms it explicitly.
+- name: Assert restore target is a named detached clone
+  ansible.builtin.assert:
+    that:
+      - k3s_restore_clone_confirm | default(false) | bool
+      - k3s_restore_clone_name is defined
+      - k3s_restore_clone_name | length > 0
+      - k3s_restore_clone_name != k3s_primary_node_name
+      - ansible_facts.hostname == k3s_restore_clone_name
+      - k3s_restore_snapshot is match('^/\\S+\\Z')
+    fail_msg: >-
+      Restore requires an explicit detached clone name, a matching clone
+      hostname, and an absolute snapshot path; the primary node is forbidden.
+
+- name: Check requested etcd snapshot exists on detached clone
+  ansible.builtin.stat:
+    path: "{{ k3s_restore_snapshot }}"
+  register: k3s_restore_snapshot_stat
+
+- name: Assert requested etcd snapshot is a regular file
+  ansible.builtin.assert:
+    that: [k3s_restore_snapshot_stat.stat.isreg | default(false)]
+    fail_msg: The requested restore snapshot is not a regular file on the clone.
+
+- name: Stop K3s before clone restore
+  ansible.builtin.systemd_service:
+    name: k3s
+    state: stopped
+
+- name: Run bounded K3s cluster reset restore on detached clone
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/k3s
+      - server
+      - --cluster-reset
+      - "--cluster-reset-restore-path={{ k3s_restore_snapshot }}"
+  changed_when: true
+  async: 600
+  poll: 5
+
+- name: Start detached clone with ordinary K3s configuration
+  ansible.builtin.systemd_service:
+    name: k3s
+    state: started
+
+- name: Wait for detached clone API after ordinary start
+  ansible.builtin.wait_for:
+    host: "{{ k3s_bind_address }}"
+    port: 6443
+    delay: 3
+    timeout: 300

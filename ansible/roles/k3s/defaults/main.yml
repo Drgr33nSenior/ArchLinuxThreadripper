@@ -1,0 +1,33 @@
+---
+# All release identities come from the same root lock as the Arch package.
+k3s_version: "{{ lookup('ansible.builtin.ini', 'K3S_VERSION', type='properties', file=playbook_dir ~ '/../versions.lock') }}"
+k3s_binary_sha256: "{{ lookup('ansible.builtin.ini', 'K3S_BINARY_SHA256', type='properties', file=playbook_dir ~ '/../versions.lock') }}"
+k3s_selinux_rpm_version: "{{ lookup('ansible.builtin.ini', 'K3S_SELINUX_RPM_VERSION', type='properties', file=playbook_dir ~ '/../versions.lock') }}"
+k3s_selinux_rpm_sha256: "{{ lookup('ansible.builtin.ini', 'K3S_SELINUX_RPM_SHA256', type='properties', file=playbook_dir ~ '/../versions.lock') }}"
+k3s_minor: '1.35'
+k3s_rpm_gpg_key_url: https://rpm.rancher.io/public.key
+k3s_rpm_gpg_key_sha256: 7d2415f7fc532c365c8874bfad966566daaa0d04a9a5ba14d1db6080a9c12629
+k3s_rpm_gpg_fingerprint: C8CFF216455126E9B9C918BE925EA29AE257814A
+k3s_rpm_gpg_key_path: /etc/pki/rpm-gpg/RPM-GPG-KEY-k3s
+k3s_management_interface: mgmt0
+k3s_dmz_interface: dmz0
+k3s_node_ip: 192.168.124.10
+k3s_node_name: k3s-dev-01
+k3s_admin_user: developer
+k3s_primary_node_name: k3s-dev-01
+k3s_node_external_ip: 198.51.100.10
+k3s_bind_address: "{{ k3s_node_ip }}"
+k3s_advertise_address: "{{ k3s_node_ip }}"
+k3s_tls_sans:
+  - "{{ k3s_node_ip }}"
+k3s_cluster_cidr: 10.42.0.0/16
+k3s_service_cidr: 10.43.0.0/16
+# Empty derives network + 10; explicit values are validated inside the Service CIDR.
+k3s_cluster_dns: ''
+k3s_management_cidr: 192.168.124.0/24
+k3s_snapshot_schedule: "0 */6 * * *"
+k3s_snapshot_retention: 14
+k3s_storage_path: /var/lib/rancher/k3s/storage
+k3s_data_device: /dev/disk/by-id/virtio-k3s-data
+k3s_restore_test: false
+k3s_take_lifecycle_snapshot: false

@@ -1,0 +1,27 @@
+# Adapted from k3s-io/k3s v1.35.7+k3s1 install.sh; managed by pacman.
+[Unit]
+Description=Lightweight Kubernetes
+Documentation=https://docs.k3s.io
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/etc/rancher/k3s/config.yaml
+
+[Service]
+Type=notify
+EnvironmentFile=-/etc/default/k3s
+KillMode=process
+Delegate=yes
+User=root
+LimitNOFILE=1048576
+LimitNPROC=infinity
+LimitCORE=infinity
+TasksMax=infinity
+TimeoutStartSec=0
+Restart=always
+RestartSec=5s
+ExecStartPre=-/usr/bin/modprobe br_netfilter
+ExecStartPre=-/usr/bin/modprobe overlay
+ExecStart=/usr/bin/k3s server
+
+[Install]
+WantedBy=multi-user.target

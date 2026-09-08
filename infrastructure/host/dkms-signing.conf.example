@@ -1,0 +1,5 @@
+# Optional /etc/dkms/framework.conf.d/ai-home-lab.conf, only after proving that
+# the selected kernel trusts this certificate for module verification.
+# These are protected local files, not values to put in Ansible or Kubernetes.
+mok_signing_key="/etc/kernel/keys/module-signing.key"
+mok_certificate="/etc/kernel/keys/module-signing.der"

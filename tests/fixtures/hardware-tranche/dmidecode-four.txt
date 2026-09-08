@@ -1,0 +1,31 @@
+Handle 0x0040, DMI type 17, 92 bytes
+Memory Device
+	Size: 32 GB
+	Locator: DIMM_A1
+	Bank Locator: P0 CHANNEL A
+	Speed: 5600 MT/s
+	Configured Memory Speed: 5200 MT/s
+
+Handle 0x0041, DMI type 17, 92 bytes
+Memory Device
+	Size: 32 GB
+	Locator: DIMM_B1
+	Bank Locator: P0 CHANNEL B
+	Speed: 5600 MT/s
+	Configured Memory Speed: 5200 MT/s
+
+Handle 0x0042, DMI type 17, 92 bytes
+Memory Device
+	Size: 32 GB
+	Locator: DIMM_C1
+	Bank Locator: P0 CHANNEL C
+	Speed: 5600 MT/s
+	Configured Memory Speed: 5200 MT/s
+
+Handle 0x0043, DMI type 17, 92 bytes
+Memory Device
+	Size: No Module Installed
+	Locator: DIMM_D1
+	Bank Locator: P0 CHANNEL D
+	Speed: Unknown
+	Configured Memory Speed: Unknown

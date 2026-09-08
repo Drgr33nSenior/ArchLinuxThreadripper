@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+set -euo pipefail
+export LC_ALL=C
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+# shellcheck disable=SC1091
+source "$script_dir/../lib/k3s/common.sh"
+# shellcheck disable=SC1091
+source "$script_dir/../lib/k3s/lifecycle.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: k3s-lab --config CONFIG [--dry-run] <network-create|create|provision|up|down|status|backup-init|backup|upgrade|restore-test> [ARGUMENT]
+
+CONFIG is a non-secret, allowlisted KEY=VALUE file.  The lifecycle command
+uses qemu:///system and never configures VM autostart.
+
+  network-create               create the non-autostart tagged DMZ bridge
+  create                      verify image, create/define the powered-off VM
+  provision                   apply the bounded Ansible play and remove seed ISO
+  up                           start the VM
+  down [--skip-etcd-snapshot]
+                                snapshot etcd then request clean shutdown
+  status                       display libvirt state and guest-agent addresses
+  backup-init                  initialize the exact encrypted Restic S3 prefix
+  backup                       Restic backup of powered-off overlays
+  upgrade K3S_VERSION          snapshot etcd then apply the lock-pinned upgrade
+  restore-test SNAPSHOT         restore only into a separately configured clone
+EOF
+}
+
+config=''; operation=''; operation_argument=''; operation_argument_count=0; K3S_DRY_RUN=false
+while (($#)); do
+  case "$1" in
+    --config) (($# >= 2)) || { usage >&2; exit 2; }; config=$2; shift 2 ;;
+    --dry-run) K3S_DRY_RUN=true; shift ;;
+    -h|--help) usage; exit 0 ;;
+    --skip-etcd-snapshot)
+      [[ $operation == down && $operation_argument_count -eq 0 ]] \
+        || k3s_die '--skip-etcd-snapshot is accepted only once after down'
+      operation_argument_count=1
+      operation_argument=$1
+      shift
+      ;;
+    -*) k3s_die "unknown option: $1" ;;
+    *)
+      if [[ -z $operation ]]; then
+        operation=$1
+      else
+        operation_argument_count=$((operation_argument_count + 1))
+        ((operation_argument_count <= 1)) || k3s_die 'operations accept at most one argument'
+        operation_argument=$1
+      fi
+      shift
+      ;;
+  esac
+done
+[[ -n $config && -n $operation ]] || { usage >&2; exit 2; }
+if ((operation_argument_count == 0)); then set --; else set -- "$operation_argument"; fi
+k3s_load_config "$config" "$script_dir/../versions.lock"
+
+if [[ $K3S_DRY_RUN == true ]]; then
+  k3s_dry_run_plan "$operation" "$@"
+  exit 0
+fi
+
+case "$operation" in
+  network-create) [ "$#" -eq 0 ] || k3s_die 'network-create accepts no additional arguments'; k3s_network_create ;;
+  create) [ "$#" -eq 0 ] || k3s_die 'create accepts no additional arguments'; k3s_create ;;
+  provision) [ "$#" -eq 0 ] || k3s_die 'provision accepts no additional arguments'; k3s_provision ;;
+  up) [ "$#" -eq 0 ] || k3s_die 'up accepts no additional arguments'; k3s_up ;;
+  down) [ "$#" -le 1 ] || k3s_die 'down accepts at most one option'; k3s_down "${1:-}" ;;
+  status) [ "$#" -eq 0 ] || k3s_die 'status accepts no additional arguments'; k3s_status ;;
+  backup-init) [ "$#" -eq 0 ] || k3s_die 'backup-init accepts no additional arguments'; k3s_backup_init ;;
+  backup) [ "$#" -eq 0 ] || k3s_die 'backup accepts no additional arguments'; k3s_backup ;;
+  upgrade) [ "$#" -eq 1 ] || k3s_die 'upgrade requires one version'; k3s_upgrade "$1" ;;
+  restore-test) [ "$#" -eq 1 ] || k3s_die 'restore-test requires a snapshot path'; k3s_restore_test "$1" ;;
+  *) usage >&2; exit 2 ;;
+esac

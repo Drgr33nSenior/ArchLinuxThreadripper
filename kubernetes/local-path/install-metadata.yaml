@@ -1,0 +1,12 @@
+# This records the exact local-path-provisioner input. The upstream manifest is
+# fetched and hash-verified by install-pinned-addons.sh, not vendored here.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: local-path-provisioner-install-lock-v0-0-37-9781b39c24f3
+  namespace: kube-system
+immutable: true
+data:
+  version: v0.0.37
+  manifest-url: https://raw.githubusercontent.com/rancher/local-path-provisioner/v0.0.37/deploy/local-path-storage.yaml
+  manifest-sha256: 9781b39c24f3f651bd6d6e41b561e04e4904bbdb6d4f8c7a6009df3a702dcd65

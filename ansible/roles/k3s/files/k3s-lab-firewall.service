@@ -1,0 +1,21 @@
+[Unit]
+Description=K3s lab owned nftables boundary
+DefaultDependencies=no
+After=local-fs.target
+Before=network-pre.target k3s.service
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/nftables/k3s-lab.nft
+ExecReload=/usr/sbin/nft -f /etc/nftables/k3s-lab.nft
+# No ExecStop: stopping this unit must not remove the firewall boundary.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+CapabilityBoundingSet=CAP_NET_ADMIN
+
+[Install]
+WantedBy=multi-user.target

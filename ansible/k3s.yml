@@ -1,0 +1,15 @@
+---
+- name: Configure the isolated AlmaLinux K3s lab node
+  hosts: k3s_servers
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Wait for the explicitly selected lab guest
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+      tags: [always]
+    - name: Gather facts after the guest is reachable
+      ansible.builtin.setup:
+      tags: [always]
+  roles:
+    - role: k3s

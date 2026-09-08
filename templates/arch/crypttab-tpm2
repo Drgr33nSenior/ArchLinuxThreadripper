@@ -1,0 +1,2 @@
+# The PIN policy is in the TPM2 LUKS token, not in this file. Enrollment is manual.
+@CRYPT_NAME@ UUID=@LUKS_UUID@ none tpm2-device=auto,fido2-device=auto,discard,x-initrd.attach

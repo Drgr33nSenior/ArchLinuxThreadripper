@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily encrypted workstation backup
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+RandomizedDelaySec=30m
+Persistent=true
+Unit=workstation-restic@backup.service
+
+[Install]
+WantedBy=timers.target

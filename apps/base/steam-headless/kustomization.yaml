@@ -1,0 +1,13 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: [deployment.yaml, service.yaml, pvc.yaml]
+configMapGenerator:
+  - name: sunshine-profile
+    literals:
+      - SUNSHINE_ENCODER=vaapi
+      - SUNSHINE_CAPTURE=x11
+      - SUNSHINE_OUTPUT_NAME=
+      - SUNSHINE_HEVC_MODE=0
+      - SUNSHINE_AV1_MODE=0
+      - SUNSHINE_VK_TUNE=2
+      - SUNSHINE_VAAPI_STRICT_RC_BUFFER=disabled

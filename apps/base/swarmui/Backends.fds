@@ -1,0 +1,11 @@
+0:
+    type: comfyui_selfstart
+    enabled: true
+    title: Packaged ROCm ComfyUI
+    settings:
+        StartScript: /SwarmUI/dlbackend/ComfyUI/main.py
+        GPU_ID: 0
+        AutoUpdate: false
+        UpdateManagedNodes: false
+        FrontendVersion: None
+        OverQueue: 0

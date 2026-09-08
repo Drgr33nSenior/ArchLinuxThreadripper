@@ -1,0 +1,1 @@
+rd.luks.name=@LUKS_UUID@=@CRYPT_NAME@ root=/dev/mapper/@CRYPT_NAME@ rootfstype=xfs rw iommu=pt

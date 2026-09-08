@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+set -o errexit -o nounset -o pipefail
+
+action="${1:-}"
+credentials="${CREDENTIALS_DIRECTORY:-}"
+repository="$credentials/restic_repository"
+password="$credentials/restic_password"
+aws_credentials="$credentials/aws_credentials"
+
+[[ -r "$repository" && -r "$password" && -r "$aws_credentials" ]] || {
+  printf 'workstation-restic: required systemd credentials are unavailable\n' >&2
+  exit 1
+}
+[[ -r /etc/restic/workstation.include && -r /etc/restic/workstation.exclude ]] || {
+  printf 'workstation-restic: include or exclude policy is unavailable\n' >&2
+  exit 1
+}
+
+export AWS_SHARED_CREDENTIALS_FILE="$aws_credentials"
+export AWS_EC2_METADATA_DISABLED=true
+export RESTIC_CACHE_DIR=/var/cache/workstation-restic
+
+restic_command=(/usr/bin/restic --repository-file "$repository" --password-file "$password" --cache-dir "$RESTIC_CACHE_DIR")
+
+case "$action" in
+  init)
+    exec "${restic_command[@]}" init
+    ;;
+  backup)
+    exec "${restic_command[@]}" backup \
+      --files-from /etc/restic/workstation.include \
+      --exclude-file /etc/restic/workstation.exclude \
+      --one-file-system --tag workstation
+    ;;
+  check)
+    exec "${restic_command[@]}" check
+    ;;
+  retention)
+    exec "${restic_command[@]}" forget --tag workstation --group-by host,paths,tags \
+      --keep-daily 7 --keep-weekly 5 --keep-monthly 12 --prune
+    ;;
+  snapshots)
+    exec "${restic_command[@]}" snapshots --compact
+    ;;
+  *)
+    printf 'workstation-restic: action must be init, backup, check, retention, or snapshots\n' >&2
+    exit 2
+    ;;
+esac

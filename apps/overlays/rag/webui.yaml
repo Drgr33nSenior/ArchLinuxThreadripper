@@ -1,0 +1,75 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: open-webui
+  annotations:
+    ai-home-lab.local/qualification: pending-rag-offline-runtime-and-admin-bootstrap
+spec:
+  replicas: 0
+  template:
+    spec:
+      nodeSelector:
+        kubernetes.io/arch: amd64
+        kubernetes.io/os: linux
+      initContainers:
+        - name: rag-inputs
+          image: registry.invalid/ai-home-lab/open-webui:UNQUALIFIED
+          envFrom:
+            - configMapRef: {name: webui-rag-profile}
+          env:
+            # A YAML block preserves Qwen's native newline; dotenv-based
+            # configMapGenerator input would retain a literal backslash-n.
+            - name: RAG_EMBEDDING_QUERY_PREFIX
+              value: |-
+                Instruct: Given a web search query, retrieve relevant passages that answer the query
+                Query:
+          command: [bash, -euc]
+          args:
+            - |
+              bash /rag-config/validate-profile.sh
+              bash /rag-config/verify-models.sh /rag-models /rag-config/SHA256SUMS
+              cp -R /app/backend/open_webui/static/. /runtime-static/
+              cp -R /app/backend/data/cache/tiktoken/. /runtime-tiktoken/
+          resources:
+            requests: {cpu: 100m, memory: 64Mi}
+            limits: {cpu: '1', memory: 128Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: rag-models, mountPath: /rag-models, readOnly: true}
+            - {name: rag-inputs, mountPath: /rag-config, readOnly: true}
+            - {name: webui-static, mountPath: /runtime-static}
+            - {name: webui-tiktoken, mountPath: /runtime-tiktoken}
+      containers:
+        - name: open-webui
+          envFrom:
+            - configMapRef: {name: webui-rag-profile}
+          env:
+            - {name: XDG_CACHE_HOME, value: /app/backend/data/cache}
+            - {name: HF_HOME, value: /app/backend/data/cache/huggingface}
+            # Must match the init container so its profile validation exercises
+            # the exact native Qwen query prefix used by the runtime.
+            - name: RAG_EMBEDDING_QUERY_PREFIX
+              value: |-
+                Instruct: Given a web search query, retrieve relevant passages that answer the query
+                Query:
+          resources:
+            requests: {cpu: '2', memory: 4Gi}
+            limits: {cpu: '2', memory: 6Gi}
+          volumeMounts:
+            - {name: rag-models, mountPath: /rag-models, readOnly: true}
+            # Upstream writes these assets on startup; do not grant root/group 0.
+            - {name: webui-static, mountPath: /app/backend/open_webui/static}
+            - {name: webui-tiktoken, mountPath: /app/backend/data/cache/tiktoken}
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: webui-rag-qwen3-data}
+        - name: rag-models
+          persistentVolumeClaim: {claimName: webui-rag-qwen3-models}
+        - name: rag-inputs
+          configMap: {name: webui-rag-inputs}
+        - name: webui-static
+          emptyDir: {sizeLimit: 64Mi}
+        - name: webui-tiktoken
+          emptyDir: {sizeLimit: 4Mi}

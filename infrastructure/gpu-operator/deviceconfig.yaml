@@ -1,0 +1,35 @@
+apiVersion: amd.com/v1alpha1
+kind: DeviceConfig
+metadata:
+  name: ai-home-lab
+  namespace: kube-amd-gpu
+spec:
+  selector:
+    feature.node.kubernetes.io/amd-gpu: 'true'
+  driver:
+    enable: false
+    blacklist: false
+    upgradePolicy:
+      enable: false
+  devicePlugin:
+    enableDevicePlugin: true
+    enableNodeLabeller: true
+    devicePluginImage: docker.io/rocm/k8s-device-plugin:1.31.0.10@sha256:0555caf9ccc1cf407b353d1aade87d4598059f87a784085aafe3ece19405b612
+    nodeLabellerImage: docker.io/rocm/k8s-device-plugin:labeller-1.31.0.10@sha256:60deb236b5fc00cdca36a911d436eb397502cfd78fa45256491fc095cc8e773d
+    devicePluginArguments:
+      resource_naming_strategy: single
+    kubeletSocketPath: /var/lib/kubelet/device-plugins
+  draDriver:
+    enable: false
+  metricsExporter:
+    enable: false
+  testRunner:
+    enable: false
+  configManager:
+    enable: false
+  remediationWorkflow:
+    enable: false
+  commonConfig:
+    initContainerImage: docker.io/library/busybox:1.37.0@sha256:9db7b59979c38555a39def84a31fb98b5296952f9e3afd4f6f11f05b07adfab0
+    utilsContainer:
+      image: docker.io/rocm/gpu-operator-utils@sha256:55e5340839f16661cb818fd67e26bdfa581718ac29929368d50920a7ad3a1e68

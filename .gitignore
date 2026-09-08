@@ -1,0 +1,30 @@
+# Generated installation and build state
+.state/
+artifacts/
+build/
+cache/
+downloads/
+local-repo/
+
+# Runtime configuration and secret-bearing local overrides
+config/*.conf
+!config/*.conf.example
+*.credential
+*.cred
+*.key
+*.pem
+*.p12
+*.pfx
+*.kubeconfig
+cloud-init/seed/
+
+# Test output
+coverage/
+test-results/
+infrastructure/ansible/inventory.local.ini
+infrastructure/ansible/group_vars/*.local.yml
+infrastructure/host/*.conf
+infrastructure/packages/**/src/
+infrastructure/packages/**/pkg/
+infrastructure/packages/**/*.pkg.tar.*
+infrastructure/packages/**/*.tar.gz

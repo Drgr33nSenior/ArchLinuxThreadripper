@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# Synchronise verified primary UKIs. --sign is the explicit package-transaction
+# rebuild path; an ordinary invocation never blesses an unsigned primary.
+set -Eeuo pipefail
+IFS=$'\n\t'
+
+helper_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+if [[ -r $helper_directory/common.sh ]]; then
+  # shellcheck source=lib/common.sh
+  source "$helper_directory/common.sh"
+else
+  # Source-tree execution for offline tests; installed packages use the sibling.
+  # shellcheck source=lib/common.sh
+  source "$helper_directory/../../lib/common.sh"
+fi
+
+uki_sync_die() { printf 'bootstrap-uki-sync: ERROR: %s\n' "$*" >&2; return 1; }
+
+uki_sync_verify() {
+  local file=$1 cert=$2
+  [[ -s $file ]] || { uki_sync_die "missing primary UKI: $file"; return 1; }
+  sbverify --cert "$cert" "$file" >/dev/null \
+    || { uki_sync_die "refusing unsigned or wrongly signed primary UKI: $file"; return 1; }
+}
+
+uki_sync_stage_copy() {
+  local source=$1 destination=$2 cert=$3 staged
+  staged="${destination}.new.$$"
+  rm -f -- "$staged" || return 1
+  install -m 0644 -- "$source" "$staged" || return 1
+  uki_sync_verify "$staged" "$cert" || { rm -f -- "$staged"; return 1; }
+  printf '%s\n' "$staged"
+}
+
+uki_sync_main() {
+  local root=${BOOTSTRAP_UKI_SYNC_ROOT:-/} cert esp_a esp_b source staged_b
+  local uki source_recovery staged_fallback_a staged_fallback_b staged_name sign=false
+  case $#:$* in
+    0:) ;;
+    1:--sign) sign=true ;;
+    *) uki_sync_die 'usage: uki-sync [--sign]'; return 1 ;;
+  esac
+  [[ $root == / ]] && root='' || root=${root%/}
+  if [[ $sign == true && ! -e $root/etc/kernel/cmdline.recovery \
+    && ! -e $root/etc/arch-workstation/host-profile.conf ]] \
+    && ! grep -Fq '/efi/EFI/Linux/arch-linux.efi' "$root/etc/mkinitcpio.d/linux.preset" 2>/dev/null; then
+    printf 'bootstrap-uki-sync: no workstation UKI configuration yet; initial package transaction skipped\n' >&2
+    return 0
+  fi
+  cert="$root/var/lib/sbctl/keys/db/db.pem"
+  esp_a="$root/efi"
+  esp_b="$root/efi2"
+  [[ -r $cert ]] || { uki_sync_die "Secure Boot db certificate is not readable: $cert"; return 1; }
+  command -v sbverify >/dev/null 2>&1 || { uki_sync_die 'sbverify is required'; return 1; }
+  common::validate_esp_pair "${root:-/}" || return 1
+
+  if [[ $sign == true ]]; then
+    command -v sbctl >/dev/null 2>&1 || { uki_sync_die 'sbctl is required to sign regenerated UKIs'; return 1; }
+    # A firmware/initramfs/library update can regenerate UKIs without activating
+    # sbctl's package hook. Sign these exact configured outputs ourselves before
+    # the same certificate verification used by the verification-only path.
+    for uki in arch-linux.efi arch-linux-lts.efi arch-recovery.efi; do
+      [[ -s $esp_a/EFI/Linux/$uki ]] || { uki_sync_die "missing regenerated UKI: $uki"; return 1; }
+    done
+    for uki in arch-linux.efi arch-linux-lts.efi arch-recovery.efi; do
+      sbctl sign -s "$esp_a/EFI/Linux/$uki" || return 1
+    done
+  fi
+
+  # The 3 x 2 normal UKI copies are staged and validated before any existing
+  # secondary image is replaced. A mid-commit failure therefore leaves only
+  # signed old/new images, never a partially written one.
+  for uki in arch-linux.efi arch-linux-lts.efi arch-recovery.efi; do
+    source="$esp_a/EFI/Linux/$uki"
+    uki_sync_verify "$source" "$cert" || return 1
+    staged_b=$(uki_sync_stage_copy "$source" "$esp_b/EFI/Linux/$uki" "$cert") || return 1
+    staged_name="STAGED_${uki//[-.]/_}"
+    printf -v "$staged_name" '%s' "$staged_b"
+  done
+  source_recovery="$esp_a/EFI/Linux/arch-recovery.efi"
+  staged_fallback_a=$(uki_sync_stage_copy "$source_recovery" "$esp_a/EFI/BOOT/BOOTX64.EFI" "$cert") || return 1
+  staged_fallback_b=$(uki_sync_stage_copy "$source_recovery" "$esp_b/EFI/BOOT/BOOTX64.EFI" "$cert") || return 1
+
+  for uki in arch-linux.efi arch-linux-lts.efi arch-recovery.efi; do
+    staged_name="STAGED_${uki//[-.]/_}"
+    staged_b=${!staged_name}
+    mv -f -- "$staged_b" "$esp_b/EFI/Linux/$uki" || return 1
+  done
+  mv -f -- "$staged_fallback_a" "$esp_a/EFI/BOOT/BOOTX64.EFI" || return 1
+  mv -f -- "$staged_fallback_b" "$esp_b/EFI/BOOT/BOOTX64.EFI" || return 1
+  sync
+}
+
+uki_sync_main "$@"

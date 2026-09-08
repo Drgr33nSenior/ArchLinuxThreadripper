@@ -1,0 +1,153 @@
+---
+- name: Require host-managed boot and cryptographic prerequisites
+  ansible.builtin.command:
+    argv: [pacman, -Q, mdadm, cryptsetup, xfsprogs, mkinitcpio, systemd-ukify, sbctl, tpm2-tss, tpm2-tools, libfido2]
+  changed_when: false
+
+- name: Read active swap metadata
+  ansible.builtin.command: cat /proc/swaps
+  register: lab_swaps
+  changed_when: false
+
+- name: Verify no active swap and a supplied hardware report
+  ansible.builtin.assert:
+    that:
+      - lab_swaps.stdout_lines | length == 1
+      - lab_hardware_report is match('^/')
+    fail_msg: Run workstationctl swap validate and hardware collect on this host before provisioning.
+
+- name: Read non-secret hardware evidence from the selected host
+  ansible.builtin.slurp:
+    src: '{{ lab_hardware_report }}'
+  register: lab_hardware_raw
+
+- name: Read the observation boot identifier
+  ansible.builtin.slurp:
+    src: '{{ lab_hardware_report | dirname }}/boot-id.txt'
+  register: lab_observation_boot
+
+- name: Read the current host boot identifier
+  ansible.builtin.command: cat /proc/sys/kernel/random/boot_id
+  register: lab_current_boot
+  changed_when: false
+
+- name: Require both detected amdgpu devices and the expected ROCm target
+  ansible.builtin.assert:
+    that:
+      - lab_observation_boot.content | b64decode | trim == lab_current_boot.stdout | trim
+      - report.schema == 1
+      - report.status == 'observed'
+      - report.os == 'Linux'
+      - report.architecture == 'x86_64'
+      - report.gpu_target == lab_expected_gfx
+      - report.pci_gpus | length == lab_expected_gpu_count
+      - report.pci_gpus | map(attribute='bdf') | unique | list | length == lab_expected_gpu_count
+      - report.pci_gpus | map(attribute='device_id') | unique | list | length == 1
+      - report.rocm_agents | length == lab_expected_gpu_count
+      - report.rocm_agents | map(attribute='agent') | unique | list | length == lab_expected_gpu_count
+      - report.rocm_agents | map(attribute='gfx') | unique | list == [lab_expected_gfx]
+      - report.pci_gpus | map(attribute='driver') | unique | list == ['amdgpu']
+    fail_msg: The current-boot hardware report must prove both GPUs; no architecture override can satisfy this gate.
+  vars:
+    report: '{{ lab_hardware_raw.content | b64decode | from_json }}'
+
+- name: Create the sleep policy directory
+  ansible.builtin.file:
+    path: /etc/systemd/sleep.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Persist the no-hibernation policy
+  ansible.builtin.copy:
+    src: '{{ playbook_dir }}/../../templates/arch/no-hibernation.conf'
+    dest: /etc/systemd/sleep.conf.d/10-no-hibernation.conf
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Persist Kubernetes prerequisite modules
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/ai-home-lab.conf
+    content: |
+      overlay
+      br_netfilter
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Persist Kubernetes networking prerequisites without flushing firewall rules
+  ansible.builtin.copy:
+    dest: /etc/sysctl.d/70-ai-home-lab.conf
+    content: |
+      net.ipv4.ip_forward = 1
+      net.bridge.bridge-nf-call-iptables = 1
+      net.bridge.bridge-nf-call-ip6tables = 1
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Leave storage, firmware, key enrollment and running sysctls unchanged
+  ansible.builtin.debug:
+    msg: Review and load prerequisites before starting K3s. This play never formats, enrolls keys, regenerates UKIs or reboots.
+
+- name: Configure optional host DKMS signing only after kernel trust qualification
+  when: lab_enable_dkms_signing | bool
+  block:
+    - name: Require explicit kernel-trust evidence and protected local paths
+      ansible.builtin.assert:
+        that:
+          - lab_module_trust_verified | bool
+          - lab_module_key_path is match('^/etc/kernel/keys/[A-Za-z0-9._-]+$')
+          - lab_module_certificate_path is match('^/etc/kernel/keys/[A-Za-z0-9._-]+$')
+        fail_msg: UEFI db enrollment alone does not prove this kernel trusts an out-of-tree module signer.
+
+    - name: Inspect signing-key permissions without reading key contents
+      ansible.builtin.stat:
+        path: '{{ lab_module_key_path }}'
+        get_checksum: false
+        get_mime: false
+      register: lab_module_key
+
+    - name: Require a root-owned private signing key
+      ansible.builtin.assert:
+        that:
+          - lab_module_key.stat.isreg | default(false)
+          - not lab_module_key.stat.islnk | default(true)
+          - lab_module_key.stat.uid == 0
+          - lab_module_key.stat.mode in ['0400', '0600']
+
+    - name: Require installed DKMS and the public signing certificate
+      ansible.builtin.command:
+        argv: [pacman, -Q, dkms]
+      changed_when: false
+
+    - name: Check public certificate presence
+      ansible.builtin.stat:
+        path: '{{ lab_module_certificate_path }}'
+      register: lab_module_certificate
+
+    - name: Refuse incomplete signing configuration
+      ansible.builtin.assert:
+        that:
+          - lab_module_certificate.stat.isreg | default(false)
+          - lab_module_certificate.stat.uid == 0
+
+    - name: Create DKMS configuration directory
+      ansible.builtin.file:
+        path: /etc/dkms/framework.conf.d
+        state: directory
+        mode: '0755'
+        owner: root
+        group: root
+
+    - name: Use DKMS native pre-compression module signing on future builds
+      ansible.builtin.copy:
+        dest: /etc/dkms/framework.conf.d/ai-home-lab.conf
+        content: |
+          mok_signing_key={{ lab_module_key_path | to_json }}
+          mok_certificate={{ lab_module_certificate_path | to_json }}
+        owner: root
+        group: root
+        mode: '0600'

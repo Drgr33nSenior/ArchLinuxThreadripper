@@ -1,0 +1,8 @@
+# Additional live packages; releng's dependencies remain upstream-owned inputs.
+arch-workstation-bootstrap
+jq
+sbctl
+sbsigntools
+systemd-ukify
+tpm2-tools
+tpm2-tss

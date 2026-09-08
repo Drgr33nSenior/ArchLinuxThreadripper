@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: webui-rag-qwen3-data
+  annotations:
+    ai-home-lab.local/capacity-note: advisory-request-not-local-path-filesystem-quota
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests: {storage: 20Gi}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: webui-rag-qwen3-models
+  annotations:
+    ai-home-lab.local/capacity-note: advisory-request-not-local-path-filesystem-quota
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests: {storage: 3Gi}

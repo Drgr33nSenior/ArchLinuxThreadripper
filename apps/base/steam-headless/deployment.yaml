@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: steam-headless
+  annotations:
+    ai-home-lab.local/qualification: pending-built-image-display-input-and-security
+spec:
+  replicas: 0
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app.kubernetes.io/name: steam-headless, ai-home-lab.local/profile: unset}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: steam-headless, ai-home-lab.local/profile: unset}
+    spec:
+      automountServiceAccountToken: false
+      priorityClassName: family-gaming-priority
+      terminationGracePeriodSeconds: 120
+      nodeSelector: {ai-home-lab.local/gfx: gfx1201, kubernetes.io/arch: amd64, kubernetes.io/os: linux}
+      securityContext:
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: steam-headless
+          # Build the locked recipe, qualify it, then supply its registry manifest
+          # digest. A local Docker config/image ID is not a registry digest.
+          image: localhost/workstation/steam-headless:UNQUALIFIED
+          envFrom:
+            - configMapRef: {name: sunshine-profile}
+          env:
+            - {name: ENABLE_STEAM, value: 'true'}
+            - {name: ENABLE_SUNSHINE, value: 'true'}
+            - {name: STEAM_ARGS, value: '-silent'}
+            # Maintained Steam-Headless contract; all game/shader/pairing data is
+            # under this existing per-family-member persistent home volume.
+            - {name: USER, value: default}
+            - {name: USER_HOME, value: /home/default}
+            - {name: XDG_CACHE_HOME, value: /home/default/.cache}
+            - {name: MESA_SHADER_CACHE_MAX_SIZE, value: 2G}
+            - name: SUNSHINE_USER
+              valueFrom:
+                secretKeyRef: {name: gaming-credentials, key: username}
+            - name: SUNSHINE_PASS
+              valueFrom:
+                secretKeyRef: {name: gaming-credentials, key: sunshine-password}
+          securityContext:
+            privileged: false
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+              add: [SYS_ADMIN, SYS_NICE]
+          resources:
+            requests: {cpu: '12', memory: 12Gi, amd.com/gpu: '1'}
+            limits: {cpu: '12', memory: 12Gi, amd.com/gpu: '1'}
+          ports:
+            - {name: http, containerPort: 47989, protocol: TCP}
+            - {name: https, containerPort: 47984, protocol: TCP}
+            - {name: rtsp, containerPort: 48010, protocol: TCP}
+            - {name: video, containerPort: 47998, protocol: UDP}
+            - {name: control, containerPort: 47999, protocol: UDP}
+            - {name: audio, containerPort: 48000, protocol: UDP}
+          volumeMounts:
+            - {name: user, mountPath: /home/default}
+            - {name: shm, mountPath: /dev/shm}
+      volumes:
+        - name: user
+          persistentVolumeClaim: {claimName: gaming-home}
+        - name: shm
+          emptyDir: {medium: Memory, sizeLimit: 2Gi}

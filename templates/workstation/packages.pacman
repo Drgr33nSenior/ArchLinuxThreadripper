@@ -1,0 +1,12 @@
+# Headless host tools. Optional host desktop/Steam packages live in packages-desktop.pacman.
+# Validate current repository availability before the bootstrap release is cut.
+base-devel devtools namcap ccache clang cmake ninja jq git git-lfs git-delta git-zsh-completion openssh gnupg libsecret libfido2 yubikey-manager sbsigntools
+zsh zsh-completions bash-completion zsh-autosuggestions zsh-syntax-highlighting fzf pkgfile
+tuned irqbalance
+linux-firmware-amdgpu mesa vulkan-radeon ocl-icd
+vulkan-tools mesa-utils clinfo libva-utils hwloc numactl perf
+rocm-hip-sdk rocm-smi-lib rocminfo rccl python-pytorch-opt-rocm
+podman crun passt slirp4netns fuse-overlayfs
+openai-codex aws-cli-v2 kubectl helm kustomize k9s kubectx stern eksctl
+qemu-base libvirt virt-install edk2-ovmf dnsmasq nftables cloud-image-utils ansible-core python ipcalc libxml2
+restic pacman-contrib arch-audit rebuild-detector

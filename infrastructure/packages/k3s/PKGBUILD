@@ -1,0 +1,27 @@
+# Build here in the reviewed repository as an unprivileged user.
+# shellcheck shell=bash disable=SC2034,SC2154
+pkgname=k3s-workstation-bin
+_lock="$startdir/../../../versions.lock"
+_release=$(awk -F= '$1 == "K3S_VERSION" {print $2}' "$_lock")
+_sha256=$(awk -F= '$1 == "K3S_BINARY_SHA256" {print $2}' "$_lock")
+[[ $_release =~ ^v1\.35\.[0-9]+\+k3s[0-9]+$ && $_sha256 =~ ^[a-f0-9]{64}$ ]] || return 1
+pkgver=${_release#v}
+pkgver=${pkgver/+/.}
+pkgrel=1
+pkgdesc='Pinned upstream K3s server for an explicitly managed Arch home lab'
+arch=('x86_64')
+url='https://github.com/k3s-io/k3s'
+license=('Apache-2.0')
+depends=('glibc' 'systemd' 'iptables' 'iproute2' 'conntrack-tools' 'socat' 'ethtool')
+provides=('k3s')
+conflicts=('k3s' 'k3s-bin' 'rke2' 'rke2-bin' 'rke2-workstation-bin')
+options=('!strip' '!debug')
+source=("k3s-${_release}::https://github.com/k3s-io/k3s/releases/download/${_release}/k3s"
+        'k3s.service')
+sha256sums=("$_sha256" '9d42a6c5dd41c41b28a1b5d5a82b43ecf9a61435e132a0a0223db7b80db7f893')
+
+package() {
+  install -Dm755 "$srcdir/k3s-${_release}" "$pkgdir/usr/bin/k3s"
+  install -Dm644 "$srcdir/k3s.service" "$pkgdir/usr/lib/systemd/system/k3s.service"
+  # No installer download, uninstall/killall helpers or service activation.
+}

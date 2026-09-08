@@ -1,0 +1,235 @@
+---
+- name: Inspect the previous RKE2 data location without reading its contents
+  ansible.builtin.stat:
+    path: /var/lib/rancher/rke2
+    get_checksum: false
+    get_mime: false
+  register: lab_previous_rke2
+
+- name: Refuse to convert existing RKE2 state in place
+  ansible.builtin.assert:
+    that:
+      - not lab_previous_rke2.stat.exists
+      - lab_k3s_data_dir == '/var/lib/rancher/k3s'
+    fail_msg: This profile creates K3s on a fresh host; existing RKE2 requires a separate data migration and recovery plan.
+
+- name: Read the repository's canonical K3s version
+  ansible.builtin.set_fact:
+    lab_k3s_version: "{{ lookup('ansible.builtin.ini', 'K3S_VERSION', type='properties', file=playbook_dir ~ '/../../versions.lock') }}"
+
+- name: Require explicit network settings and resource budgets
+  ansible.builtin.assert:
+    that:
+      - lab_node_ip | length > 0
+      - lab_management_cidr | length > 0
+      - lab_cluster_cidr | length > 0
+      - lab_service_cidr | length > 0
+      - lab_cluster_dns | length > 0
+      - lab_network_interface in ansible_facts.interfaces
+      - lab_tls_sans | length > 0
+      - lab_k3s_version is match('^v1[.]35[.][0-9]+[+]k3s[0-9]+$')
+      - lab_cpu_manager_policy in ['none', 'static']
+      - lab_cpu_manager_policy != 'static' or ((lab_reserved_system_cpus | length) > 0)
+      - lab_cpu_manager_policy == 'static' or ((lab_reserved_system_cpus | length) == 0 and not (lab_cpu_manager_cache_alignment | bool))
+      - not lab_manage_service | bool or lab_network_reviewed | bool
+    fail_msg: Supply non-overlapping LAN/pod/service networks and review host firewall policy before enabling service management.
+
+- name: Require the reviewed pacman-owned runtime package
+  ansible.builtin.command: pacman -Q k3s-workstation-bin
+  changed_when: false
+
+- name: Validate network arithmetic with the shared repository policy
+  ansible.builtin.command:
+    argv:
+      - bash
+      - '{{ playbook_dir }}/../host/check-network.sh'
+      - '{{ lab_node_ip }}'
+      - '{{ lab_management_cidr }}'
+      - '{{ lab_cluster_cidr }}'
+      - '{{ lab_service_cidr }}'
+      - '{{ lab_cluster_dns }}'
+  delegate_to: localhost
+  become: false
+  changed_when: false
+
+- name: Read installed runtime identity
+  ansible.builtin.command: /usr/bin/k3s --version
+  register: lab_k3s_installed
+  changed_when: false
+
+- name: Refuse an incompatible runtime generation
+  ansible.builtin.assert:
+    that:
+      - "('k3s version ' ~ lab_k3s_version ~ ' ') in lab_k3s_installed.stdout"
+
+- name: Select the opt-in static CPUManager configuration
+  ansible.builtin.set_fact:
+    lab_cpu_manager_static_enabled: "{{ lab_cpu_manager_policy == 'static' }}"
+
+- name: Inspect the managed CPUManager drop-in path
+  ansible.builtin.stat:
+    path: '{{ lab_k3s_data_dir }}/agent/etc/kubelet.conf.d/90-workstation-cpu.conf'
+    get_checksum: false
+    get_mime: false
+  register: lab_cpu_manager_dropin
+
+- name: Refuse to silently retain a managed static CPUManager configuration
+  ansible.builtin.assert:
+    that:
+      - not lab_cpu_manager_dropin.stat.exists
+    fail_msg: CPUManager policy none does not remove an existing managed static drop-in. Drain workloads, stop K3s, restore the intended kubelet configuration and handle cpu_manager_state manually; this role never deletes the checkpoint.
+  when: not (lab_cpu_manager_static_enabled | bool)
+
+- name: Validate static CPU reservation against observed full SMT sibling groups
+  ansible.builtin.command:
+    argv:
+      - bash
+      - -c
+      - |
+        set -euo pipefail
+        report=$1
+        cpuset=$2
+        [[ $cpuset =~ ^[0-9]+(,[0-9]+)*$ ]] || exit 2
+        jq -er --arg cpuset "$cpuset" '
+          ($cpuset | split(",") | map(tonumber)) as $requested
+          | ($requested | unique) as $reserved
+          | (.cpu_topology.cpus // error("hardware report has no CPU topology")) as $cpus
+          | (.cpu_topology.online_cpus // error("hardware report has no online CPU list")) as $online
+          | if ($requested | length) == ($reserved | length) then . else error("reservation contains duplicate CPUs") end
+          | if ($online | type) == "array" and ($online | length) > 0 and (($online | unique | length) == ($online | length)) then . else error("online CPU list is empty or duplicated") end
+          | if ($cpus | type) == "array" and ($cpus | length) > 0 and (($cpus | map(.cpu) | sort) == ($online | sort)) then . else error("CPU entries do not exactly match online CPUs") end
+          | if all($cpus[]; (.cpu | type) == "number" and (.core_id | type) == "number" and (.socket_id | type) == "number") then . else error("CPU topology identifiers are incomplete") end
+          | if all($cpus[]; . as $entry |
+              ($entry.thread_siblings | type) == "array" and ($entry.thread_siblings | length) > 0
+              and (($entry.thread_siblings | unique | length) == ($entry.thread_siblings | length))
+              and ($entry.thread_siblings | index($entry.cpu)) != null
+              and (([$cpus[] | select(.socket_id == $entry.socket_id and .core_id == $entry.core_id) | .cpu] | sort) == ($entry.thread_siblings | sort))) then . else error("SMT sibling topology is incomplete or asymmetric") end
+          | if ($reserved | length) < ($online | length) then . else error("reservation must leave workload CPUs") end
+          | if all($reserved[]; . as $cpu | ($online | index($cpu)) != null) then . else error("reserved CPU is not online") end
+          | if all($cpus[]; . as $entry | if ($reserved | index($entry.cpu)) != null then (($entry.thread_siblings | type) == "array" and ($entry.thread_siblings | length) > 0 and ($entry.thread_siblings | all(.[]; . as $sibling | ($reserved | index($sibling)) != null))) else true end) then . else error("reservation splits an SMT sibling group") end
+          | $reserved | length
+        ' "$report"
+      - _
+      - '{{ lab_hardware_report }}'
+      - '{{ lab_reserved_system_cpus }}'
+  register: lab_cpu_reservation
+  changed_when: false
+  when: lab_cpu_manager_static_enabled | bool
+
+- name: Require CPU and memory reservations to match the static CPU reservation
+  ansible.builtin.assert:
+    that:
+      - lab_system_reserved_cpu is match('^[1-9][0-9]*$')
+      - lab_kube_reserved_cpu is match('^[1-9][0-9]*$')
+      - (lab_system_reserved_cpu | int) + (lab_kube_reserved_cpu | int) == (lab_cpu_reservation.stdout | int)
+      - lab_eviction_memory is match('^[1-9][0-9]*(Mi|Gi)$')
+    fail_msg: The resource plan must reserve every CPU in lab_reserved_system_cpus through system-reserved plus kube-reserved before static CPUManager is enabled.
+  when: lab_cpu_manager_static_enabled | bool
+
+- name: Render the desired static CPUManager drop-in without writing it
+  ansible.builtin.set_fact:
+    lab_cpu_manager_desired_config: "{{ lookup('ansible.builtin.template', role_path ~ '/templates/90-workstation-cpu.conf.j2') }}"
+  when: lab_cpu_manager_static_enabled | bool
+
+- name: Inspect the CPUManager checkpoint before static configuration
+  ansible.builtin.stat:
+    path: /var/lib/kubelet/cpu_manager_state
+    get_checksum: false
+    get_mime: false
+  register: lab_cpu_manager_checkpoint
+  when: lab_cpu_manager_static_enabled | bool
+
+- name: Read the current managed static CPUManager configuration
+  ansible.builtin.slurp:
+    src: '{{ lab_k3s_data_dir }}/agent/etc/kubelet.conf.d/90-workstation-cpu.conf'
+  register: lab_cpu_manager_existing
+  when:
+    - lab_cpu_manager_static_enabled | bool
+    - lab_cpu_manager_dropin.stat.exists
+
+- name: Detect whether K3s is running before static CPUManager configuration
+  ansible.builtin.command: systemctl is-active k3s
+  register: lab_cpu_manager_k3s_active
+  changed_when: false
+  failed_when: false
+  when: lab_cpu_manager_static_enabled | bool
+
+- name: Require a known K3s service state before static CPUManager configuration
+  ansible.builtin.assert:
+    that:
+      - lab_cpu_manager_k3s_active.rc in [0, 3, 4]
+    fail_msg: Cannot determine whether K3s is active; resolve the systemctl failure before changing CPUManager policy.
+  when: lab_cpu_manager_static_enabled | bool
+
+- name: Refuse implicit static CPUManager migration
+  ansible.builtin.assert:
+    that:
+      - not lab_cpu_manager_checkpoint.stat.exists or (lab_cpu_manager_dropin.stat.exists and (lab_cpu_manager_existing.content | b64decode) == lab_cpu_manager_desired_config)
+      - lab_cpu_manager_k3s_active.rc != 0 or (lab_cpu_manager_dropin.stat.exists and (lab_cpu_manager_existing.content | b64decode) == lab_cpu_manager_desired_config)
+    fail_msg: Static CPUManager migration is not automatic. Drain workloads, stop K3s, resolve the kubelet cpu_manager_state checkpoint manually, then rerun with a reviewed matching 90-workstation-cpu.conf.
+  when: lab_cpu_manager_static_enabled | bool
+
+- name: Create protected configuration directories
+  ansible.builtin.file:
+    path: '{{ item }}'
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+  loop:
+    - /etc/rancher/k3s
+    - '{{ lab_k3s_data_dir }}/agent/etc/containerd/config-v3.toml.d'
+
+- name: Create the K3s kubelet drop-in directory for static CPUManager
+  ansible.builtin.file:
+    path: '{{ lab_k3s_data_dir }}/agent/etc/kubelet.conf.d'
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+  when: lab_cpu_manager_static_enabled | bool
+
+- name: Configure the opt-in static CPUManager kubelet drop-in
+  ansible.builtin.template:
+    src: 90-workstation-cpu.conf.j2
+    dest: '{{ lab_k3s_data_dir }}/agent/etc/kubelet.conf.d/90-workstation-cpu.conf'
+    owner: root
+    group: root
+    mode: '0600'
+  when: lab_cpu_manager_static_enabled | bool
+  notify: Restart approved K3s server
+
+- name: Configure the bare-metal K3s server
+  ansible.builtin.template:
+    src: config.yaml.j2
+    dest: /etc/rancher/k3s/config.yaml
+    owner: root
+    group: root
+    mode: '0600'
+  notify: Restart approved K3s server
+
+- name: Preserve the upstream containerd v3 base template
+  ansible.builtin.copy:
+    src: config-v3.toml.tmpl
+    dest: '{{ lab_k3s_data_dir }}/agent/etc/containerd/config-v3.toml.tmpl'
+    owner: root
+    group: root
+    mode: '0600'
+  notify: Restart approved K3s server
+
+- name: Configure CDI through the upstream-supported import directory
+  ansible.builtin.copy:
+    src: 10-cdi.toml
+    dest: '{{ lab_k3s_data_dir }}/agent/etc/containerd/config-v3.toml.d/10-cdi.toml'
+    owner: root
+    group: root
+    mode: '0600'
+  notify: Restart approved K3s server
+
+- name: Start only when explicitly requested after network and boot qualification
+  ansible.builtin.systemd_service:
+    name: k3s
+    daemon_reload: true
+    enabled: true
+    state: started
+  when: lab_manage_service | bool

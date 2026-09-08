@@ -1,0 +1,8 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: [../rag]
+configMapGenerator:
+  - name: webui-rag-profile
+    behavior: merge
+    literals:
+      - ENABLE_RAG_HYBRID_SEARCH=false

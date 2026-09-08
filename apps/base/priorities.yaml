@@ -1,0 +1,35 @@
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: heavy-ai-priority
+value: 100000
+globalDefault: false
+preemptionPolicy: PreemptLowerPriority
+description: Two-GPU inference may preempt lower-priority family workloads; no checkpoint guarantee.
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: interactive-ai-priority
+value: 10000
+globalDefault: false
+preemptionPolicy: PreemptLowerPriority
+description: Single-GPU inference.
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: creative-priority
+value: 2000
+globalDefault: false
+preemptionPolicy: Never
+description: Creative requests queue when no GPU is available.
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: family-gaming-priority
+value: 1000
+globalDefault: false
+preemptionPolicy: Never
+description: Gaming yields to AI; shutdown grace does not guarantee game saves.

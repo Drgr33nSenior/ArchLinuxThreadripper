@@ -1,0 +1,38 @@
+write-kubeconfig-mode: "0600"
+data-dir: {{ lab_k3s_data_dir | to_json }}
+node-name: {{ inventory_hostname | to_json }}
+node-ip: {{ lab_node_ip | to_json }}
+node-label:
+  - {{ ('ai-home-lab.local/gfx=' ~ lab_expected_gfx) | to_json }}
+  - {{ ('ai-home-lab.local/gpu-count=' ~ lab_expected_gpu_count) | to_json }}
+bind-address: {{ lab_node_ip | to_json }}
+advertise-address: {{ lab_node_ip | to_json }}
+tls-san: {{ lab_tls_sans | to_json }}
+cluster-cidr: {{ lab_cluster_cidr | to_json }}
+service-cidr: {{ lab_service_cidr | to_json }}
+cluster-dns: {{ lab_cluster_dns | to_json }}
+flannel-backend: vxlan
+flannel-iface: {{ lab_network_interface | to_json }}
+disable-network-policy: false
+# Traefik and local-path are bundled; ServiceLB would bind host ports automatically.
+disable:
+  - servicelb
+default-local-storage-path: {{ (lab_k3s_data_dir ~ '/storage') | to_json }}
+secrets-encryption: true
+nonroot-devices: true
+# Single-server SQLite is the default; do not enable cluster-init or etcd flags.
+kube-apiserver-arg:
+  - feature-gates=DynamicResourceAllocation=true
+kube-controller-manager-arg:
+  - feature-gates=DynamicResourceAllocation=true
+kube-scheduler-arg:
+  - feature-gates=DynamicResourceAllocation=true
+kubelet-arg:
+  - cgroup-driver=systemd
+  - feature-gates=DynamicResourceAllocation=true
+  - fail-swap-on=true
+  - {{ ('system-reserved=cpu=' ~ lab_system_reserved_cpu ~ ',memory=' ~ lab_system_reserved_memory) | to_json }}
+  - {{ ('kube-reserved=cpu=' ~ lab_kube_reserved_cpu ~ ',memory=' ~ lab_kube_reserved_memory) | to_json }}
+  - {{ ('eviction-hard=memory.available<' ~ lab_eviction_memory ~ ',nodefs.available<10%,imagefs.available<15%') | to_json }}
+kube-proxy-arg:
+  - {{ ('nodeport-addresses=' ~ lab_management_cidr) | to_json }}

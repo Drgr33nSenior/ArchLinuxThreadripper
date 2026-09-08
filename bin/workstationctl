@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+set -o errexit -o nounset -o pipefail
+export LC_ALL=C
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+repo_root="$(cd -- "$script_dir/.." && pwd -P)"
+source "$repo_root/lib/common.sh"
+source "$repo_root/lib/workstation/runtime.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: workstationctl [--config FILE] <command> [arguments]
+
+Commands:
+  status
+  boot-benchmark [output-directory]
+  profile <server|desktop|build|ai|game|vm>
+  build environment <normal|memory-heavy>
+  build cmake-ninja-args [normal|memory-heavy]
+  makepkg configure [output-file]
+  ccache configure|stats|cleanup|test
+  hardware collect <new-output-directory>
+  resources plan <hardware.json> <new-output-directory> [versions.lock]
+  session plan <ai|gaming|maintenance>
+  session switch <ai|gaming|maintenance> <hardware.json> <state-directory> --execute
+  session restore <hardware.json> <state-directory> --execute
+  session status <state-directory>
+  sunshine profile <new-output-directory>
+  sunshine image-build <new-output-directory>
+  sunshine devices
+  sunshine diagnose <new-output-directory>
+  sunshine launch <sunshine-binary> <existing-sunshine.conf>
+  sunshine compare <baseline.json> <candidate.json> <new-output-directory>
+  rag stage-models <new-output-directory>
+  rag verify-models <staged-model-directory>
+  rag corpus <new-output-directory> <docs/file.md...>
+  agent configure <new-output-directory>
+  agent launch <bundle-directory> [qwen|dsh|hermes] [cli|acp]
+  swap validate
+  encryption calibrate <install.conf> <new-output-directory>
+  kernel cpu-report <kernel-source> <compiler> <output.json>
+  rocm plan <hardware.json> <new-output-directory>
+  rocm source-manifest <TheRock-checkout> <new-output.json>
+  rocm build-llama <checkout> <hardware.json> <new-output-directory> [versions.lock]
+  rocm build-llama-vulkan <checkout> <hardware.json> <new-output-directory> [versions.lock]
+  rocm benchmark-llama <hardware.json> <hip-bench> <vulkan-bench> <model.gguf> <new-output-directory> <hip-devices> <vulkan-devices>
+  rocm validate <new-output-directory> [python-executable]
+  rocm inference <llama-cli> <GGUF-model> <new-output-directory>
+  packages snapshot <stable|experimental> <new-directory> <signing-fingerprint> <signed-packages...>
+  packages restore-plan <snapshot-directory> <signing-fingerprint>
+  kernel build <AUR-checkout> <clean-chroot-dir> <output-dir> [versions.lock]
+  kernel build-uki [db-cert]
+  kernel promote <linux-git|stable|lts> <uki.efi> <esp-a> <esp-b> [db-cert]
+  kernel rollback <stable|lts>
+  gpu validate <PCI-BDF>                  (legacy Intel)
+  ai validate <PCI-BDF>                   (legacy Intel)
+  llm pull [versions.lock]
+  llm up <B70-PCI-BDF> [model-directory] [versions.lock]
+  llm down|status
+  llm bench [concurrency] [output-file]
+  zsh setup [versions.lock] [target-directory]
+  toolbox setup [versions.lock]
+  codex configure [output-file]
+  backup credential <repository|password|aws>
+  backup install                         (verify installed signed runtime package)
+  backup enable
+  backup run <init|backup|check|retention|snapshots>
+  virtualization configure <user>
+  virtualization validate
+  aur checkout <paru|linux-git|aws-ssm> <directory> [versions.lock]
+  aur bootstrap-paru <AUR-checkout> <clean-chroot-dir> <output-dir> [versions.lock]
+  dev setup <server|workstation|gpu|ai|gaming|shell|cloud|virtualization|backup> <packages.pacman>
+EOF
+}
+
+main() {
+  local config_file=''
+  if [[ ${1:-} == --config ]]; then
+    (($# >= 3)) || { usage >&2; return 2; }
+    config_file=$2
+    shift 2
+    ws_load_config "$config_file"
+  fi
+  local area="${1:-}" action="${2:-}"
+  case "$area:$action" in
+    status:) ws_status ;;
+    boot-benchmark:*) (($# <= 2)) || return 2; shift; ws_boot_benchmark "$@" ;;
+    profile:*) ws_profile "${2:-}" ;;
+    build:environment) shift 2; ws_build_environment "$@" ;;
+    build:cmake-ninja-args) (($# == 2 || $# == 3)) || return 2; shift 2; ws_cmake_ninja_args "$@" ;;
+    makepkg:configure) shift 2; ws_makepkg_configure "$@" ;;
+    ccache:configure) (($# == 2)) || return 2; ws_ccache_configure ;;
+    ccache:stats|ccache:cleanup|ccache:test) (($# == 2)) || return 2; ws_ccache_action "$action" ;;
+    hardware:collect) (($# == 3)) || return 2; ws_hardware_collect "$3" ;;
+    resources:plan) (($# == 4 || $# == 5)) || return 2; shift 2; ws_resources_plan "$@" ;;
+    session:plan) (($# == 3)) || return 2; ws_session_plan "$3" ;;
+    session:switch) (($# == 6)) || return 2; shift 2; ws_session_switch "$@" ;;
+    session:restore) (($# == 5)) || return 2; shift 2; ws_session_switch restore "$@" ;;
+    session:status) (($# == 3)) || return 2; jq '{mode,phase,previous,context,node,namespace}' "$3/state.json" ;;
+    sunshine:profile) (($# == 3)) || return 2; ws_sunshine_profile "$3" ;;
+    sunshine:image-build) (($# == 3)) || return 2; ws_sunshine_image_build "$3" ;;
+    sunshine:devices) (($# == 2)) || return 2; ws_sunshine_device ;;
+    sunshine:diagnose) (($# == 3)) || return 2; ws_sunshine_diagnose "$3" ;;
+    sunshine:launch) (($# == 4)) || return 2; ws_sunshine_launch "$3" "$4" ;;
+    sunshine:compare) (($# == 5)) || return 2; ws_sunshine_compare "$3" "$4" "$5" ;;
+    rag:stage-models) (($# == 3)) || return 2; ws_rag_stage_models "$3" ;;
+    rag:verify-models) (($# == 3)) || return 2; ws_rag_verify_models "$3" ;;
+    rag:corpus) (($# >= 4)) || return 2; shift 2; ws_rag_corpus "$@" ;;
+    agent:configure) (($# == 3)) || return 2; ws_agent_configure "$3" ;;
+    agent:launch) (($# >= 3 && $# <= 5)) || return 2; shift 2; ws_agent_launch "$@" ;;
+    swap:validate) (($# == 2)) || return 2; ws_require_arch; ws_no_swap_check ;;
+    encryption:calibrate) (($# == 4)) || return 2; ws_argon2_calibrate "$3" "$4" ;;
+    kernel:cpu-report) (($# == 5)) || return 2; ws_kernel_cpu_report "$3" "$4" "$5" ;;
+    rocm:plan) (($# == 4)) || return 2; ws_rocm_plan "$3" "$4" ;;
+    rocm:source-manifest) (($# == 4)) || return 2; ws_rocm_source_manifest "$3" "$4" ;;
+    rocm:build-llama) (($# == 5 || $# == 6)) || return 2; shift 2; ws_rocm_build_llama "$@" ;;
+    rocm:build-llama-vulkan) (($# == 5 || $# == 6)) || return 2; shift 2; ws_rocm_build_llama_vulkan "$@" ;;
+    rocm:benchmark-llama) (($# == 9)) || return 2; shift 2; ws_rocm_benchmark_llama "$@" ;;
+    rocm:validate) (($# == 3 || $# == 4)) || return 2; ws_rocm_validate "$3" "${4:-python}" ;;
+    rocm:inference) (($# == 5)) || return 2; ws_rocm_inference "$3" "$4" "$5" ;;
+    packages:snapshot) (($# >= 6)) || return 2; shift 2; ws_package_snapshot "$@" ;;
+    packages:restore-plan) (($# == 4)) || return 2; ws_package_restore_plan "$3" "$4" ;;
+    kernel:build) (($# == 5 || $# == 6)) || return 2; shift 2; ws_kernel_build "$@" ;;
+    kernel:build-uki) shift 2; ws_kernel_build_uki "$@" ;;
+    kernel:promote) shift 2; ws_kernel_promote "$@" ;;
+    kernel:rollback) shift 2; ws_kernel_rollback "$@" ;;
+    gpu:validate) ws_gpu_validate "${3:-}" ;;
+    ai:validate) ws_ai_validate "${3:-}" ;;
+    llm:up) shift 2; ws_llm_up "$@" ;;
+    llm:pull) shift 2; ws_llm_pull "$@" ;;
+    llm:down) ws_llm_down ;;
+    llm:status) ws_llm_status ;;
+    llm:bench) shift 2; ws_llm_bench "$@" ;;
+    zsh:setup) shift 2; ws_zsh_setup "$@" ;;
+    toolbox:setup) shift 2; ws_toolbox_setup "$@" ;;
+    codex:configure) shift 2; ws_codex_configure "$@" ;;
+    backup:credential) shift 2; ws_backup_credential "$@" ;;
+    backup:install) ws_backup_install ;;
+    backup:enable) ws_backup_enable ;;
+    backup:run) shift 2; ws_backup_run "$@" ;;
+    virtualization:configure) shift 2; ws_virtualization_configure "$@" ;;
+    virtualization:validate) ws_virtualization_validate ;;
+    aur:checkout) shift 2; ws_aur_checkout "$@" ;;
+    aur:bootstrap-paru) shift 2; ws_paru_bootstrap "$@" ;;
+    dev:setup) shift 2; ws_dev_setup "$@" ;;
+    help:|--help:|-h:) usage ;;
+    *) usage >&2; return 2 ;;
+  esac
+}
+
+main "$@"

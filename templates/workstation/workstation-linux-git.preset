@@ -1,0 +1,5 @@
+ALL_config="/etc/mkinitcpio.conf"
+ALL_kver="/boot/vmlinuz-linux-git"
+PRESETS=('default')
+default_uki="/var/lib/workstation/uki/arch-linux-git.efi"
+default_options="--cmdline /etc/kernel/cmdline"

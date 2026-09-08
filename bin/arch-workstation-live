@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Explicit local menu. Boot/login never invokes an install action.
+set -euo pipefail
+root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+[[ -t 0 && -t 1 ]] || { printf 'A local interactive terminal is required.\n' >&2; exit 1; }
+while true; do
+  printf '\nArch workstation installation / recovery\n1) Inspect hardware (read-only)\n2) Preview installation\n3) Install (erases confirmed disks)\n4) Read recovery instructions\nq) Exit to shell\n> '
+  IFS= read -r choice || exit 0
+  case $choice in
+    1) lscpu; lspci -nnk; lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINTS,MODEL,SERIAL ;;
+    2|3)
+      printf 'Path to your reviewed installation config: '
+      IFS= read -r config
+      mode=--dry-run
+      [[ $choice != 3 ]] || mode=--execute
+      if ! bash "$root/bin/bootstrap-arch" --config "$config" "$mode" install; then
+        printf 'Stopped. Inspect the failure; do not rerun over a partial installation.\n' >&2
+      fi
+      ;;
+    4) less "$root/docs/ISO.md" ;;
+    q) exit 0 ;;
+    *) printf 'Choose 1, 2, 3, 4 or q.\n' ;;
+  esac
+done

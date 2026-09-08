@@ -1,0 +1,20 @@
+version: 2
+ethernets:
+  management:
+    match:
+      macaddress: "__MGMT_MAC__"
+    set-name: __MGMT_INTERFACE__
+    addresses:
+      - "__MGMT_IP__/24"
+    nameservers:
+      addresses:
+        - "__MGMT_GATEWAY__"
+  dmz:
+    match:
+      macaddress: "__DMZ_MAC__"
+    set-name: __DMZ_INTERFACE__
+    addresses:
+      - "__DMZ_IPV4__"
+      - "__DMZ_IPV6__"
+    gateway4: "__DMZ_IPV4_GATEWAY__"
+    gateway6: "__DMZ_IPV6_GATEWAY__"

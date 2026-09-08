@@ -1,0 +1,19 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: steam-headless}
+spec:
+  selector:
+    matchLabels: {ai-home-lab.local/profile: parent}
+  template:
+    metadata:
+      labels: {ai-home-lab.local/profile: parent}
+    spec:
+      containers:
+        - name: steam-headless
+          env:
+            - name: SUNSHINE_USER
+              valueFrom:
+                secretKeyRef: {name: parent-gaming-credentials, key: username}
+            - name: SUNSHINE_PASS
+              valueFrom:
+                secretKeyRef: {name: parent-gaming-credentials, key: sunshine-password}

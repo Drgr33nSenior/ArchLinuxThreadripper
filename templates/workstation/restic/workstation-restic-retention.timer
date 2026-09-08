@@ -1,0 +1,11 @@
+[Unit]
+Description=Weekly Restic retention and prune
+
+[Timer]
+OnCalendar=Sun *-*-* 05:30:00
+RandomizedDelaySec=30m
+Persistent=true
+Unit=workstation-restic@retention.service
+
+[Install]
+WantedBy=timers.target

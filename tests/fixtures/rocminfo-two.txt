@@ -1,0 +1,15 @@
+Agent 1
+  Name:                    Synthetic CPU
+  Uuid:                    CPU-TEST
+Agent 2
+  Name:                    gfx9abc
+  Uuid:                    GPU-TEST-A
+  Marketing Name:          Synthetic GPU
+  ISA Info:
+    Name:                  amdgcn-amd-amdhsa--gfx9abc:sramecc-:xnack-
+Agent 3
+  Name:                    gfx9abc
+  Uuid:                    GPU-TEST-B
+  Marketing Name:          Synthetic GPU
+  ISA Info:
+    Name:                  amdgcn-amd-amdhsa--gfx9abc:sramecc-:xnack-

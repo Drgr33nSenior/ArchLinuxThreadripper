@@ -1,0 +1,29 @@
+# Non-secret live-ISO installer configuration. Values are literal; quoting and
+# shell expansion are not supported.
+HOSTNAME=threadripper-ai
+# New installations default to headless; desktop opts into GNOME and host Steam.
+HOST_PROFILE=headless
+# auto preserves the host-profile default; the separate home-lab example opts into
+# accelerator-performance independently of desktop package selection.
+TUNED_PROFILE=auto
+USERNAME=developer
+LOCALE=en_GB.UTF-8
+KEYMAP=uk
+TIMEZONE=Europe/London
+PRIMARY_DISK=/dev/disk/by-id/nvme-REPLACE_PRIMARY
+SECONDARY_DISK=/dev/disk/by-id/nvme-REPLACE_SECONDARY
+PRIMARY_DISK_SERIAL=REPLACE_PRIMARY_SERIAL
+SECONDARY_DISK_SERIAL=REPLACE_SECONDARY_SERIAL
+RAID_NAME=archroot
+LUKS_NAME=cryptroot
+ESP_SIZE_MIB=2048
+RAID_CHUNK_KIB=512
+LUKS_ITER_TIME_MS=2000
+LUKS_MEMORY_KIB=1048576
+LUKS_PARALLEL=4
+ALLOW_DISCARDS=true
+PRIMARY_ESP_MOUNT=/efi
+SECONDARY_ESP_MOUNT=/efi2
+ENABLE_SSH=false
+ENABLE_BLUETOOTH=false
+ENABLE_PRINTING=false

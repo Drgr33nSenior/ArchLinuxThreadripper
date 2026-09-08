@@ -1,0 +1,12 @@
+# Retained legacy B70 profile. The default packages.pacman now targets AMD.
+base-devel devtools namcap git git-lfs git-delta git-zsh-completion openssh gnupg libsecret libfido2 yubikey-manager sbsigntools
+zsh zsh-completions bash-completion zsh-autosuggestions zsh-syntax-highlighting fzf pkgfile
+tuned tuned-ppd irqbalance
+mesa lib32-mesa vulkan-intel lib32-vulkan-intel intel-compute-runtime intel-graphics-compiler intel-gmmlib level-zero-loader ocl-icd intel-media-driver
+intel-gpu-tools vulkan-tools mesa-utils clinfo libva-utils hwloc numactl perf
+python-pytorch-opt-xpu openvino python-openvino openvino-intel-gpu-plugin ggml-sycl
+steam gamescope gamemode lib32-gamemode mangohud lib32-mangohud
+podman crun passt slirp4netns fuse-overlayfs
+openai-codex aws-cli-v2 kubectl helm kustomize k9s kubectx stern eksctl
+qemu-desktop libvirt virt-install virt-manager virt-viewer edk2-ovmf dnsmasq nftables cloud-image-utils ansible-core python ipcalc
+restic pacman-contrib arch-audit rebuild-detector

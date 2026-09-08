@@ -1,0 +1,42 @@
+[Unit]
+Description=Encrypted Restic workstation operation (%i)
+Documentation=man:restic(1)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+LoadCredentialEncrypted=restic_repository:/etc/credstore.encrypted/workstation-restic-repository.cred
+LoadCredentialEncrypted=restic_password:/etc/credstore.encrypted/workstation-restic-password.cred
+LoadCredentialEncrypted=aws_credentials:/etc/credstore.encrypted/workstation-restic-aws.cred
+ExecStart=/usr/lib/arch-workstation-backup/run %i
+CacheDirectory=workstation-restic
+CacheDirectoryMode=0700
+Nice=10
+CPUWeight=20
+IOWeight=20
+NoNewPrivileges=yes
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHome=read-only
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectSystem=strict
+ReadWritePaths=/var/cache/workstation-restic
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

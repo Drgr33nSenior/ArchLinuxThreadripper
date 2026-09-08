@@ -1,0 +1,14 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: sglang}
+spec:
+  template:
+    spec:
+      priorityClassName: heavy-ai-priority
+      containers:
+        - name: sglang
+          resources:
+            # 64Gi host - 18Gi host/K3s/eviction reserve = 46Gi allocatable.
+            # Leave 6Gi for CPU RAG and 2Gi for other pods. Loading is unqualified.
+            requests: {cpu: '24', memory: 38Gi, amd.com/gpu: '2'}
+            limits: {cpu: '24', memory: 38Gi, amd.com/gpu: '2'}

@@ -1,0 +1,7 @@
+version = 3
+[plugins.'io.containerd.cri.v1.runtime']
+  enable_cdi = true
+  cdi_spec_dirs = ['/etc/cdi', '/var/run/cdi']
+  device_ownership_from_security_context = true
+[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.runc.options]
+  SystemdCgroup = true

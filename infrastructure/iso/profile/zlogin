@@ -1,0 +1,3 @@
+# Deliberately no script= URL execution and no installer autorun.
+print 'Workstation live media: run arch-workstation-live when ready.'
+print 'Installation is opt-in. Secure Boot of this live image is NOT qualified.'

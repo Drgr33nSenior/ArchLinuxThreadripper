@@ -1,0 +1,14 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sglang
+  annotations:
+    ai-home-lab.local/compatibility: experimental-override-requires-recorded-before-after-test
+spec:
+  template:
+    spec:
+      containers:
+        - name: sglang
+          env:
+            - {name: HSA_OVERRIDE_GFX_VERSION, value: 12.0.1}
+            - {name: HSA_ENABLE_SDMA, value: '0'}
