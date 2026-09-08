@@ -147,6 +147,12 @@ require_check(env.any? { |e| e == {'name' => 'HSA_OVERRIDE_GFX_VERSION', 'value'
   require_check(deployment.dig('spec', 'template', 'spec', 'containers')[0].dig('resources', 'limits') == {'cpu' => '12', 'memory' => '12Gi', 'amd.com/gpu' => '1'}, 'Steam resource envelope changed')
   guaranteed_pod(deployment.dig('spec', 'template', 'spec'))
   game = deployment.dig('spec', 'template', 'spec', 'containers')[0]
+  pod_security = deployment.dig('spec', 'template', 'spec', 'securityContext')
+  require_check(pod_security['runAsNonRoot'] == true && pod_security['runAsUser'] == 1000 && pod_security['runAsGroup'] == 1000 && pod_security['fsGroup'].nil? &&
+                pod_security.dig('seccompProfile', 'type') == 'RuntimeDefault', 'Wayland gaming session must stay non-root with RuntimeDefault seccomp')
+  require_check(game.dig('securityContext', 'allowPrivilegeEscalation') == false &&
+                game.dig('securityContext', 'capabilities', 'drop') == ['ALL'] &&
+                game.dig('securityContext', 'capabilities', 'add').nil?, 'Wayland gaming session must not require elevated Linux capabilities')
   require_check(game['image'] == 'localhost/workstation/steam-headless:UNQUALIFIED', 'Gaming must require promotion of the locally built recipe')
   require_check(deployment.dig('metadata', 'annotations', 'workstation.ai/qualification') != 'qualified', 'Streaming settings cannot qualify gaming')
   require_check(game['volumeMounts'].include?({'name' => 'user', 'mountPath' => '/home/default'}), 'Persistent home must match the maintained image')
@@ -155,9 +161,9 @@ require_check(env.any? { |e| e == {'name' => 'HSA_OVERRIDE_GFX_VERSION', 'value'
   reference = game.fetch('envFrom')[0].fetch('configMapRef').fetch('name')
   require_check(reference.start_with?("#{owner}-sunshine-profile-"), 'Gaming profile ConfigMaps must remain independent')
   settings = named(family, 'ConfigMap', reference).fetch('data')
-  require_check(settings == {'SUNSHINE_ENCODER' => 'vaapi', 'SUNSHINE_CAPTURE' => 'x11', 'SUNSHINE_OUTPUT_NAME' => '',
+  require_check(settings == {'SUNSHINE_ENCODER' => 'vulkan', 'SUNSHINE_CAPTURE' => 'kwin', 'SUNSHINE_OUTPUT_NAME' => '',
                              'SUNSHINE_HEVC_MODE' => '0', 'SUNSHINE_AV1_MODE' => '0', 'SUNSHINE_VK_TUNE' => '2',
-                             'SUNSHINE_VAAPI_STRICT_RC_BUFFER' => 'disabled'}, 'Streaming baseline changed without review')
+                             'SUNSHINE_VAAPI_STRICT_RC_BUFFER' => 'disabled', 'GAMING_WIDTH' => '1920', 'GAMING_HEIGHT' => '1080'}, 'Streaming baseline changed without review')
   require_check(game['env'].none? { |env| settings.key?(env['name']) || env['name'] == 'AMD_DEBUG' }, 'Do not shadow profile settings or duplicate upstream lowlatencyenc')
 end
 kids_env = named(family, 'Deployment', 'kids-steam-headless').dig('spec', 'template', 'spec', 'containers')[0]['env']

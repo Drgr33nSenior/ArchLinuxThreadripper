@@ -18,6 +18,9 @@ spec:
       terminationGracePeriodSeconds: 120
       nodeSelector: {ai-home-lab.local/gfx: gfx1201, kubernetes.io/arch: amd64, kubernetes.io/os: linux}
       securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: steam-headless
@@ -47,7 +50,6 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               drop: [ALL]
-              add: [SYS_ADMIN, SYS_NICE]
           resources:
             requests: {cpu: '12', memory: 12Gi, amd.com/gpu: '1'}
             limits: {cpu: '12', memory: 12Gi, amd.com/gpu: '1'}

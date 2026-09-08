@@ -1,49 +1,58 @@
 # Sunshine streaming candidate
 
-The repository now builds and configures a streaming candidate. It does **not**
-yet deploy a qualified gaming session. Replicas remain zero, the image reference
-requires promotion, and the existing session command rejects unqualified gaming
-before stopping AI. No host kernel, ROCm driver, cluster or disk change is part
-of this workflow. Sunshine is the server; Moonlight runs on the clients.
+The default gaming-image candidate uses a container-local KWin Wayland virtual
+session, native KWin/PipeWire capture, XWayland for Steam and older games, and
+Sunshine Vulkan Video encoding. It does **not** start Xorg, XFCE, noVNC, a host
+display server, or the inherited rootful Steam-Headless supervisor. XWayland is
+present only as a compatibility server for applications that need X11.
+
+This remains a candidate, not a qualified gaming deployment. All gaming replicas
+remain zero. Image promotion, device permissions, controller input, audio,
+private streaming exposure, egress, capture placement and encode quality must be
+accepted on the target workstation before a session command can enable gaming.
+Sunshine is the server; Moonlight is its client.
 
 ## Implementation record — 8 September 2026
 
 | Change | Source and evidence | Implementation | Remaining validation |
 | --- | --- | --- | --- |
-| Known image contract | Maintained [Steam-Headless source](https://github.com/Steam-Headless/docker-steam-headless/tree/096fc4b1c09288b105b2eada7c386d41a51efc08); its inspected image contained Sunshine 2026.516.143833 and Mesa 25.0.7 | `infrastructure/gaming/Dockerfile`, `versions.lock`; replace the unverified publisher reference with a build-required placeholder | Rootful startup, extra services and input/display access remain unqualified |
-| Current Sunshine | [2026.906.222525 release](https://github.com/LizardByte/Sunshine/releases/tag/v2026.906.222525), commit `cb72dffa3233c5815cd5ba88f09f049dd679ba75`; release asset downloaded and hashed | Pinned Debian package; remove package-installed executable capabilities; preserve upstream session lifecycle through a launcher wrapper | R9700 encode/capture and changed Linux virtual-input implementation |
-| Matched graphics userspace | Debian [Mesa 26.1.2 backport](https://packages.debian.org/trixie-backports/mesa-vulkan-drivers) for amd64/i386 | Pin the Mesa package family; install during image build, not session startup; retain host `amdgpu` ownership | This is a supported distro backport, not a claim to contain every latest Mesa commit |
-| Explicit encoder profiles | Versioned [configuration](https://github.com/LizardByte/Sunshine/blob/v2026.906.222525/docs/configuration.md) and [CLI parser](https://github.com/LizardByte/Sunshine/blob/v2026.906.222525/src/config.cpp) | `lib/workstation/sunshine.sh`, `config/workstation.conf.example`, gaming ConfigMap | Compare the same display/client/game inputs; no measured gain claimed |
-| Allocated GPU and persistent caches | [Vulkan render-node mapping](https://github.com/LizardByte/Sunshine/blob/v2026.906.222525/src/platform/linux/vulkan_encode.cpp), [Mesa environment](https://docs.mesa3d.org/envvars.html) | Discover one accessible render node and PCI BDF; set Mesa rendering preference and Sunshine adapter; `/home/default/.cache` on existing PVC | Device-plugin isolation, actual rendering/capture GPU, permissions, no software-renderer fallback |
-| Comparable diagnostics | Existing Bash/jq CLI and test conventions | `sunshine devices`, `diagnose`, `compare`; fixture and optional image smoke tests | Physical performance, power and latency are NOT RUN — target hardware unavailable |
+| Headless Wayland session | [KWin Wayland](https://invent.kde.org/plasma/kwin), [Sunshine capture configuration](https://docs.lizardbyte.dev/projects/sunshine/master/md_docs_2configuration.html#capture) | `infrastructure/gaming/wayland-session.sh` starts KWin's virtual backend, then PipeWire, WirePlumber, Steam and Sunshine in one non-root session | R9700 rendering, virtual output, capture, shutdown and recovery |
+| Native capture and encoder | [Sunshine Linux compatibility](https://docs.lizardbyte.dev/projects/sunshine/latest/) | Default `capture=kwin`, `encoder=vulkan`; the CLI rejects Vulkan with X11 or wlroots capture | Compare Vulkan and VA-API on the same qualified KWin capture path; no gain is claimed |
+| Pinned graphics userspace | [Sunshine 2026.906.222525](https://github.com/LizardByte/Sunshine/releases/tag/v2026.906.222525), [Mesa backport](https://packages.debian.org/trixie-backports/mesa-vulkan-drivers) | `versions.lock` pins Sunshine commit `cb72dffa3233c5815cd5ba88f09f049dd679ba75`, Mesa `26.1.2-1~bpo13+1`, and KWin `4:6.3.6-1` | KWin is a reviewed compatible lock, not a claim to be the newest release or to qualify the stack |
+| Persistent state and caches | Existing per-owner `gaming-home` PVC | Pairing, Sunshine configuration, Steam files and shader caches remain below `/home/default`; no reset, copy, chown or deletion occurs | Inspect ownership and absolute app paths; take a NAS backup before changing existing state |
+| Device isolation | [AMD device-plugin allocation](https://instinct.docs.amd.com/projects/k8s-device-plugin/en/latest/user-guide/resource-allocation.html) | The launcher requires one accessible AMD/amdgpu render node and records its BDF; the Deployment requests one `amd.com/gpu` | Confirm rendering, capture and encoding all use the allocated GPU; `DRI_PRIME` and `adapter_name` are preferences, not isolation |
 
-The safe-change and infrastructure checks kept this within the existing CLI,
-Kustomize profiles and session gates. No new controller or monitoring service is
-introduced. The existing 12-CPU/12-GiB gaming envelope, 2-GiB shared memory,
-one-GPU request, AI unload checks and cooperative build inhibition are retained.
+The existing 12-CPU/12-GiB gaming envelope, 2-GiB shared-memory limit, one-GPU
+request, AI-unload checks and cooperative build inhibition are retained. This
+change adds no controller, monitoring service, host mount or live-cluster action.
 
 ## Build and inspect the image
 
 Run from the reviewed full checkout, not the live installer:
 
 ```sh
-./bin/workstationctl sunshine image-build artifacts/sunshine-image-01
-gaming_image_id=$(jq -r .local_image_id artifacts/sunshine-image-01/build-result.json)
-HOME_LAB_GAME_IMAGE="$gaming_image_id" bash tests/test_sunshine_image.sh
+# Default: non-root KWin Wayland session.
+./bin/workstationctl sunshine image-build artifacts/sunshine-wayland-01
+
+# Explicit rollback candidate only: inherited rootful Xorg/XFCE session.
+./bin/workstationctl sunshine image-build artifacts/sunshine-x11-rollback-01 x11
+SUNSHINE_ENCODER=vaapi SUNSHINE_CAPTURE=x11 \
+  ./bin/workstationctl sunshine profile artifacts/sunshine-profile-x11-01
 ```
 
-The builder sends only its staged source context and verified release asset to
-the existing Docker builder, targeting `linux/amd64` explicitly. It does not
-start the upstream rootful entrypoint, publish an image or contact K3s. Expect
-roughly 1 GB of compressed base-image downloads plus dependencies and several
-GB of builder storage. Failed builds retain evidence; nothing prunes Docker.
+The builder stages repository sources and the hash-verified Sunshine release,
+uses the existing Docker builder for `linux/amd64`, and does not publish, deploy
+or contact K3s. The Wayland build is the default. The `x11` target is an explicit
+rollback image, not a fallback selected at runtime; it retains the inherited
+rootful session and needs its own security, input and display review before use.
 
-The base digest, Sunshine hash and Mesa version are locked. Other Debian
-dependencies are resolved through signed repositories during the build, so this
-is **not** a bit-for-bit reproducible dependency closure. The complete installed
-package list is `/usr/share/workstation/gaming-packages.tsv` inside the image.
-Rebuilds need a fresh immutable image digest and qualification. The FFmpeg CLI
-package version is not proof of Sunshine's embedded FFmpeg build options.
+The base digest, Sunshine hash and Mesa version are locked. The Wayland result
+also records the KWin package lock. Other Debian dependencies are resolved
+through signed repositories during the build, so this is **not** a bit-for-bit
+reproducible dependency closure. The complete installed package list is
+`/usr/share/workstation/gaming-packages.tsv` inside the image. Rebuilds need a
+fresh immutable image digest and qualification. The FFmpeg CLI package version
+is not proof of Sunshine's embedded FFmpeg build options.
 
 Sunshine's Debian maintainer scripts try udev/module operations during package
 installation. An ordinary isolated Docker build can report unavailable udev or
@@ -58,40 +67,51 @@ not automated here. Never mark the upstream base image as the finished recipe.
 
 ## Configure a profile
 
-Use the existing workstation config; legacy config files retain defaults:
+The default profile is KWin capture, Vulkan Video, and a 1920x1080 virtual
+output:
 
 ```sh
-./bin/workstationctl --config config/workstation.conf sunshine profile artifacts/sunshine-profile-01
+./bin/workstationctl --config config/workstation.conf \
+  sunshine profile artifacts/sunshine-profile-wayland-01
+kubectl kustomize apps/overlays/family
 ./bin/workstationctl session plan gaming
 ```
 
-The first command writes a new `sunshine.env`; it does not edit a deployment.
-Copy the selected values into the existing `sunshine-profile` ConfigMap generator
-in `apps/base/steam-headless/kustomization.yaml`, or merge that generator in a
-parent/kids overlay. Render with `kubectl kustomize apps/overlays/family` and
-review the resulting per-owner ConfigMap references. Normal Kustomize content
-hashes change the Pod template when a profile changes. Follow maintenance/session
-shutdown before promotion; do not patch a running game to benchmark it.
+`sunshine profile` creates a new `sunshine.env`; it does not edit or deploy a
+workload. Copy reviewed values to the `sunshine-profile` ConfigMap generator in
+`apps/base/steam-headless/kustomization.yaml`, or make the equivalent per-owner
+overlay change. A ConfigMap hash causes a Pod rollout. Change `GAMING_WIDTH` or
+`GAMING_HEIGHT` only with that profile/image rollout; KWin creates its virtual
+output at process startup. `SUNSHINE_OUTPUT_NAME` is observed output metadata,
+not a card number or scheduler selector, and must not be hard-coded.
 
 | Setting | Baseline | Explicit experiment |
 | --- | --- | --- |
-| `SUNSHINE_ENCODER` | `vaapi` | `vulkan` |
-| `SUNSHINE_CAPTURE` | `x11` for the candidate XFCE/Xorg session | Qualified `kms`, `wlr` or `kwin` DMA-BUF path |
-| `SUNSHINE_OUTPUT_NAME` | Empty: existing config/automatic selection | Discovered connector name; required for KMS; no numeric GPU/display guesses |
+| `SUNSHINE_ENCODER` | `vulkan` | `vaapi` on the same qualified capture path |
+| `SUNSHINE_CAPTURE` | `kwin` native KWin/PipeWire capture | `portal` only after explicit owner consent; `x11` only in the separately built rollback image |
+| `GAMING_WIDTH`, `GAMING_HEIGHT` | `1920`, `1080` | A reviewed even resolution followed by a rollout |
+| `SUNSHINE_OUTPUT_NAME` | Empty | Observed output name after qualification; never a numeric ordinal guess |
 | `SUNSHINE_HEVC_MODE`, `SUNSHINE_AV1_MODE` | `0`, capability detection | `1` disables; `2` enables advertised 8-bit support; `3` advertises HDR only after qualification |
 | `SUNSHINE_VK_TUNE` | `2`, low latency | `3`, ultra-low latency, with quality comparison |
 | `SUNSHINE_VAAPI_STRICT_RC_BUFFER` | `disabled` | `enabled` for scene-change network-drop testing |
 
-Vulkan+x11 is rejected: the pinned Vulkan path expects DMA-BUF capture. For a
-paired VA-API/Vulkan test, use the **same qualified capture path for both**. For
-example, `SUNSHINE_CAPTURE=wlr` requires an actual reviewed wlroots session; the
-recipe does not install one. Setting an environment variable cannot create a
-Wayland compositor, headless connector or permission to capture another GPU.
-KMS requires primary DRM access and privilege which conflicts with the current
-baseline policy. No namespace exception or host mount has been introduced.
+Portal capture is optional, not a transparent fallback. Its first request may
+need an owner to approve the desktop-portal consent prompt in the KWin session.
+Retain and protect the portal's persistent restore state when it is issued; do
+not automate consent, log a restore token, or switch to X11 when consent or a
+portal request fails. Use the native KWin capture default while establishing the
+headless session.
+
+KMS and wlroots capture are not part of this image. KMS needs DRM-primary-node
+access and capabilities that conflict with this deployment's conservative
+profile. The pinned Sunshine compatibility matrix does not support Vulkan Video
+with X11 or wlroots capture, so the configuration validator rejects both pairs.
 
 The runtime launcher uses Sunshine's `key=value` overrides. It preserves the
-existing configuration, pairing state, app definitions and credentials. Profile
+existing configuration, pairing state and app definitions. The session entrypoint
+retains the existing Secret-backed web-account credential update at startup;
+it withholds that command's output and removes the credential variables before
+starting the desktop processes. Profile
 values override saved settings for that process; an empty output-name setting
 does not erase a saved connector. Restore baseline by reverting the profile
 values above through the same maintenance path. No clocks, voltage, ASPM, EPP
@@ -106,11 +126,20 @@ Sunshine capability advertisements do not force the client's decoder choice.
 
 ## Persistence and session boundaries
 
+The Wayland image runs as UID/GID `1000`, with all Linux capabilities dropped.
+KWin starts the virtual Wayland socket and provides its actual XWayland
+`DISPLAY` and `XAUTHORITY` to its session hook. The hook starts PipeWire,
+WirePlumber and a container-local Pulse sink before Steam and Sunshine. It
+serializes use of each persistent home and stops child process groups on exit.
+It never inherits an upstream `DISPLAY`, host D-Bus or host Pulse socket.
+
 The maintained image uses `/home/default`, not the old placeholder's `/home/user`.
 The PVC itself is unchanged. Existing relative files remain on it, but inspect
 UID/GID ownership and any absolute paths in app definitions before migrating.
 Take a NAS backup first; no automatic chown, copy, pairing reset or deletion is
-performed by this change. Upstream first-run initialization must be reviewed too.
+performed on existing state. New homes receive minimal default app definitions.
+Inspect old app definitions for Xrandr commands and Xorg connector names; remove
+or replace those commands explicitly. The migration does not rewrite user apps.
 
 Mesa shader caches use the persistent home with a `2G` cache limit per applicable
 architecture/cache implementation. This is not a limit on Steam's separate
@@ -126,13 +155,32 @@ still needs checking. Do not add blanket `/dev`, host IPC/network, or environmen
 filters as substitutes for device allocation. Rendering, display/capture and
 encoding must all be verified on the allocated card.
 
-The rootful Steam-Headless entrypoint, its extra services/default accounts and
-input requirements remain incompatible with the current conservative promotion
-gate. Resolving that security/display contract is a separate prerequisite; do not
-add capabilities or mark the deployment qualified just to start it. Validate
-`/dev/uhid`, `/dev/uinput`, audio and display access for the pinned input backend,
-and expose only reviewed private streaming ports. Steam downloads need reviewed
-egress; they remain denied by the current policy.
+The K3s source now uses `runAsNonRoot`, UID/GID `1000`, RuntimeDefault seccomp
+and `drop: [ALL]`; it no longer requests `SYS_ADMIN` or `SYS_NICE`. It still is
+not admitted or enabled. Verify the AMD device-plugin device nodes and
+permissions, the selected input mechanism, audio/capture
+permissions, private streaming ports and Steam egress before accepting a
+manifest. Do not add blanket `/dev`, Docker socket, host IPC/network, host D-Bus
+or host display mounts to make it start.
+
+Native Wayland input is a separate unresolved acceptance requirement. KWin's
+[virtual backend does not consume libinput devices](https://github.com/KDE/kwin/blob/v6.3.6/src/input.cpp).
+Sunshine's [pinned Linux input implementation](https://github.com/LizardByte/libvirtualhid/blob/6fdb8bd4de3b68d96c30e5303ac2ebb333c09746/src/platform/linux/uhid_backend.cpp)
+uses uinput or XTest fallback. Adding `/dev/uinput` can suppress that fallback
+without delivering input to this compositor. Do not add it as a guessed fix.
+The candidate path for keyboard/mouse is XTest through Xwayland's EIS portal
+support into KWin; it depends on the package build and separate input consent.
+Check `Xwayland -help` for `-enable-ei-portal`, then demonstrate owner bootstrap,
+keyboard/mouse in both an XWayland game and a native Wayland window, and each
+gamepad type. Native KWin capture avoids **capture** consent, not all **input**
+consent. Selecting portal capture alone does not establish input injection.
+Keep gaming disabled until that workflow is demonstrated; a visible stream is
+not acceptance of an interactive session.
+
+The local Workstation Bridge repository still duplicates an older X11
+`internal/worker/sunshine.Containerfile` recipe. This repository change does not
+modify or build that recipe. Coordinate a Bridge follow-up before asking the
+Bridge worker to build or promote the Wayland image.
 
 Use the existing [session switch/restore procedure](AI-PERFORMANCE.md#workload-and-session-selection).
 The current handover stops the selected AI deployment before gaming; it does not
@@ -154,11 +202,11 @@ Expect the allocated BDF and current render path; inspect `commands.jsonl` and
 `optional-commands.jsonl` for failures/timeouts. Diagnostics collect version,
 VA-API/Vulkan capability, renderer, display and audio metadata without copying
 Sunshine logs, credentials or paired-client state. A successful collection is not
-a successful stream. Reject llvmpipe/software rendering; inspect Sunshine's local
-startup logs for the selected encoder and capture path, and verify actual VCN
-activity and hardware decoding with the client. Do not publish raw logs without
-checking their contents. Record power/temperature separately with existing GPU
-telemetry; the diagnostic command does not sample workload power.
+a successful stream. Reject llvmpipe/software rendering; confirm KWin, capture
+and encoder placement on the allocated card, then verify VCN activity and the
+actual Moonlight decoder choice. Do not publish raw logs without checking their
+contents. Record power/temperature separately with existing GPU telemetry; the
+diagnostic command does not sample workload power.
 
 Copy `templates/sunshine/measurement.example.json` for each profile. Replace all
 provenance placeholders and record at least three timed runs after warm-up using
@@ -185,31 +233,48 @@ only if repeatable latency/drop or bitrate-quality results justify its trade-off
 AMF forks, blanket maximum clocks, voltage changes and unrelated ROCm tuning are
 outside this change.
 
-## Local verification — 8 September 2026
+## Verification status — 8 September 2026
 
-`workstationctl sunshine image-build` completed locally. The final smoke-tested
-Docker config ID was
-`sha256:a6025d38327649c9d2837c235b9b897d4ddf242c45e65e4074104896d5b02145`;
-this is not a deployable registry manifest reference.
+The following repository check completed successfully (41 test files reported,
+including explicit optional skips):
 
-`HOME_LAB_PYTHON=/usr/local/bin/python3.11 HOME_LAB_GAME_IMAGE=<that-local-ID> make check`
-passed all 36 test files, including the opt-in image test. Shell syntax,
-ShellCheck, YAML parsing, Kustomize semantics and the Jinja/TOML checks passed.
-The isolated non-root image test checked the pinned Sunshine/Mesa versions,
-native profile parsing, source-file permissions, removed executable capabilities,
-missing-GPU refusal and unchanged persistent configuration. It did not start a
-stream. Hash-mismatch and failed-build fixtures produced no success record.
+```sh
+HOME_LAB_PYTHON=/usr/local/bin/python3.11 \
+HOME_LAB_WAYLAND_RUNTIME_IMAGE=sha256:a6025d38327649c9d2837c235b9b897d4ddf242c45e65e4074104896d5b02145 \
+  make check
+```
 
-Optional checks skipped: shfmt, Bats, Ansible, real ccache compilation,
-CMake/Ninja integration, operator rendering without its local chart archive,
-the Bash-4-only USB signal fixture, and Linux systemd verification. IDE build
-reported success with limited build diagnostics. Its weak inspection warnings
-concerned dpkg format fields, a generated ConfigMap, deliberately uncommitted
-credential Secrets and an indirectly invoked test fixture; no controls were
-disabled to suppress those warnings.
+Shell syntax, ShellCheck, YAML parsing, offline Kustomize semantics and the
+configured Python Jinja/TOML checks passed. Focused fixtures cover dimensions,
+capture/encoder compatibility, device mapping, existing paired state, renderer
+refusal, missing session prerequisites and build-target selection. The Linux
+process test used the **previous local image only as a Bash/setsid runtime**,
+with one read-only source-file mount. Repeated cleanup and TERM-resistant child
+shutdown passed without network, devices or privileges. This is not a test of
+the new compositor or image. Documentation audits and `git diff --check` passed.
 
-R9700 capture/encoding, GPU isolation, input/audio, client compatibility,
-frame-time/latency/power measurements and recovery under a real streaming session
-remain **NOT RUN — target hardware unavailable**. The rootful image's admission
-incompatibility also remains unresolved; hardware arrival alone does not qualify
-this deployment.
+The new image build was attempted at
+`artifacts/sunshine-wayland-20260908-01`. APT resolved the Wayland package set,
+then stopped because Docker Desktop's 59-GB Linux disk had no free space. The
+failed context is retained; there is no new image ID or success receipt. No
+Docker images, containers, volumes or caches were pruned. Increase the Docker
+disk limit, then retry with a new output directory:
+
+```sh
+./bin/workstationctl sunshine image-build artifacts/sunshine-wayland-20260908-02
+gaming_image_id=$(jq -r .local_image_id artifacts/sunshine-wayland-20260908-02/build-result.json)
+HOME_LAB_GAME_IMAGE="$gaming_image_id" bash tests/test_sunshine_image.sh
+```
+
+New-image smoke tests remain **BLOCKED — Docker disk full**. Other skipped
+checks: shfmt, Bats, Ansible, real ccache compilation, CMake/Ninja integration,
+operator rendering without its local chart archive, the Bash-4-only USB signal
+fixture, and Linux systemd verification. No tools were installed to bypass skips.
+
+A bounded non-root image smoke test can check packaging and startup prerequisites,
+but cannot qualify GPU rendering, capture, encoding, portal/input consent,
+controller input, audio, real clients, latency, frame times or power.
+
+Those physical checks remain **NOT RUN — target hardware unavailable**. Do not
+mark the deployment qualified merely because a local image build or rendered
+manifest succeeds.

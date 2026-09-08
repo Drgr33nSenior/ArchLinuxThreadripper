@@ -50,12 +50,13 @@ isolation. Family members receive application accounts, not permission to create
 pods, change priorities, read Secrets or attach arbitrary PVCs. NetworkPolicy
 does not make a shared kernel or GPU equivalent to separate virtual machines.
 
-Gaming is intentionally not enabled. Its requested `SYS_ADMIN` capability fails
-the shared namespace's enforced baseline Pod Security policy. Do not relax that
-policy for every application to make gaming start. A separate gaming namespace
-or an explicitly reviewed admission exception requires an operator decision.
-The `family` overlay is a reviewable, disabled composition, not a runnable game
-streaming release.
+Gaming is intentionally not enabled. The Wayland candidate runs as UID/GID 1000
+with RuntimeDefault seccomp and all Linux capabilities dropped, so it no longer
+requires the former `SYS_ADMIN` or `SYS_NICE` exception. That source change is
+not qualification: verify GPU device-node access, capture, input, audio, private
+streaming ports and Steam egress before promotion. Do not relax the namespace
+policy or add host access merely to start a game. The `family` overlay remains a
+reviewable, disabled composition, not a runnable game-streaming release.
 
 ## 1. Storage and direct UEFI boot
 
@@ -386,11 +387,15 @@ through application permissions; PVC separation is not parental content policy.
 The unverified `games-on-whales/steam-headless` reference has been replaced by a
 build-required placeholder. The recipe in `infrastructure/gaming` uses the
 digest-pinned maintained Steam-Headless base, a hash-verified Sunshine release,
-and matched amd64/i386 Mesa backports. The home PVC now mounts at the upstream
-`/home/default` path. [SUNSHINE.md](SUNSHINE.md) documents configuration,
-persistent-state migration, the remaining rootful-entrypoint incompatibility,
-image promotion and target tests. The default X11 capture is a compatibility
-fallback, not a validated zero-copy R9700 path.
+matched amd64/i386 Mesa backports and a locked compatible KWin package. Its
+default image replaces the inherited rootful Xorg/XFCE/noVNC lifecycle with a
+non-root KWin virtual Wayland session, PipeWire/WirePlumber and XWayland only for
+Steam or older games. It uses native KWin capture with Vulkan Video by default.
+Portal capture is an explicit owner-consent option, not an X11 fallback. The
+`x11` image target remains an explicit rootful rollback candidate requiring its
+own review. The home PVC mounts at `/home/default`; [SUNSHINE.md](SUNSHINE.md)
+documents configuration, persistent-state migration, image promotion and target
+tests.
 The AMD compute plugin alone does not solve `/dev/uinput`/controller injection.
 No blanket `/dev`, Docker socket, host IPC or host network mount is added. Gaming
 services remain ClusterIP; private L4 exposure and precise input-device delegation

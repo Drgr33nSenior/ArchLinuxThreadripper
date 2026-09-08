@@ -16,18 +16,32 @@ reject() {
 }
 
 ws_load_config "$repo_root/config/workstation.conf.example"
-[[ $SUNSHINE_ENCODER == vaapi && $SUNSHINE_CAPTURE == x11 && $SUNSHINE_VK_TUNE == 2 ]]
+[[ $SUNSHINE_ENCODER == vulkan && $SUNSHINE_CAPTURE == kwin && $SUNSHINE_VK_TUNE == 2 && $GAMING_WIDTH == 1920 && $GAMING_HEIGHT == 1080 ]]
 ws_sunshine_profile "$work/profile" >/dev/null
-grep -Fxq 'SUNSHINE_ENCODER=vaapi' "$work/profile/sunshine.env"
+grep -Fxq 'SUNSHINE_ENCODER=vulkan' "$work/profile/sunshine.env"
+grep -Fxq 'SUNSHINE_CAPTURE=kwin' "$work/profile/sunshine.env"
+grep -Fxq 'GAMING_WIDTH=1920' "$work/profile/sunshine.env"
+grep -Fxq 'GAMING_HEIGHT=1080' "$work/profile/sunshine.env"
 reject ws_sunshine_profile "$work/profile"
 ln -s "$work/nonexistent" "$work/symlink"
 reject ws_sunshine_profile "$work/symlink"
 reject env SUNSHINE_ENCODER=software "$repo_root/bin/workstationctl" sunshine profile "$work/software"
 reject env SUNSHINE_ENCODER=vulkan SUNSHINE_CAPTURE=x11 "$repo_root/bin/workstationctl" sunshine profile "$work/cpu-capture"
+reject env SUNSHINE_ENCODER=vulkan SUNSHINE_CAPTURE=wlr "$repo_root/bin/workstationctl" sunshine profile "$work/wlr-capture"
 reject env SUNSHINE_OUTPUT_NAME=0 "$repo_root/bin/workstationctl" sunshine profile "$work/ordinal"
 reject env SUNSHINE_VK_TUNE=0 "$repo_root/bin/workstationctl" sunshine profile "$work/tune"
 reject env SUNSHINE_AV1_MODE=9 "$repo_root/bin/workstationctl" sunshine profile "$work/codec"
-SUNSHINE_ENCODER=vulkan SUNSHINE_CAPTURE=wlr "$repo_root/bin/workstationctl" sunshine profile "$work/vulkan" >/dev/null
+reject env GAMING_WIDTH=18446744073709553536 "$repo_root/bin/workstationctl" sunshine profile "$work/overflow-width"
+reject env GAMING_WIDTH=1919 "$repo_root/bin/workstationctl" sunshine profile "$work/odd-width"
+reject env GAMING_HEIGHT=479 "$repo_root/bin/workstationctl" sunshine profile "$work/small-height"
+reject env GAMING_WIDTH=7682 "$repo_root/bin/workstationctl" sunshine profile "$work/wide-width"
+SUNSHINE_ENCODER=vulkan SUNSHINE_CAPTURE=portal GAMING_WIDTH=2560 GAMING_HEIGHT=1440 "$repo_root/bin/workstationctl" sunshine profile "$work/vulkan" >/dev/null
+grep -Fxq 'SUNSHINE_CAPTURE=portal' "$work/vulkan/sunshine.env"
+grep -Fxq 'GAMING_WIDTH=2560' "$work/vulkan/sunshine.env"
+# The X11 rollback remains explicit and uses VAAPI rather than pretending that
+# Vulkan Video works with CPU-copy X11 capture.
+SUNSHINE_ENCODER=vaapi SUNSHINE_CAPTURE=x11 "$repo_root/bin/workstationctl" sunshine profile "$work/x11-rollback" >/dev/null
+grep -Fxq 'SUNSHINE_CAPTURE=x11' "$work/x11-rollback/sunshine.env"
 
 # Two identical synthetic AMD GPUs. Only the allocated node is accessible.
 mkdir -p "$work/sys/class/drm" "$work/sys/drivers/amdgpu" "$work/dev"
@@ -83,10 +97,11 @@ ws_require_user() { :; }
 ws_sunshine_version() { printf 'Sunshine version: 2026.906.222525\n'; }
 ws_sunshine_device() { jq -n '{bdf:"0000:21:00.0",render_node:"/dev/dri/renderD135",card_node:"/dev/dri/card1"}'; }
 ws_sunshine_launch "$work/sunshine-fixture" "$work/sunshine.conf" 2>/dev/null
-grep -Fxq 'encoder=vaapi' "$work/args.txt"
+grep -Fxq 'encoder=vulkan' "$work/args.txt"
+grep -Fxq 'capture=kwin' "$work/args.txt"
 grep -Fxq 'adapter_name=/dev/dri/renderD135' "$work/args.txt"
 cmp "$work/original.conf" "$work/sunshine.conf"
-SUNSHINE_ENCODER=vulkan SUNSHINE_CAPTURE=wlr ws_sunshine_launch "$work/sunshine-fixture" "$work/sunshine.conf" 2>/dev/null
+SUNSHINE_ENCODER=vulkan SUNSHINE_CAPTURE=portal ws_sunshine_launch "$work/sunshine-fixture" "$work/sunshine.conf" 2>/dev/null
 grep -Fxq 'encoder=vulkan' "$work/args.txt"
 grep -Fxq 'vk_rc_mode=2' "$work/args.txt"
 reject env SUNSHINE_CAPTURE=kms "$repo_root/bin/workstationctl" sunshine profile "$work/kms-profile-extra-argument" ignored-argument
@@ -105,6 +120,8 @@ PATH="$work:$PATH" ws_sunshine_diagnose "$work/diagnostics" >/dev/null
 jq -e '.status == "diagnostic-only-not-qualified"' "$work/diagnostics/result.json" >/dev/null
 jq -e -s 'any(.[]; .command == "vaapi" and .exit_code == 124 and .required == false)' "$work/diagnostics/optional-commands.jsonl" >/dev/null
 grep -Fxq -- '--kill-after=2s 20s vainfo --display drm --device /dev/dri/renderD135' "$work/diagnostic-commands.txt"
+grep -Fxq -- '--kill-after=2s 15s wayland-info' "$work/diagnostic-commands.txt"
+grep -Fxq -- '--kill-after=2s 15s gdbus call --session --dest org.kde.KWin --object-path /KWin --method org.kde.KWin.supportInformation' "$work/diagnostic-commands.txt"
 
 # Paired operator-entered measurements: fixtures, NOT measured performance.
 jq '.provenance |= with_entries(if (.value|type) == "string" then .value="fixture" else . end) |
@@ -132,6 +149,7 @@ curl() {
   done
   printf 'synthetic Sunshine package\n' > "$destination"
 }
+# shellcheck disable=SC2329 # Called indirectly by the image-build fixture.
 docker() { printf 'called\n' >> "$work/docker-called.txt"; return 90; }
 reject ws_sunshine_image_build "$work/hash-failure"
 [[ ! -e $work/docker-called.txt && ! -e $work/hash-failure/build-result.json ]]
@@ -144,4 +162,26 @@ ws_read_lock() {
 }
 reject ws_sunshine_image_build "$work/build-failure"
 [[ -s $work/docker-called.txt && ! -e $work/build-failure/build-result.json ]]
+
+# Target selection is explicit. The local ID is only a build receipt; it never
+# authorizes a registry or Kubernetes promotion.
+# shellcheck disable=SC2329 # Called indirectly by the image-build fixture.
+docker() {
+  local iid=''
+  printf '%s\n' "$@" > "$work/docker-success-args.txt"
+  while (($#)); do
+    if [[ $1 == --iidfile ]]; then iid=$2; shift 2; else shift; fi
+  done
+  [[ -n $iid ]] || return 91
+  printf '%s\n' 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' > "$iid"
+}
+ws_sunshine_image_build "$work/build-wayland" >/dev/null
+jq -e '.session == "wayland" and .build_target == "wayland"' "$work/build-wayland/build-result.json" >/dev/null
+grep -Fxq -- '--target' "$work/docker-success-args.txt"
+grep -Fxq 'wayland' "$work/docker-success-args.txt"
+ws_sunshine_image_build "$work/build-x11" x11 >/dev/null
+jq -e '.session == "x11" and .build_target == "x11"' "$work/build-x11/build-result.json" >/dev/null
+grep -Fxq 'x11' "$work/docker-success-args.txt"
+reject ws_sunshine_image_build "$work/build-invalid" legacy
+[[ ! -e $work/build-invalid ]]
 printf 'Sunshine profile, GPU mapping, launch and comparison fixtures passed (no GPU exercised)\n'

@@ -4,6 +4,11 @@ This deployment view describes the repository configuration on 2026-09-07. It
 helps the workstation owner locate the AI, gaming, host, storage and optional
 VM layers. It does not describe a discovered running installation.
 
+This dated installer view does not include the later Bridge management plane,
+client agent harnesses or RAG extension. The expanded cross-repository views are
+in `docs/STACK.md` of the `Spry.ai-workstation-bridge` repository. Keep the source
+revision and qualification boundaries of each view distinct.
+
 ![Workstation stack overview](diagrams/workstation-stack.svg)
 
 [Open the PNG preview](diagrams/workstation-stack.png) or edit the authoritative
@@ -61,9 +66,11 @@ blocked or unqualified label; colour alone does not convey status.
 
 ## Regenerate the previews
 
-Use an existing draw.io desktop CLI. The authoring environment has draw.io
-31.3.2. These commands only render local diagram files; they do not run the
-installer or contact a cluster. From the repository root:
+Use an existing draw.io desktop CLI. The original previews used draw.io 31.3.2;
+the 2026-09-08 validation used 31.4.4. XML/reference/geometry checks, fresh SVG
+and PNG exports, and visual inspection passed. These commands only render local
+diagram files; they do not run the installer or contact a cluster. From the
+repository root:
 
 ```sh
 xmllint --nonet --noout docs/diagrams/workstation-stack.drawio

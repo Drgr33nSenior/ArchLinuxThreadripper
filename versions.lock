@@ -73,6 +73,8 @@ SUNSHINE_COMMIT=cb72dffa3233c5815cd5ba88f09f049dd679ba75
 SUNSHINE_DEBIAN_SHA256=c87f226920ad83055a898be1f0c7540307593e92d8b0baf1f076909758db8ca0
 # Matched amd64/i386 Mesa userspace from signed Debian trixie-backports.
 SUNSHINE_MESA_DEBIAN_VERSION=26.1.2-1~bpo13+1
+# Headless Wayland session: reviewed virtual-backend and session-hook contract.
+KWIN_DEBIAN_VERSION=4:6.3.6-1
 # CPU-only RAG pilot inputs reviewed 2026-09-08. Registry config revision matches
 # the source commit; runtime, first-admin bootstrap and retrieval remain unqualified.
 OPEN_WEBUI_VERSION=0.11.3

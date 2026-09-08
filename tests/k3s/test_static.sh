@@ -57,6 +57,11 @@ source "$repo_root/lib/k3s/common.sh"
 # shellcheck source=/dev/null
 source "$repo_root/lib/k3s/lifecycle.sh"
 k3s_load_config "$config_file" "$repo_root/versions.lock"
+[ "$KWIN_DEBIAN_VERSION" = '4:6.3.6-1' ]
+# Repeated loads clear the new lock key; environment values cannot shadow it.
+KWIN_DEBIAN_VERSION=invalid
+k3s_load_config "$config_file" "$repo_root/versions.lock"
+[ "$KWIN_DEBIAN_VERSION" = '4:6.3.6-1' ]
 [ "$K3S_VERSION" = 'v1.35.7+k3s1' ]
 [ "$K3S_SELINUX_RPM_VERSION" = '1.6-1.el9' ]
 [ "$VM_VCPUS" = 8 ]

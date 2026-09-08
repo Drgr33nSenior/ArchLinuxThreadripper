@@ -63,12 +63,17 @@ SESSION_STREAMING_PATH=sunshine
 
 # Gaming candidate only; these settings do not qualify or enable a Deployment.
 # Generate sunshine.env for the existing Kustomize ConfigMap with `sunshine profile`.
-# x11 matches the candidate's XFCE/Xorg session but is a CPU-copy capture fallback.
-# Vulkan Video requires a separately qualified DMA-BUF capture path (kms/wlr/kwin).
-SUNSHINE_ENCODER=vaapi
-SUNSHINE_CAPTURE=x11
+# The default is the KWin/PipeWire Wayland path. Portal capture is also explicit.
+# X11 is retained only for the separately built `sunshine image-build OUT x11`
+# rollback image and cannot be used with Vulkan Video.
+SUNSHINE_ENCODER=vulkan
+SUNSHINE_CAPTURE=kwin
 SUNSHINE_OUTPUT_NAME=
 SUNSHINE_HEVC_MODE=0
 SUNSHINE_AV1_MODE=0
 SUNSHINE_VK_TUNE=2
 SUNSHINE_VAAPI_STRICT_RC_BUFFER=disabled
+# KWin virtual-output dimensions. Change only with a matching profile/image
+# rollout; values must be even and remain within the validated limits.
+GAMING_WIDTH=1920
+GAMING_HEIGHT=1080

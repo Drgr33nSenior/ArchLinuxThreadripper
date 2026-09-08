@@ -127,8 +127,10 @@ The additive [bare-metal home-lab profile](docs/HOME-LAB.md) provides
 `infrastructure/` host/K3s/operator configuration and `apps/` Kustomize bases
 and overlays. It reuses this installer with `/dev/md0`, TPM2+PIN enrollment
 planning and a 4 GiB Argon2id memory ceiling. The EL9/KVM lab remains separate.
-Workload replicas are disabled pending image/hardware qualification; gaming
-also requires an explicit namespace/admission decision.
+Workload replicas are disabled pending image/hardware qualification. Gaming now
+has a non-root KWin/Wayland candidate, but still requires image promotion and
+target validation of GPU nodes, capture, input, audio, network exposure and
+egress before it can be enabled. See [the Sunshine runbook](docs/SUNSHINE.md).
 
 The [model defaults](docs/MODELS.md) select Qwen3.8-27B-FP8 across both R9700s
 through `apps/overlays/default`. The RAG profile uses the same chat model with

@@ -2,22 +2,30 @@
 # Explicit streaming profiles and offline/target diagnostics; no cluster mutation.
 
 ws_sunshine_config_validate() {
-  SUNSHINE_ENCODER=${SUNSHINE_ENCODER:-vaapi}
-  SUNSHINE_CAPTURE=${SUNSHINE_CAPTURE:-x11}
+  SUNSHINE_ENCODER=${SUNSHINE_ENCODER:-vulkan}
+  SUNSHINE_CAPTURE=${SUNSHINE_CAPTURE:-kwin}
   SUNSHINE_OUTPUT_NAME=${SUNSHINE_OUTPUT_NAME:-}
   SUNSHINE_HEVC_MODE=${SUNSHINE_HEVC_MODE:-0}
   SUNSHINE_AV1_MODE=${SUNSHINE_AV1_MODE:-0}
   SUNSHINE_VK_TUNE=${SUNSHINE_VK_TUNE:-2}
   SUNSHINE_VAAPI_STRICT_RC_BUFFER=${SUNSHINE_VAAPI_STRICT_RC_BUFFER:-disabled}
+  GAMING_WIDTH=${GAMING_WIDTH:-1920}
+  GAMING_HEIGHT=${GAMING_HEIGHT:-1080}
   case $SUNSHINE_ENCODER in vaapi|vulkan) ;; *) ws_die 'SUNSHINE_ENCODER must be vaapi or vulkan' ;; esac
-  case $SUNSHINE_CAPTURE in x11|kms|wlr|kwin) ;; *) ws_die 'SUNSHINE_CAPTURE must explicitly select x11, kms, wlr or kwin' ;; esac
-  [[ $SUNSHINE_ENCODER != vulkan || $SUNSHINE_CAPTURE != x11 ]] \
-    || ws_die 'Vulkan Video requires a qualified DMA-BUF capture path, not x11'
+  case $SUNSHINE_CAPTURE in x11|kms|wlr|kwin|portal) ;; *) ws_die 'SUNSHINE_CAPTURE must explicitly select x11, kms, wlr, kwin or portal' ;; esac
+  [[ $SUNSHINE_ENCODER != vulkan || ( $SUNSHINE_CAPTURE != x11 && $SUNSHINE_CAPTURE != wlr ) ]] \
+    || ws_die 'Vulkan Video requires KMS, KWin or portal capture; x11 and wlr are unsupported'
   [[ -z $SUNSHINE_OUTPUT_NAME || $SUNSHINE_OUTPUT_NAME =~ ^[a-zA-Z][a-zA-Z0-9_.:-]*$ ]] \
     || ws_die 'SUNSHINE_OUTPUT_NAME must be empty or a discovered connector name, not a numeric ordinal'
   [[ $SUNSHINE_HEVC_MODE =~ ^[0-3]$ && $SUNSHINE_AV1_MODE =~ ^[0-3]$ ]] || ws_die 'Sunshine codec modes must be 0..3'
   [[ $SUNSHINE_VK_TUNE == 2 || $SUNSHINE_VK_TUNE == 3 ]] || ws_die 'SUNSHINE_VK_TUNE must be 2 (low latency) or 3 (experimental ultra-low latency)'
   case $SUNSHINE_VAAPI_STRICT_RC_BUFFER in enabled|disabled) ;; *) ws_die 'SUNSHINE_VAAPI_STRICT_RC_BUFFER must be enabled or disabled' ;; esac
+  [[ $GAMING_WIDTH =~ ^[1-9][0-9]{2,3}$ && $GAMING_HEIGHT =~ ^[1-9][0-9]{2,3}$ ]] \
+    || ws_die 'GAMING_WIDTH and GAMING_HEIGHT must be positive decimal integers'
+  (( 10#$GAMING_WIDTH >= 640 && 10#$GAMING_WIDTH <= 7680 && 10#$GAMING_WIDTH % 2 == 0 )) \
+    || ws_die 'GAMING_WIDTH must be an even value from 640 to 7680'
+  (( 10#$GAMING_HEIGHT >= 480 && 10#$GAMING_HEIGHT <= 4320 && 10#$GAMING_HEIGHT % 2 == 0 )) \
+    || ws_die 'GAMING_HEIGHT must be an even value from 480 to 4320'
 }
 
 ws_sunshine_new_output() {
@@ -29,7 +37,7 @@ ws_sunshine_new_output() {
 ws_sunshine_env() {
   local key
   ws_sunshine_config_validate
-  for key in SUNSHINE_ENCODER SUNSHINE_CAPTURE SUNSHINE_OUTPUT_NAME SUNSHINE_HEVC_MODE SUNSHINE_AV1_MODE SUNSHINE_VK_TUNE SUNSHINE_VAAPI_STRICT_RC_BUFFER; do
+  for key in SUNSHINE_ENCODER SUNSHINE_CAPTURE SUNSHINE_OUTPUT_NAME SUNSHINE_HEVC_MODE SUNSHINE_AV1_MODE SUNSHINE_VK_TUNE SUNSHINE_VAAPI_STRICT_RC_BUFFER GAMING_WIDTH GAMING_HEIGHT; do
     printf '%s=%s\n' "$key" "${!key}"
   done
 }
@@ -145,7 +153,10 @@ ws_sunshine_diagnose() (
   ws_capture_optional "$output" ffmpeg timeout --kill-after=2s 15s ffmpeg -version
   ws_capture_optional "$output" display timeout --kill-after=2s 15s xrandr --query
   ws_capture_optional "$output" renderer timeout --kill-after=2s 15s glxinfo -B
+  ws_capture_optional "$output" wayland timeout --kill-after=2s 15s wayland-info
+  ws_capture_optional "$output" kwin timeout --kill-after=2s 15s gdbus call --session --dest org.kde.KWin --object-path /KWin --method org.kde.KWin.supportInformation
   ws_capture_optional "$output" audio timeout --kill-after=2s 15s pactl list short sinks
+  ws_capture_optional "$output" xwayland-input-options timeout --kill-after=2s 15s Xwayland -help
   if command -v dpkg-query >/dev/null; then
     # shellcheck disable=SC2016 # dpkg-query expands these fields, not the shell.
     ws_capture "$output" packages dpkg-query -W '-f=${binary:Package}\t${Version}\n' sunshine libgl1-mesa-dri mesa-libgallium mesa-vulkan-drivers libva2 libvulkan1 ffmpeg
@@ -162,7 +173,9 @@ ws_sunshine_diagnose() (
 ws_sunshine_image_build() (
   set -euo pipefail
   umask 077
-  local output=$1 root base version hash url mesa image_id
+  local output=$1 session=${2:-wayland} root base version hash url mesa kwin='' image_id
+  local -a build_args
+  case $session in wayland|x11) ;; *) ws_die 'image-build session must be wayland or x11' ;; esac
   root=$(ws_repo_root)
   base=$(ws_read_lock STEAM_HEADLESS_BASE_IMAGE)
   version=$(ws_read_lock SUNSHINE_VERSION)
@@ -171,6 +184,10 @@ ws_sunshine_image_build() (
   [[ $base =~ ^docker\.io/josh5/steam-headless@sha256:[a-f0-9]{64}$ && $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && $hash =~ ^[a-f0-9]{64}$ ]] \
     || ws_die 'invalid gaming image lock'
   [[ $mesa =~ ^[0-9][a-zA-Z0-9.+~:-]+$ ]] || ws_die 'invalid Mesa package version'
+  if [[ $session == wayland ]]; then
+    kwin=$(ws_read_lock KWIN_DEBIAN_VERSION)
+    [[ $kwin =~ ^[0-9][a-zA-Z0-9.+~:-]+$ ]] || ws_die 'invalid KWin package version'
+  fi
   command -v docker >/dev/null || ws_die 'image-build requires an existing Docker builder'
   ws_sunshine_new_output "$output"
   output=$(cd -- "$output" && pwd -P)
@@ -188,15 +205,17 @@ ws_sunshine_image_build() (
   curl --fail --location --proto '=https' --proto-redir '=https' --max-time 180 --output "$output/context/sunshine.deb" "$url" \
     || ws_die 'Sunshine download failed; partial output retained'
   common::verify_sha256 "$output/context/sunshine.deb" "$hash"
-  docker build --platform linux/amd64 --build-arg "BASE_IMAGE=$base" \
-    --build-arg "SUNSHINE_SHA256=$hash" --build-arg "MESA_VERSION=$mesa" --iidfile "$output/image.id" \
+  build_args=(--platform linux/amd64 --build-arg "BASE_IMAGE=$base" --build-arg "SUNSHINE_SHA256=$hash" --build-arg "MESA_VERSION=$mesa")
+  [[ -z $kwin ]] || build_args+=(--build-arg "KWIN_DEBIAN_VERSION=$kwin")
+  docker build "${build_args[@]}" --target "$session" --iidfile "$output/image.id" \
     -f "$output/context/infrastructure/gaming/Dockerfile" "$output/context" \
     || ws_die 'gaming image build failed; partial output retained'
   image_id=$(< "$output/image.id")
   [[ $image_id =~ ^sha256:[a-f0-9]{64}$ ]] || ws_die 'builder did not return a local SHA-256 image ID'
-  jq -n --arg base "$base" --arg sunshine "$version" --arg sha256 "$hash" --arg mesa "$mesa" --arg image_id "$image_id" \
+  jq -n --arg base "$base" --arg sunshine "$version" --arg sha256 "$hash" --arg mesa "$mesa" --arg kwin "$kwin" --arg session "$session" --arg image_id "$image_id" \
     '{schema:1,status:"built-not-qualified",base:$base,sunshine:$sunshine,sunshine_deb_sha256:$sha256,
-      mesa_debian_version:$mesa,local_image_id:$image_id,note:"local config ID is NOT a registry manifest digest; dependencies recorded inside image"}' > "$output/build-result.json"
+       mesa_debian_version:$mesa,kwin_debian_version:(if $session == "wayland" then $kwin else null end),session:$session,build_target:$session,local_image_id:$image_id,
+       note:"local config ID is NOT a registry manifest digest; dependencies recorded inside image"}' > "$output/build-result.json"
   ws_note "built local candidate; no registry publication or cluster changes. Result: $output/build-result.json"
 )
 

@@ -223,7 +223,7 @@ local-path PVCs. The existing KVM/AlmaLinux lab is a separate retained workflow.
 | K3s exclusive CPUs | `infrastructure/ansible/roles/k3s_baremetal/`: previously kubelet defaults | K3s `v1.35.7+k3s1`; [drop-ins](https://docs.k3s.io/installation/configuration#kubelet-configuration-files), [v1.35 CPU policies](https://v1-35.docs.kubernetes.io/docs/tasks/administer-cluster/cpu-management-policies/) | Opt-in implementation | Offline SMT-based resource plan; static/full-core/strict reservation; restricted/pod topology; explicit checkpoint/running-service migration refusal | Resource fixtures and exact rendered task predicates; real kubelet admission NOT RUN |
 | AI CPU/RAM/GPU envelopes | `apps/base/{sglang,swarmui}/`, dual overlay: Burstable before this tranche | [Guaranteed QoS](https://kubernetes.io/docs/concepts/workloads/pods/pod-qos/); [SGLang arguments](https://github.com/sgl-project/sglang/blob/main/docs/advanced_features/server_arguments.md), image still unqualified | Implement resource corrections; retain models | Requests now match existing limits; init container also whole-core/Guaranteed. Existing `.80` memory fraction and two-request concurrency exposed through the ConfigMap; bounded `/dev/shm` retained | `tests/home-lab/check-manifests.rb`; serving correctness NOT RUN |
 | Exclusive GPUs and handover | Traditional plugin; no existing session controller | [AMD allocation semantics](https://instinct.docs.amd.com/projects/k8s-device-plugin/en/latest/user-guide/resource-allocation.html) | Implement conservative explicit command | `lib/workstation/session.sh`: exact UIDs, lock, snapshot, timeout, global pending/active GPU checks and live DRM holder check; stop all managed AI before gaming | `tests/test_session.sh` mocks; no real cluster or GPU execution |
-| Gaming activation | `apps/base/steam-headless/`: floating image, pending qualification, capabilities conflict with baseline PSA | [Sunshine container requirements](https://github.com/LizardByte/Sunshine/blob/master/DOCKER_README.md), [configuration](https://docs.lizardbyte.dev/projects/sunshine/latest/md_docs_2configuration.html) | Keep gated | No security relaxation. Session command refuses before stopping AI. Steam and Sunshine are alternative paths; Moonlight is the Sunshine client | Manifest/security gate tests; capture/input/audio/codecs NOT RUN |
+| Gaming activation | `apps/base/steam-headless/`: immutable image still pending promotion; non-root KWin/Wayland candidate | [Sunshine capture configuration](https://docs.lizardbyte.dev/projects/sunshine/master/md_docs_2configuration.html#capture), [Linux compatibility](https://docs.lizardbyte.dev/projects/sunshine/latest/) | Keep gated | KWin virtual output, PipeWire/WirePlumber, native KWin capture and Vulkan Video; XWayland supports Steam/legacy games. Session command refuses before stopping AI. Steam and Sunshine are alternative paths; Moonlight is the Sunshine client | Render/security tests; target GPU, capture, input, audio and codec checks NOT RUN |
 | Persistent storage | Model/creative/game PVCs, ccache; HF cache previously ephemeral | [K3s local storage](https://docs.k3s.io/storage) | Extend, retain layout | Separate 16 GiB HF cache PVC; read-only model mount retained. Existing gaming home holds shader caches; existing TRIM timer/encryption discard and backup design unchanged | Render/PVC tests and read-only discovery; actual cooling/TRIM/retention NOT RUN |
 | Functional peer transfers | BAR/PCI metadata cannot prove a transfer | [HIP peer API](https://rocm.docs.amd.com/projects/HIP/en/latest/doxygen/html/group___peer_to_peer.html) | Explicit diagnostic only | `tests/hardware/hip-peer-copy.cpp`: ordered pairs, 16 MiB transfer, UUID/PCI identity and readback verification | Compiled mock-HIP API tests; actual HIP compile and physical transfer NOT RUN |
 
@@ -366,19 +366,21 @@ game and run `restore`. Stop or pause already-running builds through their own
 terminal/job manager before gaming; the cooperative build marker only blocks
 new managed compiler commands. No temporary TuneD/power changes need restoration.
 
-Gaming currently fails **before** stopping AI: its built image is not promoted, its
-requested capabilities conflict with baseline PSA, and capture/uinput/audio,
-display access, network policy and encoder behaviour remain unqualified. Do not
-set `workstation.ai/qualification: qualified` merely to bypass this gate. It is
-the final reviewed marker after immutable image provenance and target tests;
-the command also checks digest pins and the conservative security profile.
-No namespace security exception was introduced. For Steam Remote Play select
+Gaming currently fails **before** stopping AI: its built image is not promoted,
+and GPU device access, capture/uinput/audio, private streaming exposure, network
+policy and encoder behaviour remain unqualified. The Wayland candidate now drops
+all capabilities and runs non-root; do not set
+`workstation.ai/qualification: qualified` merely to bypass this gate. It is the
+final reviewed marker after immutable image provenance and target tests; the
+command also checks digest pins and the conservative security profile. For Steam
+Remote Play select
 `SESSION_STREAMING_PATH=steam` and a qualified manifest with Sunshine disabled;
 for Sunshine keep rendering/capture/encoding on its plugin-allocated GPU and
 verify the chosen codec/backend with the actual Moonlight client.
-The [Sunshine implementation and qualification runbook](SUNSHINE.md) adds
-explicit VA-API/Vulkan Video profiles, persistent shader-cache settings and
-allocated-device checks. These do not remove the admission or handover gates.
+The [Sunshine implementation and qualification runbook](SUNSHINE.md) records the
+KWin/PipeWire session, explicit Vulkan/VA-API profiles, persistent shader-cache
+settings and allocated-device checks. These do not remove the promotion or
+handover gates.
 
 This tranche stops the selected AI workload before gaming, including models
 spanning both cards. A paused request queue does not unload VRAM. Simultaneous

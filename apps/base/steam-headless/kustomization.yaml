@@ -4,10 +4,12 @@ resources: [deployment.yaml, service.yaml, pvc.yaml]
 configMapGenerator:
   - name: sunshine-profile
     literals:
-      - SUNSHINE_ENCODER=vaapi
-      - SUNSHINE_CAPTURE=x11
+      - SUNSHINE_ENCODER=vulkan
+      - SUNSHINE_CAPTURE=kwin
       - SUNSHINE_OUTPUT_NAME=
       - SUNSHINE_HEVC_MODE=0
       - SUNSHINE_AV1_MODE=0
       - SUNSHINE_VK_TUNE=2
       - SUNSHINE_VAAPI_STRICT_RC_BUFFER=disabled
+      - GAMING_WIDTH=1920
+      - GAMING_HEIGHT=1080
