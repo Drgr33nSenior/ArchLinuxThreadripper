@@ -1,0 +1,20 @@
+# Dedicated console session; never merge with the desktop keyring configuration.
+cli_auth_credentials_store = "file"
+mcp_oauth_credentials_store = "file"
+approval_policy = "on-request"
+sandbox_mode = "read-only"
+check_for_update_on_startup = false
+project_root_markers = ["SOURCE-MANIFEST.sha256", ".git"]
+project_doc_fallback_filenames = [".aiassistant/rules/workstation-guardrails.md"]
+
+[history]
+persistence = "none"
+
+[analytics]
+enabled = false
+
+[feedback]
+enabled = false
+
+[shell_environment_policy]
+inherit = "none"

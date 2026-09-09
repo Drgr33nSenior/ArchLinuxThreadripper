@@ -1,5 +1,28 @@
 # Installation runbook
 
+## Codex installation guidance
+
+For Codex directly at the custom ISO console, follow [CODEX-INSTALL.md](CODEX-INSTALL.md):
+connect with iwctl first, then choose API-key or device-code authentication through
+the packaged launcher. It also covers first-boot NetworkManager reconnection and
+optional installed-host continuation. Credentials are never carried into the target.
+
+The repository-scoped [workstation-install skill](../.agents/skills/workstation-install/SKILL.md)
+uses this runbook and the existing installer. With this checkout open in Codex:
+
+```text
+$workstation-install prepare an ISO from this checkout
+$workstation-install plan my rebuild using config/install.conf
+$workstation-install investigate my interrupted installation using my private controller journal
+$workstation-install verify the installed workstation using config/install.conf
+```
+
+The skill keeps a small private journal on the controller or separate external
+storage, outside Git and the target disks. It supplies no SSH access or reboot
+continuity by itself. Disk writes, installation, key enrolment and reboots remain
+owner-run handoffs. It does not resume a partial installation automatically or
+treat a dry run as boot/recovery qualification.
+
 ## 1. Prepare the hardware and firmware
 
 1. Confirm the exact RDIMM count. A two-DIMM 2x32 GiB kit belongs in the

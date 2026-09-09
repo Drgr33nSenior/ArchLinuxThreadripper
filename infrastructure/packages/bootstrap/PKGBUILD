@@ -52,15 +52,22 @@ prepare() {
 package_arch-workstation-bootstrap() {
   pkgdesc='Guarded Arch live-media workstation installer and recovery documentation'
   depends=('bash' 'arch-install-scripts' 'cryptsetup' 'mdadm' 'xfsprogs' 'dosfstools'
-    'gptfdisk' 'pciutils' 'jq' 'sbsigntools' 'efibootmgr' 'gnupg' 'libarchive')
+    'gptfdisk' 'pciutils' 'jq' 'sbsigntools' 'efibootmgr' 'gnupg' 'libarchive'
+    'curl' 'iproute2' 'systemd' 'ripgrep' 'util-linux')
+  depends+=("openai-codex=$(_lock_value "$srcdir/project/infrastructure/iso/versions.lock" CODEX_PACKAGE_VERSION)")
   local path
   while IFS= read -r path; do
     install -Dm644 "$srcdir/project/$path" "$pkgdir/usr/lib/arch-workstation-bootstrap/$path"
   done < "$srcdir/project/source.files"
   install -Dm644 "$srcdir/project/SOURCE-MANIFEST.sha256" "$pkgdir/usr/lib/arch-workstation-bootstrap/SOURCE-MANIFEST.sha256"
+  install -Dm644 "$srcdir/project/BUILD-IDENTITY" "$pkgdir/usr/lib/arch-workstation-bootstrap/BUILD-IDENTITY"
+  # Generated instruction adapter; the canonical guardrails remain unchanged.
+  install -Dm644 "$srcdir/project/.aiassistant/rules/workstation-guardrails.md" "$pkgdir/usr/lib/arch-workstation-bootstrap/AGENTS.md"
   chmod 755 "$pkgdir/usr/lib/arch-workstation-bootstrap/bin/"*
   install -Dm755 "$srcdir/project/infrastructure/packages/bootstrap/launch-bootstrap" "$pkgdir/usr/bin/bootstrap-arch"
   install -Dm755 "$srcdir/project/infrastructure/packages/bootstrap/launch-live" "$pkgdir/usr/bin/arch-workstation-live"
+  install -Dm755 "$srcdir/project/infrastructure/packages/bootstrap/launch-codex" "$pkgdir/usr/bin/arch-workstation-codex"
+  install -Dm755 "$srcdir/project/infrastructure/packages/bootstrap/launch-network" "$pkgdir/usr/bin/arch-workstation-network"
   install -Dm644 "$srcdir/project/infrastructure/packages/bootstrap/LICENSE-NOTICE" "$pkgdir/usr/share/licenses/arch-workstation-bootstrap/LICENSE-NOTICE"
 }
 

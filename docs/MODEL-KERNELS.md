@@ -140,7 +140,22 @@ authorization may be required; never weaken access controls to profile.
 ```
 
 Profiling is bounded to 32 steps. After a successful start, cleanup attempts
-`/stop_profile`, including failures. Traces remain in the unique recorded
+`/stop_profile`, including failures. The pinned default profiler can finish
+automatically at that bound. Its subsequent stop raises an untranslated
+`RuntimeError` (generic HTTP 500), not a documented success response.
+
+The workflow checks the exact source hashes and rejects the unreviewed V2
+profiler. Start/stop success bodies must match the pinned routes. A generic 500
+remains pending until the same Pod supplies valid, hashed GPU traces for every
+TP rank in this run's unique profile-ID directory, successful per-rank export
+logs, and the exact not-in-progress exception. Unknown errors, missing/corrupt
+traces, authorization and transport failures are fatal. Log collection is bounded
+to 2,000 lines/256 KiB since this session; only a hash and the minimal validation
+summary are retained. Truncated, differently formatted or insufficient logs fail
+closed. An exclusive profiling window is required for this attribution; no other
+user may call profiling endpoints during the run.
+
+Traces remain in the unique recorded
 `/cache/xdg/workstation-profiles/…` directory on the existing PVC. Copy only the
 exact reviewed files from that Pod. Inspect every TP rank. Do not dump
 `/server_info`, environment variables or credentials. The parser accepts Kineto
@@ -233,3 +248,10 @@ Validation on 9 September 2026:
 Actual model compilation, restart cache hits, GPU numerical correctness,
 dispatch, tuning and sustained performance are **NOT RUN — target workstation
 unavailable**. No hardware-qualified improvement or faster default is claimed.
+
+The focused revalidation of installer `67a5060` and Bridge `deb6a93` is recorded
+in [VALIDATION-67a5060.md](VALIDATION-67a5060.md). Shell cleanup now preserves the
+primary workload/signal outcome, stops only its owned process groups and removes
+its three named temporary files, including `compiler-before.json`. Unexpected
+temporary contents are retained with a warning. Persistent caches and run
+evidence are never cleanup targets.

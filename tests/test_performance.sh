@@ -8,6 +8,7 @@ fi
 PYTHONDONTWRITEBYTECODE=1 "$HOME_LAB_PYTHON" "$root/tests/hardware/test_measurement.py"
 PYTHONDONTWRITEBYTECODE=1 "$HOME_LAB_PYTHON" "$root/tests/hardware/test_llama_runtime.py"
 PYTHONDONTWRITEBYTECODE=1 "$HOME_LAB_PYTHON" "$root/tests/hardware/test_model_kernels.py"
+PYTHONDONTWRITEBYTECODE=1 "$HOME_LAB_PYTHON" "$root/tests/hardware/test_serving_orchestration.py"
 # shellcheck source=lib/common.sh
 source "$root/lib/common.sh"
 # shellcheck source=lib/workstation/runtime.sh

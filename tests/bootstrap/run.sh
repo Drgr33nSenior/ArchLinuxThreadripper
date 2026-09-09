@@ -103,6 +103,8 @@ bootstrap_require_uefi() { :; }
 bootstrap_require_install_commands() { :; }
 bootstrap_select_gpu_packages() { :; }
 bootstrap_no_active_swap() { :; }
+# Connectivity is covered by test_install_network.sh; never probe real mirrors here.
+bootstrap_network_mirrors() { :; }
 # shellcheck disable=SC2034
 bootstrap_check_disk() {
   if [[ $1 == /dev/disk/by-id/nvme-Example_A ]]; then

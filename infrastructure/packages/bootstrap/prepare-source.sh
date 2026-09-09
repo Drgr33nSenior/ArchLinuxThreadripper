@@ -27,13 +27,16 @@ while IFS= read -r path; do
   install -m644 "$root/$path" "$output/project/$path"
 done <"$root/infrastructure/packages/bootstrap/source.files"
 cp "$root/infrastructure/packages/bootstrap/source.files" "$output/project/source.files"
+revision=$(git -C "$root" rev-parse --verify HEAD 2>/dev/null) || revision=unknown
+printf 'REPOSITORY_REVISION=%s\nSOURCE_IDENTITY=SOURCE-MANIFEST.sha256\n' "$revision" >"$output/project/BUILD-IDENTITY"
 (
   cd "$output/project"
   while IFS= read -r path; do printf '%s  %s\n' "$(common::sha256_file "$path")" "$path"; done <source.files
+  printf '%s  BUILD-IDENTITY\n' "$(common::sha256_file BUILD-IDENTITY)"
 ) >"$output/project/SOURCE-MANIFEST.sha256"
 {
   sed 's|^|project/|' "$output/project/source.files"
-  printf '%s\n' project/source.files project/SOURCE-MANIFEST.sha256
+  printf '%s\n' project/source.files project/SOURCE-MANIFEST.sha256 project/BUILD-IDENTITY
 } | sort >"$output/archive.files"
 while IFS= read -r path; do touch -t "$timestamp" "$output/$path"; done <"$output/archive.files"
 bsdtar --format=ustar --uid 0 --gid 0 --uname root --gname root -cf - -C "$output" -T "$output/archive.files" | gzip -n >"$output/bootstrap-source.tar.gz"

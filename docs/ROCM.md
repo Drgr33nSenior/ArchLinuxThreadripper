@@ -305,8 +305,10 @@ exists.
 
 ## Validate and promote on both GPUs
 
-Select one coherent ROCm/PyTorch environment, ensure its `rocminfo`, `rocm-smi`
-and `hipcc` are on PATH, and use its Python executable:
+Select one coherent ROCm/PyTorch environment, ensure its `rocminfo`, `hipcc`
+and provider-appropriate AMD SMI or legacy `rocm-smi` are available, and use its
+Python executable. The collector retains explicit unavailable/error observations;
+the presence of a monitoring command does not qualify sensor coverage.
 
 ```sh
 ./bin/workstationctl --config config/workstation.conf \
@@ -324,13 +326,22 @@ sum. Timeouts bound collective and inference failures. RCCL success does not
 prove direct GPU peer DMA: inspect topology and benchmark peer transfers before
 making bandwidth or interconnect claims.
 
-The inference command checks the locked llama.cpp version, enumerates actual
+The standalone `rocm inference` command is an **unsealed fixed-config smoke
+test**, not a benchmark or promotion gate. It writes `smoke.json`, does not check
+the shared runtime manifest, fixes all-device layer splitting and equal shares,
+and leaves threads/KV types at the executable's defaults. It does not implement
+the benchmark's effective-inference configuration. Use `benchmark-llama` and
+`qualify-llama` for sealed, matched performance and numerical evidence.
+
+The smoke command checks the locked llama.cpp version, enumerates actual
 ROCm device names, selects both, and requires positive model allocations on
-both in the log. Review generated output as well as throughput. Test a small,
+both in the log. Review generated output, but do not use this run for performance
+comparisons. Test a small,
 local model first. Model VRAM, KV cache and desktop overhead must fit; 64 GiB of
 VRAM across two cards is not a single automatic 64 GiB allocation.
 
-Record `rocm-smi`, temperatures, clocks, host RAM, PCIe errors and kernel logs
+Record provider-aware AMD SMI/legacy SMI observations, temperatures, clocks,
+host RAM, PCIe errors and kernel logs
 during a sustained workload. Compare repeated runs with identical model hashes,
 precision, context and batch size. Reboot manually, rerun into a new directory,
 compare boot IDs/PCI addresses/architectures, and repeat the same model. Keep

@@ -24,7 +24,7 @@ if command -v bsdtar >/dev/null; then
     startdir="$work/source-a"
     srcdir=$startdir
     pkgdir="$work/installer-package"
-    source=() sha256sums=() backup=()
+    source=() sha256sums=() backup=() depends=()
     export startdir srcdir pkgdir
     install() {
       local mode=${1#-Dm}
@@ -56,6 +56,16 @@ if command -v bsdtar >/dev/null; then
     printf 'SYNTHETIC NOT EXECUTABLE\n' >"$startdir/launch-bootstrap"
     package_arch-workstation-bootstrap
     [[ -x $pkgdir/usr/bin/bootstrap-arch && -x $pkgdir/usr/bin/arch-workstation-live ]]
+    [[ -x $pkgdir/usr/bin/arch-workstation-codex && -x $pkgdir/usr/bin/arch-workstation-network ]]
+    packaged_root="$pkgdir/usr/lib/arch-workstation-bootstrap"
+    [[ -x $packaged_root/bin/arch-workstation-codex && -x $packaged_root/bin/arch-workstation-network ]]
+    [[ -f $packaged_root/.agents/skills/workstation-install/SKILL.md && ! -e $packaged_root/.git ]]
+    [[ -f $packaged_root/BUILD-IDENTITY && -f $packaged_root/docs/CODEX-INSTALL.md ]]
+    cmp "$packaged_root/AGENTS.md" "$packaged_root/.aiassistant/rules/workstation-guardrails.md"
+    [[ " ${depends[*]} " == *" openai-codex=$(common::lock_get "$root/infrastructure/iso/versions.lock" CODEX_PACKAGE_VERSION) "* ]]
+    bash "$packaged_root/bin/arch-workstation-codex" --help >/dev/null
+    bash "$packaged_root/bin/arch-workstation-network" --help >/dev/null
+    (cd "$packaged_root" && sha256sum --check --strict SOURCE-MANIFEST.sha256 >/dev/null)
     cmp "$pkgdir/usr/bin/bootstrap-arch" "$srcdir/project/infrastructure/packages/bootstrap/launch-bootstrap"
     bash "$pkgdir/usr/lib/arch-workstation-bootstrap/bin/bootstrap-arch" --help >/dev/null
     pkgdir="$work/runtime-package"

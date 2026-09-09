@@ -90,7 +90,8 @@ setup_fragment=$(sed -n '/^# Restore shared documentation directories/,/^useradd
 (
   export ISO_DOCKER_TEST_ROOT="$work/builder-root"
   expected=$(sed -n 's/^ARCHISO_PACKAGE_VERSION=//p' "$root/infrastructure/iso/versions.lock")
-  export expected
+  lock="$root/infrastructure/iso/versions.lock"
+  export expected lock
   # Exported for the child Bash process that executes the setup fragment.
   # shellcheck disable=SC2329
   install() {
@@ -102,9 +103,14 @@ setup_fragment=$(sed -n '/^# Restore shared documentation directories/,/^useradd
     case $1 in
       -Syu)
         [[ -d $ISO_DOCKER_TEST_ROOT/usr/share/doc && -d $ISO_DOCKER_TEST_ROOT/usr/share/man ]] || return 1
+        [[ " $* " == *" openai-codex=$(sed -n 's/^CODEX_PACKAGE_VERSION=//p' "$lock") "* ]] || return 1
         return "${ISO_DOCKER_TEST_INSTALL_STATUS:-0}"
         ;;
       -Q)
+        if [[ $2 == openai-codex ]]; then
+          printf 'openai-codex %s\n' "${ISO_DOCKER_TEST_CODEX_VERSION:-$(sed -n 's/^CODEX_PACKAGE_VERSION=//p' "$lock")}"
+          return 0
+        fi
         [[ $* == '-Q archiso' ]] || return 1
         printf 'archiso %s\n' "${ISO_DOCKER_TEST_VERSION:-$expected}"
         ;;
@@ -115,12 +121,28 @@ setup_fragment=$(sed -n '/^# Restore shared documentation directories/,/^useradd
       *) return 1 ;;
     esac
   }
-  export -f install pacman
+  # No real package cache or executable is touched by this fragment regression.
+  # shellcheck disable=SC2329 # Exported into the setup-fragment child shell.
+  codex() {
+    [[ $* == --version ]] || return 1
+    printf 'codex-cli %s\n' "$(sed -n 's/^CODEX_CLI_VERSION=//p' "$lock")"
+  }
+  # shellcheck disable=SC2329 # Exported into the setup-fragment child shell.
+  sha256sum() {
+    local line
+    [[ $* == '--check --strict' ]] || return 1
+    IFS= read -r line
+    [[ $line == "$(sed -n 's/^CODEX_PACKAGE_SHA256=//p' "$lock")  /var/cache/pacman/pkg/openai-codex-$(sed -n 's/^CODEX_PACKAGE_VERSION=//p' "$lock")-x86_64.pkg.tar.zst" ]] || return 1
+    return "${ISO_DOCKER_TEST_CODEX_HASH_STATUS:-0}"
+  }
+  export -f install pacman codex sha256sum
   bash -euo pipefail -c "$setup_fragment"
   # Directory restoration is also safe when both directories already exist.
   bash -euo pipefail -c "$setup_fragment"
   if ISO_DOCKER_TEST_INSTALL_STATUS=1 bash -euo pipefail -c "$setup_fragment"; then exit 1; fi
   if ISO_DOCKER_TEST_VERSION=unexpected bash -euo pipefail -c "$setup_fragment" >/dev/null 2>&1; then exit 1; fi
   if ISO_DOCKER_TEST_INTEGRITY_STATUS=1 bash -euo pipefail -c "$setup_fragment"; then exit 1; fi
+  if ISO_DOCKER_TEST_CODEX_VERSION=unexpected bash -euo pipefail -c "$setup_fragment"; then exit 1; fi
+  if ISO_DOCKER_TEST_CODEX_HASH_STATUS=1 bash -euo pipefail -c "$setup_fragment"; then exit 1; fi
 )
 printf 'Docker ISO wrapper, target, privilege and source-context boundary tests passed\n'

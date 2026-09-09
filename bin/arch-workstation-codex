@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+# Owner-console launcher only. No credentials or sessions enter the target root.
+set +x +v
+set -euo pipefail
+umask 077
+ulimit -c 0
+root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+source "$root/lib/common.sh"
+source "$root/lib/bootstrap/common.sh"
+source "$root/lib/bootstrap/network.sh"
+
+ci_ram_root() {
+  if ((EUID == 0)); then printf '/run\n'; else printf '/run/user/%s\n' "$EUID"; fi
+}
+ci_platform() {
+  [[ $(uname -s) == Linux && $(uname -m) == x86_64 && -r /etc/arch-release ]] || {
+    bootstrap_die 'use the x86_64 Arch live ISO or installed Arch console'
+    return 1
+  }
+}
+
+ci_cleanup() {
+  local result=$? attempt
+  trap - EXIT INT TERM HUP
+  unset ci_key
+  if [[ -n ${ci_tty_state:-} ]]; then stty "$ci_tty_state" </dev/tty || true; fi
+  if [[ -n ${ci_child:-} ]]; then
+    kill -TERM "$ci_child" 2>/dev/null || true
+    for ((attempt = 0; attempt < 5; attempt++)); do
+      kill -0 "$ci_child" 2>/dev/null || break
+      sleep 1
+    done
+    kill -KILL "$ci_child" 2>/dev/null || true
+    wait "$ci_child" 2>/dev/null || true
+  fi
+  # Never accept an externally supplied cleanup target.
+  if [[ -n ${ci_base:-} && ${ci_session:-} == "$ci_base"/arch-workstation-codex.* && -d $ci_session && ! -L $ci_session ]]; then
+    rm -rf -- "$ci_session"
+  fi
+  exit "$result"
+}
+
+ci_wait() {
+  local result=0
+  wait "$ci_child" || result=$?
+  ci_child=''
+  return "$result"
+}
+
+ci_main() {
+  local mode=${1:-} codex_bin expected result=0
+  if [[ $mode == --help ]]; then
+    printf 'Usage: arch-workstation-codex api-key|device-code\nOwner console only; private RAM session; reauthenticate after exit/reboot.\n'
+    return 0
+  fi
+  (($# == 1)) && [[ $mode == api-key || $mode == device-code ]] || return 2
+  ci_platform || return 1
+  [[ -t 0 && -t 1 ]] || {
+    bootstrap_die 'use an interactive local terminal, never a transcript or pipe'
+    return 1
+  }
+  ci_base=$(ci_ram_root)
+  [[ $(findmnt -n -o FSTYPE --target "$ci_base") == tmpfs ]] || {
+    bootstrap_die 'private session requires a writable /run runtime directory on tmpfs'
+    return 1
+  }
+  bootstrap_no_swap_for_codex || return 1
+  [[ -f $root/.agents/skills/workstation-install/SKILL.md ]] || {
+    bootstrap_die 'packaged installation skill is missing'
+    return 1
+  }
+  if [[ -f $root/SOURCE-MANIFEST.sha256 ]]; then
+    (cd "$root" && sha256sum --check --strict --status SOURCE-MANIFEST.sha256) || {
+      bootstrap_die 'packaged source manifest mismatch'
+      return 1
+    }
+    cmp -s "$root/AGENTS.md" "$root/.aiassistant/rules/workstation-guardrails.md" || {
+      bootstrap_die 'packaged instruction adapter mismatch'
+      return 1
+    }
+  fi
+  codex_bin=$(command -v codex) || {
+    bootstrap_die 'install the recorded openai-codex package first'
+    return 1
+  }
+  expected=$(common::lock_get "$root/infrastructure/iso/versions.lock" CODEX_CLI_VERSION)
+  # No exported key or inherited provider may silently select another account.
+  unset OPENAI_API_KEY CODEX_API_KEY CODEX_ACCESS_TOKEN
+  case $mode in
+    api-key) bootstrap_network_codex api || return 1 ;;
+    device-code) bootstrap_network_codex device || return 1 ;;
+  esac
+  ci_session=$(mktemp -d "$ci_base/arch-workstation-codex.XXXXXXXX") || return 1
+  ci_child=''
+  trap ci_cleanup EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  trap 'exit 129' HUP
+  mkdir "$ci_session/codex" "$ci_session/tmp" "$ci_session/cache" "$ci_session/config" "$ci_session/data"
+  install -m600 "$root/templates/workstation/codex-install.toml" "$ci_session/codex/config.toml"
+  # Keep the user's HOME unchanged; CODEX_HOME has its documented dedicated use.
+  local -a client_env=(env -i "PATH=$PATH" "HOME=$HOME" "TERM=${TERM:-xterm-256color}" LANG=C.UTF-8
+    "CODEX_HOME=$ci_session/codex" "TMPDIR=$ci_session/tmp" "XDG_CACHE_HOME=$ci_session/cache"
+    "XDG_CONFIG_HOME=$ci_session/config" "XDG_DATA_HOME=$ci_session/data")
+  [[ $("${client_env[@]}" "$codex_bin" --version) == "codex-cli $expected" ]] || {
+    bootstrap_die 'Codex version differs from the installation lock'
+    return 1
+  }
+  cd -- "$root"
+  if [[ $mode == api-key ]]; then
+    ci_tty_state=$(stty -g </dev/tty) || return 1
+    stty -echo </dev/tty || return 1
+    printf 'API-key mode: OpenAI Platform usage billing, separate from ChatGPT.\nAPI key (hidden): ' >/dev/tty
+    IFS= read -r ci_key </dev/tty || return 1
+    stty "$ci_tty_state" </dev/tty || return 1
+    ci_tty_state=''
+    printf '\n' >/dev/tty
+    [[ -n $ci_key ]] || {
+      unset ci_key
+      return 1
+    }
+    # Only the shell builtin writer sees the unexported key. No argument contains it.
+    printf '%s' "$ci_key" | "${client_env[@]}" "$codex_bin" login --with-api-key >/dev/null 2>&1 &
+    ci_child=$!
+    unset ci_key
+    ci_wait || {
+      bootstrap_die 'API-key login failed; no session started or billing method changed'
+      return 1
+    }
+  else
+    printf 'ChatGPT device-code mode: complete the displayed browser flow on your other device.\n' >/dev/tty
+    "${client_env[@]}" "$codex_bin" login --device-auth </dev/tty >/dev/tty 2>&1 &
+    ci_child=$!
+    ci_wait || {
+      bootstrap_die 'Device login failed/unsupported; no API-key fallback'
+      return 1
+    }
+  fi
+  # login status can display a masked key/account: inspect exit only, never export it.
+  "${client_env[@]}" "$codex_bin" login status >/dev/null 2>&1 &
+  ci_child=$!
+  ci_wait || {
+    bootstrap_die 'Stored authentication was not reusable by a second process'
+    return 1
+  }
+  # shellcheck disable=SC2016 # Literal skill invocation for the owner to type.
+  printf 'Authentication stored for this RAM session only; model access still needs a successful request.\nUse /skills, then $workstation-install. Keep secrets and raw sessions out of your journal.\n' >/dev/tty
+  "${client_env[@]}" "$codex_bin" --cd "$root" --sandbox read-only --ask-for-approval on-request </dev/tty >/dev/tty 2>&1 &
+  ci_child=$!
+  ci_wait || result=$?
+  return "$result"
+}
+
+bootstrap_no_swap_for_codex() {
+  [[ -r /proc/swaps ]] && [[ $(awk 'NR > 1 {n++} END {print n+0}' /proc/swaps) == 0 ]] || {
+    bootstrap_die 'disable swap through the owner workflow before RAM-only authentication'
+    return 1
+  }
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then ci_main "$@"; fi

@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+source "$root/lib/bootstrap/common.sh"
+source "$root/lib/bootstrap/network.sh"
+case ${1:-} in
+  --help) printf 'Usage: arch-workstation-network mirrors|codex-api|codex-device\n' ;;
+  mirrors)
+    (($# == 1)) || exit 2
+    bootstrap_network_mirrors
+    ;;
+  codex-api)
+    (($# == 1)) || exit 2
+    bootstrap_network_codex api
+    ;;
+  codex-device)
+    (($# == 1)) || exit 2
+    bootstrap_network_codex device
+    ;;
+  *) exit 2 ;;
+esac

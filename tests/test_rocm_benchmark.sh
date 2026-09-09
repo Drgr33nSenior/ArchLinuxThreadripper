@@ -112,6 +112,7 @@ ws_measure_command() {
 export INFERENCE_LOG="$work/inference.log"
 
 ws_rocm_inference "$work/inference-build/llama-cli" "$work/model.gguf" "$work/inference-output" >/dev/null
+jq -e '.status == "unsealed-fixed-config-smoke"' "$work/inference-output/smoke.json" >/dev/null
 grep -Fq -- '--ctx-size 2048' "$INFERENCE_LOG"
 grep -Fq -- '--batch-size 2048' "$INFERENCE_LOG"
 grep -Fq -- '--ubatch-size 512' "$INFERENCE_LOG"

@@ -1,5 +1,6 @@
 """Synthetic SGLang contracts; no model, compiler cache or GPU is qualified."""
 import copy
+import gzip
 import importlib.util
 import io
 import json
@@ -9,11 +10,15 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+from urllib.error import HTTPError, URLError
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT/"lib/workstation"))
 import model_kernels as kernels
 import kernel_run
+profile_spec = importlib.util.spec_from_file_location("profile_evidence", ROOT/"tests/hardware/sglang-profile-evidence.py")
+profile_evidence = importlib.util.module_from_spec(profile_spec)
+profile_spec.loader.exec_module(profile_evidence)
 
 
 def fixtures():
@@ -142,7 +147,7 @@ class KernelTests(unittest.TestCase):
         pod, runtime, compiler = self.observed
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)
-            report = {"status": "measured-awaiting-provenance", "pod": pod,
+            report = {"status": "measured-awaiting-provenance", "kind": "kernel-warmup", "pod": pod,
                       "identity": kernels.runtime_key(pod, runtime, compiler)}
             kernels.write(path/"result.json", report)
             kernels.write(path/"compiler-before.json", compiler)
@@ -220,6 +225,8 @@ class KernelTests(unittest.TestCase):
                     return io.BytesIO(json.dumps({"model_path": runtime["settings"]["MODEL_PATH"]}).encode())
                 if route == "/stop_profile":
                     raise RuntimeError("fixture stop failure")
+                if route == "/start_profile":
+                    return io.BytesIO(b"Start profiling.\n")
                 return io.BytesIO(b"{}")
             with patch.dict(os.environ, {"AGENT_BASE_URL": "http://127.0.0.1:18000/v1"}), \
                     patch.object(kernel_run.serving, "request", side_effect=request), \
@@ -238,6 +245,113 @@ class KernelTests(unittest.TestCase):
                 with patch.object(kernel_run.serving, "request", side_effect=rejected), self.assertRaises(RuntimeError):
                     kernel_run.run("kernel-profile", path/"workload.json", ev, ev/"compiler.json", path/"rejected")
                 self.assertNotIn("/stop_profile", routes)
+
+    def test_bounded_profile_automatic_completion_requires_evidence(self):
+        # Stateful model of the digest-reviewed default profiler: forwards hit
+        # the target, export each TP trace, then clear profile_in_progress.
+        # The pinned HTTP route maps the subsequent RuntimeError to generic 500.
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory); ev = path/"evidence"; ev.mkdir()
+            for name, data in zip(("pod.json", "runtime.json", "compiler.json"), self.observed):
+                kernels.write(ev/name, data)
+            kernels.write(path/"workload.json", self.workload)
+            state = {"active": False, "steps": 0, "exports": []}
+            def request(_base, route, payload=None, **_kwargs):
+                if route == "/model_info":
+                    return io.BytesIO(b'{"model_path":"/models/fixture"}')
+                if route == "/start_profile":
+                    self.assertEqual(payload["num_steps"], 32)
+                    state.update(active=True, steps=0, exports=[], path=payload["output_dir"])
+                    self.assertEqual(payload["profile_id"], payload["output_dir"].rsplit("/", 1)[1])
+                    return io.BytesIO(b"Start profiling.\n")
+                self.assertEqual(route, "/stop_profile")
+                self.assertFalse(state["active"])
+                raise HTTPError("http://127.0.0.1/stop_profile", 500, "Internal Server Error", {}, io.BytesIO(b"Internal Server Error"))
+            def generate(_base, _case):
+                state["steps"] += 8
+                if state["active"] and state["steps"] >= 32:
+                    state["exports"] = [0, 1]
+                    state["active"] = False
+                return {"tokens": [1, 2], "logprobs": [-.2, -.3]}
+            with patch.dict(os.environ, {"AGENT_BASE_URL":"http://127.0.0.1:18000/v1"}), \
+                    patch.object(kernel_run.serving, "request", side_effect=request), \
+                    patch.object(kernel_run, "generate", side_effect=generate), \
+                    patch.object(kernel_run, "snapshot", return_value={}):
+                kernel_run.run("kernel-profile", path/"workload.json", ev, ev/"compiler.json", path/"run")
+            run = path/"run"
+            result = kernels.load(run/"result.json")
+            self.assertEqual(state["exports"], [0, 1])
+            self.assertEqual(result["profile_stop"], "http-500-awaiting-verification")
+            self.assertEqual(result["status"], "measured-awaiting-provenance")
+            log = "\n".join(f"[fixture TP{i}] Profiling done. Traces are saved to: {state['path']}" for i in (0, 1))
+            log += "\nRuntimeError: Profiling is not in progress. Call /start_profile first.\n"
+            for bad in (log.replace("RuntimeError: Profiling", "RuntimeError: Unknown Profiling"),
+                        log.replace("TP1]", "TP9]"), log + "ValueError: trace export failed\n"):
+                out = path/str(len(list(path.iterdir()))); out.mkdir()
+                kernels.write(out/"result.json", result)
+                with self.assertRaises(ValueError):
+                    kernel_run.profile_log(out, bad.encode())
+            kernel_run.profile_log(run, log.encode())
+            self.assertTrue(kernels.load(run/"profile-log.json")["normal_completion"])
+            # HTTP/log success alone cannot finalize without every actual trace.
+            with self.assertRaises(FileNotFoundError):
+                kernel_run.finish(run)
+            self.assertEqual(kernels.load(run/"result.json")["status"], "failed-memory-or-provenance")
+            (run/"result.json").write_text(json.dumps(result))
+            kernels.write(run/"profile-traces.json", {"profile_path": state["path"], "traces": {
+                str(i): {"name": state["path"].rsplit("/", 1)[1]+f"-TP-{i}.trace.json.gz", "sha256":"a"*64, "bytes":100}
+                for i in (0, 1)}})
+            kernels.write(run/"compiler-after.json", self.observed[2])
+            sample = {"gpus_by_bdf": {bdf: {"mem_info_vram_used":"1", "mem_info_vram_total":"2"} for bdf in ("a", "b")}}
+            (run/"warmup-telemetry.jsonl").write_text(json.dumps(sample)+"\n")
+            kernel_run.finish(run)
+            self.assertEqual(kernels.load(run/"result.json")["profile_stop"], "automatic-completion-verified")
+
+    def test_profile_auth_transport_unknown_responses_are_fatal(self):
+        class BrokenBody(io.BytesIO):
+            def read(self, size=-1):
+                raise OSError("interrupted error response")
+        failures = [URLError("transport"), RuntimeError("unknown"),
+                    HTTPError("http://127.0.0.1", 403, "forbidden", {}, io.BytesIO(b"forbidden")),
+                    HTTPError("http://127.0.0.1", 500, "unknown", {}, io.BytesIO(b"unknown trace failure")),
+                    HTTPError("http://127.0.0.1", 500, "truncated", {}, BrokenBody())]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory); ev = path/"evidence"; ev.mkdir()
+            for name, data in zip(("pod.json", "runtime.json", "compiler.json"), self.observed):
+                kernels.write(ev/name, data)
+            kernels.write(path/"workload.json", self.workload)
+            for index, error in enumerate(failures):
+                def request(_base, route, payload=None, **_kwargs):
+                    if route == "/model_info": return io.BytesIO(b'{"model_path":"/models/fixture"}')
+                    if route == "/start_profile": return io.BytesIO(b"Start profiling.\n")
+                    raise error
+                with patch.dict(os.environ, {"AGENT_BASE_URL":"http://127.0.0.1:18000/v1"}), \
+                        patch.object(kernel_run.serving, "request", side_effect=request), \
+                        patch.object(kernel_run, "generate", return_value={"tokens":[1,2],"logprobs":[-.2,-.3]}), \
+                        patch.object(kernel_run, "snapshot", return_value={}), self.assertRaises(ValueError):
+                    kernel_run.run("kernel-profile", path/"workload.json", ev, ev/"compiler.json", path/str(index))
+                self.assertEqual(kernels.load(path/str(index)/"result.json")["status"], "failed-profile-cleanup")
+
+    def test_exported_trace_validation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)/"fixture.trace.json.gz"
+            with self.assertRaises(ValueError):
+                profile_evidence.read_trace(path)
+            for data in (b"not JSON", b'{"traceEvents":[]}', b'{"traceEvents":[{"cat":"cpu_op"}]}'):
+                path.write_bytes(gzip.compress(data))
+                with self.assertRaises(ValueError):
+                    profile_evidence.read_trace(path)
+            path.write_bytes(gzip.compress(b'{"traceEvents":[{"cat":"kernel","ph":"X","dur":2}]}'))
+            result = profile_evidence.read_trace(path)
+            self.assertEqual(result["sha256"], kernels.file_hash(path))
+            link = Path(directory)/"link.gz"; link.symlink_to(path)
+            with self.assertRaises(ValueError):
+                profile_evidence.read_trace(link)
+            path.write_bytes(b"truncated gzip")
+            with self.assertRaises(OSError):
+                profile_evidence.read_trace(path)
+            with self.assertRaises(ValueError):
+                profile_evidence.traces(directory, 2)
 
     def test_dispatch_requires_gpu_events_and_matching_tuning(self):
         with tempfile.TemporaryDirectory() as directory:

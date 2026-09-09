@@ -47,7 +47,7 @@ ws_serving_evidence() (
 
 ws_serving_benchmark() (
   set -euo pipefail
-  local workload=$1 evidence=$2 output=$3 mode=${4:-serving} pod before after port_dir port_pid port attempt boot
+  local workload=$1 evidence=$2 output=$3 mode=${4:-serving} pod before after port_dir port_pid='' measure_pid='' port attempt boot
   local -a identity=()
   case $mode in serving | kernel-warmup | kernel-profile) ;; *) ws_die 'unsupported serving measurement mode' ;; esac
   ws_require_arch
@@ -63,13 +63,26 @@ ws_serving_benchmark() (
   # Bind a fresh loopback port to this exact Pod, never an existing public route
   # or an operator tunnel whose destination cannot be verified here.
   port_dir=$(mktemp -d)
+  # Retain the primary exit/signal status. Remove only named files we created;
+  # unexpected contents are retained and reported, never recursively removed.
+  trap 'status=$?; trap - EXIT INT TERM; set +e
+    if [[ -n $measure_pid ]]; then
+      kill -TERM -- "-$measure_pid" 2>/dev/null
+      wait "$measure_pid" 2>/dev/null
+    fi
+    if [[ -n $port_pid ]]; then
+      kill -TERM -- "-$port_pid" 2>/dev/null
+      wait "$port_pid" 2>/dev/null
+    fi
+    rm -f -- "$port_dir/forward.txt" "$port_dir/pod-before.json" "$port_dir/compiler-before.json"
+    rmdir -- "$port_dir" || printf "WARNING: temporary directory retained: %s\n" "$port_dir" >&2
+    exit "$status"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   [[ -z ${SESSION_KUBECONFIG:-} ]] || identity=(--kubeconfig "$SESSION_KUBECONFIG")
   setsid kubectl "${identity[@]}" --context "$SESSION_CONTEXT" -n "$SESSION_NAMESPACE" \
     port-forward --address=127.0.0.1 "pod/$pod" :30000 >"$port_dir/forward.txt" 2>&1 &
   port_pid=$!
-  trap 'kill -TERM -- "-$port_pid" 2>/dev/null || true; wait "$port_pid" 2>/dev/null || true; rm -f -- "$port_dir/forward.txt" "$port_dir/pod-before.json"; rmdir -- "$port_dir"' EXIT
-  trap 'exit 130' INT
-  trap 'exit 143' TERM
   port=''
   for ((attempt = 0; attempt < 30; attempt++)); do
     kill -0 "$port_pid" 2>/dev/null || ws_die 'private pod port-forward failed'
@@ -82,14 +95,19 @@ ws_serving_benchmark() (
   ws_session_kubectl -n "$SESSION_NAMESPACE" exec -i "$pod" -c sglang -- python3 - snapshot \
     <"$(ws_repo_root)/lib/workstation/measurement.py" >"$port_dir/pod-before.json"
   if [[ $mode == serving ]]; then
-    timeout --kill-after=5s 21600 "$(ws_measure_python)" "$(ws_repo_root)/lib/workstation/serving.py" "$workload" "$evidence" "$output" ||
-      ws_die 'serving benchmark failed; no successful measurement record'
+    setsid timeout --kill-after=5s 21600 "$(ws_measure_python)" "$(ws_repo_root)/lib/workstation/serving.py" "$workload" "$evidence" "$output" &
   else
     ws_kernel_probe "$pod" >"$port_dir/compiler-before.json"
-    timeout --kill-after=5s 21600 "$(ws_measure_python)" "$(ws_repo_root)/lib/workstation/kernel_run.py" \
-      "$mode" "$workload" "$evidence" "$port_dir/compiler-before.json" "$output" ||
-      ws_die 'kernel experiment failed; retain incomplete/failed evidence'
+    if [[ $mode == kernel-profile ]]; then
+      ws_session_kubectl -n "$SESSION_NAMESPACE" exec -i "$pod" -c sglang -- python3 - contract \
+        <"$(ws_repo_root)/tests/hardware/sglang-profile-evidence.py" >/dev/null
+    fi
+    setsid timeout --kill-after=5s 21600 "$(ws_measure_python)" "$(ws_repo_root)/lib/workstation/kernel_run.py" \
+      "$mode" "$workload" "$evidence" "$port_dir/compiler-before.json" "$output" &
   fi
+  measure_pid=$!
+  wait "$measure_pid" || exit "$?"
+  measure_pid=''
   cp -- "$port_dir/pod-before.json" "$output/pod-resources-before.json"
   ws_hardware_collect "$output/hardware"
   ws_detected_gpu_target "$output/hardware/hardware.json" >/dev/null
@@ -107,6 +125,16 @@ ws_serving_benchmark() (
   fi
   if [[ $mode != serving ]]; then
     ws_kernel_probe "$pod" >"$output/compiler-after.json"
+    if [[ $mode == kernel-profile ]]; then
+      ws_session_kubectl -n "$SESSION_NAMESPACE" exec -i "$pod" -c sglang -- python3 - \
+        "$(jq -er .profile_path "$output/result.json")" "$(jq -er '.settings.TENSOR_PARALLEL' "$evidence/runtime.json")" \
+        <"$(ws_repo_root)/tests/hardware/sglang-profile-evidence.py" >"$output/profile-traces.json"
+      if [[ $(jq -r .profile_stop "$output/result.json") == http-500-awaiting-verification ]]; then
+        ws_session_kubectl -n "$SESSION_NAMESPACE" logs "$pod" -c sglang \
+          --since-time="$(jq -er .profile_started_at "$output/result.json")" --tail=2000 --limit-bytes=262144 |
+          "$(ws_measure_python)" "$(ws_repo_root)/lib/workstation/kernel_run.py" profile-log "$output"
+      fi
+    fi
     "$(ws_measure_python)" "$(ws_repo_root)/lib/workstation/kernel_run.py" finish "$output" ||
       ws_die 'kernel experiment memory/runtime check failed'
     [[ $(ws_serving_pod "$pod" | jq -cS .) == "$(jq -cS . "$evidence/pod.json")" ]] ||

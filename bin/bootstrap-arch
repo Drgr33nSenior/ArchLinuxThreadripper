@@ -18,6 +18,8 @@ source "$BOOTSTRAP_ROOT/lib/bootstrap/config.sh"
 # shellcheck source=../lib/bootstrap/preflight.sh
 # shellcheck disable=SC1091
 source "$BOOTSTRAP_ROOT/lib/bootstrap/preflight.sh"
+# shellcheck source=lib/bootstrap/network.sh
+source "$BOOTSTRAP_ROOT/lib/bootstrap/network.sh"
 # shellcheck source=../lib/bootstrap/install.sh
 # shellcheck disable=SC1091
 source "$BOOTSTRAP_ROOT/lib/bootstrap/install.sh"

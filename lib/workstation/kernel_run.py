@@ -1,11 +1,16 @@
 """Owner-invoked warmup/quality/profile requests through the existing private tunnel."""
 import argparse
+from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor
 import json
+import hashlib
 import os
+import re
 from pathlib import Path
 import time
+import sys
 import uuid
+from urllib.error import HTTPError
 
 import serving
 from measurement import Sampler, snapshot, pod_cgroup, cgroup_values, interruptions
@@ -65,13 +70,16 @@ def run(kind, workload_path, evidence_dir, compiler_before, output):
         with interruptions():
             if kind == "kernel-profile":
                 report["profile_path"] = "/cache/xdg/workstation-profiles/" + uuid.uuid4().hex
+                report["profile_started_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
                 # Bounded server profiling; no unauthenticated/public new endpoint.
                 # If the server requires an admin key, the existing credential must
                 # already have that authority. Never remove its access controls.
                 with serving.request(base, "/start_profile", {"output_dir": report["profile_path"],
+                        "profile_id": report["profile_path"].rsplit("/", 1)[1],
                         "activities": ["CPU", "GPU"], "num_steps": 32,
-                        "with_stack": False, "record_shapes": True, "merge_profiles": False}):
-                    pass
+                        "with_stack": False, "record_shapes": True, "merge_profiles": False}) as response:
+                    if response.read(4097) != b"Start profiling.\n":
+                        raise ValueError("unknown profile start response")
                 profiling = True
             scope = pod_cgroup(pod["uid"])
             def collect():
@@ -102,9 +110,28 @@ def run(kind, workload_path, evidence_dir, compiler_before, output):
     finally:
         if profiling:
             try:
-                with serving.request(base, "/stop_profile", {}, timeout=30):
-                    pass
-            except BaseException:
+                with serving.request(base, "/stop_profile", {}, timeout=30) as response:
+                    if response.read(4097) != b"Stop profiling. This will take some time.\n":
+                        raise ValueError("unknown profile stop response")
+                report["profile_stop"] = "explicit-awaiting-traces"
+            except HTTPError as error:
+                # The pinned route leaves RuntimeError untranslated (HTTP 500).
+                # This is NOT success: finish requires exact same-run log and
+                # every TP trace. Auth, transport and other statuses stay fatal.
+                try:
+                    pending = error.code == 500 and error.read(4097) == b"Internal Server Error"
+                except Exception:
+                    pending = False
+                finally:
+                    error.close()
+                if pending:
+                    report["profile_stop"] = "http-500-awaiting-verification"
+                else:
+                    report["profile_stop"] = "failed"
+                    report["status"] = "failed-profile-cleanup"
+            except BaseException as error:
+                report["profile_stop"] = "failed"
+                report["profile_error_class"] = type(error).__name__
                 report["status"] = "failed-profile-cleanup"
                 # Server-side step bound remains the fallback; never report success.
         write(output/"result.json", report)
@@ -118,6 +145,27 @@ def finish(output):
     try:
         if report["status"] != "measured-awaiting-provenance":
             raise ValueError("workload did not complete")
+        if report["kind"] == "kernel-profile":
+            profile = load(output/"profile-traces.json")
+            ranks = int(report["identity"]["runtime"]["settings"]["TENSOR_PARALLEL"])
+            if (profile["profile_path"] != report["profile_path"]
+                    or set(profile["traces"]) != {str(i) for i in range(ranks)}):
+                raise ValueError("missing or mismatched per-rank trace evidence")
+            for rank, trace in profile["traces"].items():
+                expected = report["profile_path"].rsplit("/", 1)[1] + f"-TP-{rank}.trace.json.gz"
+                if (trace["name"] != expected or not re.fullmatch(r"[a-f0-9]{64}", trace["sha256"])
+                        or type(trace["bytes"]) is not int or not 0 < trace["bytes"] <= 128*1024**2):
+                    raise ValueError("invalid trace identity")
+            if report["profile_stop"] == "http-500-awaiting-verification":
+                log = load(output/"profile-log.json")
+                if log["profile_path"] != report["profile_path"] or not log["normal_completion"]:
+                    raise ValueError("unknown profiler failure; automatic completion not verified")
+                report["profile_stop"] = "automatic-completion-verified"
+            elif report["profile_stop"] == "explicit-awaiting-traces":
+                report["profile_stop"] = "explicit-completion-verified"
+            else:
+                raise ValueError("profiler lifecycle failed")
+            report["profile_traces"] = profile
         before, after = load(output/"compiler-before.json"), load(output/"compiler-after.json")
         if runtime_key(report["pod"], report["identity"]["runtime"], after) != report["identity"]:
             raise ValueError("compiler or loaded-library identity changed")
@@ -162,13 +210,37 @@ def finish(output):
         (output/"result.json").write_text(json.dumps(report, indent=2, allow_nan=False) + "\n")
 
 
+def profile_log(output, raw):
+    """Minimize bounded same-Pod logs; never retain unrelated log text."""
+    report = load(Path(output)/"result.json")
+    if len(raw) > 262144:
+        raise ValueError("profile log exceeds budget")
+    text = raw.decode("utf-8", errors="strict")
+    lines = text.splitlines()
+    # HTTP 500 alone is ambiguous. The pinned exception AND successful export
+    # messages for every rank must be present in this unique session directory.
+    expected = "RuntimeError: Profiling is not in progress. Call /start_profile first."
+    errors = [line for line in lines if "Error:" in line or "Exception:" in line]
+    ranks = int(report["identity"]["runtime"]["settings"]["TENSOR_PARALLEL"])
+    completed = [line for line in lines if "Profiling done. Traces are saved to: " + report["profile_path"] in line]
+    rank_ok = all(any(f"TP{i}]" in line for line in completed) for i in range(ranks)) if ranks > 1 else bool(completed)
+    normal = len(errors) == 1 and errors[0].endswith(expected) and rank_ok
+    write(Path(output)/"profile-log.json", {"schema": 1, "profile_path": report["profile_path"],
+        "normal_completion": normal, "log_sha256": hashlib.sha256(raw).hexdigest(),
+        "scope": "bounded same-Pod logs since this exclusive profiling session; raw unrelated text not retained"})
+    if not normal:
+        raise ValueError("unknown profiler error or missing per-rank completion logs")
+
+
 def main():
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("kind", choices=("kernel-warmup", "kernel-profile", "finish"))
+    parser.add_argument("kind", choices=("kernel-warmup", "kernel-profile", "finish", "profile-log"))
     parser.add_argument("paths", nargs="+")
     args = parser.parse_args()
-    if args.kind == "finish" and len(args.paths) == 1:
+    if args.kind == "profile-log" and len(args.paths) == 1:
+        profile_log(args.paths[0], sys.stdin.buffer.read(262145))
+    elif args.kind == "finish" and len(args.paths) == 1:
         finish(*args.paths)
     elif args.kind != "finish" and len(args.paths) == 4:
         run(args.kind, *args.paths)

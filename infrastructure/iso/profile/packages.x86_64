@@ -1,5 +1,10 @@
 # Additional live packages; releng's dependencies remain upstream-owned inputs.
 arch-workstation-bootstrap
+openai-codex
+ripgrep
+curl
+iproute2
+iwd
 jq
 sbctl
 sbsigntools

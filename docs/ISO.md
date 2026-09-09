@@ -9,6 +9,11 @@ These commands build local artifacts only. They do not install Arch on your Mac,
 write a USB drive, change firmware or reboot anything. The resulting live ISO is
 not yet boot-qualified or Secure Boot qualified.
 
+The signed bootstrap package now includes the installation skill and console
+launcher; the ISO selects a recorded Codex package from its Arch snapshot.
+See [CODEX-INSTALL.md](CODEX-INSTALL.md) for Wi-Fi, explicit authentication,
+private RAM-session cleanup and live-ISO smoke tests. No credentials enter the ISO.
+
 ## Before you start
 
 - Run from the repository root: the directory containing `README.md`, `bin/`

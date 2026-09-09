@@ -1109,6 +1109,7 @@ ws_rocm_inference() (
   [[ -x $binary && -f $model && ! -e $output ]] || ws_die 'provide a llama-cli executable, local GGUF file and new output directory'
   commit=$(ws_read_lock ROCM_LLAMA_CPP_COMMIT)
   mkdir -p -- "$output"
+  jq -n '{schema:1,status:"unsealed-fixed-config-smoke",scope:"Not a benchmark or qualification: no runtime manifest; fixed all-GPU layer split, implicit threads/KV defaults"}' >"$output/smoke.json"
   ws_hardware_collect "$output/hardware"
   target=$(ws_detected_gpu_target "$output/hardware/hardware.json") || exit 1
   "$binary" --version >"$output/version.txt" 2>&1
@@ -1131,5 +1132,5 @@ ws_rocm_inference() (
       ws_die "no positive model allocation recorded for $device; do not accept a one-GPU/CPU fallback"
   done
   printf '%s\n' "$target" >"$output/gpu-target.txt"
-  ws_note "inference completed; review per-GPU allocations and output in $output/inference.txt before promotion"
+  ws_note "unsealed fixed-config smoke completed; review $output/inference.txt, then use benchmark-llama and qualify-llama for sealed evidence; this result cannot justify promotion"
 )
