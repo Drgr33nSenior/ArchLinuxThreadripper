@@ -33,8 +33,11 @@ printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' \
   '    mkdir "$3"' \
   '    cp "$2/source.lock" "$3/source.lock"' \
   '    printf "%s\n" "${2%/source}" > "$ISO_RELEASE_TEST_RUN" ;;' \
+  '  bridge)' \
+  '    [[ $execute == true && $mounts == false && $4 == "${2%/packages}/bundled" ]] || exit 1' \
+  '    mkdir "$4"; cp "$2/source.lock" "$4/source.lock"; printf "{}\n" > "$4/bridge-bundle.json" ;;' \
   '  iso)' \
-  '    [[ $5 == "${2%/packages}/$1" ]] || exit 1' \
+  '    base=${2%/packages}; base=${base%/bundled}; [[ $5 == "$base/$1" ]] || exit 1' \
   '    if [[ $execute == true ]]; then [[ $mounts == true ]] || exit 1; mkdir "$5"; fi' \
   '    printf "%s\n" "$5" > "$ISO_RELEASE_TEST_RUN" ;;' \
   '  *) exit 1 ;;' \
@@ -106,6 +109,17 @@ printf 'wrong run\n' >"$first_run/packages/source.lock"
 before=$(<"$ISO_RELEASE_TEST_LOG")
 if bash "$release" iso "$first_run" public.asc SYNTHETIC >/dev/null 2>&1; then exit 1; fi
 [[ $(<"$ISO_RELEASE_TEST_LOG") == "$before" ]] || exit 1
+
+# The explicit Bridge stage must use this run, retain old inputs and refuse
+# ambiguous output. Incomplete bundle state must never select packages instead.
+bash "$release" bridge "$second_run" "$work/candidate" >"$work/result" 2>&1
+[[ ! -e $second_run/bundled ]]
+bash "$release" --execute bridge "$second_run" "$work/candidate" >"$work/result" 2>&1
+cmp "$second_run/bundled/source.lock" "$second_run/source/source.lock"
+if bash "$release" --execute bridge "$second_run" "$work/candidate" >/dev/null 2>&1; then exit 1; fi
+bash "$release" iso "$second_run" public.asc SYNTHETIC >"$work/result" 2>&1
+mv "$second_run/bundled/bridge-bundle.json" "$second_run/bundled/retained-manifest.json"
+if bash "$release" iso "$second_run" public.asc SYNTHETIC >/dev/null 2>&1; then exit 1; fi
 
 # Check the shell examples without executing their signing or privileged steps.
 awk -v output="$work" '

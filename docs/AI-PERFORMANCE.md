@@ -1,37 +1,20 @@
 # AI performance and experimental builds
 
-See [opt-in model-kernel compilation and tuning](MODEL-KERNELS.md) for bounded
-Inductor workers, matched graph profiles, cache-restart evidence, dispatch
-profiling and HIP compiler diagnostics. The existing serving baseline is unchanged.
+Use this guide for resource budgets, CPU Manager and AI/gaming session policy.
+Hardware reports must distinguish expected inventory from discovery; no local
+workstation speedup has been established by source tests.
 
-This is the 2026-09-07 source audit for the Threadripper 9960X, dual R9700 and
-64 GiB host. The changes below provide targeted build controls and a measurement
-path. They are not evidence of a measured speedup on that hardware.
+| Task | Authoritative guide |
+| --- | --- |
+| Native SDK, CPU builds, ccache and source packaging | [ROCm](ROCM.md) and [workstation setup](WORKSTATION.md) |
+| Serving, paired HIP/Vulkan, CPU/storage measurement and numerical qualification | [Performance validation](PERFORMANCE-VALIDATION.md) |
+| Optional model compilation, cache reuse and kernel dispatch | [Model kernels](MODEL-KERNELS.md) |
+| Models, retrieval and IDE clients | [Models](MODELS.md), [RAG](RAG.md), [agent harnesses](AGENT-HARNESSES.md) |
+| Snapshot-to-rolling transition and maintenance | [Operations](OPERATIONS.md#move-from-the-installation-snapshot-to-rolling-arch) |
 
-The [2026-09-09 performance validation record](PERFORMANCE-VALIDATION.md) extends
-this audit with private SGLang serving tests, one/two-card paired runs, numerical
-checks, IPC/collective diagnostics, CPU/storage comparisons and exact target
-commands. Its coverage matrix separates tooling from physical qualification.
-
-The [local RAG pilot and context notes](RAG.md) were added on 2026-09-08. They
-cover pinned CPU embeddings, hybrid retrieval, source provenance, the current
-64 GiB/context budgets and a paired workstation test procedure. Graph retrieval,
-shared agent memory and host KV offload remain separate follow-ups.
-
-The [2026-09-08 model review](MODELS.md) selects Qwen3.8-27B-FP8 across both
-GPUs as the default, Qwen3.5-9B as the explicit one-card option, and CPU
-Qwen3-Embedding-0.6B for RAG. It records exact revisions, the remaining runtime
-checks and model/index migration. These selections are not measured speedups.
-
-The [local agent harness guide](AGENT-HARNESSES.md) defines the optional Qwen
-Code, DSH and Hermes client path. It keeps IDE agents on the client machine,
-uses a temporary owner-operated loopback tunnel after SGLang qualification, and
-does not add an Ingress, automatic tool execution, or automatic RAG access.
-
-Arch supplies signed binary packages and supports custom source packages; it
-does not rebuild the whole system locally. Keep the official rolling stack as
-the comparison baseline, then rebuild components that affect the workload.
-See [Arch's distribution model](https://archlinux.org/about/).
+Arch supplies signed binary packages; it does not rebuild the distribution for
+this CPU. Keep the coherent distribution/vendor baseline and measure selected
+source builds before promotion.
 
 ## Audit decisions
 
@@ -52,157 +35,43 @@ Mac's emulated ISO builder. The bootstrap package does not include
 host. Rebuild, sign and assemble a fresh ISO package run to include installer
 changes; an existing ISO is unchanged.
 
-## Move from the installation snapshot to rolling Arch
-
-The custom ISO copies its dated mirrorlist into the installed system to keep
-installation transactions coherent. Running `pacman -Syu` against that archive
-does not move the host forward to today's packages.
-
-After stable/LTS boot and recovery tests pass:
-
-1. Back up the system and retain the known-good package archives and signed
-   UKIs. Record the installed package list and the ISO release lock.
-2. Inspect `/etc/pacman.conf` and `/etc/pacman.d/mirrorlist`. Save their current
-   contents outside the paths being edited. Review current Arch news.
-3. Select synchronized HTTPS mirrors using the
-   [official mirrorlist generator](https://archlinux.org/mirrorlist/). Replace
-   the dated archive selection deliberately. Check for explicit archive URLs
-   and `IgnorePkg` entries in pacman configuration too.
-4. Run one complete `sudo pacman -Syu`. Review `.pacnew` files and the UKI hook
-   results, reboot, then collect new hardware and GPU validation reports.
-
-Do not combine archived libraries with selectively updated ROCm, Mesa, firmware
-or PyTorch. Arch supports full upgrades, not partial upgrades. See
-[system maintenance](https://wiki.archlinux.org/title/System_maintenance).
-Keep the ISO's build lock pinned; changing the installed host's update policy
-does not require turning recovery media into a floating build.
-
-For upstream development builds, review and advance the exact commits in
-`versions.lock`, inspect recipe/config/build-option changes, and use a new output
-directory. Existing pins are reproducible candidate inputs, not a claim that
-they remain upstream HEAD. Refresh the kernel and its packaging recipe as a
-reviewed pair. Refresh TheRock's dependency inventory with its entry-point pin.
-
 ## Host and kernel policy
 
-The home-lab installer example explicitly sets
-`TUNED_PROFILE=accelerator-performance`. Older configuration files that omit
-this optional key retain their existing headless `balanced` or desktop policy.
-To select or compare profiles on an installed host:
+Follow [workstation setup](WORKSTATION.md#boot-and-tuned) for persistent TuneD
+selection and [kernel builds](WORKSTATION.md#reviewed-aur-and-git-kernel) for the
+native Kconfig/clean-chroot path. CPU-specific packages are not generic recovery
+artifacts. Host CFLAGS do not replace kernel Kconfig.
 
-```sh
-sudo ./bin/workstationctl profile ai
-tuned-adm active
-tuned-adm verify
-# Comparison and rollback:
-sudo ./bin/workstationctl profile server
-```
-
-These `profile` selections persist until changed. The separate
-`performance tuned` experiment command restores the prior verified TuneD
-profile on completion or failure. The workstation config example defaults the explicit configured
-`profile` command to `ai`, but merely loading that file does not tune the host.
-The upstream [accelerator profile](https://raw.githubusercontent.com/redhat-performance/tuned/master/profiles/accelerator-performance/tuned.conf)
-requests performance-oriented CPU and latency settings. Expect higher idle
-power and heat; inspect the installed profile and actual driver behaviour.
-
-The git-kernel builder applies `CONFIG_X86_NATIVE_CPU=y` through the pinned
-recipe's `config.user` path. It verifies the packaged effective configuration,
-including native CPU, AMD GPU/HSA, IOMMU, SMP, module signing and CPU mitigation
-support. It retains config, compiler, package and Namcap evidence. Follow the
-[kernel build and promotion procedure](WORKSTATION.md#reviewed-aur-and-git-kernel).
-These packages are CPU-specific; do not distribute them as generic recovery
-artifacts. Host `CFLAGS` are not a substitute for kernel Kconfig.
-
-The existing upstream NUMA, THP, preemption and AMD P-state policy is retained.
-No blanket `mitigations=off`, SMT disabling, fixed hugepage reservation, manual
-IRQ affinity, forced P-state mode or GPU overclock is added. Firmware must
-enable IOMMU; `iommu=pt` selects passthrough mappings and is not full host-device
-DMA isolation. The undocumented `amd_iommu=on` token has been removed. See the
-[kernel parameter reference](https://cdn.kernel.org/doc/html/latest/admin-guide/kernel-parameters.html).
+The separate `performance tuned` experiment restores the previous verified
+profile after completion or failure; ordinary `profile` selections persist.
+Compare latency, heat, power and memory as well as throughput. Keep the existing
+mitigations, SMT, THP, NUMA and IRQ policy unless a reversible, measured change
+passes correctness and recovery gates. `iommu=pt` is not full host-device DMA
+isolation.
 
 ## Build and measure llama.cpp
 
-Use a clean checkout of `ROCM_LLAMA_CPP_REPOSITORY` at exactly
-`ROCM_LLAMA_CPP_COMMIT` from the reviewed lock. The build command does not fetch,
-install system packages, install binaries globally or package the ROCm stack.
-Install a coherent HIP SDK plus CMake, Ninja and ccache first. The default uses
-official Arch ROCm packages; the explicit
-[ROCm 10 AUR provider](ROCM.md#reviewed-rocm-10-sdk-provider) accepts the reviewed
-RDNA4 binary package. It does not build ROCm from source or migrate packages.
-Unset architecture overrides and GPU visibility filters before collection.
+Use a clean checkout at `ROCM_LLAMA_CPP_COMMIT`, a coherent SDK and the same
+boot's full two-GPU inventory. See [ROCm prerequisites](ROCM.md#native-compilation-and-ccache).
+These commands build applications, not ROCm, and do not install them globally:
 
 ```sh
 ./bin/workstationctl --config config/workstation.conf ccache configure
-./bin/workstationctl --config config/workstation.conf \
-  hardware collect artifacts/ai-boot-01
-./bin/workstationctl --config config/workstation.conf \
-  rocm build-llama /path/to/locked/llama.cpp \
-  artifacts/ai-boot-01/hardware.json artifacts/llama-01
-./bin/workstationctl --config config/workstation.conf \
-  rocm validate artifacts/ai-validation-01 /usr/bin/python
-./bin/workstationctl --config config/workstation.conf \
-  rocm inference artifacts/llama-01/build/bin/llama-cli \
-  /path/to/reviewed-model.gguf artifacts/ai-inference-01
+./bin/workstationctl --config config/workstation.conf hardware collect artifacts/perf-hardware
+./bin/workstationctl --config config/workstation.conf rocm build-llama /path/to/locked/llama.cpp artifacts/perf-hardware/hardware.json artifacts/hip
+./bin/workstationctl --config config/workstation.conf rocm build-llama-vulkan /path/to/locked/llama.cpp artifacts/perf-hardware/hardware.json artifacts/vulkan
 ```
 
-The `/usr/bin/python` example is for the coherent Arch baseline. After selecting
-the AUR SDK, pass a separately qualified matching ROCm Python environment; do
-not assume an Arch PyTorch binary matches a replaced SDK. SGLang uses its own
-container userspace, documented in the [home-lab guide](HOME-LAB.md#rocm-10-sglang-candidate).
+Use fresh output directories. Both builds remain `built-not-qualified`.
+Follow the [sealed paired benchmark and quality procedure](PERFORMANCE-VALIDATION.md#llama-and-multi-gpu-commands);
+do not use executable-only hashes or raw ad hoc benchmark runs as equivalent
+provenance. Match the model, quantization, corpus and inference settings.
 
-The build requires a fresh, matching two-GPU observation from the same boot.
-It records source identity, CMake options/cache, toolchain/package metadata and
-binary hashes. A successful build is `built-not-qualified`. Ccache is enabled
-for host C/C++ only, not the HIP compiler. This standalone upstream Release
-build is not a makepkg rebuild and does not inherit Arch's full compiler policy.
-
-For a scaling comparison, choose a local GGUF that fits completely on one card,
-including KV cache and workspace. Use the same binary, model hash, CPU thread
-count and TuneD profile for both runs. Confirm the device names first. The
-following commands run on the installed Arch host, not this Mac:
-
-```sh
-bench=artifacts/llama-01/build/bin/llama-bench
-model=/path/to/reviewed-model.gguf
-bench_run=$(mktemp -d artifacts/llama-bench.XXXXXX)
-"$bench" --list-devices
-sha256sum "$bench" "$model" > "$bench_run/SHA256SUMS"
-"$bench" --model "$model" --device ROCm0 --split-mode none \
-  --n-gpu-layers 999 --threads 12 --n-prompt 512 --n-gen 128 \
-  --repetitions 3 --output json --verbose \
-  > "$bench_run/one-gpu.json" 2> "$bench_run/one-gpu.log"
-"$bench" --model "$model" --device ROCm0/ROCm1 --split-mode layer \
-  --tensor-split 1/1 --n-gpu-layers 999 --threads 12 --n-prompt 512 --n-gen 128 \
-  --repetitions 3 --output json --verbose \
-  > "$bench_run/two-gpu.json" 2> "$bench_run/two-gpu.log"
-```
-
-Run each command only if the previous one succeeds. Review JSON and logs; file
-creation alone is not a pass. This pinned `llama-bench` uses slashes for devices
-and tensor shares; commas request multiple benchmark cases. JSON includes
-per-repetition measurements. The benchmark excludes tokenization and sampling;
-it is not an end-to-end serving latency test. See the
-[pinned benchmark interface](https://github.com/ggml-org/llama.cpp/blob/427291b5b34cd914a31b3fd3b61a68f6184f4b9f/tools/llama-bench/README.md).
-
-Confirm actual GPU layer placement and nonzero model buffers on both devices in
-the dual run. Repeat in alternating order after thermal stabilization. Record
-prompt and generation throughput separately, peak VRAM/RAM, clocks, power,
-PCIe negotiation, kernel/ROCm versions and any GPU resets. Compare stock versus
-native kernel only after keeping the userspace build fixed. Then compare CPU
-thread counts, batching and attention options one at a time.
-
-Two GPUs can increase model capacity without improving small-model throughput.
-Measure before selecting row/tensor splitting or NUMA binding. A model that only
-fits across both cards is a capacity test, not the same one-card comparison.
-With no swap and 64 GiB RAM, stop source builds and unneeded VMs before large
-inference tests. Do not reserve hugepages or additional Kubernetes memory without
-measuring the remaining host headroom.
-
-Promote only after correctness checks, repeatable workload gains and the
-[soak/recovery gates](OPERATIONS.md) pass. Keep a result that is slower or fails
-numerical tests as evidence; do not label a compiler flag an optimization solely
-because the build succeeded.
+For one/two-card scaling, use the same model that fits one card including KV
+and workspace. A model that only fits two cards tests capacity, not speedup.
+The benchmark excludes tokenization/sampling; measure serving latency separately.
+Stop competing builds/VMs when necessary to preserve the 64 GiB no-swap budget.
+Keep failures, and promote only after numerical, memory, thermal and recovery checks.
 
 ## First-tranche implementation record
 
@@ -238,7 +107,7 @@ local-path PVCs. The existing KVM/AlmaLinux lab is a separate retained workflow.
 | Functional peer transfers | BAR/PCI metadata cannot prove a transfer | [HIP peer API](https://rocm.docs.amd.com/projects/HIP/en/latest/doxygen/html/group___peer_to_peer.html) | Explicit diagnostic only | `tests/hardware/hip-peer-copy.cpp`: ordered pairs, 16 MiB transfer, UUID/PCI identity and readback verification | Compiled mock-HIP API tests; actual HIP compile and physical transfer NOT RUN |
 
 No dependency pins were advanced in that first tranche. The subsequent
-[9 September follow-up](AUDIT-FOLLOWUP-2026-09-09.md) selects K3s
+[9 September follow-up](validation/AUDIT-FOLLOWUP-2026-09-09.md) selects K3s
 `v1.35.8+k3s1` and Qwen Code 0.23.2. `versions.lock` remains authoritative;
 the retained llama.cpp pin is
 `427291b5b34cd914a31b3fd3b61a68f6184f4b9f`, TheRock
@@ -507,46 +376,10 @@ status must be reverified before a separate experiment; none was silently
 enabled from an unreviewed research percentage. Security mitigations, IOMMU
 configuration and filesystem durability are retained.
 
-### Local validation record
+### Validation and RAG
 
-`HOME_LAB_PYTHON=/usr/local/bin/python3.11 make check` passed with 32 test
-scripts on the macOS development host. This includes shell syntax/ShellCheck,
-YAML and Kustomize rendering, Jinja-generated K3s configuration, exact offline
-CPU-reservation predicates, installer/source-generation dry-runs, hardware and
-build fixtures, and session failure/recovery tests. The peer diagnostic was
-compiled against a deliberately simulated HIP header, not a ROCm installation.
-
-Unavailable checks were reported, not treated as executed: shfmt, Bats,
-Ansible syntax-check (the Homebrew launcher references a missing Python 3.8),
-Linux `systemd-analyze`, a local pinned GPU-operator chart archive, real ccache
-repeat compilation and real CMake/Ninja fixture generation. The selected
-PyCharm Python 3.11 SDK did run the Jinja/YAML configuration checks. No installer,
-cluster mutation, firmware action, real ROCm build, ISO assembly, disk benchmark
-or performance workload ran on this development host.
-
-## RAG and context tranche — 2026-09-08
-
-The opt-in `apps/overlays/rag` composition extends `single-gpu` without changing
-the other profiles. It pins Open WebUI 0.11.3 and a small CPU embedding model,
-uses embedded Chroma, bounds threads/uploads/chunks, and keeps zero replicas
-with pending qualification. It does not request a GPU or alter SGLang's context,
-host packages, gaming allocation or no-swap policy.
-
-`bin/workstationctl rag stage-models` prepares hash-verified offline assets;
-`rag verify-models` checks them after transfer. `rag corpus` snapshots explicitly
-selected Markdown documents with source hashes and nullable Git provenance.
-The new `webui-rag-data` PVC isolates pilot settings/data from `webui-data`.
-Git-managed settings override the Admin UI in this profile; read the migration
-and rollback notes before activating it.
-
-Tests are `tests/test_rag.sh` and `tests/home-lab/check-rag.rb`. The seed questions
-in `tests/fixtures/rag/questions.json` include unknown-hardware and invented-gain
-cases. They are test expectations, not measured answers. See [RAG.md](RAG.md) for
-the evidence/decision matrix, exact preparation commands, acceptance metrics,
-privacy boundaries, storage retention and deferred pgvector/reranking/graph work.
-
-Local validation passed on 2026-09-08: `make check` with the configured Python
-SDK (37 test scripts), Kubernetes 1.35 schema validation (28 objects per RAG
-overlay) and actual staging/verification of all 11 model files. Optional tooling
-skips and the unrun application/hardware tests are listed in the
-[RAG verification record](RAG.md#local-verification-record--2026-09-08).
+Dated test counts and the original RAG tranche record are retained with
+[the audit evidence](validation/AUDIT-FOLLOWUP-2026-09-09.md#earlier-ai-performance-records).
+They are not current hardware qualification. Use [RAG.md](RAG.md) for the current
+composition, migration, preparation, evaluation and rollback procedure; do not
+infer its base overlay from an older audit narrative.

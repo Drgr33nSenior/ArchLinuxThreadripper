@@ -187,7 +187,7 @@ and sign it with makepkg as a non-root user, then install the signed package.
 The update includes containerd 2.2.7-k3s1 and Traefik chart v40. Existing
 ingress-nginx migration settings must use `kubernetesIngressNGINX` instead of
 `kubernetesIngressNginx`. Review the [release notes](https://github.com/k3s-io/k3s/releases/tag/v1.35.8%2Bk3s1)
-and the [audit follow-up](AUDIT-FOLLOWUP-2026-09-09.md) before upgrading.
+and the [audit follow-up](validation/AUDIT-FOLLOWUP-2026-09-09.md) before upgrading.
 No running cluster has been upgraded or restore-qualified by this source change.
 
 Use a fresh K3s data directory. The role refuses existing `/var/lib/rancher/rke2`

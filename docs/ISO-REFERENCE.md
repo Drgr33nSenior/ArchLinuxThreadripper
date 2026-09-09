@@ -1,25 +1,12 @@
 # ISO reference: manual stages, implementation and recovery
 
-Start with [the three-stage build guide](ISO.md). This reference describes the
-underlying commands, security boundaries, native Arch fallback and acceptance
-tests. You do not need to run the manual build commands as well as `release.sh`.
+Use [ISO.md](ISO.md) for the normal controller workflow and
+[INSTALLATION.md](INSTALLATION.md) at the workstation. This reference is for
+manual/native builds, trust boundaries, diagnostics and disposable acceptance.
+Do not run these lower-level steps in addition to the release coordinator.
 
-This adds a network-assisted Archiso release path to the existing installer.
-It is not a new distribution or a second installation implementation. The primary
-build workflow uses a pinned amd64 Arch container on Docker Desktop. On Apple
-Silicon, Docker runs x86_64 userspace through emulation. Native x86_64 Arch builds
-remain an alternative. No ISO has yet been boot-qualified on the workstation.
-
-See [current qualification](ISO.md#qualification) in the build guide. The image
-build uses the existing pacman compatibility exception described below; this is
-not qualification with all downloader sandbox controls enabled.
-
-Observed with Docker Engine 29.6.2 and Buildx 0.35.0-desktop.2. Docker's separate
-`--check --platform=linux/amd64` validation also reported `InvalidBaseImagePlatform`
-(expected arm64). This earlier warning remains unresolved; the separate Dockerfile
-check has not been requalified. The actual amd64 build now succeeds. Package hooks
-also reported an uninitialized `/etc/` tmpfiles rule and skipped system-manager
-reloads because the container root is not booted. These did not fail the build.
+Dated build results and failures are retained under [validation/](validation).
+They do not establish a boot-qualified or Secure Boot-qualified workstation.
 
 ## Components and boundaries
 
@@ -28,6 +15,10 @@ reloads because the container root is not booted. These did not fail the build.
   docs. `arch-workstation-boot` owns the installed UKI sync helper and hook.
   The optional `arch-workstation-backup` package owns the Restic helper, units
   and policy; it is not installed on the live image or base host.
+  `arch-workstation-bridge-runtime` supplies the target-owned runtime/reference
+  closure. Follow [Bridge bundling](ISO.md#1a-bundle-bridge-unless-explicitly-opting-out) to select the separate reviewed
+  Bridge package and seal dependencies before signing. Neither Bridge package
+  is installed in the live root.
 - `infrastructure/iso/profile/`: reviewed changes to Archiso's `releng` profile.
 - `infrastructure/iso/docker/`: pinned builder image and fixed container actions.
 - `infrastructure/iso/docker.sh`: dry-run wrapper for image creation, userspace
@@ -135,19 +126,14 @@ mkdir -p build/iso
 bash infrastructure/packages/bootstrap/prepare-source.sh build/iso/source-01
 ```
 
-Review `source.lock`, `project/SOURCE-MANIFEST.sha256`, `PKGBUILD` and the two
-launchers. The archive is normalized for file order, ownership and timestamps.
+Review `source.lock`, `project/SOURCE-MANIFEST.sha256`, `PKGBUILD` and all
+packaged launchers. The archive is normalized for file order, ownership and timestamps.
 This is source-archive repeatability, not a claim of bit-identical ISO builds.
 No private signing key is an input to source preparation.
 
-Build the Docker tools image and check its userspace. First review the dry run;
-`--execute` is required to create an image or start a container:
-
-```sh
-bash infrastructure/iso/docker.sh image
-bash infrastructure/iso/docker.sh --execute image &&
-bash infrastructure/iso/docker.sh --execute check
-```
+For Docker builds, use the package command in [ISO.md](ISO.md#1-build-fresh-packages);
+the coordinator prepares the source, checks userspace and exports all four
+split packages. Native Arch source builds are described below.
 
 If image construction reports `archiso: /usr/share/doc (No such file or directory)`
 and the equivalent warning for `/usr/share/man`, the failure is from
@@ -159,21 +145,8 @@ subject to `NoExtract`; package-file verification still stops on other mismatche
 Do not suppress the check with `|| true`. Rebuild with the commands above; the
 changed recipe generates a new image tag without pruning existing images.
 
-The check verifies the amd64 Arch tools. It does not test mount permissions, build
-an ISO or boot a kernel. Build the three split packages in a new isolated job:
-
-```sh
-bash infrastructure/iso/docker.sh packages candidate-01 \
-  build/iso/source-01 build/iso/packages-01
-bash infrastructure/iso/docker.sh --execute packages candidate-01 \
-  build/iso/source-01 build/iso/packages-01
-```
-
-Only the source tarball, generated PKGBUILD and exported `source.lock` are
-mounted, read-only. `makepkg` checks
-dependencies and source integrity; it does not install dependencies or run as root.
-
-The intended outputs are three `*.pkg.tar.zst` files: bootstrap, boot and backup.
+The intended outputs are four `*.pkg.tar.zst` files: bootstrap, boot, backup and
+Bridge runtime/reference payload.
 Inspect `.PKGINFO`, `.BUILDINFO` and archive contents. None should contain an
 install scriptlet. The boot package must contain its helper and shared validator
 under `/usr/lib` and its hook under `/usr/share/libalpm/hooks`. The optional
@@ -183,9 +156,10 @@ package installs into `/usr/local` or starts a service.
 
 The job also exports an unsigned `arch-workstation.db.tar.gz` repository database,
 checksums, a package inventory and the builder image ID. Use your existing approved
-signing process outside Docker to produce detached `.sig` files for all three packages
-and that exact database. Keep these artifacts in one release directory. These are
-operator signing actions, not agent-run publication.
+signing process outside Docker. Keep matching packages and database in one release directory. For the default Bridge-enabled ISO, first complete the bundle
+stage; sign its five local packages, new database and manifest instead, retaining
+the official dependency signatures. Use ISO.md's signing block for that run.
+Signing is owner-run; never treat it as agent-run publication.
 Never copy a private key or a complete personal GnuPG home into build artifacts.
 
 ## 2. Review signed release inputs
@@ -209,45 +183,26 @@ fails, installation must stop before disk erasure. This trust is specific to a
 release whose ISO signature you verified; it is not permission to trust random
 package keys. Verify the ISO through an independent trusted channel before use.
 
-Packages used to **install Arch** still come from the dated online repository.
-ISO assembly consumes only the signed bootstrap and boot archives. Its signed
-database can also describe the optional backup package, but that archive is not
-bundled or installed by the ISO. Retain it in the external signed release set
-for explicit post-install use. Bundling scripts
-and rescue tools does not provide a fully offline installation. The installer
-preserves the same mirror snapshot inside the new system for its initial chroot
-transactions. After acceptance, perform a reviewed coherent system update; do
-not leave an old snapshot pinned indefinitely.
+Packages used to install the OS still come from the dated online repository.
+The default Bridge bundle carries five local archives plus official runtime
+dependencies. Only bootstrap and boot are installed in the live root; Bridge and
+its runtime/reference package are target payloads, and backup remains opt-in.
+Without Bridge, assembly carries bootstrap and boot only, and target installation
+must select `INSTALL_BRIDGE=false`. Neither path makes the whole OS installer
+offline. Keep the snapshot through initial transactions, then follow the
+[full-upgrade procedure](OPERATIONS.md#move-from-the-installation-snapshot-to-rolling-arch).
 
-## 3. Build, inspect and sign
+## 3. Manual and native assembly
 
-```sh
-bash infrastructure/iso/docker.sh iso candidate-01 \
-  build/iso/packages-01 /absolute/path/to/project-public.asc \
-  YOUR_REVIEWED_FINGERPRINT build/iso/release-01
-# Operator-run, after reviewing the plan and the privilege boundary above:
-bash infrastructure/iso/docker.sh --execute --allow-iso-mounts iso candidate-01 \
-  build/iso/packages-01 /absolute/path/to/project-public.asc \
-  YOUR_REVIEWED_FINGERPRINT build/iso/release-01
-```
+Use [ISO.md](ISO.md#3-assemble-the-iso) for coordinated Docker assembly.
+It checks mount-namespace support, refuses existing job/output state and limits
+compression to four workers on disk-backed storage. Do not add privileges to
+work around mount or emulation failures. Review the ISO contents, manifests and
+checksums, then sign the ISO separately from package and Secure Boot signing.
 
-ISO assembly checks mount-namespace support before downloads. If mounts, chroots
-or amd64 execution fail, stop and inspect the retained job. Do not add blanket
-privileges or change the VM kernel to work around the failure automatically.
-Use the native Arch fallback if the Docker environment cannot support this stage.
-
-The build refuses existing job/work/output state. Compression is limited to four
-workers. Work files and package caches stay on the job's disk-backed volume, not
-in a large tmpfs. No ROCm source build or native CPU tuning runs in the container.
-
-Review the ISO contents, generated package list, `SHA256SUMS`, source manifest and
-builder inventory. Sign the final ISO through the approved release-signing process.
-Artifact signing and Secure Boot signing are different controls. No script writes
-the resulting image to USB, enrolls firmware keys, publishes it or reboots a host.
-
-For each subsequent release, increase `BOOTSTRAP_PACKAGE_VERSION` in the ISO lock
-and review the snapshot and source epoch together. The source hash distinguishes
-build inputs; its lexical order does not provide a package upgrade sequence.
+For a subsequent release, review `BOOTSTRAP_PACKAGE_VERSION`, snapshot and
+source epoch together. Source hashes distinguish inputs but do not establish
+package upgrade order.
 
 ### Native Arch fallback
 
@@ -255,7 +210,13 @@ On an isolated x86_64 Arch builder prepared against the same snapshot, the origi
 scripts remain supported. Transfer the source bundle and use the same reviewed
 checkout. Run `makepkg --cleanbuild` as an ordinary user from the prepared source
 directory, with `SOURCE_DATE_EPOCH` from `source.lock`. Create the repository
-database with `repo-add`, then sign it and all three packages through the approved process.
+database with `repo-add`. For the default target, run the same
+`infrastructure/iso/bridge-bundle.sh PACKAGES BRIDGE_INPUTS NEW_OUTPUT` in that
+prepared unprivileged builder before signing; retain the matching `source.lock`.
+Sign the five bundled local packages, new database and manifest through
+[ISO.md's owner procedure](ISO.md#2-review-and-sign-this-runs-packages).
+For an explicit Bridge-disabled release, sign the four split packages and
+database instead.
 Also test `makepkg --source` and rebuild from its extracted archive without
 adjacent launcher files or `source.lock`; offline reconstruction tests do not
 replace this real Arch acceptance check.
@@ -384,3 +345,123 @@ Primary references:
 - [Pinned base-image metadata](https://github.com/docker-library/repo-info/blob/master/repos/archlinux/remote/base-20260830.0.582275.md)
 - [Docker amd64 emulation](https://docs.docker.com/build/building/multi-platform/)
 - [Docker capability boundaries](https://docs.docker.com/engine/containers/run/#runtime-privilege-and-linux-capabilities)
+
+## Bridge payload and candidate contract
+
+`bridge-bundle.json` records schema, selected installer source-archive hash,
+Bridge source-archive hash, snapshot, package names/versions/releases,
+architectures/digests and repository database digest. The source archive hash
+identifies dirty source too; HEAD alone does not. The existing source lock must
+match throughout the selected run.
+
+`arch-workstation-bridge-runtime` installs root-owned files at:
+
+- `/usr/lib/bridge/workstation-runtime`: the existing workstation CLI, libraries,
+  templates, locks, deployment inputs and explicitly listed diagnostic sources.
+- `/usr/lib/bridge/workstation-reference`: catalog locks, example configuration,
+  deployment profiles and RAG integrity inputs from that same source archive.
+
+The exact lists are `infrastructure/packages/bootstrap/bridge-runtime.files` and
+`bridge-reference.files`. They are included in the established source allowlist
+and checksum workflow. Nothing under `/etc/bridge` or mutable application state
+is generated. Examples are not active configuration. GPU qualification and
+target system-executable approvals are never fabricated from package hashes.
+
+The bundle executes the **selected package's** offline `bridge-hostd
+--check-reference`/`--check-native` against the staged reference tree and the
+actual runtime-generated native harness bundle. It also collects manifests with
+`bridge-hostd --manifest` and verifies the payload's per-file checksums. These
+commands do not start a service, contact a cluster or authorize hashes.
+Bridge's `scripts/test-installer-contract.sh --candidate SOURCE_DIRECTORY`
+adds source tests for the actual installer export; the historical pinned fixture
+remains independently checked. Catalog drift still refuses import.
+
+Bundling resolves the runtime dependency closure against the installer's snapshot
+using an empty private package database/cache. Official packages retain their Arch
+signatures. Go is build-only; optional GPU SDKs, compilers and model weights are
+not added merely to satisfy optional capabilities. Unsigned preparation cannot
+perform the signed offline install test.
+
+### Offline Bridge acceptance
+
+Before relying on the package, use a disposable Arch root/VM at the selected
+snapshot, with normal Arch keyring, filesystem, package manager and service hooks.
+After the owner establishes the reviewed signing key, disconnect networking.
+Run the Bridge installation transaction from the live installer against **only
+that disposable root**, or pass the two Bridge/runtime archives plus the recorded
+official dependency archives to `pacman --root TARGET --gpgdir KEYRING --needed -U`.
+Keep signature policy Required. Do not pass real disks or the development host root.
+Run the ownership/checksum/contract commands in [the first-boot handoff](INSTALLATION.md#bridge-package-and-owner-handoff) inside that target. Inspect
+actual sysusers allocation and service/socket inactivity. Repeat installation with
+`--needed`; verify owner test configuration and mutable-state sentinel files did
+not change. A later started service is outside this installation test.
+
+Change one runtime file in a separate disposable copy and confirm manifest
+verification fails. Check the same-model/source pair, not the old fixture alone.
+Preserve failed evidence. Unsigned candidates cannot complete this signed-install
+test; owner signing is a blocker, not permission to use `--skipinteg` or weaken
+pacman trust. VM package acceptance does not qualify physical GPU handover.
+
+## Codex package and live-console acceptance
+
+The ISO lock selects the exact `openai-codex` version, archive hash and Arch
+snapshot. The builder checks package and executable versions and signatures.
+The bootstrap package depends on that pin and owns the launcher, skill,
+references and generated guardrail adapter. No unpinned npm/AUR install runs at
+boot; no credentials enter the source package or ISO. A changed snapshot requires
+a reviewed rebuild. See [the recorded CLI checks](validation/VALIDATION-CODEX-INSTALL.md).
+
+Follow the [two file-backed disk VM procedure](#4-disposable-uefi-installation-tests) with outbound networking;
+never pass host disks through. On the booted ISO, before installation:
+
+1. Run `codex --version`, `pacman -Q openai-codex arch-workstation-bootstrap`, and
+   inspect `BUILD-IDENTITY`. Match the release lock; verify the packaged manifest.
+2. Run `arch-workstation-network mirrors` and the selected `codex-api` or
+   `codex-device` probe. A wired VM does not qualify physical Wi-Fi.
+3. Run the selected launcher locally. Owner authentication is optional/manual;
+   no real credentials belong in automation. Confirm actual `/skills` discovery,
+   interactive startup, read-only sandbox and approval policy. Request a harmless
+   response only if you explicitly accept the account's usage charge.
+4. Exit, repeat with INT/TERM, and verify that only the owned RAM session is removed
+   without printing its contents. Confirm unrelated user auth remains unchanged.
+5. Exercise disconnected DNS/mirrors and prove preflight refuses before erasure.
+6. For the separately authorized disposable install, follow exact disk confirmations,
+   then first-boot NetworkManager connection, fresh auth, verification and recovery
+   tests. Do not infer that a VM Ethernet connection qualifies target Wi-Fi.
+
+Record separately: source/fixture checks; actual package/CLI execution; login;
+model access; ISO boot; Wi-Fi; installation; unlock/firmware/recovery. None of these
+is a performance measurement. Remaining physical acceptance is owner-run.
+
+## Signature-verification retry
+
+The 2026-09-05 failure was reproduced in the builder's GPGME library. The pinned
+`pacstrap` runs pacman as PID 1 in a nested PID namespace. GPGME leaves orphaned
+child processes that pacman does not reap. These zombies exhaust the process
+limit, after which verification reports misleading `ioctl` and corrupt-package
+errors. This is distinct from a bad signature or a signing-passphrase prompt.
+
+The builder now uses a [pacstrap adapter](../infrastructure/iso/docker/pacstrap.sh)
+that keeps Bash as PID 1 to reap children. It changes only the nested process
+launcher, refuses an unexpected upstream launcher, and leaves `/usr/bin/pacstrap`
+unchanged. Package signatures, the 512-PID limit and Docker security controls
+remain enabled. Docker's outer `--init` alone would not fix this nested namespace.
+
+Build and check the updated tools image from the repository root:
+
+```sh
+bash infrastructure/iso/docker.sh --execute image
+bash infrastructure/iso/docker.sh --execute check
+```
+
+Keep `ISO_RUN` set to your existing successful package run, then retry [ISO assembly](ISO.md#3-assemble-the-iso):
+
+```sh
+bash infrastructure/iso/release.sh --execute --allow-iso-mounts iso \
+  "${ISO_RUN:?}" "$ISO_RUN/signing-key.asc" "${SIGNING_FINGERPRINT:?}"
+```
+
+This builder-only fix does not require rebuilding or resigning those packages.
+The coordinator creates a new ISO attempt and retains the failed job. If signature
+verification still fails, stop and inspect the new log; do not use `SigLevel = Never`
+or assume that all signature failures have this cause.

@@ -1,13 +1,14 @@
-# Canonical template. prepare-source.sh fills only these three literal pins after
+# Canonical template. prepare-source.sh fills only these literal pins after
 # hashing the archive containing this template, avoiding a circular source hash.
 # shellcheck shell=bash disable=SC2034,SC2154
 _source_digest='@SOURCE_SHA256@'
 _source_version='@PACKAGE_VERSION@'
 _source_epoch='@SOURCE_DATE_EPOCH@'
+_codex_package_version='@CODEX_PACKAGE_VERSION@'
 pkgbase='arch-workstation-bootstrap'
-pkgname=(arch-workstation-bootstrap arch-workstation-boot arch-workstation-backup)
-[[ $_source_digest =~ ^[a-f0-9]{64}$ && $_source_version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ \
-  && $_source_epoch =~ ^[0-9]{10}$ ]] || return 1
+pkgname=(arch-workstation-bootstrap arch-workstation-boot arch-workstation-backup arch-workstation-bridge-runtime)
+[[ $_source_digest =~ ^[a-f0-9]{64}$ && $_source_version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ &&
+  $_source_epoch =~ ^[0-9]{10}$ ]] || return 1
 export SOURCE_DATE_EPOCH=$_source_epoch
 pkgver=$_source_version.s${_source_digest:0:12}
 pkgrel=1
@@ -30,21 +31,23 @@ verify() {
   rendered=$(printf '%s\n' "$canonical" | sed \
     -e "s/^_source_digest='@SOURCE_SHA256@'$/_source_digest='$_source_digest'/" \
     -e "s/^_source_version='@PACKAGE_VERSION@'$/_source_version='$_source_version'/" \
-    -e "s/^_source_epoch='@SOURCE_DATE_EPOCH@'$/_source_epoch='$_source_epoch'/") || return 1
+    -e "s/^_source_epoch='@SOURCE_DATE_EPOCH@'$/_source_epoch='$_source_epoch'/" \
+    -e "s/^_codex_package_version='@CODEX_PACKAGE_VERSION@'$/_codex_package_version='$_codex_package_version'/") || return 1
   cmp -s <(printf '%s\n' "$rendered") "$startdir/PKGBUILD" || return 1
   # source.lock is an optional human-readable export, not a makepkg prerequisite.
   # A standard makepkg --source archive therefore remains self-contained.
   if [[ -e $startdir/source.lock || -L $startdir/source.lock ]]; then
     [[ -f $startdir/source.lock && ! -L $startdir/source.lock ]] || return 1
-    [[ $(_lock_value "$startdir/source.lock" SOURCE_SHA256) == "$_source_digest" \
-      && $(_lock_value "$startdir/source.lock" PACKAGE_VERSION) == "$_source_version" \
-      && $(_lock_value "$startdir/source.lock" SOURCE_DATE_EPOCH) == "$_source_epoch" ]] || return 1
+    [[ $(_lock_value "$startdir/source.lock" SOURCE_SHA256) == "$_source_digest" &&
+    $(_lock_value "$startdir/source.lock" PACKAGE_VERSION) == "$_source_version" &&
+    $(_lock_value "$startdir/source.lock" SOURCE_DATE_EPOCH) == "$_source_epoch" ]] || return 1
   fi
 }
 
 prepare() {
-  [[ $(_lock_value "$srcdir/project/infrastructure/iso/versions.lock" BOOTSTRAP_PACKAGE_VERSION) == "$_source_version" \
-    && $(_lock_value "$srcdir/project/infrastructure/iso/versions.lock" SOURCE_DATE_EPOCH) == "$_source_epoch" ]] || return 1
+  [[ $(_lock_value "$srcdir/project/infrastructure/iso/versions.lock" CODEX_PACKAGE_VERSION) == "$_codex_package_version" ]] || return 1
+  [[ $(_lock_value "$srcdir/project/infrastructure/iso/versions.lock" BOOTSTRAP_PACKAGE_VERSION) == "$_source_version" &&
+  $(_lock_value "$srcdir/project/infrastructure/iso/versions.lock" SOURCE_DATE_EPOCH) == "$_source_epoch" ]] || return 1
   cmp "$srcdir/project/source.files" "$srcdir/project/infrastructure/packages/bootstrap/source.files" || return 1
   (cd "$srcdir/project" && sha256sum --check --strict SOURCE-MANIFEST.sha256) || return 1
 }
@@ -54,13 +57,15 @@ package_arch-workstation-bootstrap() {
   depends=('bash' 'arch-install-scripts' 'cryptsetup' 'mdadm' 'xfsprogs' 'dosfstools'
     'gptfdisk' 'pciutils' 'jq' 'sbsigntools' 'efibootmgr' 'gnupg' 'libarchive'
     'curl' 'iproute2' 'systemd' 'ripgrep' 'util-linux')
-  depends+=("openai-codex=$(_lock_value "$srcdir/project/infrastructure/iso/versions.lock" CODEX_PACKAGE_VERSION)")
+  # makepkg evaluates split-package dependency metadata before srcdir is assigned.
+  depends+=("openai-codex=$_codex_package_version")
   local path
   while IFS= read -r path; do
     install -Dm644 "$srcdir/project/$path" "$pkgdir/usr/lib/arch-workstation-bootstrap/$path"
-  done < "$srcdir/project/source.files"
+  done <"$srcdir/project/source.files"
   install -Dm644 "$srcdir/project/SOURCE-MANIFEST.sha256" "$pkgdir/usr/lib/arch-workstation-bootstrap/SOURCE-MANIFEST.sha256"
   install -Dm644 "$srcdir/project/BUILD-IDENTITY" "$pkgdir/usr/lib/arch-workstation-bootstrap/BUILD-IDENTITY"
+  printf '%s\n' "$_source_digest" >"$pkgdir/usr/lib/arch-workstation-bootstrap/INSTALLER-SOURCE.sha256"
   # Generated instruction adapter; the canonical guardrails remain unchanged.
   install -Dm644 "$srcdir/project/.aiassistant/rules/workstation-guardrails.md" "$pkgdir/usr/lib/arch-workstation-bootstrap/AGENTS.md"
   chmod 755 "$pkgdir/usr/lib/arch-workstation-bootstrap/bin/"*
@@ -95,4 +100,28 @@ package_arch-workstation-backup() {
   done
   install -Dm644 "$srcdir/project/infrastructure/packages/bootstrap/LICENSE-NOTICE" "$pkgdir/usr/share/licenses/arch-workstation-backup/LICENSE-NOTICE"
   # No repository credentials, installation scriptlet, timer enablement or backup.
+}
+
+package_arch-workstation-bridge-runtime() {
+  pkgdesc='Reviewed installer runtime and catalog references for Spry.ai Bridge; no active policy'
+  depends=('bash' 'coreutils' 'findutils' 'gawk' 'grep' 'sed' 'jq' 'util-linux'
+    'python' 'python-yaml' 'iproute2' 'pciutils' 'curl' 'ripgrep')
+  optdepends=('kubectl: qualified session operations' 'rocm-smi-lib: optional legacy GPU telemetry'
+    'ccache: compiler cache operations' 'bubblewrap: contained builds')
+  local kind path destination
+  for kind in runtime reference; do
+    destination="$pkgdir/usr/lib/bridge/workstation-$kind"
+    while IFS= read -r path; do
+      install -Dm644 "$srcdir/project/$path" "$destination/$path"
+      case "$path" in bin/* | *.sh) chmod 755 "$destination/$path" ;; esac
+    done <"$srcdir/project/infrastructure/packages/bootstrap/bridge-$kind.files"
+    install -Dm644 "$srcdir/project/BUILD-IDENTITY" "$destination/BUILD-IDENTITY"
+    printf '%s\n' "$_source_digest" >"$destination/INSTALLER-SOURCE.sha256"
+    (
+      cd "$destination" || return 1
+      while IFS= read -r path; do sha256sum "$path"; done <"$srcdir/project/infrastructure/packages/bootstrap/bridge-$kind.files"
+      sha256sum BUILD-IDENTITY INSTALLER-SOURCE.sha256
+    ) >"$destination/SOURCE-MANIFEST.sha256"
+  done
+  # No active configuration, target executable approvals, credentials or units.
 }

@@ -28,6 +28,8 @@ source "$BOOTSTRAP_ROOT/lib/bootstrap/install.sh"
 source "$BOOTSTRAP_ROOT/lib/bootstrap/verify.sh"
 # shellcheck source=lib/bootstrap/package.sh
 source "$BOOTSTRAP_ROOT/lib/bootstrap/package.sh"
+# shellcheck source=lib/bootstrap/bridge.sh
+source "$BOOTSTRAP_ROOT/lib/bootstrap/bridge.sh"
 
 usage() {
   cat <<'USAGE'

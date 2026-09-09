@@ -1,18 +1,13 @@
 # Build the installer ISO on your Mac
 
-Use three stages: **build packages → sign packages → assemble the ISO**.
-You choose a signing key, but you no longer choose source-directory or Docker-job
-names. The coordinator creates a fresh source snapshot for every package build
-and prints the one run directory needed for the remaining stages.
+Follow this guide in order: build packages, bundle Bridge, sign, assemble,
+verify and write USB media. The default installation includes Bridge; its
+services remain inactive until owner setup after first boot.
 
-These commands build local artifacts only. They do not install Arch on your Mac,
-write a USB drive, change firmware or reboot anything. The resulting live ISO is
-not yet boot-qualified or Secure Boot qualified.
-
-The signed bootstrap package now includes the installation skill and console
-launcher; the ISO selects a recorded Codex package from its Arch snapshot.
-See [CODEX-INSTALL.md](CODEX-INSTALL.md) for Wi-Fi, explicit authentication,
-private RAM-session cleanup and live-ISO smoke tests. No credentials enter the ISO.
+Run from the reviewed checkout on the controller. These steps do not install
+Arch on the Mac, enrol firmware keys or reboot a machine. For booting the ISO,
+Wi-Fi, Codex and target installation, use [INSTALLATION.md](INSTALLATION.md).
+Advanced build internals and disposable tests are in [ISO-REFERENCE.md](ISO-REFERENCE.md).
 
 ## Before you start
 
@@ -34,41 +29,6 @@ You do **not** need workstation disk paths, installation credentials, ROCm,
 Ansible or Kubernetes configuration to build the ISO. Configure the workstation
 installation separately, after building and validating the media.
 
-The home lab now uses K3s. Kubernetes is configured after the Arch installation;
-the ISO does not install or start a cluster. The [bare-metal profile](HOME-LAB.md#3-package-and-configure-bare-metal-k3s)
-uses SQLite, and the separate [KVM lab](../ansible/K3S-OPERATIONS.md) retains
-embedded etcd for its snapshot/restore workflow. Both use `K3S_VERSION` from
-the root `versions.lock`. Secure Boot and ISO package signing are unchanged.
-Existing ISO files remain frozen artifacts. To include these revised guides,
-build a fresh package run and repeat signing and assembly; retrying assembly
-with an old package run does not incorporate checkout changes.
-
-## AI tuning and the installed system
-
-The live ISO keeps a generic Arch kernel. Native CPU compilation belongs on the
-installed Threadripper; the Mac's ISO builder must not select CPU-native flags
-for the target machine. The home-lab install example now explicitly selects
-`TUNED_PROFILE=accelerator-performance`, independently of `HOST_PROFILE=headless`.
-The generic install example retains `auto` and its previous balanced default.
-This configures the installed host, not the running live ISO.
-
-After installation, the reviewed full checkout provides native git-kernel
-builds, memory-limited compilation and same-revision llama.cpp HIP/Vulkan builds. The
-bootstrap package does not bundle these post-install workstation commands.
-Follow [the AI performance audit and qualification runbook](AI-PERFORMANCE.md).
-It also explains the explicit move from the ISO's dated package mirror to
-rolling Arch after recovery tests pass. Existing media are not modified by
-editing this checkout.
-
-The [first-tranche tracking matrix](AI-PERFORMANCE.md#first-tranche-implementation-record)
-also covers target topology, K3s whole-core resource plans, persistent caches and
-gated AI/gaming handover. These are post-install commands and source changes;
-they do not run benchmarks, configure K3s or discover target hardware in the ISO
-builder. Gaming remains disabled until image, device and security qualification.
-The [Sunshine runbook](SUNSHINE.md) covers the pinned gaming-image recipe,
-VA-API/Vulkan Video profiles, allocated-GPU diagnostics and paired measurements.
-These are post-install tools; rebuilding the ISO does not qualify game streaming.
-
 ## 1. Build fresh packages
 
 Preview the workflow without contacting Docker or creating files:
@@ -84,52 +44,77 @@ bash infrastructure/iso/release.sh --execute packages
 ```
 
 This builds or reuses the pinned tools image, checks it, snapshots the current
-checkout and builds all three unsigned packages. Each stage stops on failure.
+checkout and builds all four unsigned installer packages. Each stage stops on failure.
 Package building runs as UID 1000 without network or Linux capabilities.
 
 ### Select your build directory
 
-`ISO_RUN` is a shell variable containing the **absolute path to one build run on
-your Mac**. It selects the packages you will sign and use for ISO assembly. Set
-it to the parent directory containing both `source/` and `packages/`, not to one
-of those subdirectories, a Docker job name or an `.iso` file:
+Paste the successful command's printed `ISO_RUN=...` assignment into your
+terminal. It selects one completed run, not the newest timestamp:
 
 ```text
-build/iso/run-<timestamp>-<pid>/   ← ISO_RUN points here
-├── source/       # Frozen source archive, recipe and source manifest
-└── packages/     # Three packages, repository database, checksums and build records
+build/iso/run-<timestamp>-<pid>/
+├── source/       # Frozen source archive, recipe and manifest
+├── packages/     # Four unsigned installer packages
+└── bundled/      # After Bridge selection: five packages + official dependencies
 ```
 
-At the end of a successful package build, the command prints an `ISO_RUN=...`
-line. **Paste that entire line into your terminal and press Enter.** Printing the
-line does not set the variable: the build script runs in a separate shell.
-
-For example, from the repository root, a run named `run-20260905-191820-34503`
-would be selected like this. Use your successful run's name:
-
 ```sh
-ISO_RUN="$(pwd)/build/iso/run-20260905-191820-34503"
-```
-
-Check the selected directory before continuing:
-
-```sh
-printf 'Selected build: %s\n' "${ISO_RUN:?Set ISO_RUN first}"
+printf 'Selected build: %s\n' "${ISO_RUN:?Paste the successful run assignment first}"
 ls "$ISO_RUN/source/source.lock" "$ISO_RUN/packages/source.lock"
 ```
 
-Both manifest paths should exist. If either is missing, check your selection and
-whether stage 1 completed. This check does not create a directory or rebuild anything.
+Keep this assignment through bundling, signing and assembly. In a new terminal,
+restore the same reviewed absolute path. Missing manifests mean an incomplete
+or wrong selection; do not create them or rebuild merely to restore context.
+Changed source requires a new package run. Failed jobs and prior artifacts remain
+available for inspection.
 
-Keep the same value through stages 2 and 3. It lasts only in the terminal session
-where you set it; in a new tab or terminal, run the assignment again. No `export`
-is needed because the commands below pass the value as an argument. `$ISO_RUN`
-substitutes the selected path; `${ISO_RUN:?}` also stops the command if the variable
-is unset or empty. Neither form chooses a run automatically.
+## 1a. Bundle Bridge, unless explicitly opting out
 
-Do not rerun this stage just to continue signing or ISO assembly. To build edited
-source, rerun the same command: it creates a new snapshot and run automatically.
-Old runs, including failed containers and volumes, remain available for inspection.
+The default `INSTALL_BRIDGE=true` requires this stage before signing. For media
+without Bridge, skip this stage and set `INSTALL_BRIDGE=false` in the install
+configuration; omission means true, including in older configurations.
+
+Select one reviewed local or successful CI build of
+`spry-ai-workstation-bridge`, with its exact `PKGBUILD` and
+`spry-bridge-*-src.tar.gz`. A version label alone does not identify the source.
+For a local build, follow Bridge's `docs/ARCH-PACKAGING.md`:
+
+```sh
+BRIDGE_REPO=/absolute/reviewed/Spry.ai-workstation-bridge
+cd "$BRIDGE_REPO"
+make check
+go run ./cmd/bridge-arch-package --version v0.0.0 --output /absolute/new/bridge-source
+# In a prepared unprivileged Arch environment, in that generated directory:
+makepkg --verifysource
+makepkg --cleanbuild
+```
+
+Choose a reviewed version label; `v0.0.0` is only a local candidate example.
+Return to the installer checkout, retain the printed `ISO_RUN`, and select
+the directory containing that single package, source archive and recipe:
+
+```sh
+BRIDGE_ARTIFACTS=/absolute/reviewed/bridge-artifacts
+bash infrastructure/iso/release.sh bridge "$ISO_RUN" "$BRIDGE_ARTIFACTS"
+bash infrastructure/iso/release.sh --execute bridge "$ISO_RUN" "$BRIDGE_ARTIFACTS"
+```
+
+The stage creates `ISO_RUN/bundled`: five local packages, a rebuilt repository,
+`bridge-bundle.json` and the official runtime dependency closure for the ISO's
+Arch snapshot. Go remains build-only. Official packages retain their Arch
+signatures. The selected Bridge binary checks the matching runtime/reference
+catalog; no service starts and no target approvals are generated.
+
+Review the recorded source hashes, package metadata and dependency evidence.
+Missing, ambiguous or changed inputs stop the stage. Existing output is refused;
+retain failed jobs and use a fresh reviewed run for changed inputs. Do not fall
+back to another run's packages. Signed offline transaction validation remains
+pending until owner signing and installation preflight.
+
+See [payload and contract details](ISO-REFERENCE.md#bridge-payload-and-candidate-contract).
+Transporting these archives does not make the whole OS installation offline.
 
 ## 2. Review and sign this run's packages
 
@@ -145,7 +130,8 @@ SIGNING_FINGERPRINT='REPLACE_WITH_YOUR_REVIEWED_PRIMARY_FINGERPRINT'
 ```
 
 Review the generated PKGBUILD, source manifest, `.PKGINFO`, `.BUILDINFO` and
-package contents. Expect bootstrap, boot and backup packages; no `.INSTALL`
+package contents. Expect bootstrap, boot, backup and Bridge-runtime packages,
+plus Bridge after bundling; no `.INSTALL`
 scriptlets. The [package-content checklist](ISO-REFERENCE.md#1-prepare-the-source-package)
 describes their intended files. Then run the following in the same terminal.
 It checks the recorded checksums, exports only the public key, and creates a
@@ -159,11 +145,15 @@ set -euo pipefail
 run=$1
 fingerprint=$2
 [[ $fingerprint =~ ^[A-F0-9]{40}$ ]] || { echo 'Use the full uppercase primary fingerprint.' >&2; exit 1; }
-cd "$run/packages"
+artifact_dir="$run/packages"
+expected_count=4
+if [[ -d $run/bundled ]]; then artifact_dir="$run/bundled"; expected_count=5; fi
+cd "$artifact_dir"
 shopt -s nullglob
 packages=(./*.pkg.tar.zst)
-((${#packages[@]} == 3)) || { echo 'Expected three packages.' >&2; exit 1; }
+((${#packages[@]} == expected_count)) || { echo 'Unexpected package count.' >&2; exit 1; }
 artifacts=("${packages[@]}" ./arch-workstation.db.tar.gz)
+if ((expected_count==5)); then artifacts+=(./bridge-bundle.json); fi
 [[ ! -e ../signing-key.asc && ! -L ../signing-key.asc ]] || { echo 'Public-key output already exists; inspect this run.' >&2; exit 1; }
 for artifact in "${artifacts[@]}"; do
   [[ -f $artifact && ! -L $artifact && ! -e $artifact.sig && ! -L $artifact.sig ]] || { echo 'Missing artifact or existing signature; inspect this run.' >&2; exit 1; }
@@ -299,7 +289,7 @@ until the flash drive is available.
 ## If a stage fails
 
 - **Repeated `GPGME error: Inappropriate ioctl for device` during package integrity
-  checks:** see the [signature-verification retry](#signature-verification-retry)
+  checks:** see the [signature-verification retry](ISO-REFERENCE.md#signature-verification-retry)
   below. Do not delete packages or change your signing key based on this message.
 - **Missing `/work/source/launch-bootstrap`:** a manually selected bundle contains
   the older recipe. Run stage 1 above; changing only `candidate-01` to `candidate-02`
@@ -315,52 +305,14 @@ until the flash drive is available.
   inspect `build/iso/` and select your successful run, not simply the newest directory.
   Do not create an empty directory or rebuild packages just to restore the variable.
 
-### Signature-verification retry
-
-The 2026-09-05 failure was reproduced in the builder's GPGME library. The pinned
-`pacstrap` runs pacman as PID 1 in a nested PID namespace. GPGME leaves orphaned
-child processes that pacman does not reap. These zombies exhaust the process
-limit, after which verification reports misleading `ioctl` and corrupt-package
-errors. This is distinct from a bad signature or a signing-passphrase prompt.
-
-The builder now uses a [pacstrap adapter](../infrastructure/iso/docker/pacstrap.sh)
-that keeps Bash as PID 1 to reap children. It changes only the nested process
-launcher, refuses an unexpected upstream launcher, and leaves `/usr/bin/pacstrap`
-unchanged. Package signatures, the 512-PID limit and Docker security controls
-remain enabled. Docker's outer `--init` alone would not fix this nested namespace.
-
-Build and check the updated tools image from the repository root:
-
-```sh
-bash infrastructure/iso/docker.sh --execute image
-bash infrastructure/iso/docker.sh --execute check
-```
-
-Keep `ISO_RUN` set to your existing successful package run, then retry stage 3:
-
-```sh
-bash infrastructure/iso/release.sh --execute --allow-iso-mounts iso \
-  "${ISO_RUN:?}" "$ISO_RUN/signing-key.asc" "${SIGNING_FINGERPRINT:?}"
-```
-
-This builder-only fix does not require rebuilding or resigning those packages.
-The coordinator creates a new ISO attempt and retains the failed job. If signature
-verification still fails, stop and inspect the new log; do not use `SigLevel = Never`
-or assume that all signature failures have this cause.
-
 ## Qualification
 
-As of 2026-09-05, the Docker tools image and unprivileged userspace check passed
-on this Mac with builder tag `arch-workstation-iso-builder:acba2b40e867f6e24826`.
-Archiso 90-1 reported `198 total files, 0 altered files`. The coordinator also
-built and exported all three unsigned packages from a fresh source snapshot;
-their checksums, launcher contents and package metadata passed inspection.
-The subsequent signed-package run passed preparation but failed during ISO package
-verification. An offline regression reproduced GPGME process exhaustion with a
-64-PID limit; the child-reaping adapter passed 100 operations under the same limit.
-The updated builder `arch-workstation-iso-builder:0b1a2f52d00187889d4f` also passed
-the userspace check. `arch-install-scripts` reported `21 total files, 0 altered
-files`; the adapter does not modify the installed upstream package.
-These checks do not qualify a complete ISO. ISO assembly and boot validation
-remain pending. See the [reference](ISO-REFERENCE.md) for retained warnings, implementation details,
-manual stage commands and recovery procedures.
+Use the [dated validation records](validation/VALIDATION-BRIDGE-ISO.md) for exact
+source/package identities, completed checks, failures and pending acceptance.
+A package build, signature or USB readback does not qualify ISO boot, live Secure
+Boot, disk unlock, recovery or physical hardware.
+
+Do not rebuild or resign a successful old run merely to continue. Documentation
+changes affect future source packages, not existing signed media. Keep reviewed
+recovery media and follow the [disposable tests](ISO-REFERENCE.md#4-disposable-uefi-installation-tests)
+before relying on a new ISO.

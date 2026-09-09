@@ -250,7 +250,7 @@ dispatch, tuning and sustained performance are **NOT RUN — target workstation
 unavailable**. No hardware-qualified improvement or faster default is claimed.
 
 The focused revalidation of installer `67a5060` and Bridge `deb6a93` is recorded
-in [VALIDATION-67a5060.md](VALIDATION-67a5060.md). Shell cleanup now preserves the
+in [VALIDATION-67a5060.md](validation/VALIDATION-67a5060.md). Shell cleanup now preserves the
 primary workload/signal outcome, stops only its owned process groups and removes
 its three named temporary files, including `compiler-before.json`. Unexpected
 temporary contents are retained with a warning. Persistent caches and run

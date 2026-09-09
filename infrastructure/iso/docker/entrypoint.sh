@@ -37,8 +37,8 @@ case ${1:-check} in
     makepkg --cleanbuild --noconfirm
     shopt -s nullglob
     packages=(/work/output/*.pkg.tar.zst)
-    ((${#packages[@]} == 3)) || fail 'expected the three workstation split packages'
-    for name in bootstrap boot backup; do
+    ((${#packages[@]} == 4)) || fail 'expected four workstation split packages'
+    for name in bootstrap boot backup bridge-runtime; do
       matching=(/work/output/arch-workstation-"$name"-*.pkg.tar.zst)
       ((${#matching[@]} == 1)) || fail "expected exactly one $name package"
     done
@@ -50,6 +50,11 @@ case ${1:-check} in
     cd /work/output
     sha256sum ./*.pkg.tar.zst arch-workstation.db.tar.gz >SHA256SUMS
     printf 'Unsigned packages and repository database are ready for review and signing.\n'
+    ;;
+  bridge)
+    (($# == 1)) || fail 'bridge accepts no arguments'
+    [[ $(id -u) != 0 ]] || fail 'bundle as the unprivileged builder'
+    bash /project/infrastructure/iso/bridge-bundle.sh /input /candidate /work/output
     ;;
   iso)
     (($# == 2)) || fail 'iso requires the reviewed primary public fingerprint'

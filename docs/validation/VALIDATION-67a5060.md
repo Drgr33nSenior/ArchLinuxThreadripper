@@ -1,5 +1,10 @@
 # Focused correctness revalidation — 9 September 2026
 
+> Dated evidence for the revisions named below, not a current installation
+> procedure. Use [ISO.md](../ISO.md), [INSTALLATION.md](../INSTALLATION.md) and the
+> relevant workload runbook for new work. Preserve the recorded failures and skips.
+
+
 Starting checkouts were clean:
 
 - Installer: `67a506090e8ecf696190e0be55f865e3ce054d0e`.
@@ -105,7 +110,7 @@ diff checks are separate from performance qualification.
 real model warmup/compilation, automatic profiler stop and per-rank exports,
 restart cache reuse, numerical GPU correctness, sustained performance and
 thermal/memory qualification. Use the exact model/workload and reviewed session
-configuration from [MODEL-KERNELS.md](MODEL-KERNELS.md):
+configuration from [MODEL-KERNELS.md](../MODEL-KERNELS.md):
 
 ```sh
 ./bin/workstationctl --config config/workstation.conf hardware collect artifacts/kernel-hardware-01

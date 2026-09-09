@@ -1,5 +1,10 @@
 # Whole-project audit follow-up
 
+> Dated evidence for the revisions named below, not a current installation
+> procedure. Use [ISO.md](../ISO.md), [INSTALLATION.md](../INSTALLATION.md) and the
+> relevant workload runbook for new work. Preserve the recorded failures and skips.
+
+
 Started from clean `fb6dfc66cae4d0ba85473c6e41834cb105bebc7d` on 9 September
 2026. This is an implementation increment, **not completion of the whole
 audit**. The development host is macOS/arm64. No target performance gain,
@@ -121,7 +126,7 @@ select `LLAMA_SPLIT_MODE=row` for both benchmark and qualification. Do not compa
 different models as a scaling result.
 
 Run the host/Pod IPC, peer-copy, RCCL, serving and encrypted scratch-file
-procedures in [PERFORMANCE-VALIDATION.md](PERFORMANCE-VALIDATION.md). Those
+procedures in [PERFORMANCE-VALIDATION.md](../PERFORMANCE-VALIDATION.md). Those
 commands still require the actual workstation, model bundle, exact Pod and
 owner-approved workload window. Restore kernel preference with the existing
 `sudo ./bin/workstationctl kernel rollback stable` or `lts` only during an
@@ -192,7 +197,7 @@ It produced three unsigned packages, repository metadata, checksums and source
 locks in `build/iso/run-20260909-160800-10377`. Their version is
 `0.1.0.scecf401aaacf-1`; the recorded source snapshot identifies their inputs,
 not later documentation edits. Retained Docker build artifacts were not pruned.
-Continue at the explicit signing/trust gate in [ISO.md](ISO.md), selecting that
+Continue at the explicit signing/trust gate in [ISO.md](../ISO.md), selecting that
 run and an owner-controlled signing identity. Unsigned package assembly does
 not qualify a signed ISO, installation, firmware unlock or recovery boot.
 
@@ -202,3 +207,53 @@ newer llama HIP/Vulkan (prompt/decode spread and quality); coherent newer graphi
 (working input, distinct-frame cadence and latency); SGLang hybrid-state pools
 (long-context latency and peak memory). Keep only repeated improvements beyond
 noise without stability, quality or memory regressions.
+
+## Earlier AI performance records
+
+The following earlier tranche notes are historical. In particular, the original
+RAG base-overlay description is not the current model/deployment selection;
+use [RAG.md](../RAG.md) and [MODELS.md](../MODELS.md) for current configuration.
+
+### Local validation record
+
+`HOME_LAB_PYTHON=/usr/local/bin/python3.11 make check` passed with 32 test
+scripts on the macOS development host. This includes shell syntax/ShellCheck,
+YAML and Kustomize rendering, Jinja-generated K3s configuration, exact offline
+CPU-reservation predicates, installer/source-generation dry-runs, hardware and
+build fixtures, and session failure/recovery tests. The peer diagnostic was
+compiled against a deliberately simulated HIP header, not a ROCm installation.
+
+Unavailable checks were reported, not treated as executed: shfmt, Bats,
+Ansible syntax-check (the Homebrew launcher references a missing Python 3.8),
+Linux `systemd-analyze`, a local pinned GPU-operator chart archive, real ccache
+repeat compilation and real CMake/Ninja fixture generation. The selected
+PyCharm Python 3.11 SDK did run the Jinja/YAML configuration checks. No installer,
+cluster mutation, firmware action, real ROCm build, ISO assembly, disk benchmark
+or performance workload ran on this development host.
+
+## RAG and context tranche — 2026-09-08
+
+The opt-in `apps/overlays/rag` composition extends `single-gpu` without changing
+the other profiles. It pins Open WebUI 0.11.3 and a small CPU embedding model,
+uses embedded Chroma, bounds threads/uploads/chunks, and keeps zero replicas
+with pending qualification. It does not request a GPU or alter SGLang's context,
+host packages, gaming allocation or no-swap policy.
+
+`bin/workstationctl rag stage-models` prepares hash-verified offline assets;
+`rag verify-models` checks them after transfer. `rag corpus` snapshots explicitly
+selected Markdown documents with source hashes and nullable Git provenance.
+The new `webui-rag-data` PVC isolates pilot settings/data from `webui-data`.
+Git-managed settings override the Admin UI in this profile; read the migration
+and rollback notes before activating it.
+
+Tests are `tests/test_rag.sh` and `tests/home-lab/check-rag.rb`. The seed questions
+in `tests/fixtures/rag/questions.json` include unknown-hardware and invented-gain
+cases. They are test expectations, not measured answers. See [RAG.md](../RAG.md) for
+the evidence/decision matrix, exact preparation commands, acceptance metrics,
+privacy boundaries, storage retention and deferred pgvector/reranking/graph work.
+
+Local validation passed on 2026-09-08: `make check` with the configured Python
+SDK (37 test scripts), Kubernetes 1.35 schema validation (28 objects per RAG
+overlay) and actual staging/verification of all 11 model files. Optional tooling
+skips and the unrun application/hardware tests are listed in the
+[RAG verification record](../RAG.md#local-verification-record--2026-09-08).

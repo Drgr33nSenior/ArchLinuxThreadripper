@@ -19,9 +19,9 @@ outputs. Edit the source and regenerate both previews; do not edit them separate
 
 - The primary AI deployment is bare-metal K3s on Arch. The optional AlmaLinux
   K3s VM is a separate lab with its own datastore and network boundaries.
-- Application replicas default to zero. AI images remain unqualified. Gaming
-  is optional and its requested `SYS_ADMIN` capability conflicts with the
-  namespace's baseline Pod Security policy. No diagram arrow removes those gates.
+- Application replicas default to zero. AI images remain unqualified. The historical gaming box describes the older `SYS_ADMIN` admission conflict,
+  not the current non-root Wayland candidate. Use [SUNSHINE.md](SUNSHINE.md) for
+  current capture/admission and input acceptance. No diagram arrow qualifies it.
 - Open WebUI calls the internal SGLang OpenAI-compatible API. SwarmUI expects
   an in-pod ROCm ComfyUI backend; its ClusterIP service remains internal and
   default-deny NetworkPolicy blocks ingress. A private access path is not yet

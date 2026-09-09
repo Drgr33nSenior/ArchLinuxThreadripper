@@ -3,11 +3,11 @@
 The [opt-in model-kernel workflow](MODEL-KERNELS.md) adds independent compilation,
 warmup, restart-reuse and numerical/dispatch evidence without promoting defaults.
 
-See [the 9 September implementation record](AUDIT-FOLLOWUP-2026-09-09.md) for
+See [the 9 September implementation record](validation/AUDIT-FOLLOWUP-2026-09-09.md) for
 runtime-library provenance, matching benchmark/quality configuration, installed
 kernel verification, provider-aware monitoring and strict-check results.
 
-See [validation of e5281734](VALIDATION-e5281734.md) for the dependency-prepared
+See [validation of e5281734](validation/VALIDATION-e5281734.md) for the dependency-prepared
 follow-up checks, retained logs, corrections and remaining qualification blockers.
 
 Reviewed 2026-09-09 against checkout `bd4077f58afb6f81f3bfdd33986d001d46170dcc`,

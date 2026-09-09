@@ -412,6 +412,7 @@ bootstrap_install() {
   bootstrap_write_target_config || return 1
   bootstrap_configure_system || return 1
   bootstrap_install_boot_package || return 1
+  bootstrap_install_bridge || return 1
   bootstrap_create_firmware_entries || return 1
   bootstrap_log 'install complete. Do not enable Secure Boot until you have exported firmware keys and manually enrolled the new owner keys.'
 }

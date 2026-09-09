@@ -37,122 +37,48 @@ configured disks.
 | `bash infrastructure/iso/release.sh` | Fresh ISO package builds and explicitly authorized ISO assembly |
 | `make check` | Offline syntax, shell, Ansible, and Kubernetes-source validation |
 
-## Build the installer ISO on macOS
+## Start here
 
-Start Docker Desktop, review the checkout and run this from the repository root:
+Run commands from the reviewed checkout unless the guide specifies the packaged
+live-console launcher. Keep nonsecret settings in the existing config examples
+and versions in the locks; do not infer target identity from a diagram or example.
 
-```sh
-bash infrastructure/iso/release.sh packages             # Preview; changes nothing
-bash infrastructure/iso/release.sh --execute packages   # Build fresh unsigned packages
-```
+| Task | Guide |
+| --- | --- |
+| Build, bundle Bridge, sign, assemble and write the installer ISO | [ISO](docs/ISO.md) |
+| Boot, Wi-Fi, optional Codex, install, recover and hand off to Bridge | [Installation](docs/INSTALLATION.md) |
+| Native media builds, troubleshooting and disposable UEFI acceptance | [ISO reference](docs/ISO-REFERENCE.md) |
+| Packages, shell, native compiler policy and experimental kernels | [Workstation setup](docs/WORKSTATION.md) |
+| Updates, backups and retained VM lifecycle | [Operations](docs/OPERATIONS.md) |
+| Bare-metal K3s, networking, GPU allocation and application profiles | [Home lab](docs/HOME-LAB.md) |
+| Native ROCm SDK, llama builds, ccache and source-package status | [ROCm](docs/ROCM.md) |
+| CPU/RAM budgets and AI/gaming session policy | [AI performance](docs/AI-PERFORMANCE.md) |
+| Serving, numerical quality and comparative measurement | [Performance validation](docs/PERFORMANCE-VALIDATION.md) |
+| Opt-in compilation, cache reuse and kernel dispatch | [Model kernels](docs/MODEL-KERNELS.md) |
+| Model selection/staging, retrieval and client agents | [Models](docs/MODELS.md), [RAG](docs/RAG.md), [agent harnesses](docs/AGENT-HARNESSES.md) |
+| Gaming image, capture, encoding and input acceptance | [Sunshine](docs/SUNSHINE.md) |
+| Design, dated diagram, secret boundaries and source register | [Architecture](docs/ARCHITECTURE.md), [stack view](docs/STACK.md), [security](docs/SECURITY.md), [sources](docs/SOURCES.md) |
+| Optional management integration contract | [Bridge contract](docs/BRIDGE-CONTRACT.md) |
+| Historical checks, failures and source-specific acceptance gaps | [Validation records](docs/validation) |
 
-The coordinator builds/checks the tools image, snapshots the current checkout and
-builds packages in a new run directory. It handles source paths, Docker job names
-and output paths together, so retries cannot accidentally select an old bundle.
-On success, paste the printed `ISO_RUN=...` line back into your terminal and press
-Enter. This sets the path to that build directory; printing it does not set the
-variable for you. Follow the [ISO_RUN explanation and three-stage guide](docs/ISO.md#select-your-build-directory)
-to select the run, sign its packages and assemble the ISO.
-Signing and ISO mount privileges remain explicit; neither command above creates
-an ISO, writes USB media or installs the workstation.
+The default install includes the signed Bridge package and reviewed runtime/reference
+payload; it does not activate management services, create credentials or authorize
+host operations. `INSTALL_BRIDGE=false` explicitly opts out. Codex guidance is
+optional and never substitutes for owner disk confirmation or local secret entry.
 
-Docker image construction and userspace checks have passed on this Mac. See the
-guide's [qualification status](docs/ISO.md#qualification) before treating an image
-as recovery media. The [reference](docs/ISO-REFERENCE.md) covers manual stages,
-native Arch builds and disposable UEFI tests; those are not additional steps in
-the main Docker workflow. `make check` never runs Docker builds or boots a VM.
-
-## Install the workstation
-
-A signed `arch-workstation-boot` runtime package is required before real
-installation. The custom ISO bundles it; official-ISO users supply
-`--boot-package FILE`. Building the ISO does not require the configuration below.
-
-Start by copying the non-secret examples:
-
-```sh
-cp config/install.conf.example config/install.conf
-cp config/workstation.conf.example config/workstation.conf
-cp config/k3s-lab.conf.example config/k3s-lab.conf
-```
-
-Replace every `REPLACE_...` or unresolved value. Do not put passwords, tokens,
-private keys, kubeconfigs, or AWS secret keys in these files.
-
-On the Arch live ISO:
-
-```sh
-sudo ./bin/bootstrap-arch --config config/install.conf preflight
-sudo ./bin/bootstrap-arch --config config/install.conf --dry-run install
-sudo ./bin/bootstrap-arch --config config/install.conf --execute install
-```
-
-The install command stops at manual boundaries for credentials and Secure Boot
-key enrolment. Follow [the installation runbook](docs/INSTALLATION.md) before
-rebooting.
-
-After the first boot, use `workstationctl` for optional layers. Create the K3s
-VM only after host recovery, networking, backups, and KVM validation pass. See
-[workstation setup](docs/WORKSTATION.md), [operations](docs/OPERATIONS.md),
-[architecture](docs/ARCHITECTURE.md), and
-[security boundaries](docs/SECURITY.md). The research baseline is preserved in
-[primary references](docs/SOURCES.md).
-
-The intended first-boot order is:
-
-```sh
-sudo ./bin/workstationctl --config config/workstation.conf dev setup server templates/workstation/packages.pacman
-./bin/workstationctl --config config/workstation.conf ccache configure
-./bin/workstationctl --config config/workstation.conf makepkg configure
-./bin/workstationctl --config config/workstation.conf zsh setup
-sudo ./bin/workstationctl virtualization configure developer
-./bin/workstationctl virtualization validate
-```
-
-Keep JetBrains and Codex on the client Mac for remote development unless the
-host needs them. Host Toolbox and the desktop-keyring Codex configuration remain
-optional; see [workstation setup](docs/WORKSTATION.md). Existing installations
-are not converted or stripped of packages by changing the default.
-
-For the AI optimization audit, build controls and one/two-GPU measurements,
-start with [AI-PERFORMANCE.md](docs/AI-PERFORMANCE.md). The
-[ROCm build guide](docs/ROCM.md) distinguishes implemented native-kernel,
-ccache and pinned llama.cpp HIP/Vulkan builds from the pending complete TheRock
-dependency lock, ROCm source build and PKGBUILD packaging. Hardware
-reports collected away from the Linux workstation are explicitly `pending`.
-The retained `llm` and `ai validate` commands are legacy Intel workflows;
-use `rocm validate` and `rocm inference` for the R9700s.
-
-The additive [bare-metal home-lab profile](docs/HOME-LAB.md) provides
-`infrastructure/` host/K3s/operator configuration and `apps/` Kustomize bases
-and overlays. It reuses this installer with `/dev/md0`, TPM2+PIN enrollment
-planning and a 4 GiB Argon2id memory ceiling. The EL9/KVM lab remains separate.
-Workload replicas are disabled pending image/hardware qualification. Gaming now
-has a non-root KWin/Wayland candidate, but still requires image promotion and
-target validation of GPU nodes, capture, input, audio, network exposure and
-egress before it can be enabled. See [the Sunshine runbook](docs/SUNSHINE.md).
-
-The [model defaults](docs/MODELS.md) select Qwen3.8-27B-FP8 across both R9700s
-through `apps/overlays/default`. The RAG profile uses the same chat model with
-CPU Qwen3 embeddings. Model weights are staged separately, not bundled in the ISO.
-
-K3s replaces RKE2 for new installations. The bare-metal profile uses SQLite;
-the optional KVM lab keeps embedded etcd for its snapshot and restore commands.
-Both use the same checksum-pinned K3s release. Use `bin/k3s-lab` and
-`config/k3s-lab.conf` for new VMs; existing RKE2 configurations and data require
-a separate migration. See the [selection rationale and backup requirements](docs/HOME-LAB.md#3-package-and-configure-bare-metal-k3s).
-
-These commands do not log in to JetBrains, Codex, or AWS, enrol a YubiKey,
-enable backup timers, build AUR packages, or make the git kernel preferred.
-Those remain explicit trust and recovery boundaries.
+Bare-metal AI uses K3s with SQLite. The optional AlmaLinux/KVM lab uses embedded
+etcd and its own restore workflow; its backups do not cover bare-metal application
+volumes. Neither is high availability. Workloads remain disabled until their
+image/device/access qualification passes. Model weights are staged separately,
+not bundled in the ISO. The retained `llm` commands are Intel-only.
 
 ## Supported posture
 
-This is a development workstation and lab cluster, not a production platform.
-Arch on an AMD host with dual Radeon GPUs, AlmaLinux as a K3s guest, a git
-kernel, and development GPU stacks have different vendor support boundaries.
-The scripts keep those layers independently reversible; they do not make the
-combination vendor-certified.
+This is a personal development workstation and lab, not a vendor-certified
+production platform. Source tests, package builds, signed media, successful boots
+and measured workload results are separate evidence. Preserve stable/LTS recovery
+before experimental software; no hardware performance improvement is implied.
 
-RAID0 has no redundancy. Either NVMe failure destroys root. Maintain and test
-the documented S3/Restic and K3s restore paths.
+RAID0 has no redundancy: either member's failure loses root data. Keep tested,
+off-array backups and independent recovery credentials. The intended NAS/bare-metal
+K3s recovery acceptance remains separate from the optional VM backup workflow.

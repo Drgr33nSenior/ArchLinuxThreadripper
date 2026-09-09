@@ -1,5 +1,10 @@
 # Validation of e5281734
 
+> Dated evidence for the revisions named below, not a current installation
+> procedure. Use [ISO.md](../ISO.md), [INSTALLATION.md](../INSTALLATION.md) and the
+> relevant workload runbook for new work. Preserve the recorded failures and skips.
+
+
 Validation started on 9 September 2026 with a clean checkout at
 `e5281734a3b0e1a12f4b0e31e93324fefb7c9098`. The development host is Darwin
 25.6.0/arm64, not the installed Arch workstation. **Local tests are not hardware
@@ -172,8 +177,8 @@ Jinja2/PyYAML rendering was enabled in every recorded full run.
 
 ## Resume hardware qualification
 
-Follow [ROCM.md](ROCM.md#collect-the-target-evidence) and
-[PERFORMANCE-VALIDATION.md](PERFORMANCE-VALIDATION.md#prepare-target-evidence)
+Follow [ROCM.md](../ROCM.md#collect-the-target-evidence) and
+[PERFORMANCE-VALIDATION.md](../PERFORMANCE-VALIDATION.md#prepare-target-evidence)
 on the installed workstation. First identify the approved target and whether it
 is serving users. Use the existing maintenance process before releasing GPUs
 or replacing workloads. Select the coherent ROCm Python, staged model/corpus,
@@ -189,10 +194,10 @@ umask 077
 ./bin/workstationctl --config config/workstation.conf rocm validate artifacts/qualification-e5281734-rocm /path/to/coherent-rocm/bin/python
 ```
 
-Then run the existing [llama and Pod commands](PERFORMANCE-VALIDATION.md#llama-and-multi-gpu-commands),
-[serving comparisons](PERFORMANCE-VALIDATION.md#interactive-and-batch-serving),
-[CPU/storage comparisons](PERFORMANCE-VALIDATION.md#cpu-build-and-encrypted-storage-comparisons)
-and [gaming checks](PERFORMANCE-VALIDATION.md#gaming-refresh-and-rollback).
+Then run the existing [llama and Pod commands](../PERFORMANCE-VALIDATION.md#llama-and-multi-gpu-commands),
+[serving comparisons](../PERFORMANCE-VALIDATION.md#interactive-and-batch-serving),
+[CPU/storage comparisons](../PERFORMANCE-VALIDATION.md#cpu-build-and-encrypted-storage-comparisons)
+and [gaming checks](../PERFORMANCE-VALIDATION.md#gaming-refresh-and-rollback).
 Retain failures, raw measurements, hardware/boot identities, model/corpus hashes
 and effective settings in separate directories for every run. Reboot and repeat
 only in the owner's maintenance window. Keep current qualification gates and

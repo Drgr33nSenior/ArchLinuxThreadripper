@@ -5,6 +5,7 @@ set -euo pipefail
 export LC_ALL=C
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)
 source "$root/lib/common.sh"
+source "$root/lib/bootstrap/bridge.sh"
 (($# == 5)) || common::die 'usage: prepare.sh <signed-package-dir> <public-key.asc> <primary-fingerprint> <builder-keyring-dir> <new-output-dir>'
 common::require_linux
 [[ $(uname -m) == x86_64 && -f /etc/arch-release ]] || common::die 'prepare on an isolated x86_64 Arch builder'
@@ -53,6 +54,13 @@ $(package_field "${boot[0]}" pkgname) == arch-workstation-boot ]] || common::die
 bootstrap_version=$(package_field "${bootstrap[0]}" pkgver) || common::die 'invalid installer package version metadata'
 boot_version=$(package_field "${boot[0]}" pkgver) || common::die 'invalid runtime package version metadata'
 [[ -n $bootstrap_version && $bootstrap_version == "$boot_version" ]] || common::die 'split-package versions differ'
+bridge=false
+if [[ -f $packages/bridge-bundle.json ]]; then
+  bridge_verify_bundle "$packages" "$keyring" "$fingerprint" || common::die 'Bridge bundle/signatures/repository metadata failed'
+  [[ $(jq -r .snapshot "$packages/bridge-bundle.json") == "$(common::lock_get "$lock" ARCH_SNAPSHOT)" &&
+  $(bsdtar -xOf "${bootstrap[0]}" usr/lib/arch-workstation-bootstrap/INSTALLER-SOURCE.sha256) == "$(jq -r .installer_source "$packages/bridge-bundle.json")" ]] || common::die 'Bridge selected installer or snapshot mismatch'
+  bridge=true
+fi
 cp -R /usr/share/archiso/configs/releng "$output/profile"
 profile="$output/profile"
 cp "$root/infrastructure/iso/profile/profiledef.sh" "$profile/profiledef.sh"
@@ -78,6 +86,14 @@ mkdir -p "$profile/local-repo" "$profile/airootfs$live_repo" \
 for artifact in "${bootstrap[0]}" "${boot[0]}" "$packages/arch-workstation.db.tar.gz"; do
   cp "$artifact" "$artifact.sig" "$profile/local-repo/"
 done
+if [[ $bridge == true ]]; then
+  for artifact in "$packages"/*.pkg.tar.zst "$packages/bridge-bundle.json"; do
+    cp "$artifact" "$artifact.sig" "$profile/local-repo/"
+  done
+  cp -R "$packages/dependencies" "$profile/airootfs$live_repo/"
+  # Transport archives only; none of Bridge's units/accounts enter the live root.
+  if grep -Eq '^(spry-ai-workstation-bridge|arch-workstation-bridge-runtime)$' "$profile/packages.x86_64"; then common::die 'Bridge must not be a live package'; fi
+fi
 cp "$profile/local-repo/arch-workstation.db.tar.gz" "$profile/local-repo/arch-workstation.db"
 cp "$profile/local-repo/arch-workstation.db.tar.gz.sig" "$profile/local-repo/arch-workstation.db.sig"
 cp "$profile/local-repo/"* "$profile/airootfs$live_repo/"

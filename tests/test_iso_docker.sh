@@ -50,6 +50,21 @@ if bash "$wrapper" packages candidate-01 "$work/source" "$work/missing-parent/ou
 if bash "$wrapper" --privileged image >/dev/null 2>&1; then exit 1; fi
 if bash "$wrapper" --allow-iso-mounts packages candidate-01 "$work/source" "$work/packages" >/dev/null 2>&1; then exit 1; fi
 
+mkdir "$work/bundle-input" "$work/candidate"
+for name in bootstrap boot backup bridge-runtime; do
+  printf 'fixture\n' >"$work/bundle-input/arch-workstation-$name-0.1.0-1-any.pkg.tar.zst"
+done
+printf 'fixture\n' >"$work/bundle-input/source.lock"
+for file in spry-ai-workstation-bridge-0.0.0-1-x86_64.pkg.tar.zst spry-bridge-0.0.0-src.tar.gz PKGBUILD; do
+  printf 'fixture\n' >"$work/candidate/$file"
+done
+printf 'must not mount\n' >"$work/candidate/unrelated-private-file"
+plan=$(bash "$wrapper" bridge candidate-01 "$work/bundle-input" "$work/candidate" "$work/bundled")
+[[ $plan == *'--user 1000:1000'* && $plan == *'--cap-drop ALL'* && $plan == *'/candidate/PKGBUILD'* ]]
+[[ $plan != *unrelated-private-file* && $plan != *"src=$work/candidate,dst="* && ! -e $work/bundled ]]
+printf 'ambiguous\n' >"$work/candidate/spry-ai-workstation-bridge-0.0.1-1-x86_64.pkg.tar.zst"
+if bash "$wrapper" bridge candidate-01 "$work/bundle-input" "$work/candidate" "$work/bundled" >/dev/null 2>&1; then exit 1; fi
+
 for file in arch-workstation-bootstrap-0.1.0-1-any.pkg.tar.zst arch-workstation-boot-0.1.0-1-any.pkg.tar.zst arch-workstation.db.tar.gz; do
   printf 'synthetic signed artifact\n' >"$work/signed/$file"
   printf 'synthetic signature\n' >"$work/signed/$file.sig"

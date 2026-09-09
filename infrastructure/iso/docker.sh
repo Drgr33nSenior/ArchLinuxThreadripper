@@ -11,6 +11,7 @@ usage() {
     '  image' \
     '  check' \
     '  packages JOB SOURCE_BUNDLE_DIRECTORY NEW_OUTPUT_DIRECTORY' \
+    '  bridge JOB RUN_PACKAGE_DIRECTORY REVIEWED_BRIDGE_DIRECTORY NEW_OUTPUT_DIRECTORY' \
     '  iso JOB SIGNED_PACKAGE_DIRECTORY PUBLIC_KEY.asc FINGERPRINT NEW_OUTPUT_DIRECTORY' \
     'Default: dry-run, local desktop-linux context; all job state is retained.'
 }
@@ -95,6 +96,32 @@ main() {
         mounts+=(--mount "type=bind,source=$source/$file,target=/input/$file,readonly")
       done
       ;;
+    bridge)
+      (($# == 4)) || common::die 'bridge requires JOB, run packages, reviewed Bridge inputs, new output'
+      job=$1
+      source=$(directory_path "$2")
+      local candidate
+      candidate=$(directory_path "$3")
+      output=$(new_output_path "$4")
+      local bridge_candidates=() bridge_sources=() installer_packages=()
+      shopt -s nullglob
+      bridge_candidates=("$candidate"/spry-ai-workstation-bridge-*.pkg.tar.zst)
+      bridge_sources=("$candidate"/spry-bridge-*-src.tar.gz)
+      installer_packages=("$source"/*.pkg.tar.zst)
+      ((${#bridge_candidates[@]} == 1 && ${#bridge_sources[@]} == 1 && ${#installer_packages[@]} == 4)) || common::die 'ambiguous or missing Bridge/source/installer package inputs'
+      for file in "${installer_packages[@]}" "$source/source.lock"; do
+        regular_file "$file"
+        mounts+=(--mount "type=bind,source=$file,target=/input/${file##*/},readonly")
+      done
+      for file in "${bridge_candidates[0]}" "${bridge_sources[0]}" "$candidate/PKGBUILD"; do
+        regular_file "$file"
+        mounts+=(--mount "type=bind,source=$file,target=/candidate/${file##*/},readonly")
+      done
+      for file in lib/common.sh lib/bootstrap/bridge.sh infrastructure/iso/bridge-bundle.sh infrastructure/iso/versions.lock; do
+        regular_file "$root/$file"
+        mounts+=(--mount "type=bind,source=$root/$file,target=/project/$file,readonly")
+      done
+      ;;
     iso)
       (($# == 5)) || common::die 'iso requires JOB, signed package directory, public key, fingerprint and new output directory'
       job=$1
@@ -118,8 +145,19 @@ main() {
         mounts+=(--mount "type=bind,source=$file,target=/release/${file##*/},readonly"
           --mount "type=bind,source=$file.sig,target=/release/${file##*/}.sig,readonly")
       done
+      if [[ -f $source/bridge-bundle.json ]]; then
+        for file in "$source/bridge-bundle.json" "$source"/arch-workstation-backup-*.pkg.tar.zst "$source"/arch-workstation-bridge-runtime-*.pkg.tar.zst "$source"/spry-ai-workstation-bridge-*.pkg.tar.zst; do
+          regular_file "$file"
+          regular_file "$file.sig"
+          mounts+=(--mount "type=bind,source=$file,target=/release/${file##*/},readonly"
+            --mount "type=bind,source=$file.sig,target=/release/${file##*/}.sig,readonly")
+        done
+        regular_file "$source/source.lock"
+        mounts+=(--mount "type=bind,source=$source/source.lock,target=/release/source.lock,readonly"
+          --mount "type=bind,source=$source/dependencies,target=/release/dependencies,readonly")
+      fi
       mounts+=(--mount "type=bind,source=$public_key,target=/release/signing-key.asc,readonly")
-      for file in lib/common.sh infrastructure/iso/prepare.sh infrastructure/iso/build.sh \
+      for file in lib/common.sh lib/bootstrap/bridge.sh infrastructure/iso/prepare.sh infrastructure/iso/build.sh \
         infrastructure/iso/versions.lock templates/arch/no-hibernation.conf; do
         regular_file "$root/$file"
         mounts+=(--mount "type=bind,source=$root/$file,target=/project/$file,readonly")
@@ -130,7 +168,7 @@ main() {
     *) common::die 'unknown action' ;;
   esac
   [[ $action == iso || $allow_mounts == false ]] || common::die '--allow-iso-mounts is only valid for ISO assembly'
-  if [[ $action == packages || $action == iso ]]; then
+  if [[ $action == packages || $action == bridge || $action == iso ]]; then
     [[ $job =~ ^[a-z][a-z0-9-]{0,31}$ ]] || common::die 'JOB must be a short lowercase identifier'
   fi
   local container="arch-workstation-iso-$action-$job" volume="arch-workstation-iso-$action-$job"
@@ -160,8 +198,9 @@ main() {
     else
       run+=(--name "$container" --label io.arch-workstation.scope=dev --label io.arch-workstation.purpose=iso-builder
         --mount "type=volume,source=$volume,target=/work")
-      if [[ $action == packages ]]; then
-        run+=(--network none --cap-drop ALL --user 1000:1000)
+      if [[ $action == packages || $action == bridge ]]; then
+        run+=(--cap-drop ALL --user 1000:1000)
+        [[ $action != packages ]] || run+=(--network none)
       else
         common::warn 'ISO assembly uses container root and CAP_SYS_ADMIN for chroot mounts. It does not use --privileged, host devices, host namespaces or an unconfined security profile.'
         run+=(--user 0:0 --cap-add SYS_ADMIN --tmpfs '/run/arch-workstation:rw,noexec,nosuid,nodev,mode=0700')

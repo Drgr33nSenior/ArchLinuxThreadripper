@@ -8,6 +8,8 @@ usage() {
   printf '%s\n' \
     'Usage: release.sh [--context NAME] [--execute] [--allow-iso-mounts] ACTION ...' \
     '  packages                       Build tools, snapshot this checkout, build packages.' \
+    '  bridge RUN_DIRECTORY REVIEWED_BRIDGE_DIRECTORY' \
+    '                                 Add target payload/dependencies before owner signing.' \
     '  iso RUN_DIRECTORY PUBLIC_KEY.asc FINGERPRINT' \
     '                                 Assemble an ISO from this run after manual signing.' \
     'Default: dry-run. Each execution uses fresh job/output names and retains all state.' \
@@ -89,6 +91,14 @@ main() {
         common::info 'Preview only: no files, Docker queries or jobs were created. --execute will choose its own fresh run.'
       fi
       ;;
+    bridge)
+      (($# == 2)) || common::die 'bridge requires one completed installer run and one reviewed Bridge artifact directory'
+      [[ $allow_mounts == false ]] || common::die '--allow-iso-mounts is only valid for ISO assembly'
+      run=$(cd -- "$1" && pwd -P)
+      cmp -s "$run/source/source.lock" "$run/packages/source.lock" || common::die 'installer run identities differ'
+      [[ ! -e $run/bundled && ! -L $run/bundled ]] || common::die 'bundle already exists; retain it and use a new reviewed run'
+      step 'Seal Bridge candidate, resolve snapshot dependencies, rebuild unsigned repository' bash "$wrapper" "${docker_options[@]}" --execute bridge "$job" "$run/packages" "$2" "$run/bundled" || return
+      ;;
     iso)
       (($# == 3)) || common::die 'iso requires the run directory, public key and full fingerprint'
       if [[ $execute == true && $allow_mounts != true ]]; then
@@ -105,7 +115,13 @@ main() {
       common::info 'If ISO assembly fails, inspect its log with:'
       common::print_command docker --context "$context" logs --tail 60 "arch-workstation-iso-iso-$job"
       # The existing wrapper owns signature-input, context, mount and job checks.
-      bash "$wrapper" "${docker_options[@]}" iso "$job" "$run/packages" "$2" "$3" "$run/$job" || return
+      local selected="$run/packages"
+      if [[ -d $run/bundled ]]; then
+        cmp -s "$run/source/source.lock" "$run/bundled/source.lock" || common::die 'Bridge bundle belongs to another installer run'
+        [[ -f $run/bundled/bridge-bundle.json ]] || common::die 'incomplete Bridge bundle; do not fall back to packages'
+        selected="$run/bundled"
+      fi
+      bash "$wrapper" "${docker_options[@]}" iso "$job" "$selected" "$2" "$3" "$run/$job" || return
       ;;
     *) common::die 'unknown action; use packages or iso' ;;
   esac

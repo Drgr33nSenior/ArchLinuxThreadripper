@@ -1,5 +1,10 @@
 # Codex installation-console validation
 
+> Dated evidence for the revisions named below, not a current installation
+> procedure. Use [ISO.md](../ISO.md), [INSTALLATION.md](../INSTALLATION.md) and the
+> relevant workload runbook for new work. Preserve the recorded failures and skips.
+
+
 Date: 2026-09-09. Checkout HEAD:
 `67a506090e8ecf696190e0be55f865e3ce054d0e`, with preserved earlier uncommitted
 changes and this installation-console increment. This is not a claim that the
@@ -10,7 +15,7 @@ committed revision alone contains the implementation. No commit or push was made
 The change adds the locked Arch Codex package, a packaged installation skill,
 an isolated owner-console launcher, a pre-erasure mirror/network check and
 first-boot NetworkManager instructions. The installer, signing, disk confirmations
-and recovery procedures remain authoritative. See [CODEX-INSTALL.md](CODEX-INSTALL.md)
+and recovery procedures remain authoritative. See [CODEX-INSTALL.md](../INSTALLATION.md#optional-codex-authentication)
 for the complete owner sequence and disposable live-ISO acceptance procedure.
 
 | Check | Observed result and boundary |
@@ -91,5 +96,25 @@ were used for these checks. The package checksum check is not a substitute for
 the existing pacman and owner package-signature gates.
 
 Backup/restore, signed ISO/UEFI acceptance and gaming input acceptance remain
-separate deliverables. Use the numbered smoke procedure in CODEX-INSTALL for
+separate deliverables. Use the numbered smoke procedure in ISO-REFERENCE for
 the next owner-run checks; promote no hardware status based on these fixtures.
+
+## Recorded package boundary
+
+The [ISO lock](../../infrastructure/iso/versions.lock) selects the official Arch
+`openai-codex` package from the same dated snapshot as the ISO. On 2026-09-09,
+the 2026-09-04 extra database supplied 0.153.2-1; its downloaded package matched
+SHA-256 `a01a7705edb14181f00b70562f367c229e53cd7a552cecb54a45652e0a1131a4`.
+The package declares bubblewrap, bzip2, glibc, libcap, libgcc, oniguruma, OpenSSL,
+SQLite, xz, zlib and zstd dependencies. Pacman resolves these from that snapshot
+and verifies Arch package signatures. Ripgrep is included; experimental Node/JS
+tools are not required by this workflow. No npm/AUR installer runs at boot.
+
+The builder checks the exact package version, cached package checksum and
+`codex --version`. A changed snapshot needs a reviewed lock update and new build,
+not an unpinned substitution. The bootstrap package depends on that exact Codex
+package version and ships the launcher, skill, references and canonical
+guardrails. Its generated `AGENTS.md` is a copy of those guardrails, not a second
+policy. `SOURCE-MANIFEST.sha256` identifies packaged content; `BUILD-IDENTITY`
+records the source revision (or explicitly `unknown`). Local changes are
+identified by the manifest, not by the revision alone.

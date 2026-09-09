@@ -1,4 +1,4 @@
-# Dual-R9700 build and validation milestone
+# Native ROCm builds and validation
 
 The current target is the TRX50 AI TOP, Threadripper 9960X, two Radeon AI PRO
 R9700 AI TOP cards, and 64 GiB DDR5-5600 ECC RDIMM. Both GPUs belong to the Arch
@@ -17,7 +17,7 @@ The ISO milestone now packages the UKI synchronization helper and ALPM hook as
 Restic runtime. Existing unowned installations require reviewed manual migration;
 these packages do not make the pending ROCm source build a packaged release.
 
-## What this milestone delivers
+## Implementation and remaining qualification
 
 | Area | Implemented | Still pending |
 | --- | --- | --- |
@@ -101,7 +101,7 @@ in a new output directory; do not reuse a ROCm 10 CMake cache for the baseline.
 
 Install the official Arch baseline with a complete `pacman -Syu` transaction.
 For a custom-ISO installation, first review the
-[dated-mirror transition](AI-PERFORMANCE.md#move-from-the-installation-snapshot-to-rolling-arch).
+[dated-mirror transition](OPERATIONS.md#move-from-the-installation-snapshot-to-rolling-arch).
 `templates/workstation/packages.pacman` now selects AMD firmware, RADV, the
 official ROCm HIP SDK and ROCm PyTorch package. The legacy Intel list is retained
 as `packages-intel.pacman`; its `ai validate` and `llm` commands remain Intel-only.
@@ -120,7 +120,7 @@ legacy ROCm SMI inventory, installed packages,
 PCI topology and boot ID. Missing tools remain visible in `commands.json`.
 On another OS/architecture, `hardware.json` says `pending` and has no GPU target.
 Inspect `gpu-monitor.json` for the selected provider and command/schema status.
-See the [audit follow-up](AUDIT-FOLLOWUP-2026-09-09.md) for runtime-library
+See the [audit follow-up](validation/AUDIT-FOLLOWUP-2026-09-09.md) for runtime-library
 manifests and matching benchmark/quality configuration. Older llama builds
 without sealed runtime manifests need rebuilding in new directories.
 An observed report requires two distinct AMD PCI devices bound to `amdgpu` and

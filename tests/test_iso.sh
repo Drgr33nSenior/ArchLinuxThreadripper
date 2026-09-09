@@ -60,7 +60,10 @@ if command -v bsdtar >/dev/null; then
     packaged_root="$pkgdir/usr/lib/arch-workstation-bootstrap"
     [[ -x $packaged_root/bin/arch-workstation-codex && -x $packaged_root/bin/arch-workstation-network ]]
     [[ -f $packaged_root/.agents/skills/workstation-install/SKILL.md && ! -e $packaged_root/.git ]]
-    [[ -f $packaged_root/BUILD-IDENTITY && -f $packaged_root/docs/CODEX-INSTALL.md ]]
+    [[ -f $packaged_root/BUILD-IDENTITY && -f $packaged_root/docs/INSTALLATION.md ]]
+    [[ -f $packaged_root/docs/ISO.md && -f $packaged_root/docs/ISO-REFERENCE.md ]]
+    [[ -f $packaged_root/docs/validation/VALIDATION-BRIDGE-ISO.md ]]
+    [[ ! -e $packaged_root/docs/BRIDGE-ISO.md && ! -e $packaged_root/docs/CODEX-INSTALL.md ]]
     cmp "$packaged_root/AGENTS.md" "$packaged_root/.aiassistant/rules/workstation-guardrails.md"
     [[ " ${depends[*]} " == *" openai-codex=$(common::lock_get "$root/infrastructure/iso/versions.lock" CODEX_PACKAGE_VERSION) "* ]]
     bash "$packaged_root/bin/arch-workstation-codex" --help >/dev/null
@@ -79,6 +82,15 @@ if command -v bsdtar >/dev/null; then
     [[ -f $pkgdir/etc/restic/workstation.include && -f $pkgdir/etc/restic/workstation.exclude ]]
     [[ ${backup[*]} == 'etc/restic/workstation.include etc/restic/workstation.exclude' ]]
     grep -Fqx 'ExecStart=/usr/lib/arch-workstation-backup/run %i' "$pkgdir/usr/lib/systemd/system/workstation-restic@.service"
+    pkgdir="$work/bridge-runtime-package"
+    package_arch-workstation-bridge-runtime
+    for kind in runtime reference; do
+      payload="$pkgdir/usr/lib/bridge/workstation-$kind"
+      (cd "$payload" && sha256sum --check --strict SOURCE-MANIFEST.sha256 >/dev/null)
+      [[ $(<"$payload/INSTALLER-SOURCE.sha256") == "$(common::lock_get "$startdir/source.lock" SOURCE_SHA256)" ]]
+    done
+    [[ -x $pkgdir/usr/lib/bridge/workstation-runtime/bin/workstationctl && ! -e $pkgdir/etc && ! -e $pkgdir/var ]]
+    [[ -f $pkgdir/usr/lib/bridge/workstation-runtime/lib/workstation/session.sh && -f $pkgdir/usr/lib/bridge/workstation-reference/apps/overlays/rag/SHA256SUMS ]]
 
     # Incidental edits to the consumed recipe or exported lock must be rejected.
     mkdir "$work/drift"

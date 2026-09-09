@@ -15,12 +15,20 @@ below from that root. Read applicable agent instructions, including the
 [guardrails](../../../.aiassistant/rules/workstation-guardrails.md), then:
 
 On the custom ISO, that root is the signed package tree, not a Git checkout.
-Read [console setup](../../../docs/CODEX-INSTALL.md) for owner-local Wi-Fi/login
+Read [console setup](../../../docs/INSTALLATION.md#optional-codex-authentication) for owner-local Wi-Fi/login
 and first-boot reconnection. Use `BUILD-IDENTITY` and `SOURCE-MANIFEST.sha256`
 when Git metadata is absent; never manufacture a revision. Login is an owner
 handoff outside agent tools. Never read or export its private tmpfs session.
 Controller-side media building needs the full checkout and its build tools;
 do not attempt those stages from the bootstrap-only live package tree.
+
+Read [Bridge ISO handoff](../../../docs/ISO.md#1a-bundle-bridge-unless-explicitly-opting-out) for the default-on target
+payload. Review `INSTALL_BRIDGE` explicitly: omission means true, not disabled.
+Before signing, seal the selected Bridge candidate against this run's frozen
+installer source; retain package/source/dependency and repository identities.
+Preflight/dry-run must pass the Bridge signature and offline-closure gates before
+the owner installation handoff. Never install Bridge into the live root merely
+to transport its archive. Missing/stale bundles block enabled installation.
 
 - Always: [installation](../../../docs/INSTALLATION.md),
   [security](../../../docs/SECURITY.md), [operations/recovery](../../../docs/OPERATIONS.md),
@@ -186,13 +194,19 @@ sudo ./bin/bootstrap-arch --config config/install.conf verify
 
 The optional signed bootstrap package supports the same skill after first boot,
 with local NetworkManager reconnection and fresh launcher authentication. The
-post-install `workstationctl status` command needs the full reviewed checkout;
-do not invoke it from a bootstrap-only tree. `verify` checks the running installed root, not a live
+post-install `workstationctl status` command uses the installed Bridge runtime
+or a full reviewed checkout; do not run post-install actions in the live ISO.
+`verify` checks the running installed root, not a live
 ISO's mounted `/mnt`. Follow INSTALLATION's remaining storage, no-swap, signatures,
 unlock and cold-boot checks. Preserve known-good stable/LTS/recovery media before
 updates, tuning or optional workloads; follow OPERATIONS for later maintenance.
 
 Report every stage as verified, failed, blocked or untested with evidence scope.
+After first boot, follow INSTALLATION's Bridge ownership/version, runtime/reference hash,
+catalog and inactive-unit checks. Hand actual UID/GID discovery, policy review,
+private TLS/address selection, local owner-token creation and service activation
+to the owner. Package hashes do not authorize system executables or qualify GPU
+operations. Keep Codex credentials and journals separate from Bridge state.
 A zero exit verifies only that command's checks. Fixture success, package
 signatures and filesystem verification do not prove physical boot/recovery,
 firmware trust, performance or optional workloads. Failed/skipped/missing checks

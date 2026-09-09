@@ -48,5 +48,7 @@ SECONDARY_ESP_MOUNT=/efi2
 
 # Optional host services. Values must be true or false; SSH is an explicit opt-in.
 ENABLE_SSH=false
+# Install signed Bridge/runtime payload only; owner provisioning follows first boot.
+INSTALL_BRIDGE=true
 ENABLE_BLUETOOTH=false
 ENABLE_PRINTING=false

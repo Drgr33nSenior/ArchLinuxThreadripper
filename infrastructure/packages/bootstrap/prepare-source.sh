@@ -9,6 +9,8 @@ source "$root/lib/common.sh"
 command -v bsdtar >/dev/null || common::die 'libarchive bsdtar is required'
 epoch=$(common::lock_get "$root/infrastructure/iso/versions.lock" SOURCE_DATE_EPOCH)
 version=$(common::lock_get "$root/infrastructure/iso/versions.lock" BOOTSTRAP_PACKAGE_VERSION)
+codex_version=$(common::lock_get "$root/infrastructure/iso/versions.lock" CODEX_PACKAGE_VERSION)
+[[ $codex_version =~ ^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+$ ]] || common::die 'invalid Codex package pin'
 [[ $epoch =~ ^[0-9]{10}$ && $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || common::die 'invalid source epoch or package version'
 timestamp=$(date -u -d "@$epoch" +%Y%m%d%H%M.%S 2>/dev/null) || timestamp=$(date -u -r "$epoch" +%Y%m%d%H%M.%S)
 mkdir -- "$1"
@@ -47,5 +49,6 @@ printf 'SOURCE_SHA256=%s\nPACKAGE_VERSION=%s\nSOURCE_DATE_EPOCH=%s\n' "$digest" 
 sed -e "s/^_source_digest='@SOURCE_SHA256@'$/_source_digest='$digest'/" \
   -e "s/^_source_version='@PACKAGE_VERSION@'$/_source_version='$version'/" \
   -e "s/^_source_epoch='@SOURCE_DATE_EPOCH@'$/_source_epoch='$epoch'/" \
+  -e "s/^_codex_package_version='@CODEX_PACKAGE_VERSION@'$/_codex_package_version='$codex_version'/" \
   "$output/project/infrastructure/packages/bootstrap/PKGBUILD" >"$output/PKGBUILD"
 common::info "Prepared source $digest; makepkg/signing/ISO creation have NOT run."

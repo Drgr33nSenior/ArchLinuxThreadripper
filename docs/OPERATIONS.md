@@ -2,10 +2,9 @@
 
 ## Host updates
 
-If installed from the custom ISO, first review the
-[archive-to-rolling transition](AI-PERFORMANCE.md#move-from-the-installation-snapshot-to-rolling-arch).
-The installer deliberately retains its dated mirrorlist; `pacman -Syu` alone
-does not move that archive forward.
+For the first transition off installation media, complete the
+[snapshot-to-rolling procedure](#move-from-the-installation-snapshot-to-rolling-arch).
+For subsequent full updates:
 
 1. Run a Restic backup and record the installed package/kernel/GPU
    manifest.
@@ -22,6 +21,37 @@ exact upstream kernel commit, config hash, compiler, and package hashes. Promote
 it only after the stable/LTS paths have been tested on the current firmware.
 The exact commands and clean-chroot boundary are in
 [workstation setup](WORKSTATION.md).
+
+## Move from the installation snapshot to rolling Arch
+
+The custom ISO copies its dated mirrorlist into the installed system to keep
+installation transactions coherent. Running `pacman -Syu` against that archive
+does not move the host forward to today's packages.
+
+After stable/LTS boot and recovery tests pass:
+
+1. Back up the system and retain the known-good package archives and signed
+   UKIs. Record the installed package list and the ISO release lock.
+2. Inspect `/etc/pacman.conf` and `/etc/pacman.d/mirrorlist`. Save their current
+   contents outside the paths being edited. Review current Arch news.
+3. Select synchronized HTTPS mirrors using the
+   [official mirrorlist generator](https://archlinux.org/mirrorlist/). Replace
+   the dated archive selection deliberately. Check for explicit archive URLs
+   and `IgnorePkg` entries in pacman configuration too.
+4. Run one complete `sudo pacman -Syu`. Review `.pacnew` files and the UKI hook
+   results, reboot, then collect new hardware and GPU validation reports.
+
+Do not combine archived libraries with selectively updated ROCm, Mesa, firmware
+or PyTorch. Arch supports full upgrades, not partial upgrades. See
+[system maintenance](https://wiki.archlinux.org/title/System_maintenance).
+Keep the ISO's build lock pinned; changing the installed host's update policy
+does not require turning recovery media into a floating build.
+
+For upstream development builds, review and advance the exact commits in
+`versions.lock`, inspect recipe/config/build-option changes, and use a new output
+directory. Existing pins are reproducible candidate inputs, not a claim that
+they remain upstream HEAD. Refresh the kernel and its packaging recipe as a
+reviewed pair. Refresh TheRock's dependency inventory with its entry-point pin.
 
 ## Performance profiles
 

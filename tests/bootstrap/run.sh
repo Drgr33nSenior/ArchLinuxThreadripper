@@ -23,6 +23,8 @@ source "$TEST_ROOT/lib/bootstrap/install.sh"
 source "$TEST_ROOT/lib/bootstrap/verify.sh"
 
 failures=0
+# Host/storage fixtures do not carry signed release artifacts; covered separately.
+bootstrap_bridge_preflight() { :; }
 assert_ok() {
   if ! "$@"; then
     printf 'FAIL expected success: %q\n' "$*" >&2

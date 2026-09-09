@@ -124,6 +124,7 @@ bootstrap_preflight() {
       }
   fi
   bootstrap_network_mirrors || return 1
+  bootstrap_bridge_preflight || return 1
   bootstrap_log "preflight passed: $disk_a ($BOOTSTRAP_DISK_A_SERIAL), $disk_b ($BOOTSTRAP_DISK_B_SERIAL)"
 }
 

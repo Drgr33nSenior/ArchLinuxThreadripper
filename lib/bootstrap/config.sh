@@ -5,7 +5,7 @@ readonly -a BOOTSTRAP_CONFIG_KEYS=(
   PRIMARY_DISK_SERIAL SECONDARY_DISK_SERIAL RAID_NAME LUKS_NAME ESP_SIZE_MIB
   RAID_CHUNK_KIB LUKS_ITER_TIME_MS LUKS_MEMORY_KIB LUKS_PARALLEL ALLOW_DISCARDS
   PRIMARY_ESP_MOUNT SECONDARY_ESP_MOUNT ENABLE_SSH ENABLE_BLUETOOTH ENABLE_PRINTING
-  RAID_DEVICE BOOT_UNLOCK VM_TEST_MODE HOST_PROFILE TUNED_PROFILE
+  RAID_DEVICE BOOT_UNLOCK VM_TEST_MODE HOST_PROFILE TUNED_PROFILE INSTALL_BRIDGE
 )
 
 bootstrap_config_allowed() {
@@ -52,7 +52,7 @@ bootstrap_load_config() {
     seen_keys="$seen_keys $key"
   done <"$file"
   for required in "${BOOTSTRAP_CONFIG_KEYS[@]}"; do
-    [[ $required != RAID_DEVICE && $required != BOOT_UNLOCK && $required != VM_TEST_MODE && $required != HOST_PROFILE && $required != TUNED_PROFILE ]] || continue
+    [[ $required != RAID_DEVICE && $required != BOOT_UNLOCK && $required != VM_TEST_MODE && $required != HOST_PROFILE && $required != TUNED_PROFILE && $required != INSTALL_BRIDGE ]] || continue
     [[ -n ${!required:-} ]] || {
       bootstrap_die "missing required config key: $required"
       return 1
@@ -62,6 +62,7 @@ bootstrap_load_config() {
   : "${VM_TEST_MODE:=false}"
   : "${HOST_PROFILE:=headless}"
   : "${TUNED_PROFILE:=auto}"
+  : "${INSTALL_BRIDGE:=true}"
   case "$TUNED_PROFILE" in
     auto | balanced | desktop | throughput-performance | accelerator-performance | virtual-host) ;;
     *)
@@ -130,7 +131,7 @@ bootstrap_load_config() {
       bootstrap_die 'the supported ESP mount points are /efi and /efi2'
       return 1
     }
-  for key in ENABLE_SSH ENABLE_BLUETOOTH ENABLE_PRINTING; do
+  for key in ENABLE_SSH ENABLE_BLUETOOTH ENABLE_PRINTING INSTALL_BRIDGE; do
     current_value=${!key}
     [[ $current_value == true || $current_value == false ]] || {
       bootstrap_die "$key must be true or false"
