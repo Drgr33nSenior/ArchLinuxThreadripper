@@ -22,8 +22,17 @@ def ops(path, backend, run_record):
         rows = list(reader)
     if any(set(r) != set(fields) or any(value is None for value in r.values()) for r in rows):
         raise ValueError("malformed numerical CSV row")
-    if any(r["backend_name"] != backend or r["test_mode"] != "test" or r["supported"] not in ("0", "1") for r in rows):
+    if any(r["test_mode"] != "test" or r["supported"] not in ("0", "1") for r in rows):
         raise ValueError("unexpected backend, mode or support flag in numerical CSV")
+    for row in rows:
+        if row["supported"] == "1":
+            if row["backend_name"] != backend:
+                raise ValueError("unexpected selected backend in supported numerical CSV row")
+        # Pinned test_case::eval attributes skips to each backend that cannot
+        # support a tensor (selected backend or CPU reference), retaining
+        # repeated names joined by exactly ", ". This is not a device selection.
+        elif any(name not in (backend, "CPU") for name in row["backend_name"].split(", ")):
+            raise ValueError("unexpected unsupported backend attribution in numerical CSV")
     supported = [r for r in rows if r["supported"] == "1"]
     if not supported or any(r["error_message"].strip() for r in supported):
         raise ValueError("no numerical tests ran or a supported test failed")

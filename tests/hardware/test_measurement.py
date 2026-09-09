@@ -142,6 +142,35 @@ class Tests(unittest.TestCase):
             path.write_text('Final estimate: PPL = 3.0 +/- 0.1\n')
             self.assertEqual(quality_metrics.perplexity(path)["perplexity"], 3)
 
+    def test_quality_unsupported_backend_attribution(self):
+        fixture = (Path(__file__).resolve().parents[1] / "fixtures/llama-quality/ops-with-skips.csv").read_text()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ops.csv"
+            record = Path(tmp) / "run.json"
+            record.write_text(json.dumps({"status": "measured-not-qualified", "returncode": 0}))
+            for backend in ("Vulkan0", "Vulkan1", "ROCm0", "ROCm1"):
+                rows = fixture.replace("Vulkan0", backend)
+                path.write_text(rows)
+                with self.subTest(backend=backend):
+                    self.assertEqual(quality_metrics.ops(path, backend, record),
+                                     {"supported_passes": 3, "unsupported": 4})
+                # CPU/repeated attribution is valid only on skipped rows.
+                for name in ("CPU", f"{backend}, {backend}", f"{backend}, CPU"):
+                    path.write_text(rows.replace(f'"{backend}"', f'"{name}"', 1))
+                    with self.subTest(supported_backend=name), self.assertRaises(ValueError):
+                        quality_metrics.ops(path, backend, record)
+                for name in ("", "Vulkan9", f"{backend}, Vulkan9", f"{backend},",
+                             f"{backend}, ", f"{backend},{backend}", f"{backend},  CPU"):
+                    path.write_text(rows.replace('"CPU","MUL_MAT"', f'"{name}","MUL_MAT"'))
+                    with self.subTest(unsupported_backend=name), self.assertRaises(ValueError):
+                        quality_metrics.ops(path, backend, record)
+                # A skipped variant cannot replace any required supported op.
+                for operation in ("MUL_MAT", "RMS_NORM", "SOFT_MAX"):
+                    path.write_text("\n".join(line for line in rows.splitlines()
+                                              if not line.startswith(f'"{backend}","{operation}"')) + "\n")
+                    with self.subTest(missing=operation), self.assertRaises(ValueError):
+                        quality_metrics.ops(path, backend, record)
+
     def test_stream_chunk_timing_and_abort_metadata(self):
         def check(counts, ticks, finish=None):
             rows = [{"meta_info": {"completion_tokens": count}} for count in counts]

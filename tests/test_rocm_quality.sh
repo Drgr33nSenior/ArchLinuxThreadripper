@@ -40,9 +40,20 @@ for backend in hip vulkan; do
     '{status:"built-not-qualified",backend:$backend,source:{commit:$commit,tree:"fixture-tree"},outputs:{llama_bench_sha256:$hash,llama_perplexity_sha256:$hash,backend_ops_sha256:$hash}}' \
     > "$candidate/build-result.json"
   # Real qualification function -> runner subprocess -> CLI stub -> CSV parser.
-  ws_rocm_qualify_llama "$work/hardware/hardware.json" "$candidate" "$work/model.gguf" "$work/corpus.txt" \
-    "$work/good-$backend" "${QUALITY_BACKEND}0/${QUALITY_BACKEND}1"
-  jq -e '.status == "numerical-checks-passed-model-review-required"' "$work/good-$backend/quality.json" >/dev/null
+  for fixture in ops ops-with-skips; do
+    export QUALITY_CSV="$root/tests/fixtures/llama-quality/$fixture.csv"
+    output="$work/good-$backend-$fixture"
+    unsupported=0
+    [[ $fixture != ops-with-skips ]] || unsupported=4
+    ws_rocm_qualify_llama "$work/hardware/hardware.json" "$candidate" "$work/model.gguf" "$work/corpus.txt" \
+      "$output" "${QUALITY_BACKEND}0/${QUALITY_BACKEND}1"
+    jq -e '.status == "numerical-checks-passed-model-review-required"' "$output/quality.json" >/dev/null
+    for device in "${QUALITY_BACKEND}0" "${QUALITY_BACKEND}1"; do
+      jq -e --argjson unsupported "$unsupported" '.supported_passes == 3 and .unsupported == $unsupported' \
+        "$output/ops-$device/result.json" >/dev/null
+    done
+  done
+  export QUALITY_CSV="$root/tests/fixtures/llama-quality/ops.csv"
   for failure in exit-failure malformed missing unsupported error ppl-failure ppl-malformed; do
     export QUALITY_CASE=$failure
     if ws_rocm_qualify_llama "$work/hardware/hardware.json" "$candidate" "$work/model.gguf" "$work/corpus.txt" \
