@@ -8,7 +8,7 @@ source "$repo_root/infrastructure/gaming/wayland-session.sh"
 work=$(mktemp -d)
 trap 'rm -rf -- "$work"' EXIT
 reject() {
-  if ("$@") > "$work/rejected.txt" 2>&1; then
+  if ("$@") >"$work/rejected.txt" 2>&1; then
     printf 'unexpected success in Wayland fixture\n' >&2
     exit 1
   fi
@@ -48,8 +48,8 @@ reject gaming_display
 # Existing paired config and app definitions survive initialization verbatim.
 XDG_CONFIG_HOME="$work/config"
 mkdir -p "$XDG_CONFIG_HOME/sunshine"
-printf 'paired-config-fixture\n' > "$XDG_CONFIG_HOME/sunshine/sunshine.conf"
-printf 'existing-apps-fixture\n' > "$XDG_CONFIG_HOME/sunshine/apps.json"
+printf 'paired-config-fixture\n' >"$XDG_CONFIG_HOME/sunshine/sunshine.conf"
+printf 'existing-apps-fixture\n' >"$XDG_CONFIG_HOME/sunshine/apps.json"
 cp "$XDG_CONFIG_HOME/sunshine/sunshine.conf" "$work/original.conf"
 cp "$XDG_CONFIG_HOME/sunshine/apps.json" "$work/original-apps.json"
 unset SUNSHINE_USER SUNSHINE_PASS
@@ -76,15 +76,15 @@ grep -Fq 'KWin must launch the session hook' "$work/rejected.txt"
 (
   gaming_pids=(12345 12346)
   kill() {
-    printf '%s\n' "$*" >> "$work/signals.txt"
+    printf '%s\n' "$*" >>"$work/signals.txt"
     [[ $1 != -0 ]]
   }
   # shellcheck disable=SC2329 # Invoked by imported gaming_cleanup, not a real wait.
-  wait() { printf '%s\n' "$*" >> "$work/waits.txt"; }
+  wait() { printf '%s\n' "$*" >>"$work/waits.txt"; }
   gaming_cleanup
 )
 grep -Fxq -- '-TERM -- -12345' "$work/signals.txt"
 grep -Fxq -- '-TERM -- -12346' "$work/signals.txt"
 grep -Fxq -- '-KILL -- -12345' "$work/signals.txt"
-[[ $(wc -l < "$work/waits.txt" | tr -d ' ') == 2 ]]
+[[ $(wc -l <"$work/waits.txt" | tr -d ' ') == 2 ]]
 printf 'Wayland renderer, paired-state, missing-session and process-group fixtures passed (no compositor/GPU exercised)\n'

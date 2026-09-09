@@ -15,17 +15,30 @@ readonly -a BOOTSTRAP_MULTILIB_PACKAGES=(
 
 bootstrap_select_host_profile() {
   case ${HOST_PROFILE:-headless} in
-    headless) BOOTSTRAP_PROFILE_PACKAGES=(); BOOTSTRAP_TUNED_PROFILE=balanced ;;
-    desktop) BOOTSTRAP_PROFILE_PACKAGES=("${BOOTSTRAP_DESKTOP_PACKAGES[@]}"); BOOTSTRAP_TUNED_PROFILE=desktop ;;
-    *) bootstrap_die 'unknown host profile'; return 1 ;;
+    headless)
+      BOOTSTRAP_PROFILE_PACKAGES=()
+      BOOTSTRAP_TUNED_PROFILE=balanced
+      ;;
+    desktop)
+      BOOTSTRAP_PROFILE_PACKAGES=("${BOOTSTRAP_DESKTOP_PACKAGES[@]}")
+      BOOTSTRAP_TUNED_PROFILE=desktop
+      ;;
+    *)
+      bootstrap_die 'unknown host profile'
+      return 1
+      ;;
   esac
   # Runtime policy is independent of whether the host has a desktop. Old
   # configurations retain their defaults; AI is an explicit profile selection.
   case ${TUNED_PROFILE:-auto} in
     auto) ;;
-    balanced|desktop|throughput-performance|accelerator-performance|virtual-host)
-      BOOTSTRAP_TUNED_PROFILE=$TUNED_PROFILE ;;
-    *) bootstrap_die 'unsupported TuneD profile'; return 1 ;;
+    balanced | desktop | throughput-performance | accelerator-performance | virtual-host)
+      BOOTSTRAP_TUNED_PROFILE=$TUNED_PROFILE
+      ;;
+    *)
+      bootstrap_die 'unsupported TuneD profile'
+      return 1
+      ;;
   esac
 }
 
@@ -38,9 +51,12 @@ bootstrap_select_gpu_packages() {
     BOOTSTRAP_GPU_DESCRIPTION='QEMU storage/boot test ONLY; physical GPU qualification is pending'
     return 0
   fi
-  inventory=$(lspci -Dn) || { bootstrap_die 'PCI enumeration failed'; return 1; }
-  amd=$(awk '$2 ~ /^03[0-9a-f][0-9a-f]:$/ && $3 ~ /^1002:/ {n++} END {print n+0}' <<< "$inventory")
-  intel=$(awk '$2 ~ /^03[0-9a-f][0-9a-f]:$/ && $3 ~ /^8086:/ {n++} END {print n+0}' <<< "$inventory")
+  inventory=$(lspci -Dn) || {
+    bootstrap_die 'PCI enumeration failed'
+    return 1
+  }
+  amd=$(awk '$2 ~ /^03[0-9a-f][0-9a-f]:$/ && $3 ~ /^1002:/ {n++} END {print n+0}' <<<"$inventory")
+  intel=$(awk '$2 ~ /^03[0-9a-f][0-9a-f]:$/ && $3 ~ /^8086:/ {n++} END {print n+0}' <<<"$inventory")
   if ((amd > 0 && intel == 0)); then
     BOOTSTRAP_GPU_PACKAGES=(linux-firmware-amdgpu vulkan-radeon)
     BOOTSTRAP_GPU_MULTILIB=(lib32-vulkan-radeon)
@@ -76,14 +92,14 @@ bootstrap_create_partitions() {
   done
   bootstrap_run partprobe "$BOOTSTRAP_DISK_A_REAL" || return 1
   bootstrap_run partprobe "$BOOTSTRAP_DISK_B_REAL" || return 1
-  if (( ! BOOTSTRAP_DRY_RUN )); then
+  if ((! BOOTSTRAP_DRY_RUN)); then
     udevadm settle || return 1
     BOOTSTRAP_ESP_A=$(bootstrap_part_path "$BOOTSTRAP_DISK_A_REAL" 1) || return 1
     BOOTSTRAP_ESP_B=$(bootstrap_part_path "$BOOTSTRAP_DISK_B_REAL" 1) || return 1
     BOOTSTRAP_MEMBER_A=$(bootstrap_part_path "$BOOTSTRAP_DISK_A_REAL" 2) || return 1
     BOOTSTRAP_MEMBER_B=$(bootstrap_part_path "$BOOTSTRAP_DISK_B_REAL" 2) || return 1
-    [[ -b $BOOTSTRAP_ESP_A && -b $BOOTSTRAP_ESP_B && -b $BOOTSTRAP_MEMBER_A && -b $BOOTSTRAP_MEMBER_B ]] \
-      || bootstrap_die 'partition discovery failed after partitioning'
+    [[ -b $BOOTSTRAP_ESP_A && -b $BOOTSTRAP_ESP_B && -b $BOOTSTRAP_MEMBER_A && -b $BOOTSTRAP_MEMBER_B ]] ||
+      bootstrap_die 'partition discovery failed after partitioning'
   fi
 }
 
@@ -98,18 +114,24 @@ bootstrap_create_storage_stack() {
   # accepted in configuration, arguments, process environments, or logs.
   bootstrap_run cryptsetup luksFormat --type luks2 --pbkdf argon2id --iter-time "$LUKS_ITER_TIME_MS" \
     --pbkdf-memory "$LUKS_MEMORY_KIB" --pbkdf-parallel "$LUKS_PARALLEL" "$md_device" || return 1
-  if (( ! BOOTSTRAP_DRY_RUN )); then
+  if ((! BOOTSTRAP_DRY_RUN)); then
     # Record KDF costs only, never salts, keys or the complete header metadata.
     BOOTSTRAP_ARGON2_RECORD=$(cryptsetup luksDump --dump-json-metadata "$md_device" | jq -c \
       '{pbkdf:"argon2id",keyslots:[.keyslots|to_entries[]|{slot:.key,kdf:(.value.kdf|{type,time,memory,cpus})}]}') || return 1
     payload_offset=$(LC_ALL=C cryptsetup luksDump "$md_device" | awk '$1 == "offset:" && $3 == "[bytes]" { print $2; exit }') || return 1
-    [[ $payload_offset =~ ^[0-9]+$ ]] || { bootstrap_die 'could not determine the LUKS payload offset'; return 1; }
+    [[ $payload_offset =~ ^[0-9]+$ ]] || {
+      bootstrap_die 'could not determine the LUKS payload offset'
+      return 1
+    }
     chunk_bytes=$((RAID_CHUNK_KIB * 1024))
-    ((payload_offset % chunk_bytes == 0)) || { bootstrap_die "LUKS payload offset $payload_offset is not aligned to $chunk_bytes bytes"; return 1; }
+    ((payload_offset % chunk_bytes == 0)) || {
+      bootstrap_die "LUKS payload offset $payload_offset is not aligned to $chunk_bytes bytes"
+      return 1
+    }
   fi
   bootstrap_run cryptsetup open "$md_device" "$CRYPT_NAME" || return 1
   bootstrap_run mkfs.xfs -f -d "su=${RAID_CHUNK_KIB}k,sw=2" "/dev/mapper/$CRYPT_NAME" || return 1
-  if (( ! BOOTSTRAP_DRY_RUN )); then
+  if ((! BOOTSTRAP_DRY_RUN)); then
     LUKS_UUID=$(blkid -s UUID -o value "$md_device") || return 1
     ROOT_UUID=$(blkid -s UUID -o value "/dev/mapper/$CRYPT_NAME") || return 1
     MD_UUID=$(mdadm --detail --export "$md_device" | awk -F= '$1 == "MD_UUID" { print $2; exit }') || return 1
@@ -128,8 +150,8 @@ bootstrap_create_luks_header_backup() {
   local backup_dir="$BOOTSTRAP_TARGET/etc/cryptsetup"
   bootstrap_run install -d -m 0700 "$backup_dir" || return 1
   bootstrap_run cryptsetup luksHeaderBackup "$RAID_DEVICE" --header-backup-file "$backup_dir/luks-$LUKS_UUID.header" || return 1
-  if (( ! BOOTSTRAP_DRY_RUN )); then
-    printf '%s\n' "$BOOTSTRAP_ARGON2_RECORD" > "$backup_dir/argon2id-parameters.json" || return 1
+  if ((! BOOTSTRAP_DRY_RUN)); then
+    printf '%s\n' "$BOOTSTRAP_ARGON2_RECORD" >"$backup_dir/argon2id-parameters.json" || return 1
     chmod 0600 "$backup_dir/luks-$LUKS_UUID.header" "$backup_dir/argon2id-parameters.json" || return 1
   fi
   bootstrap_log 'copy the LUKS header backup to offline media before relying on this installation'
@@ -151,7 +173,7 @@ bootstrap_write_target_config() {
   bootstrap_render_template "$template_dir/linux.preset" "$BOOTSTRAP_TARGET/etc/mkinitcpio.d/linux.preset" || return 1
   bootstrap_render_template "$template_dir/linux-lts.preset" "$BOOTSTRAP_TARGET/etc/mkinitcpio.d/linux-lts.preset" || return 1
   bootstrap_run install -Dm 0644 "$template_dir/no-hibernation.conf" "$BOOTSTRAP_TARGET/etc/systemd/sleep.conf.d/10-no-hibernation.conf" || return 1
-  if (( BOOTSTRAP_DRY_RUN )); then
+  if ((BOOTSTRAP_DRY_RUN)); then
     bootstrap_log "+ mdadm --detail --scan > $BOOTSTRAP_TARGET/etc/mdadm.conf"
     bootstrap_log "+ genfstab -U $BOOTSTRAP_TARGET > $BOOTSTRAP_TARGET/etc/fstab"
   else
@@ -171,7 +193,7 @@ bootstrap_write_target_config() {
       install -Dm0644 /etc/arch-workstation-iso/release.lock "$BOOTSTRAP_TARGET/etc/arch-workstation/release.lock" || return 1
     fi
     if [[ ${VM_TEST_MODE:-false} == true ]]; then
-      printf 'QEMU STORAGE/BOOT TEST ONLY; physical GPU and TPM validation pending\n' > "$BOOTSTRAP_TARGET/etc/arch-workstation-vm-test" || return 1
+      printf 'QEMU STORAGE/BOOT TEST ONLY; physical GPU and TPM validation pending\n' >"$BOOTSTRAP_TARGET/etc/arch-workstation-vm-test" || return 1
     fi
   fi
 }
@@ -185,14 +207,17 @@ bootstrap_configure_offline_policy() {
     bootstrap_log '+ persist sshd PermitRootLogin no (sshd remains opt-in)'
     return 0
   fi
-  [[ -f "$BOOTSTRAP_TARGET/usr/lib/tuned/profiles/$BOOTSTRAP_TUNED_PROFILE/tuned.conf" ]] \
-    || { bootstrap_die "installed TuneD profile is missing: $BOOTSTRAP_TUNED_PROFILE"; return 1; }
+  [[ -f "$BOOTSTRAP_TARGET/usr/lib/tuned/profiles/$BOOTSTRAP_TUNED_PROFILE/tuned.conf" ]] ||
+    {
+      bootstrap_die "installed TuneD profile is missing: $BOOTSTRAP_TUNED_PROFILE"
+      return 1
+    }
   install -d -m0755 "$BOOTSTRAP_TARGET/etc/tuned" "$BOOTSTRAP_TARGET/etc/ssh/sshd_config.d" \
     "$BOOTSTRAP_TARGET/etc/arch-workstation" || return 1
-  printf '%s\n' "$BOOTSTRAP_TUNED_PROFILE" > "$BOOTSTRAP_TARGET/etc/tuned/active_profile" || return 1
-  printf 'manual\n' > "$BOOTSTRAP_TARGET/etc/tuned/profile_mode" || return 1
-  printf 'PermitRootLogin no\n' > "$BOOTSTRAP_TARGET/etc/ssh/sshd_config.d/00-arch-workstation-root.conf" || return 1
-  printf 'HOST_PROFILE=%s\n' "$HOST_PROFILE" > "$BOOTSTRAP_TARGET/etc/arch-workstation/host-profile.conf" || return 1
+  printf '%s\n' "$BOOTSTRAP_TUNED_PROFILE" >"$BOOTSTRAP_TARGET/etc/tuned/active_profile" || return 1
+  printf 'manual\n' >"$BOOTSTRAP_TARGET/etc/tuned/profile_mode" || return 1
+  printf 'PermitRootLogin no\n' >"$BOOTSTRAP_TARGET/etc/ssh/sshd_config.d/00-arch-workstation-root.conf" || return 1
+  printf 'HOST_PROFILE=%s\n' "$HOST_PROFILE" >"$BOOTSTRAP_TARGET/etc/arch-workstation/host-profile.conf" || return 1
   chmod 0644 "$BOOTSTRAP_TARGET/etc/tuned/active_profile" "$BOOTSTRAP_TARGET/etc/tuned/profile_mode" \
     "$BOOTSTRAP_TARGET/etc/ssh/sshd_config.d/00-arch-workstation-root.conf" \
     "$BOOTSTRAP_TARGET/etc/arch-workstation/host-profile.conf" || return 1
@@ -211,8 +236,11 @@ bootstrap_set_passwords() {
   # passwd -S reports state only, never a credential or password hash.
   local state
   state=$(arch-chroot "$BOOTSTRAP_TARGET" passwd -S root) || return 1
-  [[ $(awk '{print $2}' <<< "$state") == P ]] \
-    || { bootstrap_die 'root recovery authentication is locked or has no password'; return 1; }
+  [[ $(awk '{print $2}' <<<"$state") == P ]] ||
+    {
+      bootstrap_die 'root recovery authentication is locked or has no password'
+      return 1
+    }
 }
 
 bootstrap_configure_system() {
@@ -255,7 +283,7 @@ bootstrap_configure_system() {
 
 bootstrap_copy_and_sign_ukis() {
   local uki source target
-  if (( ! BOOTSTRAP_DRY_RUN )); then common::validate_esp_pair "$BOOTSTRAP_TARGET" || return 1; fi
+  if ((! BOOTSTRAP_DRY_RUN)); then common::validate_esp_pair "$BOOTSTRAP_TARGET" || return 1; fi
   for uki in arch-linux.efi arch-linux-lts.efi arch-recovery.efi; do
     source="$BOOTSTRAP_TARGET/efi/EFI/Linux/$uki"
     target="$BOOTSTRAP_TARGET/efi2/EFI/Linux/$uki"
@@ -274,10 +302,13 @@ bootstrap_bootnum_for_label() {
     *) partuuid=${COMMON_ESP_A_PARTUUID:?validate ESP identities first} ;;
   esac
   case $label in
-    'Arch Linux (stable)'|'Arch Linux (stable backup)') loader='\EFI\Linux\arch-linux.efi' ;;
-    'Arch Linux (LTS)'|'Arch Linux (LTS backup)') loader='\EFI\Linux\arch-linux-lts.efi' ;;
-    'Arch Linux (recovery)'|'Arch Linux (recovery backup)') loader='\EFI\Linux\arch-recovery.efi' ;;
-    *) bootstrap_die 'unknown project UEFI label'; return 1 ;;
+    'Arch Linux (stable)' | 'Arch Linux (stable backup)') loader='\EFI\Linux\arch-linux.efi' ;;
+    'Arch Linux (LTS)' | 'Arch Linux (LTS backup)') loader='\EFI\Linux\arch-linux-lts.efi' ;;
+    'Arch Linux (recovery)' | 'Arch Linux (recovery backup)') loader='\EFI\Linux\arch-recovery.efi' ;;
+    *)
+      bootstrap_die 'unknown project UEFI label'
+      return 1
+      ;;
   esac
   common::bootnum_for_label "$label" "$partuuid" "$loader"
 }
@@ -287,15 +318,24 @@ bootstrap_set_boot_order() {
     'Arch Linux (stable)' 'Arch Linux (LTS)' 'Arch Linux (recovery)'
     'Arch Linux (stable backup)' 'Arch Linux (LTS backup)' 'Arch Linux (recovery backup)'
   ) label number order='' existing entry inventory
-  ((BOOTSTRAP_DRY_RUN)) && { bootstrap_log '+ efibootmgr --bootorder <stable,LTS,recovery,backup entries>'; return 0; }
+  ((BOOTSTRAP_DRY_RUN)) && {
+    bootstrap_log '+ efibootmgr --bootorder <stable,LTS,recovery,backup entries>'
+    return 0
+  }
   common::validate_esp_pair "$BOOTSTRAP_TARGET" || return 1
   for label in "${labels[@]}"; do
     number=$(bootstrap_bootnum_for_label "$label") || return 1
     order+="${order:+,}$number"
   done
-  inventory=$(efibootmgr -v) || { bootstrap_die 'firmware BootOrder inspection failed'; return 1; }
-  existing=$(awk -F': ' '$1 == "BootOrder" {n++; value=toupper($2)} END {if(n != 1) exit 1; print value}' <<< "$inventory") || return 1
-  [[ $existing =~ ^[A-F0-9]{4}(,[A-F0-9]{4})*$ ]] || { bootstrap_die 'firmware did not report a valid BootOrder'; return 1; }
+  inventory=$(efibootmgr -v) || {
+    bootstrap_die 'firmware BootOrder inspection failed'
+    return 1
+  }
+  existing=$(awk -F': ' '$1 == "BootOrder" {n++; value=toupper($2)} END {if(n != 1) exit 1; print value}' <<<"$inventory") || return 1
+  [[ $existing =~ ^[A-F0-9]{4}(,[A-F0-9]{4})*$ ]] || {
+    bootstrap_die 'firmware did not report a valid BootOrder'
+    return 1
+  }
   IFS=',' read -r -a BOOTSTRAP_EXISTING_BOOT_ORDER <<<"$existing"
   for entry in "${BOOTSTRAP_EXISTING_BOOT_ORDER[@]}"; do
     [[ ",$order," == *",$entry,"* ]] || order+=",$entry"
@@ -308,10 +348,16 @@ bootstrap_assert_boot_labels_absent() {
     'Arch Linux (stable)' 'Arch Linux (LTS)' 'Arch Linux (recovery)'
     'Arch Linux (stable backup)' 'Arch Linux (LTS backup)' 'Arch Linux (recovery backup)'
   ) label inventory entries
-  inventory=$(efibootmgr -v) || { bootstrap_die 'firmware entry inspection failed'; return 1; }
-  common::validate_boot_inventory <<< "$inventory" || { bootstrap_die 'firmware entry inventory is malformed or empty'; return 1; }
+  inventory=$(efibootmgr -v) || {
+    bootstrap_die 'firmware entry inspection failed'
+    return 1
+  }
+  common::validate_boot_inventory <<<"$inventory" || {
+    bootstrap_die 'firmware entry inventory is malformed or empty'
+    return 1
+  }
   for label in "${labels[@]}"; do
-    entries=$(common::boot_entries_for_label "$label" <<< "$inventory") || return 1
+    entries=$(common::boot_entries_for_label "$label" <<<"$inventory") || return 1
     if [[ -n $entries ]]; then
       bootstrap_die "UEFI label already exists; remove or rename it explicitly before installation: $label"
       return 1
@@ -338,13 +384,16 @@ bootstrap_create_firmware_entries() {
 bootstrap_install() {
   BOOTSTRAP_TARGET=/mnt
   bootstrap_require_root || return 1
-  if (( ! BOOTSTRAP_DRY_RUN )); then
+  if ((! BOOTSTRAP_DRY_RUN)); then
     bootstrap_require_tty || return 1
   fi
   bootstrap_preflight || return 1
   bootstrap_assert_safe_target || return 1
-  if (( ! BOOTSTRAP_DRY_RUN )); then
-    command -v efibootmgr >/dev/null 2>&1 || { bootstrap_die 'efibootmgr is required before destructive installation'; return 1; }
+  if ((! BOOTSTRAP_DRY_RUN)); then
+    command -v efibootmgr >/dev/null 2>&1 || {
+      bootstrap_die 'efibootmgr is required before destructive installation'
+      return 1
+    }
     bootstrap_assert_boot_labels_absent || return 1
     bootstrap_verify_boot_package || return 1
   fi

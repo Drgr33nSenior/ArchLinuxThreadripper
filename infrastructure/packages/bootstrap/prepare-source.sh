@@ -25,21 +25,24 @@ while IFS= read -r path; do
   [[ -f $root/$path ]] || common::die "missing source: $path"
   mkdir -p -- "$output/project/$(dirname -- "$path")"
   install -m644 "$root/$path" "$output/project/$path"
-done < "$root/infrastructure/packages/bootstrap/source.files"
+done <"$root/infrastructure/packages/bootstrap/source.files"
 cp "$root/infrastructure/packages/bootstrap/source.files" "$output/project/source.files"
 (
   cd "$output/project"
-  while IFS= read -r path; do printf '%s  %s\n' "$(common::sha256_file "$path")" "$path"; done < source.files
-) > "$output/project/SOURCE-MANIFEST.sha256"
-{ sed 's|^|project/|' "$output/project/source.files"; printf '%s\n' project/source.files project/SOURCE-MANIFEST.sha256; } | sort > "$output/archive.files"
-while IFS= read -r path; do touch -t "$timestamp" "$output/$path"; done < "$output/archive.files"
-bsdtar --format=ustar --uid 0 --gid 0 --uname root --gname root -cf - -C "$output" -T "$output/archive.files" | gzip -n > "$output/bootstrap-source.tar.gz"
+  while IFS= read -r path; do printf '%s  %s\n' "$(common::sha256_file "$path")" "$path"; done <source.files
+) >"$output/project/SOURCE-MANIFEST.sha256"
+{
+  sed 's|^|project/|' "$output/project/source.files"
+  printf '%s\n' project/source.files project/SOURCE-MANIFEST.sha256
+} | sort >"$output/archive.files"
+while IFS= read -r path; do touch -t "$timestamp" "$output/$path"; done <"$output/archive.files"
+bsdtar --format=ustar --uid 0 --gid 0 --uname root --gname root -cf - -C "$output" -T "$output/archive.files" | gzip -n >"$output/bootstrap-source.tar.gz"
 digest=$(common::sha256_file "$output/bootstrap-source.tar.gz")
-printf 'SOURCE_SHA256=%s\nPACKAGE_VERSION=%s\nSOURCE_DATE_EPOCH=%s\n' "$digest" "$version" "$epoch" > "$output/source.lock"
+printf 'SOURCE_SHA256=%s\nPACKAGE_VERSION=%s\nSOURCE_DATE_EPOCH=%s\n' "$digest" "$version" "$epoch" >"$output/source.lock"
 # The source archive contains the canonical template. Only its literal header
 # pins differ in the generated recipe; makepkg needs no out-of-band source.lock.
 sed -e "s/^_source_digest='@SOURCE_SHA256@'$/_source_digest='$digest'/" \
   -e "s/^_source_version='@PACKAGE_VERSION@'$/_source_version='$version'/" \
   -e "s/^_source_epoch='@SOURCE_DATE_EPOCH@'$/_source_epoch='$epoch'/" \
-  "$output/project/infrastructure/packages/bootstrap/PKGBUILD" > "$output/PKGBUILD"
+  "$output/project/infrastructure/packages/bootstrap/PKGBUILD" >"$output/PKGBUILD"
 common::info "Prepared source $digest; makepkg/signing/ISO creation have NOT run."

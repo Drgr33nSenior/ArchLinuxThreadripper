@@ -9,7 +9,7 @@ work=$(mktemp -d)
 trap 'rm -rf -- "$work"' EXIT
 
 reject() {
-  if ("$@") > "$work/rejected.txt" 2>&1; then
+  if ("$@") >"$work/rejected.txt" 2>&1; then
     printf 'unexpected success: %s\n' "$*" >&2
     exit 1
   fi
@@ -49,8 +49,8 @@ for item in 128 129; do
   bdf="0000:$((item - 127))1:00.0"
   gpu="$work/sys/devices/$bdf"
   mkdir -p "$gpu/drm/card$((item - 128))" "$work/sys/class/drm/renderD$item"
-  printf '0x1002\n' > "$gpu/vendor"
-  printf '0x1234\n' > "$gpu/device"
+  printf '0x1002\n' >"$gpu/vendor"
+  printf '0x1234\n' >"$gpu/device"
   ln -s "$work/sys/drivers/amdgpu" "$gpu/driver"
   ln -s "$gpu" "$work/sys/class/drm/renderD$item/device"
   touch "$work/dev/renderD$item" "$work/dev/card$((item - 128))"
@@ -65,29 +65,29 @@ ws_sunshine_device_accessible() {
   esac
 }
 # shellcheck disable=SC2218 # Imported real function; replaced for launch fixtures below.
-ws_sunshine_device "$work/sys" "$work/dev" > "$work/device.json"
+ws_sunshine_device "$work/sys" "$work/dev" >"$work/device.json"
 jq -e '.bdf == "0000:21:00.0" and (.render_node|endswith("renderD129")) and (.card_node|endswith("card1"))' "$work/device.json" >/dev/null
 mv "$work/dev/renderD129" "$work/dev/renderD135"
 mv "$work/sys/class/drm/renderD129" "$work/sys/class/drm/renderD135"
 allocated=renderD135
 # shellcheck disable=SC2218 # Imported real function; replaced for launch fixtures below.
-ws_sunshine_device "$work/sys" "$work/dev" > "$work/renumbered.json"
+ws_sunshine_device "$work/sys" "$work/dev" >"$work/renumbered.json"
 jq -e '.bdf == "0000:21:00.0" and (.render_node|endswith("renderD135"))' "$work/renumbered.json" >/dev/null
 accessible_mode=all
 reject ws_sunshine_device "$work/sys" "$work/dev"
 accessible_mode=none
 reject ws_sunshine_device "$work/sys" "$work/dev"
 accessible_mode=single
-printf '0x8086\n' > "$work/sys/devices/0000:21:00.0/vendor"
+printf '0x8086\n' >"$work/sys/devices/0000:21:00.0/vendor"
 reject ws_sunshine_device "$work/sys" "$work/dev"
-printf '0x1002\n' > "$work/sys/devices/0000:21:00.0/vendor"
+printf '0x1002\n' >"$work/sys/devices/0000:21:00.0/vendor"
 mv "$work/sys/devices/0000:21:00.0/driver" "$work/sys/devices/0000:21:00.0/driver-recorded"
 reject ws_sunshine_device "$work/sys" "$work/dev"
 
 # Launch is fixture-only: no graphics process, existing config remains byte-identical.
-printf 'paired configuration fixture\n' > "$work/sunshine.conf"
+printf 'paired configuration fixture\n' >"$work/sunshine.conf"
 cp "$work/sunshine.conf" "$work/original.conf"
-cat > "$work/sunshine-fixture" <<'STUB'
+cat >"$work/sunshine-fixture" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$@" > "$SUNSHINE_TEST_ARGS"
 STUB
@@ -112,7 +112,7 @@ reject ws_sunshine_launch "$work/sunshine-fixture" "$work/sunshine.conf"
 # Bounded diagnostic failures remain visible; no target tools execute here.
 cp "$work/sunshine-fixture" "$work/sunshine"
 timeout() {
-  printf '%s\n' "$*" >> "$work/diagnostic-commands.txt"
+  printf '%s\n' "$*" >>"$work/diagnostic-commands.txt"
   [[ $1 == --kill-after=2s ]] || return 99
   [[ $3 != vainfo ]] || return 124
 }
@@ -127,9 +127,9 @@ grep -Fxq -- '--kill-after=2s 15s gdbus call --session --dest org.kde.KWin --obj
 jq '.provenance |= with_entries(if (.value|type) == "string" then .value="fixture" else . end) |
   .provenance.image_digest="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" |
   .provenance.cache="warm" | .runs[0].frame_p99_ms=10 | .runs[1].frame_p99_ms=14 | .runs[2].frame_p99_ms=12' \
-  "$repo_root/templates/sunshine/measurement.example.json" > "$work/baseline.json"
+  "$repo_root/templates/sunshine/measurement.example.json" >"$work/baseline.json"
 jq '.profile.encoder="vulkan" | .runs[0].frame_p99_ms=9 | .runs[1].frame_p99_ms=11 | .runs[2].frame_p99_ms=10' \
-  "$work/baseline.json" > "$work/candidate.json"
+  "$work/baseline.json" >"$work/candidate.json"
 ws_sunshine_compare "$work/baseline.json" "$work/candidate.json" "$work/comparison" >/dev/null
 jq -e '.baseline.metrics.frame_p99_ms == {n:3,median:12,min:10,max:14} and
   .candidate.metrics.gpu_power_w == {n:0,median:null,min:null,max:null}' "$work/comparison/comparison.json" >/dev/null
@@ -137,7 +137,7 @@ reject ws_sunshine_compare "$work/baseline.json" "$work/candidate.json" "$work/c
 reject ws_sunshine_compare "$repo_root/templates/sunshine/measurement.example.json" "$work/candidate.json" "$work/placeholders"
 reject ws_sunshine_compare "$work/baseline.json" "$work/baseline.json" "$work/identical"
 for change in '.provenance.fps=120' '.provenance.cache="cold"' '.profile.vk_tune=3' '.runs[0].frame_p99_ms=-1' '.runs=[]'; do
-  jq "$change" "$work/candidate.json" > "$work/bad.json"
+  jq "$change" "$work/candidate.json" >"$work/bad.json"
   reject ws_sunshine_compare "$work/baseline.json" "$work/bad.json" "$work/bad-comparison"
 done
 
@@ -145,12 +145,18 @@ done
 curl() {
   local destination=''
   while (($#)); do
-    if [[ $1 == --output ]]; then destination=$2; shift 2; else shift; fi
+    if [[ $1 == --output ]]; then
+      destination=$2
+      shift 2
+    else shift; fi
   done
-  printf 'synthetic Sunshine package\n' > "$destination"
+  printf 'synthetic Sunshine package\n' >"$destination"
 }
 # shellcheck disable=SC2329 # Called indirectly by the image-build fixture.
-docker() { printf 'called\n' >> "$work/docker-called.txt"; return 90; }
+docker() {
+  printf 'called\n' >>"$work/docker-called.txt"
+  return 90
+}
 reject ws_sunshine_image_build "$work/hash-failure"
 [[ ! -e $work/docker-called.txt && ! -e $work/hash-failure/build-result.json ]]
 ws_read_lock() {
@@ -168,12 +174,15 @@ reject ws_sunshine_image_build "$work/build-failure"
 # shellcheck disable=SC2329 # Called indirectly by the image-build fixture.
 docker() {
   local iid=''
-  printf '%s\n' "$@" > "$work/docker-success-args.txt"
+  printf '%s\n' "$@" >"$work/docker-success-args.txt"
   while (($#)); do
-    if [[ $1 == --iidfile ]]; then iid=$2; shift 2; else shift; fi
+    if [[ $1 == --iidfile ]]; then
+      iid=$2
+      shift 2
+    else shift; fi
   done
   [[ -n $iid ]] || return 91
-  printf '%s\n' 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' > "$iid"
+  printf '%s\n' 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' >"$iid"
 }
 ws_sunshine_image_build "$work/build-wayland" >/dev/null
 jq -e '.session == "wayland" and .build_target == "wayland"' "$work/build-wayland/build-result.json" >/dev/null

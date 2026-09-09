@@ -12,27 +12,27 @@ trap 'rm -rf -- "$work"' EXIT
 source_dir="$work/llama.cpp"
 repository=https://github.com/ggml-org/llama.cpp.git
 git init -q "$source_dir"
-printf '%s\n' 'cmake_minimum_required(VERSION 3.21)' > "$source_dir/CMakeLists.txt"
+printf '%s\n' 'cmake_minimum_required(VERSION 3.21)' >"$source_dir/CMakeLists.txt"
 git -C "$source_dir" add CMakeLists.txt
 git -C "$source_dir" -c user.name=Test -c user.email=test@example.invalid commit -qm initial
 git -C "$source_dir" remote add origin "$repository"
 commit=$(git -C "$source_dir" rev-parse HEAD)
 lock="$work/versions.lock"
-printf 'ROCM_LLAMA_CPP_REPOSITORY=%s\nROCM_LLAMA_CPP_COMMIT=%s\n' "$repository" "$commit" > "$lock"
+printf 'ROCM_LLAMA_CPP_REPOSITORY=%s\nROCM_LLAMA_CPP_COMMIT=%s\n' "$repository" "$commit" >"$lock"
 
 make_report() {
   local output=$1
   mkdir -p -- "$output"
-  printf '%s\n' 11111111-2222-3333-4444-555555555555 > "$output/boot-id.txt"
+  printf '%s\n' 11111111-2222-3333-4444-555555555555 >"$output/boot-id.txt"
   jq -n '{schema:1,status:"observed",os:"Linux",architecture:"x86_64",expected:{gpu_count:2},gpu_target:"gfx1201",
     pci_gpus:[{bdf:"0000:01:00.0",device_id:"0x1234",driver:"amdgpu"},{bdf:"0000:02:00.0",device_id:"0x1234",driver:"amdgpu"}],
-    rocm_agents:[{agent:"1",gfx:"gfx1201",uuid:"GPU-111"},{agent:"2",gfx:"gfx1201",uuid:"GPU-222"}]}' > "$output/hardware.json"
+    rocm_agents:[{agent:"1",gfx:"gfx1201",uuid:"GPU-111"},{agent:"2",gfx:"gfx1201",uuid:"GPU-222"}]}' >"$output/hardware.json"
 }
 make_report "$work/recorded"
 
 fake_bin="$work/bin"
 mkdir -p -- "$fake_bin"
-cat > "$fake_bin/cmake" <<'STUB'
+cat >"$fake_bin/cmake" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$CMAKE_LOG"
 [[ ${1:-} != --version ]] || { printf 'cmake fixture\n'; exit 0; }
@@ -57,11 +57,11 @@ cp "$build/bin/llama-bench" "$build/bin/test-backend-ops"
 chmod +x "$build/bin/llama-perplexity" "$build/bin/test-backend-ops"
 chmod +x "$build/bin/llama-cli" "$build/bin/llama-bench"
 STUB
-cat > "$fake_bin/ninja" <<'STUB'
+cat >"$fake_bin/ninja" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$NINJA_LOG"
 STUB
-cat > "$fake_bin/ccache" <<'STUB'
+cat >"$fake_bin/ccache" <<'STUB'
 #!/usr/bin/env bash
 printf 'ccache test\n'
 STUB
@@ -70,7 +70,7 @@ chmod +x "$fake_bin/cmake" "$fake_bin/ninja" "$fake_bin/ccache"
 export PATH="$fake_bin:$PATH" CMAKE_LOG="$work/cmake.log" NINJA_LOG="$work/ninja.log"
 CCACHE_DIRECTORY="$work/ccache"
 mkdir -p -- "$CCACHE_DIRECTORY"
-printf 'cache_dir = %s\n' "$CCACHE_DIRECTORY" > "$CCACHE_DIRECTORY/ccache.conf"
+printf 'cache_dir = %s\n' "$CCACHE_DIRECTORY" >"$CCACHE_DIRECTORY/ccache.conf"
 ws_require_arch() { :; }
 ws_require_user() { :; }
 uname() { [[ ${1:-} == -m ]] && printf 'x86_64\n' || printf 'Linux\n'; }
@@ -81,8 +81,8 @@ ws_rocm_llama_host_compilers_validate() { printf 'gcc\n'; }
 ws_rocm_llama_vulkan_glslc_validate() { printf 'shaderc\n'; }
 ws_rocm_llama_cmake_host_compilers_validate() { :; }
 ws_rocm_llama_vulkan_record_toolchain() {
-  printf 'stub Vulkan toolchain\n' > "$1/toolchain.txt"
-  printf 'stub Vulkan packages\n' > "$1/packages.txt"
+  printf 'stub Vulkan toolchain\n' >"$1/toolchain.txt"
+  printf 'stub Vulkan packages\n' >"$1/packages.txt"
 }
 ws_rocm_build_llama_vulkan "$source_dir" "$work/recorded/hardware.json" "$work/output" "$lock" >/dev/null
 

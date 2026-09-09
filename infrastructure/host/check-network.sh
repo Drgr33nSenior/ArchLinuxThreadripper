@@ -3,7 +3,10 @@
 set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)
 source "$root/lib/k3s/common.sh"
-(($# == 5)) || { printf 'Usage: check-network.sh NODE-IP LAN-CIDR POD-CIDR SERVICE-CIDR DNS-IP\n' >&2; exit 2; }
+(($# == 5)) || {
+  printf 'Usage: check-network.sh NODE-IP LAN-CIDR POD-CIDR SERVICE-CIDR DNS-IP\n' >&2
+  exit 2
+}
 node=$1 lan=$2 pods=$3 services=$4 dns=$5
 for cidr in "$lan" "$pods" "$services"; do
   [[ $cidr == */* ]] || k3s_die 'network CIDR requires a prefix'

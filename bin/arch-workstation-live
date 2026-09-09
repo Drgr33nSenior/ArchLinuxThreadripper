@@ -2,13 +2,20 @@
 # Explicit local menu. Boot/login never invokes an install action.
 set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
-[[ -t 0 && -t 1 ]] || { printf 'A local interactive terminal is required.\n' >&2; exit 1; }
+[[ -t 0 && -t 1 ]] || {
+  printf 'A local interactive terminal is required.\n' >&2
+  exit 1
+}
 while true; do
   printf '\nArch workstation installation / recovery\n1) Inspect hardware (read-only)\n2) Preview installation\n3) Install (erases confirmed disks)\n4) Read recovery instructions\nq) Exit to shell\n> '
   IFS= read -r choice || exit 0
   case $choice in
-    1) lscpu; lspci -nnk; lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINTS,MODEL,SERIAL ;;
-    2|3)
+    1)
+      lscpu
+      lspci -nnk
+      lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINTS,MODEL,SERIAL
+      ;;
+    2 | 3)
       printf 'Path to your reviewed installation config: '
       IFS= read -r config
       mode=--dry-run

@@ -7,11 +7,14 @@ if [[ -z ${HOME_LAB_GAME_IMAGE:-} ]]; then
   printf 'SKIP: set HOME_LAB_GAME_IMAGE to an already-built local image ID for streaming smoke tests\n'
   exit 0
 fi
-[[ $HOME_LAB_GAME_IMAGE =~ ^sha256:[a-f0-9]{64}$ ]] || { printf 'Expected a local sha256 image ID\n' >&2; exit 2; }
+[[ $HOME_LAB_GAME_IMAGE =~ ^sha256:[a-f0-9]{64}$ ]] || {
+  printf 'Expected a local sha256 image ID\n' >&2
+  exit 2
+}
 docker image inspect "$HOME_LAB_GAME_IMAGE" --format '{{.Os}}/{{.Architecture}}' | grep -Fxq linux/amd64
 docker image inspect "$HOME_LAB_GAME_IMAGE" --format '{{.Config.User}}' | grep -Fxq 1000:1000
-docker image inspect "$HOME_LAB_GAME_IMAGE" --format '{{json .Config.Entrypoint}}' \
-  | grep -Fxq '["/usr/bin/dumb-init","--","/usr/lib/workstation/wayland-session"]'
+docker image inspect "$HOME_LAB_GAME_IMAGE" --format '{{json .Config.Entrypoint}}' |
+  grep -Fxq '["/usr/bin/dumb-init","--","/usr/lib/workstation/wayland-session"]'
 docker run --rm --pull never --platform linux/amd64 --network none --read-only \
   --cap-drop ALL --security-opt no-new-privileges --user 1000:1000 \
   --pids-limit 64 --memory 256m --cpus 1 --tmpfs /tmp:rw,nosuid,nodev,size=16m \

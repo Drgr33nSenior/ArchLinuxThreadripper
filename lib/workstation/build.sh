@@ -14,11 +14,23 @@ ws_build_config_validate() {
   ws_build_defaults
   local key
   for key in BUILD_RESERVE_MIB BUILD_JOB_MIB BUILD_HEAVY_JOB_MIB BUILD_LINK_MIB BUILD_LINK_JOBS EXPECTED_GPU_COUNT; do
-    ws_positive_integer "${!key}" || { ws_die "$key must be a positive integer"; return 1; }
+    ws_positive_integer "${!key}" || {
+      ws_die "$key must be a positive integer"
+      return 1
+    }
   done
-  [[ $CCACHE_MAX_SIZE =~ ^[1-9][0-9]{0,4}[GM]$ ]] || { ws_die 'CCACHE_MAX_SIZE must be a size such as 100G'; return 1; }
-  [[ $CCACHE_DIRECTORY == /* && $CCACHE_DIRECTORY != / && $CCACHE_DIRECTORY != *$'\n'* ]] || { ws_die 'CCACHE_DIRECTORY must be an absolute cache directory'; return 1; }
-  [[ $EXPECTED_GPU_MODEL =~ ^[A-Za-z0-9_-]+$ ]] || { ws_die 'EXPECTED_GPU_MODEL must be a model token'; return 1; }
+  [[ $CCACHE_MAX_SIZE =~ ^[1-9][0-9]{0,4}[GM]$ ]] || {
+    ws_die 'CCACHE_MAX_SIZE must be a size such as 100G'
+    return 1
+  }
+  [[ $CCACHE_DIRECTORY == /* && $CCACHE_DIRECTORY != / && $CCACHE_DIRECTORY != *$'\n'* ]] || {
+    ws_die 'CCACHE_DIRECTORY must be an absolute cache directory'
+    return 1
+  }
+  [[ $EXPECTED_GPU_MODEL =~ ^[A-Za-z0-9_-]+$ ]] || {
+    ws_die 'EXPECTED_GPU_MODEL must be a model token'
+    return 1
+  }
 }
 
 # Inputs are explicit to make the resource policy testable without spoofing the
@@ -47,8 +59,8 @@ ws_available_memory_mib() {
     path="/sys/fs/cgroup${group%/}"
     while [[ $path == /sys/fs/cgroup* ]]; do
       if [[ -r $path/memory.max && -r $path/memory.current ]]; then
-        read -r limit < "$path/memory.max"
-        read -r used < "$path/memory.current"
+        read -r limit <"$path/memory.max"
+        read -r used <"$path/memory.current"
         if [[ $limit =~ ^[0-9]+$ && $used =~ ^[0-9]+$ ]]; then
           remaining=$(((limit - used) / 1048576))
           ((remaining >= 0)) || remaining=0
@@ -69,12 +81,21 @@ ws_build_session_inhibit_path() { printf '%s\n' /run/workstation/build-inhibit; 
 # compilations. Existing or unrelated processes are deliberately untouched.
 ws_build_session_guard() {
   local marker
-  marker=$(ws_build_session_inhibit_path) || { ws_die 'could not resolve the managed-build inhibit marker'; return 1; }
-  [[ $marker == /* && $marker != / && $marker != *$'\n'* ]] \
-    || { ws_die 'managed-build inhibit marker path is invalid'; return 1; }
+  marker=$(ws_build_session_inhibit_path) || {
+    ws_die 'could not resolve the managed-build inhibit marker'
+    return 1
+  }
+  [[ $marker == /* && $marker != / && $marker != *$'\n'* ]] ||
+    {
+      ws_die 'managed-build inhibit marker path is invalid'
+      return 1
+    }
   if [[ -e $marker || -L $marker ]]; then
-    [[ -f $marker && ! -L $marker && -r $marker ]] \
-      || { ws_die 'managed-build inhibit marker exists but is unreadable or unsafe; refuse new compilation'; return 1; }
+    [[ -f $marker && ! -L $marker && -r $marker ]] ||
+      {
+        ws_die 'managed-build inhibit marker exists but is unreadable or unsafe; refuse new compilation'
+        return 1
+      }
     ws_die 'new managed compilation is inhibited by the active workstation session'
     return 1
   fi
@@ -86,8 +107,14 @@ ws_build_jobs() {
   ws_build_session_guard
   [[ $(uname -s) == Linux ]] || ws_die 'build concurrency must be measured on the Linux build host'
   case $kind in
-    normal) cap=${WORKSTATION_MAKE_JOBS:-24}; per_job=$BUILD_JOB_MIB ;;
-    memory-heavy) cap=${WORKSTATION_MEMORY_HEAVY_JOBS:-16}; per_job=$BUILD_HEAVY_JOB_MIB ;;
+    normal)
+      cap=${WORKSTATION_MAKE_JOBS:-24}
+      per_job=$BUILD_JOB_MIB
+      ;;
+    memory-heavy)
+      cap=${WORKSTATION_MEMORY_HEAVY_JOBS:-16}
+      per_job=$BUILD_HEAVY_JOB_MIB
+      ;;
     *) ws_die 'build kind must be normal or memory-heavy' ;;
   esac
   available=$(ws_available_memory_mib)
@@ -125,13 +152,19 @@ ws_emit_build_environment() {
 # shape changes instead of silently replacing an unknown policy.
 ws_native_flags() {
   local flags=$1 token march=0 tune=0 optimization=0 result='' tokens=()
-  read -r -a tokens <<< "$flags"
+  read -r -a tokens <<<"$flags"
   for token in "${tokens[@]}"; do
     case $token in
-      -march=x86-64) token=-march=native; march=$((march + 1)) ;;
-      -mtune=generic) token=-mtune=native; tune=$((tune + 1)) ;;
+      -march=x86-64)
+        token=-march=native
+        march=$((march + 1))
+        ;;
+      -mtune=generic)
+        token=-mtune=native
+        tune=$((tune + 1))
+        ;;
       -O2) optimization=$((optimization + 1)) ;;
-      -march=*|-mtune=*|-O*|-ffast-math|-funsafe-math-optimizations) ws_die "unexpected system build flag: $token" ;;
+      -march=* | -mtune=* | -O* | -ffast-math | -funsafe-math-optimizations) ws_die "unexpected system build flag: $token" ;;
     esac
     result+="${result:+ }$token"
   done
@@ -165,7 +198,7 @@ ws_ccache_configure() {
     printf 'cache_dir = %s\nmax_size = %s\n' "$CCACHE_DIRECTORY" "$CCACHE_MAX_SIZE"
     printf 'compression = true\ncompiler_check = content\nstats = true\n'
     printf 'hard_link = false\nsloppiness =\n'
-  } > "$staged"
+  } >"$staged"
   ws_write_new_or_identical "$staged" "$CCACHE_DIRECTORY/ccache.conf"
   ws_note "ccache configured: $CCACHE_DIRECTORY ($CCACHE_MAX_SIZE, compressed, user-owned)"
 }
@@ -240,9 +273,11 @@ ws_makepkg_native_configure() (
     # Do not freeze yesterday's available memory into a persistent profile.
     # shellcheck disable=SC2016
     printf '%s\n' 'MAKEFLAGS="-j${WORKSTATION_BUILD_JOBS:?Load workstationctl build environment immediately before building}"'
-    printf 'BUILDENV=('; printf '%q ' "${buildenv[@]}"; printf ')\n'
+    printf 'BUILDENV=('
+    printf '%q ' "${buildenv[@]}"
+    printf ')\n'
     printf 'export CCACHE_DIR=%q\nexport CCACHE_CONFIGPATH=%q\n' "$CCACHE_DIRECTORY" "$CCACHE_DIRECTORY/ccache.conf"
-  } > "$staged"
+  } >"$staged"
   ws_write_new_or_identical "$staged" "$output"
   ws_note "wrote native makepkg profile preserving installed Arch hardening: $output"
 )
@@ -256,13 +291,13 @@ ws_kernel_cpu_report() {
   [[ ! -e $report ]] || ws_die 'kernel CPU report already exists'
   # Kconfig itself resolves compiler-version dependencies. This command reports
   # the candidate only; olddefconfig and the resolved .config are the final gate.
-  if grep -q '^config X86_NATIVE_CPU$' "$source/arch/x86/Kconfig.cpu" \
-    && printf 'int x;\n' | "$compiler" -march=native -x c -fsyntax-only - >/dev/null 2>&1; then
+  if grep -q '^config X86_NATIVE_CPU$' "$source/arch/x86/Kconfig.cpu" &&
+    printf 'int x;\n' | "$compiler" -march=native -x c -fsyntax-only - >/dev/null 2>&1; then
     symbol=X86_NATIVE_CPU
   fi
   kernel_version=$(awk '/^(VERSION|PATCHLEVEL|SUBLEVEL) =/ {printf "%s%s", separator,$3; separator="."}' "$source/Makefile")
   jq -n --arg version "$kernel_version" --arg compiler "$("$compiler" --version | head -n1)" \
     --arg candidate "$symbol" --arg hash "$(common::sha256_file "$source/arch/x86/Kconfig.cpu")" \
     '{kernel_version:$version,compiler:$compiler,kconfig_sha256:$hash,candidate:$candidate,validated:false,
-      next:"Use scripts/config in a separate kernel build tree; run olddefconfig with the selected compiler and confirm CONFIG_X86_NATIVE_CPU=y. Otherwise retain the packaged generic configuration."}' > "$report"
+      next:"Use scripts/config in a separate kernel build tree; run olddefconfig with the selected compiler and confirm CONFIG_X86_NATIVE_CPU=y. Otherwise retain the packaged generic configuration."}' >"$report"
 }

@@ -14,23 +14,23 @@ bootstrap_select_host_profile
 [[ $BOOTSTRAP_TUNED_PROFILE == accelerator-performance && ${#BOOTSTRAP_PROFILE_PACKAGES[@]} == 0 ]]
 
 # The optional setting must not leak in from the caller's environment.
-sed '/^TUNED_PROFILE=/d' "$root/config/install.conf.example" > "$work/legacy.conf"
+sed '/^TUNED_PROFILE=/d' "$root/config/install.conf.example" >"$work/legacy.conf"
 TUNED_PROFILE=untrusted
 bootstrap_load_config "$work/legacy.conf"
 [[ $TUNED_PROFILE == auto ]]
 bootstrap_select_host_profile
 [[ $BOOTSTRAP_TUNED_PROFILE == balanced ]]
-sed 's/^TUNED_PROFILE=.*/TUNED_PROFILE=untrusted/' "$root/config/install.conf.example" > "$work/invalid.conf"
+sed 's/^TUNED_PROFILE=.*/TUNED_PROFILE=untrusted/' "$root/config/install.conf.example" >"$work/invalid.conf"
 if bootstrap_load_config "$work/invalid.conf" >/dev/null 2>&1; then exit 1; fi
 
 bootstrap_load_config "$root/infrastructure/host/install.conf.example"
 BOOTSTRAP_DRY_RUN=0
 BOOTSTRAP_TARGET="$work/target"
 mkdir -p "$BOOTSTRAP_TARGET/usr/lib/tuned/profiles/accelerator-performance"
-printf '# synthetic installed profile\n' > "$BOOTSTRAP_TARGET/usr/lib/tuned/profiles/accelerator-performance/tuned.conf"
+printf '# synthetic installed profile\n' >"$BOOTSTRAP_TARGET/usr/lib/tuned/profiles/accelerator-performance/tuned.conf"
 bootstrap_configure_offline_policy
-[[ $(< "$BOOTSTRAP_TARGET/etc/tuned/active_profile") == accelerator-performance ]]
-[[ $(< "$BOOTSTRAP_TARGET/etc/tuned/profile_mode") == manual ]]
+[[ $(<"$BOOTSTRAP_TARGET/etc/tuned/active_profile") == accelerator-performance ]]
+[[ $(<"$BOOTSTRAP_TARGET/etc/tuned/profile_mode") == manual ]]
 bootstrap_configure_offline_policy
 HOST_PROFILE=desktop
 bootstrap_select_host_profile

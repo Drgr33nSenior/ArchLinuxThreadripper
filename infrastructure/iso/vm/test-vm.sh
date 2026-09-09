@@ -5,8 +5,8 @@ root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd -P)
 source "$root/lib/common.sh"
 
 vm_path() {
-  [[ $1 =~ ^/[A-Za-z0-9_./-]+$ && $1 != *..* && $1 != /dev/* && $1 != /proc/* && $1 != /sys/* ]] \
-    || common::die 'use an absolute file path without spaces, commas, traversal or device paths'
+  [[ $1 =~ ^/[A-Za-z0-9_./-]+$ && $1 != *..* && $1 != /dev/* && $1 != /proc/* && $1 != /sys/* ]] ||
+    common::die 'use an absolute file path without spaces, commas, traversal or device paths'
   [[ ! -L $1 ]] || common::die 'symlink input refused'
 }
 
@@ -15,20 +15,25 @@ vm_image_check() {
   [[ -f $1 && ! -L $1 && -O $1 ]] || common::die 'disk must be an owned regular fixture file'
   # Force raw: guest-controlled bytes can never name a host backing/data file.
   metadata=$(qemu-img info -f raw --output=json "$1") || common::die 'cannot inspect fixture image'
-  jq -e '.format == "raw" and .["virtual-size"] == 68719476736' <<< "$metadata" >/dev/null \
-    || common::die 'fixture must be a standalone 64 GiB raw file'
+  jq -e '.format == "raw" and .["virtual-size"] == 68719476736' <<<"$metadata" >/dev/null ||
+    common::die 'fixture must be a standalone 64 GiB raw file'
 }
 
 main() {
   (($# >= 3)) || common::die 'usage: test-vm.sh create DIR OVMF_VARS [--execute] | boot/recover DIR OVMF_CODE ISO-or-- [--network] [--execute]'
   local action=$1 directory=$2 firmware=$3 medium='' execute=false network=false option
   shift 3
-  vm_path "$directory"; vm_path "$firmware"
+  vm_path "$directory"
+  vm_path "$firmware"
   [[ -f $firmware ]] || common::die 'firmware must be a regular file, never a host firmware device'
   if [[ $action != create ]]; then
     (($# >= 1)) || common::die 'supply the ISO path or - for installed-disk boot'
-    medium=$1; shift
-    if [[ $medium != - ]]; then vm_path "$medium"; [[ -f $medium ]] || common::die 'ISO must be a regular file'; fi
+    medium=$1
+    shift
+    if [[ $medium != - ]]; then
+      vm_path "$medium"
+      [[ -f $medium ]] || common::die 'ISO must be a regular file'
+    fi
   fi
   for option in "$@"; do
     case $option in
@@ -48,11 +53,11 @@ main() {
     cp "$firmware" "$directory/OVMF_VARS.fd"
     qemu-img create -f raw "$directory/nvme-a.raw" 64G
     qemu-img create -f raw "$directory/nvme-b.raw" 64G
-    printf 'ARCHLAB_VM_V1\n' > "$directory/fixture.marker"
+    printf 'ARCHLAB_VM_V1\n' >"$directory/fixture.marker"
     return
   fi
-  [[ -d $directory && -O $directory && -f $directory/fixture.marker \
-    && $(<"$directory/fixture.marker") == ARCHLAB_VM_V1 ]] || common::die 'not an owned disposable fixture directory'
+  [[ -d $directory && -O $directory && -f $directory/fixture.marker &&
+    $(<"$directory/fixture.marker") == ARCHLAB_VM_V1 ]] || common::die 'not an owned disposable fixture directory'
   [[ -f $directory/OVMF_VARS.fd && ! -L $directory/OVMF_VARS.fd ]] || common::die 'missing regular private VM variable store'
   local disk_mode='' nic=none
   if [[ $action == recover ]]; then

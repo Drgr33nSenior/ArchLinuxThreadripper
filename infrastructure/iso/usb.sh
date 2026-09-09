@@ -27,7 +27,7 @@ usb_source_device() { /bin/df -P "$1" | awk 'NR == 2 { print $1 }'; }
 usb_lock_path() { printf '/var/run/arch-workstation-usb-%s.lock\n' "${1##*/}"; }
 usb_open() {
   [[ -b "$1" && ! -L "$1" && -c "$2" && ! -L "$2" ]] || common::die 'target device nodes are missing or unsafe'
-  exec 9> "$2"
+  exec 9>"$2"
 }
 usb_copy() { /bin/dd if="$1" bs=1m >&9; }
 usb_flush() { /bin/sync; }
@@ -38,16 +38,16 @@ usb_compare() { usb_read "$1" "$3" | /usr/bin/cmp "$2" -; }
 
 usb_confirm() {
   local expected="$1" answer
-  printf 'Type exactly: %s\n> ' "$expected" > /dev/tty || common::die 'an interactive controlling terminal is required'
-  IFS= read -r answer < /dev/tty || common::die 'confirmation was not received'
+  printf 'Type exactly: %s\n> ' "$expected" >/dev/tty || common::die 'an interactive controlling terminal is required'
+  IFS= read -r answer </dev/tty || common::die 'confirmation was not received'
   [[ "$answer" == "$expected" ]] || common::die 'confirmation did not match; no disk was unmounted or written'
 }
 
 usb_image_check() {
   local iso="$1" name manifest hash actual
   name=${iso##*/}
-  [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*\.iso$ && -f "$iso" && ! -L "$iso" && -s "$iso" ]] \
-    || common::die 'select a nonempty regular ISO with a simple .iso filename; symlinks are refused'
+  [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*\.iso$ && -f "$iso" && ! -L "$iso" && -s "$iso" ]] ||
+    common::die 'select a nonempty regular ISO with a simple .iso filename; symlinks are refused'
   manifest="${iso%/*}/SHA256SUMS"
   [[ -f "$manifest" && ! -L "$manifest" ]] || common::die 'the ISO needs a regular adjacent SHA256SUMS from its build'
   hash=$(awk -v name="$name" '
@@ -72,7 +72,7 @@ usb_identity() {
     (.DeviceTreePath|type == "string" and length > 0) and
     (.TotalSize|type == "number" and . > 0 and . >= $bytes) and
     (.DeviceBlockSize|type == "number" and . > 0) and ($bytes % .DeviceBlockSize == 0)
-  ' <<< "$info" >/dev/null || common::die 'require an identifiable, writable, external physical USB whole disk large enough for the ISO; unknown properties fail closed'
+  ' <<<"$info" >/dev/null || common::die 'require an identifiable, writable, external physical USB whole disk large enough for the ISO; unknown properties fail closed'
   layout=$(usb_layout "$device") || common::die 'cannot inspect target partitions'
   jq -e --arg disk "${device##*/}" --argjson unmounted "$unmounted" '
     (.AllDisksAndPartitions|type == "array" and length == 1) and
@@ -81,12 +81,12 @@ usb_identity() {
       ((.Content // "")|test("APFS|CoreStorage|RAID";"i")|not) and
       ((.MountPoint // "")|test("^/$|^/System(/|$)|^/private(/|$)")|not) and
       ($unmounted == false or (.MountPoint // "") == ""))
-  ' <<< "$layout" >/dev/null || common::die 'refusing unknown layout, macOS system mounts, APFS, CoreStorage or RAID media; no automatic reformatting'
+  ' <<<"$layout" >/dev/null || common::die 'refusing unknown layout, macOS system mounts, APFS, CoreStorage or RAID media; no automatic reformatting'
   system=$(usb_info /) || common::die 'cannot identify the running macOS system volume'
   jq -e --arg disk "${device##*/}" '
     (.DeviceIdentifier|type == "string") and (.ParentWholeDisk|type == "string") and
     .DeviceIdentifier != $disk and .ParentWholeDisk != $disk
-  ' <<< "$system" >/dev/null || common::die 'target is the system disk or system-disk identity is unknown'
+  ' <<<"$system" >/dev/null || common::die 'target is the system disk or system-disk identity is unknown'
   media=$(usb_media) || common::die 'cannot inspect live IOKit media identity'
   identity=$(jq -ce --arg disk "${device##*/}" --argjson info "$info" '
     [..|objects|select(.["BSD Name"]? == $disk and .Whole? == true)] |
@@ -94,7 +94,7 @@ usb_identity() {
     select((.IORegistryEntryID|type) == "number" and .IORegistryEntryID > 0 and .Size == $info.TotalSize and .Writable == true) |
     {device:$info.DeviceNode,name:$info.MediaName,bytes:$info.TotalSize,
       block_size:$info.DeviceBlockSize,device_tree:$info.DeviceTreePath,registry_id:.IORegistryEntryID}
-  ' <<< "$media") || common::die 'live whole-media identity is missing, ambiguous or inconsistent'
+  ' <<<"$media") || common::die 'live whole-media identity is missing, ambiguous or inconsistent'
   printf '%s\n' "$identity"
 }
 
@@ -105,21 +105,21 @@ usb_source_check() {
   info=$(usb_info "$source") || common::die 'cannot resolve the ISO filesystem device'
   jq -e --arg disk "${target##*/}" '
     (.ParentWholeDisk|type == "string") and .ParentWholeDisk != $disk and .DeviceIdentifier != $disk
-  ' <<< "$info" >/dev/null || common::die 'the ISO must not reside on the USB disk being overwritten'
+  ' <<<"$info" >/dev/null || common::die 'the ISO must not reside on the USB disk being overwritten'
 }
 
 usb_list() {
   local devices device info
   devices=$(usb_diskutil list -plist external physical | usb_plist) || common::die 'cannot list external physical disks'
-  jq -e '.AllDisksAndPartitions|type == "array"' <<< "$devices" >/dev/null || common::die 'unexpected disk inventory'
+  jq -e '.AllDisksAndPartitions|type == "array"' <<<"$devices" >/dev/null || common::die 'unexpected disk inventory'
   printf 'External physical USB disks (listing is not write approval):\n'
   while IFS= read -r device; do
     [[ "$device" =~ ^disk[0-9]+$ ]] || common::die 'invalid disk identifier in inventory'
     info=$(usb_info "/dev/$device") || common::die 'cannot inspect an external disk'
     jq -r 'select(.BusProtocol == "USB") |
       [.DeviceNode, (.MediaName // "UNKNOWN"), ((.TotalSize // "UNKNOWN")|tostring),
-       (if .Writable == true then "writable" else "read-only/unknown" end)] | @tsv' <<< "$info"
-  done < <(jq -r '.AllDisksAndPartitions[].DeviceIdentifier' <<< "$devices")
+       (if .Writable == true then "writable" else "read-only/unknown" end)] | @tsv' <<<"$info"
+  done < <(jq -r '.AllDisksAndPartitions[].DeviceIdentifier' <<<"$devices")
   printf 'Columns: device, media name, capacity in bytes, write status. No disk selected.\n'
 }
 
@@ -150,7 +150,7 @@ usb_write() (
   trap 'exec 9>&-; rmdir "$lock"; if [[ "$completed" != true ]]; then common::warn "USB operation incomplete (unmount/write started: $touched). Do not assume a bootable copy; no automatic retry or recovery was performed."; fi' EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
-  usb_confirm "ERASE $device $(jq -r .bytes <<< "$initial") ${hash:0:12}"
+  usb_confirm "ERASE $device $(jq -r .bytes <<<"$initial") ${hash:0:12}"
   [[ "$(usb_image_check "$iso")" == "$hash" && "$(usb_size "$iso")" == "$bytes" ]] || common::die 'ISO changed after preview'
   usb_source_check "$iso" "$device"
   fresh=$(usb_identity "$device" "$bytes") || exit 1
@@ -183,17 +183,32 @@ usb_write() (
 
 main() {
   local execute=false
-  if [[ ${1:-} == --execute ]]; then execute=true; shift; fi
+  if [[ ${1:-} == --execute ]]; then
+    execute=true
+    shift
+  fi
   case ${1:-} in
-    -h|--help) usage; return ;;
-    list|write) ;;
-    *) usage >&2; return 2 ;;
+    -h | --help)
+      usage
+      return
+      ;;
+    list | write) ;;
+    *)
+      usage >&2
+      return 2
+      ;;
   esac
   usb_platform
   common::require_command jq
   case "$1" in
-    list) (($# == 1)) && [[ "$execute" == false ]] || common::die 'list takes no options or device and never executes writes'; usb_list ;;
-    write) (($# == 3)) || common::die 'write requires an explicit ISO and whole /dev/diskN'; usb_write "$2" "$3" "$execute" ;;
+    list)
+      (($# == 1)) && [[ "$execute" == false ]] || common::die 'list takes no options or device and never executes writes'
+      usb_list
+      ;;
+    write)
+      (($# == 3)) || common::die 'write requires an explicit ISO and whole /dev/diskN'
+      usb_write "$2" "$3" "$execute"
+      ;;
   esac
 }
 

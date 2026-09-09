@@ -16,9 +16,32 @@ setup() {
 @test "LLM requires an immutable image reference" {
   lock="$BATS_TEST_TMPDIR/versions.lock"
   printf 'LLM_SCALER_IMAGE=example.invalid/image:latest\n' > "$lock"
-  run bash -c 'source "$1/lib/workstation/runtime.sh"; ws_llm_up 0000:01:00.0 "$2" "$3"' _ "$REPO_ROOT" "$BATS_TEST_TMPDIR" "$lock"
+  # Exercise the image gate on any development OS, without device/runtime access.
+  run bash -c '
+    source "$1/lib/workstation/runtime.sh"
+    ws_require_arch() { :; }
+    ws_require_user() { :; }
+    ws_gpu_validate() { ws_die "unexpected device access"; }
+    podman() { ws_die "unexpected container execution"; }
+    ws_llm_up 0000:01:00.0 "$2" "$3"
+  ' _ "$REPO_ROOT" "$BATS_TEST_TMPDIR" "$lock"
   [ "$status" -ne 0 ]
   [[ "$output" == *immutable* ]]
+}
+
+@test "immutable LLM image reaches the mocked device gate" {
+  lock="$BATS_TEST_TMPDIR/versions.lock"
+  printf 'LLM_SCALER_IMAGE=example.invalid/image@sha256:%064d\n' 0 > "$lock"
+  run bash -c '
+    source "$1/lib/workstation/runtime.sh"
+    ws_require_arch() { :; }
+    ws_require_user() { :; }
+    ws_gpu_validate() { ws_die "fixture device gate reached"; }
+    podman() { ws_die "unexpected container execution"; }
+    ws_llm_up 0000:01:00.0 "$2" "$3"
+  ' _ "$REPO_ROOT" "$BATS_TEST_TMPDIR" "$lock"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"fixture device gate reached"* ]]
 }
 
 @test "GPU validation rejects a non-B70 PCI address before device access" {

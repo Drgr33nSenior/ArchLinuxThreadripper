@@ -64,7 +64,10 @@ printf '%s\n' \
   'ENABLE_BLUETOOTH=false' \
   'ENABLE_PRINTING=false' >"$valid_config"
 assert_ok bootstrap_load_config "$valid_config"
-[[ $HOSTNAME == threadripper-ai ]] || { printf 'FAIL hostname not loaded\n' >&2; failures=$((failures + 1)); }
+[[ $HOSTNAME == threadripper-ai ]] || {
+  printf 'FAIL hostname not loaded\n' >&2
+  failures=$((failures + 1))
+}
 
 unknown_config="$temp_dir/unknown.conf"
 cp "$valid_config" "$unknown_config"
@@ -79,7 +82,10 @@ assert_fail bootstrap_load_config "$unsafe_config"
 BOOTSTRAP_DRY_RUN=1
 export BOOTSTRAP_DRY_RUN
 dry_run_output=$(bootstrap_run definitely-not-an-installed-command 2>&1)
-[[ $dry_run_output == *definitely-not-an-installed-command* ]] || { printf 'FAIL dry-run did not print command\n' >&2; failures=$((failures + 1)); }
+[[ $dry_run_output == *definitely-not-an-installed-command* ]] || {
+  printf 'FAIL dry-run did not print command\n' >&2
+  failures=$((failures + 1))
+}
 
 # shellcheck disable=SC2016
 assert_fail bootstrap_config_value_safe '$(untrusted)'
@@ -139,15 +145,28 @@ dry_run_plan_calls=0
 dry_run_tty_calls=0
 dry_run_destructive_calls=0
 # shellcheck disable=SC2034,SC2329
-bootstrap_preflight() { dry_run_preflight_calls=$((dry_run_preflight_calls + 1)); BOOTSTRAP_DISK_A_REAL=/dev/mock-a; BOOTSTRAP_DISK_B_REAL=/dev/mock-b; }
+bootstrap_preflight() {
+  dry_run_preflight_calls=$((dry_run_preflight_calls + 1))
+  BOOTSTRAP_DISK_A_REAL=/dev/mock-a
+  BOOTSTRAP_DISK_B_REAL=/dev/mock-b
+}
 bootstrap_assert_safe_target() { :; }
 bootstrap_install_plan() { dry_run_plan_calls=$((dry_run_plan_calls + 1)); }
-bootstrap_require_tty() { dry_run_tty_calls=$((dry_run_tty_calls + 1)); return 1; }
-bootstrap_create_partitions() { dry_run_destructive_calls=$((dry_run_destructive_calls + 1)); return 1; }
+bootstrap_require_tty() {
+  dry_run_tty_calls=$((dry_run_tty_calls + 1))
+  return 1
+}
+bootstrap_create_partitions() {
+  dry_run_destructive_calls=$((dry_run_destructive_calls + 1))
+  return 1
+}
 BOOTSTRAP_DRY_RUN=1
 assert_ok bootstrap_install
-[[ $dry_run_preflight_calls == 1 && $dry_run_plan_calls == 1 && $dry_run_tty_calls == 0 && $dry_run_destructive_calls == 0 ]] \
-  || { printf 'FAIL dry-run did not remain non-interactive and side-effect free\n' >&2; failures=$((failures + 1)); }
+[[ $dry_run_preflight_calls == 1 && $dry_run_plan_calls == 1 && $dry_run_tty_calls == 0 && $dry_run_destructive_calls == 0 ]] ||
+  {
+    printf 'FAIL dry-run did not remain non-interactive and side-effect free\n' >&2
+    failures=$((failures + 1))
+  }
 
 # A real install must fail before preflight or disk operations when no terminal
 # is present to collect the passphrase and exact destructive confirmation.
@@ -155,8 +174,11 @@ interactive_preflight_calls=0
 bootstrap_preflight() { interactive_preflight_calls=$((interactive_preflight_calls + 1)); }
 BOOTSTRAP_DRY_RUN=0
 assert_fail bootstrap_install
-[[ $interactive_preflight_calls == 0 && $dry_run_tty_calls == 1 && $dry_run_destructive_calls == 0 ]] \
-  || { printf 'FAIL non-interactive install advanced past the TTY guard\n' >&2; failures=$((failures + 1)); }
+[[ $interactive_preflight_calls == 0 && $dry_run_tty_calls == 1 && $dry_run_destructive_calls == 0 ]] ||
+  {
+    printf 'FAIL non-interactive install advanced past the TTY guard\n' >&2
+    failures=$((failures + 1))
+  }
 BOOTSTRAP_DRY_RUN=1
 
 # Signature verification is certificate-based and covers all direct and
@@ -188,7 +210,10 @@ sbverify() { [[ $1 == --cert && -r $2 && -s $3 ]]; }
 source "$TEST_ROOT/tests/bootstrap/storage-fixtures.sh"
 storage_fixture_create "$verify_root"
 # shellcheck disable=SC2329
-arch-chroot() { [[ $2 == passwd && $3 == -S && $4 == root ]] || return 1; printf 'root P 2026-09-05 0 99999 7 -1\n'; }
+arch-chroot() {
+  [[ $2 == passwd && $3 == -S && $4 == root ]] || return 1
+  printf 'root P 2026-09-05 0 99999 7 -1\n'
+}
 # shellcheck disable=SC2034
 BOOTSTRAP_TARGET=$verify_root
 assert_ok bootstrap_verify
@@ -198,7 +223,7 @@ mkdir -p "$verify_root/usr/local/lib/bootstrap-arch" "$verify_root/etc/pacman.d/
 cp "$verify_root/usr/lib/arch-workstation-bootstrap/uki-sync" "$verify_root/usr/local/lib/bootstrap-arch/uki-sync"
 sed 's|/usr/lib/arch-workstation-bootstrap/uki-sync|/usr/local/lib/bootstrap-arch/uki-sync|' \
   "$verify_root/usr/share/libalpm/hooks/zzz-bootstrap-uki-sync.hook" \
-  > "$verify_root/etc/pacman.d/hooks/zzz-bootstrap-uki-sync.hook"
+  >"$verify_root/etc/pacman.d/hooks/zzz-bootstrap-uki-sync.hook"
 assert_fail bootstrap_verify
 mv "$verify_root/usr/lib/arch-workstation-bootstrap/uki-sync" "$temp_dir/packaged-helper"
 assert_ok bootstrap_verify
@@ -253,16 +278,25 @@ printf '%s\n' '#!/usr/bin/env bash' '[[ $1 == --cert && -r $2 && -s $3 ]] || exi
 chmod 0755 "$helper_bin/sbverify"
 assert_ok env PATH="$helper_bin:/usr/bin:/bin" BOOTSTRAP_UKI_SYNC_ROOT="$helper_root" bash "$TEST_ROOT/templates/arch/uki-sync"
 for uki in arch-linux.efi arch-linux-lts.efi arch-recovery.efi; do
-  cmp -s "$helper_root/efi/EFI/Linux/$uki" "$helper_root/efi2/EFI/Linux/$uki" \
-    || { printf 'FAIL sync helper did not update %s\n' "$uki" >&2; failures=$((failures + 1)); }
+  cmp -s "$helper_root/efi/EFI/Linux/$uki" "$helper_root/efi2/EFI/Linux/$uki" ||
+    {
+      printf 'FAIL sync helper did not update %s\n' "$uki" >&2
+      failures=$((failures + 1))
+    }
 done
-cmp -s "$helper_root/efi/EFI/Linux/arch-recovery.efi" "$helper_root/efi/EFI/BOOT/BOOTX64.EFI" \
-  || { printf 'FAIL sync helper did not update primary fallback\n' >&2; failures=$((failures + 1)); }
+cmp -s "$helper_root/efi/EFI/Linux/arch-recovery.efi" "$helper_root/efi/EFI/BOOT/BOOTX64.EFI" ||
+  {
+    printf 'FAIL sync helper did not update primary fallback\n' >&2
+    failures=$((failures + 1))
+  }
 printf '%s\n' preserved-secondary >"$helper_root/efi2/EFI/Linux/arch-linux-lts.efi"
 printf '%s\n' UNSIGNED >"$helper_root/efi/EFI/Linux/arch-linux-lts.efi"
 assert_fail env PATH="$helper_bin:/usr/bin:/bin" BOOTSTRAP_UKI_SYNC_ROOT="$helper_root" bash "$TEST_ROOT/templates/arch/uki-sync"
-[[ $(<"$helper_root/efi2/EFI/Linux/arch-linux-lts.efi") == preserved-secondary ]] \
-  || { printf 'FAIL sync helper copied an unsigned primary UKI\n' >&2; failures=$((failures + 1)); }
+[[ $(<"$helper_root/efi2/EFI/Linux/arch-linux-lts.efi") == preserved-secondary ]] ||
+  {
+    printf 'FAIL sync helper copied an unsigned primary UKI\n' >&2
+    failures=$((failures + 1))
+  }
 
 if ((failures)); then
   printf '%d bootstrap test(s) failed\n' "$failures" >&2

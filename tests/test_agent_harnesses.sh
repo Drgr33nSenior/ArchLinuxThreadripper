@@ -45,7 +45,7 @@ sed \
   -e 's|^AGENT_MODEL=.*|AGENT_MODEL=Fixture-Model-1|' \
   -e 's|^AGENT_CONTEXT_TOKENS=.*|AGENT_CONTEXT_TOKENS=8192|' \
   -e 's|^AGENT_MAX_OUTPUT_TOKENS=.*|AGENT_MAX_OUTPUT_TOKENS=1024|' \
-  "$root/config/workstation.conf.example" > "$work/agent.conf"
+  "$root/config/workstation.conf.example" >"$work/agent.conf"
 
 # --config is authoritative: inherited environment settings must not affect a
 # portable bundle. Configure performs no client, model or network operation.
@@ -73,8 +73,8 @@ for harness_file in qwen/settings.json dsh/settings.yaml hermes/config.yaml; do
   [[ $(jq -er --arg harness "$harness" '.config_sha256[$harness]' "$work/bundle/bundle.json") == "$(common::sha256_file "$work/bundle/$harness_file")" ]]
 done
 [[ $(file_mode "$work/bundle") == 700 && $(file_mode "$work/bundle/qwen/settings.json") == 600 &&
-  $(file_mode "$work/bundle/dsh/settings.yaml") == 600 && $(file_mode "$work/bundle/hermes/config.yaml") == 600 &&
-  $(file_mode "$work/bundle/bundle.json") == 600 ]]
+$(file_mode "$work/bundle/dsh/settings.yaml") == 600 && $(file_mode "$work/bundle/hermes/config.yaml") == 600 &&
+$(file_mode "$work/bundle/bundle.json") == 600 ]]
 if grep -Rq 'fixture-secret\|WORKSTATION_AGENT_API_KEY=' "$work/bundle"; then exit 1; fi
 
 # Existing paths and malformed URLs fail before a partial output directory exists.
@@ -82,21 +82,21 @@ reject "$root/bin/workstationctl" --config "$work/agent.conf" agent configure "$
 ln -s "$work/missing-target" "$work/dangling"
 reject "$root/bin/workstationctl" --config "$work/agent.conf" agent configure "$work/dangling"
 for invalid_url in http://example.test/v1 http://127.0.0.1/v1?query=1 https://user@example.test/v1 https://example.test/v2 https://example.test:65536/v1; do
-  sed "s|^AGENT_BASE_URL=.*|AGENT_BASE_URL=$invalid_url|" "$work/agent.conf" > "$work/invalid.conf"
+  sed "s|^AGENT_BASE_URL=.*|AGENT_BASE_URL=$invalid_url|" "$work/agent.conf" >"$work/invalid.conf"
   reject "$root/bin/workstationctl" --config "$work/invalid.conf" agent configure "$work/invalid-output"
   [[ ! -e $work/invalid-output ]]
 done
 for invalid_setting in AGENT_HARNESS=unknown AGENT_CONTEXT_TOKENS=2047 AGENT_CONTEXT_TOKENS=262145 AGENT_MAX_OUTPUT_TOKENS=127 AGENT_MAX_OUTPUT_TOKENS=5000 AGENT_MODEL=../not-a-model; do
   setting_key=${invalid_setting%%=*}
   setting_value=${invalid_setting#*=}
-  sed "s|^$setting_key=.*|$setting_key=$setting_value|" "$work/agent.conf" > "$work/invalid.conf"
+  sed "s|^$setting_key=.*|$setting_key=$setting_value|" "$work/agent.conf" >"$work/invalid.conf"
   reject "$root/bin/workstationctl" --config "$work/invalid.conf" agent configure "$work/invalid-output"
   [[ ! -e $work/invalid-output ]]
 done
 
 # Legacy configurations omit the agent keys and use the bounded defaults, even
 # when an inherited environment contains an invalid endpoint.
-sed '/^AGENT_/d' "$root/config/workstation.conf.example" > "$work/legacy.conf"
+sed '/^AGENT_/d' "$root/config/workstation.conf.example" >"$work/legacy.conf"
 env AGENT_BASE_URL=http://example.test/v1 "$root/bin/workstationctl" --config "$work/legacy.conf" \
   agent configure "$work/default-bundle" >/dev/null
 jq -e '.default_harness == "qwen" and .base_url == "http://127.0.0.1:18000/v1" and
@@ -118,16 +118,16 @@ hermes() { :; }
 # shellcheck disable=SC2329 # Called indirectly by the tested launch implementation.
 ws_agent_qwen_policy_path() { printf '%s\n' "$work/no-managed-qwen-policy"; }
 ws_agent_exec() {
-  printf '%s\n' "$@" > "$work/client-args"
-  printf 'called\n' > "$work/client-called"
+  printf '%s\n' "$@" >"$work/client-args"
+  printf 'called\n' >"$work/client-called"
   # shellcheck disable=SC2031 # This mock intentionally observes launch-subshell exports.
   printf 'QWEN_HOME=%s\nQWEN_RUNTIME_DIR=%s\nQWEN_CODE_SYSTEM_SETTINGS_PATH=%s\nDSH_HOME=%s\nDSH_TELEMETRY_MODE=%s\nHERMES_HOME=%s\nOPENAI_BASE_URL=%s\nOPENAI_MODEL=%s\nKEY_LENGTH=%s\n' \
     "${QWEN_HOME:-}" "${QWEN_RUNTIME_DIR:-}" "${QWEN_CODE_SYSTEM_SETTINGS_PATH:-}" "${DSH_HOME:-}" "${DSH_TELEMETRY_MODE:-}" "${HERMES_HOME:-}" "${OPENAI_BASE_URL:-}" "${OPENAI_MODEL:-}" \
-    "${#WORKSTATION_AGENT_API_KEY}" > "$work/client-env"
+    "${#WORKSTATION_AGENT_API_KEY}" >"$work/client-env"
 }
 unset WORKSTATION_AGENT_API_KEY
 unset QWEN_CODE_SYSTEM_SETTINGS_PATH
-(ws_agent_launch "$work/bundle" qwen acp) > "$work/acp-stdout"
+(ws_agent_launch "$work/bundle" qwen acp) >"$work/acp-stdout"
 [[ ! -s $work/acp-stdout ]]
 grep -Fxq qwen "$work/client-args"
 grep -Fxq -- '--auth-type' "$work/client-args"
@@ -154,7 +154,7 @@ reject "$root/bin/workstationctl" agent launch "$work/bundle" qwen cli unexpecte
 # Bundle route metadata must agree with the selected, checksum-pinned native
 # config. Changing metadata alone cannot redirect a launch.
 cp "$work/bundle/bundle.json" "$work/bundle-manifest-original"
-jq '.base_url = "http://127.0.0.1:19999/v1"' "$work/bundle/bundle.json" > "$work/bundle-manifest-tampered"
+jq '.base_url = "http://127.0.0.1:19999/v1"' "$work/bundle/bundle.json" >"$work/bundle-manifest-tampered"
 mv "$work/bundle-manifest-tampered" "$work/bundle/bundle.json"
 mv "$work/client-called" "$work/client-called-before-metadata-tamper"
 reject ws_agent_launch "$work/bundle" qwen cli
@@ -164,7 +164,7 @@ mv "$work/bundle-manifest-original" "$work/bundle/bundle.json"
 # The selected native file is pinned to the manifest. Refuse a changed file or
 # symlink before the client execution boundary, then restore fixture state.
 cp "$work/bundle/qwen/settings.json" "$work/qwen-settings-original"
-printf 'tampered\n' >> "$work/bundle/qwen/settings.json"
+printf 'tampered\n' >>"$work/bundle/qwen/settings.json"
 reject ws_agent_launch "$work/bundle" qwen cli
 [[ ! -e $work/client-called ]]
 cp "$work/qwen-settings-original" "$work/bundle/qwen/settings.json"
@@ -176,21 +176,26 @@ mv "$work/bundle/qwen/settings.json" "$work/qwen-settings-symlink"
 mv "$work/qwen-settings-for-symlink" "$work/bundle/qwen/settings.json"
 
 # A managed system policy or a conflicting process policy must be left intact.
-printf 'managed policy\n' > "$work/managed-qwen-policy"
+printf 'managed policy\n' >"$work/managed-qwen-policy"
 # shellcheck disable=SC2329 # This fixture replaces the policy-path dependency.
 ws_agent_qwen_policy_path() { printf '%s\n' "$work/managed-qwen-policy"; }
 reject ws_agent_launch "$work/bundle" qwen cli
 grep -Fxq 'managed policy' "$work/managed-qwen-policy"
 # shellcheck disable=SC2329 # Restore the non-existent policy fixture for later launches.
 ws_agent_qwen_policy_path() { printf '%s\n' "$work/no-managed-qwen-policy"; }
-if (QWEN_CODE_SYSTEM_SETTINGS_PATH="$work/different-policy"; export QWEN_CODE_SYSTEM_SETTINGS_PATH; ws_agent_launch "$work/bundle" qwen cli) >"$work/conflicting-policy.log" 2>&1; then exit 1; fi
+if (
+  QWEN_CODE_SYSTEM_SETTINGS_PATH="$work/different-policy"
+  export QWEN_CODE_SYSTEM_SETTINGS_PATH
+  ws_agent_launch "$work/bundle" qwen cli
+) >"$work/conflicting-policy.log" 2>&1; then exit 1; fi
 
 # An HTTPS bundle cannot launch without an owner-provided environment credential.
-sed 's|^AGENT_BASE_URL=.*|AGENT_BASE_URL=https://agents.example.test/v1|' "$work/agent.conf" > "$work/https.conf"
+sed 's|^AGENT_BASE_URL=.*|AGENT_BASE_URL=https://agents.example.test/v1|' "$work/agent.conf" >"$work/https.conf"
 "$root/bin/workstationctl" --config "$work/https.conf" agent configure "$work/https-bundle" >/dev/null
 unset WORKSTATION_AGENT_API_KEY
 reject ws_agent_launch "$work/https-bundle" qwen cli
-( WORKSTATION_AGENT_API_KEY=fixture-secret
+(
+  WORKSTATION_AGENT_API_KEY=fixture-secret
   export WORKSTATION_AGENT_API_KEY
   ws_agent_launch "$work/https-bundle" qwen cli
 ) >/dev/null
@@ -198,13 +203,16 @@ grep -Fxq 'KEY_LENGTH=14' "$work/client-env"
 if grep -Rq 'fixture-secret' "$work/https-bundle"; then exit 1; fi
 
 # Client failure is returned as-is, never retried through a second harness.
-ws_agent_exec() { printf '%s\n' "$1" >> "$work/failed-client-calls"; return 37; }
-if (ws_agent_launch "$work/default-bundle") > "$work/failed-client-stdout" 2> "$work/failed-client-stderr"; then
+ws_agent_exec() {
+  printf '%s\n' "$1" >>"$work/failed-client-calls"
+  return 37
+}
+if (ws_agent_launch "$work/default-bundle") >"$work/failed-client-stdout" 2>"$work/failed-client-stderr"; then
   exit 1
 else
   [[ $? == 37 ]]
 fi
-[[ $(wc -l < "$work/failed-client-calls") -eq 1 && ! -s $work/failed-client-stdout ]]
+[[ $(wc -l <"$work/failed-client-calls") -eq 1 && ! -s $work/failed-client-stdout ]]
 grep -Fxq qwen "$work/failed-client-calls"
 
 printf 'Agent harness bundle, validation and fixture-only launch tests passed (no client or endpoint used)\n'

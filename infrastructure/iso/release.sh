@@ -32,15 +32,31 @@ main() {
   local execute=false context=desktop-linux allow_mounts=false
   while (($#)); do
     case $1 in
-      --execute) execute=true; shift ;;
-      --context) (($# >= 2)) || common::die '--context needs a name'; context=$2; shift 2 ;;
-      --allow-iso-mounts) allow_mounts=true; shift ;;
-      -h|--help) usage; return ;;
+      --execute)
+        execute=true
+        shift
+        ;;
+      --context)
+        (($# >= 2)) || common::die '--context needs a name'
+        context=$2
+        shift 2
+        ;;
+      --allow-iso-mounts)
+        allow_mounts=true
+        shift
+        ;;
+      -h | --help)
+        usage
+        return
+        ;;
       --*) common::die 'unknown option; arbitrary Docker arguments are not accepted' ;;
       *) break ;;
     esac
   done
-  (($#)) || { usage; return 1; }
+  (($#)) || {
+    usage
+    return 1
+  }
   [[ $context =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || common::die 'invalid Docker context name'
   local action=$1 job run
   shift
@@ -80,8 +96,8 @@ main() {
       fi
       [[ -d $1 && ! -L $1 ]] || common::die 'supply the run directory printed by the packages command'
       run=$(cd -- "$1" && pwd -P) || return
-      [[ -f $run/source/source.lock && ! -L $run/source/source.lock \
-        && -f $run/packages/source.lock && ! -L $run/packages/source.lock ]] || common::die 'run lacks source/package manifests; complete the packages stage first'
+      [[ -f $run/source/source.lock && ! -L $run/source/source.lock &&
+        -f $run/packages/source.lock && ! -L $run/packages/source.lock ]] || common::die 'run lacks source/package manifests; complete the packages stage first'
       cmp -s "$run/source/source.lock" "$run/packages/source.lock" || common::die 'source and package manifests differ; do not combine runs'
       if [[ $execute == true ]]; then docker_options+=(--execute); fi
       if [[ $allow_mounts == true ]]; then docker_options+=(--allow-iso-mounts); fi

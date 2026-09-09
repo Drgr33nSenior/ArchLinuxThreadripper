@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 export LC_ALL=C
-fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+fail() {
+  printf 'ERROR: %s\n' "$*" >&2
+  exit 1
+}
 lock_get() {
   awk -F= -v key="$2" '$1==key {n++; v=$2} END {if(n!=1 || v=="") exit 1; print v}' "$1"
 }
 builder=/opt/arch-workstation-builder
 [[ $(uname -m) == x86_64 && -f /etc/arch-release ]] || fail 'amd64 Arch userspace is required'
-[[ $(pacman -Q archiso) == "archiso $(lock_get "$builder/versions.lock" ARCHISO_PACKAGE_VERSION)" ]] \
-  || fail 'builder Archiso version differs from the release lock'
+[[ $(pacman -Q archiso) == "archiso $(lock_get "$builder/versions.lock" ARCHISO_PACKAGE_VERSION)" ]] ||
+  fail 'builder Archiso version differs from the release lock'
 case ${1:-check} in
   check)
     (($# <= 1)) || fail 'check accepts no arguments'
@@ -43,27 +46,27 @@ case ${1:-check} in
     # tooling is opt-in; ISO assembly consumes only the bootstrap and boot pair.
     repo-add /work/output/arch-workstation.db.tar.gz "${packages[@]}"
     cp "$builder/versions.lock" "$builder/packages.txt" source.lock PKGBUILD /work/output/
-    printf 'BUILDER_IMAGE_ID=%s\n' "${BUILDER_IMAGE_ID:?}" > /work/output/builder.lock
+    printf 'BUILDER_IMAGE_ID=%s\n' "${BUILDER_IMAGE_ID:?}" >/work/output/builder.lock
     cd /work/output
-    sha256sum ./*.pkg.tar.zst arch-workstation.db.tar.gz > SHA256SUMS
+    sha256sum ./*.pkg.tar.zst arch-workstation.db.tar.gz >SHA256SUMS
     printf 'Unsigned packages and repository database are ready for review and signing.\n'
     ;;
   iso)
     (($# == 2)) || fail 'iso requires the reviewed primary public fingerprint'
     [[ $(id -u) == 0 && $2 =~ ^[A-F0-9]{40}$ ]] || fail 'ISO assembly requires container root and a full fingerprint'
-    cmp "$builder/versions.lock" /project/infrastructure/iso/versions.lock \
-      || fail 'image and project locks differ; rebuild the builder'
+    cmp "$builder/versions.lock" /project/infrastructure/iso/versions.lock ||
+      fail 'image and project locks differ; rebuild the builder'
     [[ ! -e /work/prepared && ! -e /work/output ]] || fail 'ISO work exists; select a new job'
     # Fail before key setup/downloads if Docker or emulation rejects namespaces.
-    unshare --mount --propagation private true \
-      || fail 'mount namespace unavailable; do not disable Docker security controls automatically'
+    unshare --mount --propagation private true ||
+      fail 'mount namespace unavailable; do not disable Docker security controls automatically'
     # Check adapter compatibility before initializing trust or downloading.
     export PATH="$builder/bin:$PATH"
     pacstrap -h >/dev/null
     keyring=/run/arch-workstation/gnupg
     install -d -m0700 "$keyring"
-    grep -qx -- '-----BEGIN PGP PUBLIC KEY BLOCK-----' /release/signing-key.asc \
-      || fail 'an armored public key is required'
+    grep -qx -- '-----BEGIN PGP PUBLIC KEY BLOCK-----' /release/signing-key.asc ||
+      fail 'an armored public key is required'
     if grep -q 'PRIVATE KEY' /release/signing-key.asc; then fail 'private signing material is forbidden'; fi
     pacman-key --gpgdir "$keyring" --init
     pacman-key --gpgdir "$keyring" --populate archlinux
@@ -74,7 +77,7 @@ case ${1:-check} in
     mkdir /work/output
     cp /work/prepared/out/* /work/output/
     cp /work/prepared/release.lock /work/prepared/artifacts.lock /work/prepared/builder-packages.txt /work/output/
-    printf 'BUILDER_IMAGE_ID=%s\n' "${BUILDER_IMAGE_ID:?}" > /work/output/builder.lock
+    printf 'BUILDER_IMAGE_ID=%s\n' "${BUILDER_IMAGE_ID:?}" >/work/output/builder.lock
     ;;
   *) fail 'supported actions: check, packages, iso' ;;
 esac

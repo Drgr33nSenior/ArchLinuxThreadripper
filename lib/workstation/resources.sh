@@ -65,13 +65,16 @@ ws_resources_plan() {
           "GPU count allocation does not select a physical card or combine VRAM."]
       } end
     ' "$hardware")" || ws_die 'resource budget cannot fit the discovered hardware'
-  (umask 077; mkdir -p -- "$output")
-  printf '%s\n' "$plan" > "$output/resource-plan.json"
+  (
+    umask 077
+    mkdir -p -- "$output"
+  )
+  printf '%s\n' "$plan" >"$output/resource-plan.json"
   jq '{lab_cpu_manager_policy:"static",lab_reserved_system_cpus:(.reserved_cpus|map(tostring)|join(",")),
     lab_system_reserved_cpu:((.reserved_cpus|length)-2|tostring),lab_kube_reserved_cpu:"2",
     lab_system_reserved_memory:((.memory.host_reserve_mib|tostring)+"Mi"),
     lab_kube_reserved_memory:((.memory.kube_reserve_mib|tostring)+"Mi"),
     lab_eviction_memory:((.memory.eviction_mib|tostring)+"Mi"),
-    lab_cpu_manager_cache_alignment:false}' "$output/resource-plan.json" > "$output/ansible-vars.json"
+    lab_cpu_manager_cache_alignment:false}' "$output/resource-plan.json" >"$output/ansible-vars.json"
   ws_note "offline resource plan written to $output; review before passing ansible-vars.json as Ansible extra vars"
 }

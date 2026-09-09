@@ -9,7 +9,7 @@ mkdir -p "$repo/infrastructure/iso" "$repo/infrastructure/packages/bootstrap" "$
 cp "$root/infrastructure/iso/release.sh" "$repo/infrastructure/iso/"
 cp "$root/lib/common.sh" "$repo/lib/"
 export ISO_RELEASE_TEST_LOG="$work/stages" ISO_RELEASE_TEST_RUN="$work/run-path" ISO_RELEASE_TEST_SOURCE="$work/current-source"
-printf 'first checkout\n' > "$ISO_RELEASE_TEST_SOURCE"
+printf 'first checkout\n' >"$ISO_RELEASE_TEST_SOURCE"
 
 # Fixture source is literal; variables expand only when the child script runs.
 # shellcheck disable=SC2016
@@ -38,13 +38,13 @@ printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' \
   '    if [[ $execute == true ]]; then [[ $mounts == true ]] || exit 1; mkdir "$5"; fi' \
   '    printf "%s\n" "$5" > "$ISO_RELEASE_TEST_RUN" ;;' \
   '  *) exit 1 ;;' \
-  'esac' > "$repo/infrastructure/iso/docker.sh"
+  'esac' >"$repo/infrastructure/iso/docker.sh"
 # shellcheck disable=SC2016
 printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' \
   'printf "prepare\n" >> "$ISO_RELEASE_TEST_LOG"' \
   '[[ ${ISO_RELEASE_TEST_FAIL:-} != prepare ]] || exit 7' \
   'mkdir "$1"' 'cp "$ISO_RELEASE_TEST_SOURCE" "$1/source.lock"' \
-  > "$repo/infrastructure/packages/bootstrap/prepare-source.sh"
+  >"$repo/infrastructure/packages/bootstrap/prepare-source.sh"
 release="$repo/infrastructure/iso/release.sh"
 
 plan=$(bash "$release" packages 2>&1)
@@ -53,59 +53,59 @@ plan=$(bash "$release" packages 2>&1)
 
 # A failed image or userspace check cannot prepare source or start packages.
 for failed_stage in image check; do
-  : > "$ISO_RELEASE_TEST_LOG"
+  : >"$ISO_RELEASE_TEST_LOG"
   status=0
-  ISO_RELEASE_TEST_FAIL=$failed_stage bash "$release" --execute packages > "$work/result" 2>&1 || status=$?
+  ISO_RELEASE_TEST_FAIL=$failed_stage bash "$release" --execute packages >"$work/result" 2>&1 || status=$?
   [[ $status == 7 && ! -e $repo/build ]] || exit 1
   [[ $(tail -n 1 "$ISO_RELEASE_TEST_LOG") == "$failed_stage" ]] || exit 1
   if grep -q '^ISO_RUN=' "$work/result"; then exit 1; fi
 done
 
 # Each execution reads the current checkout and couples the job/source/output.
-: > "$ISO_RELEASE_TEST_LOG"
-bash "$release" --context alternate-local --execute packages > "$work/result" 2>&1
-first_run=$(< "$ISO_RELEASE_TEST_RUN")
-[[ $(tr '\n' ' ' < "$ISO_RELEASE_TEST_LOG") == 'image check prepare packages ' ]] || exit 1
+: >"$ISO_RELEASE_TEST_LOG"
+bash "$release" --context alternate-local --execute packages >"$work/result" 2>&1
+first_run=$(<"$ISO_RELEASE_TEST_RUN")
+[[ $(tr '\n' ' ' <"$ISO_RELEASE_TEST_LOG") == 'image check prepare packages ' ]] || exit 1
 printf -v assignment 'ISO_RUN=%q' "$first_run"
 grep -Fxq "$assignment" "$work/result"
-printf 'second checkout\n' > "$ISO_RELEASE_TEST_SOURCE"
-bash "$release" --execute packages > "$work/result" 2>&1
-second_run=$(< "$ISO_RELEASE_TEST_RUN")
-[[ $first_run != "$second_run" && $(< "$first_run/source/source.lock") == 'first checkout' ]] || exit 1
+printf 'second checkout\n' >"$ISO_RELEASE_TEST_SOURCE"
+bash "$release" --execute packages >"$work/result" 2>&1
+second_run=$(<"$ISO_RELEASE_TEST_RUN")
+[[ $first_run != "$second_run" && $(<"$first_run/source/source.lock") == 'first checkout' ]] || exit 1
 cmp "$second_run/packages/source.lock" "$ISO_RELEASE_TEST_SOURCE"
 
 # Failed source/package stages retain their work but never report success.
 for failed_stage in prepare packages; do
-  : > "$ISO_RELEASE_TEST_LOG"
+  : >"$ISO_RELEASE_TEST_LOG"
   status=0
-  ISO_RELEASE_TEST_FAIL=$failed_stage bash "$release" --execute packages > "$work/result" 2>&1 || status=$?
+  ISO_RELEASE_TEST_FAIL=$failed_stage bash "$release" --execute packages >"$work/result" 2>&1 || status=$?
   [[ $status == 7 && $(tail -n 1 "$ISO_RELEASE_TEST_LOG") == "$failed_stage" ]] || exit 1
   [[ -d $first_run && -d $second_run ]] || exit 1
   if grep -q '^ISO_RUN=' "$work/result"; then exit 1; fi
 done
 
-before=$(< "$ISO_RELEASE_TEST_LOG")
+before=$(<"$ISO_RELEASE_TEST_LOG")
 if bash "$release" packages old-source >/dev/null 2>&1; then exit 1; fi
 if bash "$release" --allow-iso-mounts packages >/dev/null 2>&1; then exit 1; fi
 if bash "$release" --context bad/context --execute packages >/dev/null 2>&1; then exit 1; fi
 if bash "$release" --privileged packages >/dev/null 2>&1; then exit 1; fi
 if bash "$release" --execute iso "$first_run" public.asc SYNTHETIC >/dev/null 2>&1; then exit 1; fi
-[[ $(< "$ISO_RELEASE_TEST_LOG") == "$before" ]] || exit 1
+[[ $(<"$ISO_RELEASE_TEST_LOG") == "$before" ]] || exit 1
 
 # Delegation passes the mount opt-in only for an explicit ISO execution. A new
 # attempt name permits reuse of signed packages without overwriting prior output.
-bash "$release" iso "$first_run" public.asc SYNTHETIC > "$work/result" 2>&1
-iso_preview=$(< "$ISO_RELEASE_TEST_RUN")
+bash "$release" iso "$first_run" public.asc SYNTHETIC >"$work/result" 2>&1
+iso_preview=$(<"$ISO_RELEASE_TEST_RUN")
 [[ ! -e $iso_preview ]] || exit 1
-bash "$release" --execute --allow-iso-mounts iso "$first_run" public.asc SYNTHETIC > "$work/result" 2>&1
-iso_first=$(< "$ISO_RELEASE_TEST_RUN")
-bash "$release" --execute --allow-iso-mounts iso "$first_run" public.asc SYNTHETIC > "$work/result" 2>&1
-iso_second=$(< "$ISO_RELEASE_TEST_RUN")
+bash "$release" --execute --allow-iso-mounts iso "$first_run" public.asc SYNTHETIC >"$work/result" 2>&1
+iso_first=$(<"$ISO_RELEASE_TEST_RUN")
+bash "$release" --execute --allow-iso-mounts iso "$first_run" public.asc SYNTHETIC >"$work/result" 2>&1
+iso_second=$(<"$ISO_RELEASE_TEST_RUN")
 [[ $iso_first != "$iso_second" && -d $iso_first && -d $iso_second ]] || exit 1
-printf 'wrong run\n' > "$first_run/packages/source.lock"
-before=$(< "$ISO_RELEASE_TEST_LOG")
+printf 'wrong run\n' >"$first_run/packages/source.lock"
+before=$(<"$ISO_RELEASE_TEST_LOG")
 if bash "$release" iso "$first_run" public.asc SYNTHETIC >/dev/null 2>&1; then exit 1; fi
-[[ $(< "$ISO_RELEASE_TEST_LOG") == "$before" ]] || exit 1
+[[ $(<"$ISO_RELEASE_TEST_LOG") == "$before" ]] || exit 1
 
 # Check the shell examples without executing their signing or privileged steps.
 awk -v output="$work" '

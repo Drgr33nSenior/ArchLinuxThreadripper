@@ -36,8 +36,8 @@ command -v "$compiler" >/dev/null || {
 }
 "$compiler" -std=c++17 -O0 -I "$mock_include" "$source_file" -o "$work/hip-peer-copy-mock"
 
-"$work/hip-peer-copy-mock" > "$work/success.out"
-[[ $(wc -l < "$work/success.out") == 5 ]]
+"$work/hip-peer-copy-mock" >"$work/success.out"
+[[ $(wc -l <"$work/success.out") -eq 5 ]]
 grep -Fq 'PAIR source=0 ' "$work/success.out"
 grep -Fq 'PAIR source=1 ' "$work/success.out"
 grep -Fq 'result=PASS correctness=verified' "$work/success.out"
@@ -53,7 +53,7 @@ run_mode() {
   expected_status=$2
   output="$work/$mode.out"
   set +e
-  MOCK_HIP_MODE="$mode" "$work/hip-peer-copy-mock" > "$output" 2>&1
+  MOCK_HIP_MODE="$mode" "$work/hip-peer-copy-mock" >"$output" 2>&1
   actual_status=$?
   set -e
   [[ $actual_status == "$expected_status" ]]

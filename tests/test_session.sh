@@ -19,8 +19,8 @@ SESSION_STREAMING_PATH=sunshine
 export SESSION_CONTEXT SESSION_NODE SESSION_ENVIRONMENT SESSION_NAMESPACE SESSION_AI_DEPLOYMENT SESSION_GAME_DEPLOYMENT SESSION_TIMEOUT_SECONDS SESSION_STREAMING_PATH
 mkdir "$work/api"
 fixture_node='{"status":{"allocatable":{"cpu":"42","memory":"48234496Ki","amd.com/gpu":"2"}}}'
-printf '{"items":[]}\n' > "$work/api/pods.json"
-printf '{"items":[]}\n' > "$work/api/rs.json"
+printf '{"items":[]}\n' >"$work/api/pods.json"
+printf '{"items":[]}\n' >"$work/api/rs.json"
 for name in "$SESSION_AI_DEPLOYMENT" "$SESSION_GAME_DEPLOYMENT"; do
   jq -n --arg name "$name" '{metadata:{name:$name,uid:($name+"-uid"),resourceVersion:"7",annotations:{"workstation.ai/qualification":"qualified"}},
     spec:{replicas:0,strategy:{type:"Recreate"},template:{spec:{containers:[{name:"workload",
@@ -28,11 +28,11 @@ for name in "$SESSION_AI_DEPLOYMENT" "$SESSION_GAME_DEPLOYMENT"; do
       env:[{name:"ENABLE_STEAM",value:"true"},{name:"ENABLE_SUNSHINE",value:"true"}],
       securityContext:{privileged:false,allowPrivilegeEscalation:false,capabilities:{drop:["ALL"]}},
       resources:{requests:{cpu:"20",memory:"32Gi","amd.com/gpu":1},limits:{cpu:"20",memory:"32Gi","amd.com/gpu":1}}}],
-      volumes:[]}}}}' > "$work/api/$name.json"
+      volumes:[]}}}}' >"$work/api/$name.json"
 done
 set_document() {
   local file="$1" filter="$2"
-  jq "$filter" "$file" > "$work/document.tmp"
+  jq "$filter" "$file" >"$work/document.tmp"
   mv "$work/document.tmp" "$file"
 }
 set_document "$work/api/sglang.json" '.spec.replicas=1'
@@ -56,21 +56,29 @@ ws_session_kubectl() {
     get:pods) command jq . "$work/api/pods.json" ;;
     get:replicasets) command jq . "$work/api/rs.json" ;;
     scale:*)
-      printf '%s\n' "$*" >> "$work/scale.log"
+      printf '%s\n' "$*" >>"$work/scale.log"
       [[ ! -f "$work/fail-scale" ]] || return 1
       local name="${2#deployment/}" requested='' current='' version='' arg
       for arg in "$@"; do
         case "$arg" in --replicas=*) requested="${arg#*=}" ;; --current-replicas=*) current="${arg#*=}" ;; --resource-version=*) version="${arg#*=}" ;; esac
       done
       [[ "$current" == "$(jq -r .spec.replicas "$work/api/$name.json")" && "$version" == 7 ]] || return 1
-      set_document "$work/api/$name.json" ".spec.replicas=$requested" ;;
+      set_document "$work/api/$name.json" ".spec.replicas=$requested"
+      ;;
     rollout:status) [[ ! -e "$work/fail-rollout" ]] ;;
-    *) printf 'unexpected mock API command: %s\n' "$*" >&2; return 2 ;;
+    *)
+      printf 'unexpected mock API command: %s\n' "$*" >&2
+      return 2
+      ;;
   esac
 }
 expect_failure() {
-  if (set -e; "$@") > "$work/failure.log" 2>&1; then
-    printf 'expected rejection: %s\n' "$*" >&2; exit 1
+  if (
+    set -e
+    "$@"
+  ) >"$work/failure.log" 2>&1; then
+    printf 'expected rejection: %s\n' "$*" >&2
+    exit 1
   fi
 }
 
@@ -92,15 +100,15 @@ sidecar="$(ws_session_deployment sglang | jq '.spec.template.spec.initContainers
 expect_failure ws_session_capacity_check "$sidecar" "$fixture_node"
 
 # Exact UID chain: a deceptive generated-name prefix is not managed ownership.
-printf '{"items":[{"metadata":{"uid":"rs-real","ownerReferences":[{"uid":"sglang-uid","kind":"Deployment"}]}}]}\n' > "$work/api/rs.json"
-printf '{"items":[{"metadata":{"uid":"pod-real","ownerReferences":[{"uid":"rs-real","kind":"ReplicaSet"}]}},{"metadata":{"uid":"pod-foreign","ownerReferences":[{"uid":"rs-foreign","name":"sglang-deceptive","kind":"ReplicaSet"}]}}]}\n' > "$work/api/pods.json"
+printf '{"items":[{"metadata":{"uid":"rs-real","ownerReferences":[{"uid":"sglang-uid","kind":"Deployment"}]}}]}\n' >"$work/api/rs.json"
+printf '{"items":[{"metadata":{"uid":"pod-real","ownerReferences":[{"uid":"rs-real","kind":"ReplicaSet"}]}},{"metadata":{"uid":"pod-foreign","ownerReferences":[{"uid":"rs-foreign","name":"sglang-deceptive","kind":"ReplicaSet"}]}}]}\n' >"$work/api/pods.json"
 [[ "$(ws_session_managed_pods sglang | jq -c 'map(.metadata.uid)')" == '["pod-real"]' ]]
 # Pending/unbound consumers are checked globally before any mutation.
-printf '{"items":[{"metadata":{"uid":"pending-unmanaged"},"status":{"phase":"Pending"},"spec":{"containers":[{"resources":{"requests":{"amd.com/gpu":1}}}]}}]}\n' > "$work/api/pods.json"
+printf '{"items":[{"metadata":{"uid":"pending-unmanaged"},"status":{"phase":"Pending"},"spec":{"containers":[{"resources":{"requests":{"amd.com/gpu":1}}}]}}]}\n' >"$work/api/pods.json"
 expect_failure ws_session_other_gpu_check
 expect_failure ws_session_gpu_free "$work/unused-hardware.json"
-printf '{"items":[]}\n' > "$work/api/pods.json"
-printf '{"items":[]}\n' > "$work/api/rs.json"
+printf '{"items":[]}\n' >"$work/api/pods.json"
+printf '{"items":[]}\n' >"$work/api/rs.json"
 
 # From here only the host holder probe is mocked, including a failed release.
 ws_session_gpu_free() { [[ ! -e "$work/gpu-held" ]] || ws_die 'fixture GPU still held'; }
@@ -120,16 +128,16 @@ jq -e '.phase=="ready" and .mode=="maintenance" and .previous.ai==1' "$work/stat
 ws_session_switch restore "$work/fixture.json" "$work/state" --execute
 [[ "$(jq -r .spec.replicas "$work/api/sglang.json")" == 1 ]]
 ws_session_switch ai "$work/fixture.json" "$work/state" --execute
-count="$(wc -l < "$work/scale.log")"
+count="$(wc -l <"$work/scale.log")"
 touch "$work/build-inhibit"
 ws_session_switch ai "$work/fixture.json" "$work/state" --execute
-[[ "$count" == "$(wc -l < "$work/scale.log")" ]]
+[[ "$count" == "$(wc -l <"$work/scale.log")" ]]
 [[ ! -e "$work/build-inhibit" ]]
 
 touch "$work/locked"
 expect_failure ws_session_switch gaming "$work/fixture.json" "$work/state" --execute
 rm "$work/locked"
-[[ "$count" == "$(wc -l < "$work/scale.log")" ]]
+[[ "$count" == "$(wc -l <"$work/scale.log")" ]]
 touch "$work/gpu-held"
 expect_failure ws_session_switch gaming "$work/fixture.json" "$work/state" --execute
 jq -e '.phase=="failed" and .previous.ai==1' "$work/state/state.json" >/dev/null

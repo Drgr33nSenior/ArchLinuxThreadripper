@@ -5,7 +5,10 @@ repo_root=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 # shellcheck source=lib/workstation/build.sh
 source "$repo_root/lib/workstation/build.sh"
 
-ws_die() { printf 'test failure: %s\n' "$*" >&2; exit 1; }
+ws_die() {
+  printf 'test failure: %s\n' "$*" >&2
+  exit 1
+}
 ws_available_memory_mib() { printf '%s\n' "$MOCK_AVAILABLE_MEMORY_MIB"; }
 uname() { printf 'Linux\n'; }
 nproc() { printf '48\n'; }
@@ -27,7 +30,10 @@ for kind in unsupported normal; do
     printf 'invalid CMake/Ninja pool request was accepted: %s\n' "$kind" >&2
     exit 1
   fi
-  [[ -z $output ]] || { printf 'failed CMake/Ninja pool request emitted partial output\n' >&2; exit 1; }
+  [[ -z $output ]] || {
+    printf 'failed CMake/Ninja pool request emitted partial output\n' >&2
+    exit 1
+  }
 done
 MOCK_AVAILABLE_MEMORY_MIB=65536
 
@@ -36,7 +42,10 @@ if output=$(ws_cmake_ninja_args normal 2>/dev/null); then
   printf 'invalid link-job budget was accepted\n' >&2
   exit 1
 fi
-[[ -z $output ]] || { printf 'invalid configuration emitted partial CMake/Ninja arguments\n' >&2; exit 1; }
+[[ -z $output ]] || {
+  printf 'invalid configuration emitted partial CMake/Ninja arguments\n' >&2
+  exit 1
+}
 BUILD_LINK_JOBS=1
 
 if command -v cmake >/dev/null && command -v ninja >/dev/null; then
@@ -45,13 +54,13 @@ if command -v cmake >/dev/null && command -v ninja >/dev/null; then
   printf '%s\n' \
     'cmake_minimum_required(VERSION 3.15)' \
     'project(workstation_pool_fixture C)' \
-    'add_executable(workstation_pool_fixture main.c)' > "$work/CMakeLists.txt"
-  printf '%s\n' 'int main(void) { return 0; }' > "$work/main.c"
+    'add_executable(workstation_pool_fixture main.c)' >"$work/CMakeLists.txt"
+  printf '%s\n' 'int main(void) { return 0; }' >"$work/main.c"
 
   cmake_args=()
   while IFS= read -r argument; do
     cmake_args+=("$argument")
-  done <<< "$normal_args"
+  done <<<"$normal_args"
   cmake -S "$work" -B "$work/build" -G Ninja "${cmake_args[@]}" >/dev/null
   rg -q '^[[:space:]]*pool = compile$' "$work/build/build.ninja"
   rg -q '^[[:space:]]*pool = link$' "$work/build/build.ninja"

@@ -6,7 +6,10 @@ set -euo pipefail
 pacstrap_program() {
   local upstream=$1 adapter=$2
   local marker='pid_unshare="unshare --fork --pid"'
-  [[ $adapter =~ ^[A-Za-z0-9_./-]+$ ]] || { printf 'ERROR: unsafe pacstrap adapter path\n' >&2; return 1; }
+  [[ $adapter =~ ^[A-Za-z0-9_./-]+$ ]] || {
+    printf 'ERROR: unsafe pacstrap adapter path\n' >&2
+    return 1
+  }
   [[ $(grep -Fxc "$marker" "$upstream") == 1 ]] || {
     printf 'ERROR: upstream pacstrap PID launcher changed; review the builder adapter\n' >&2
     return 1
@@ -17,7 +20,10 @@ pacstrap_program() {
 main() {
   if [[ ${1:-} == --reap-child ]]; then
     shift
-    (($#)) || { printf 'ERROR: a child command is required\n' >&2; return 1; }
+    (($#)) || {
+      printf 'ERROR: a child command is required\n' >&2
+      return 1
+    }
     # pacstrap otherwise makes pacman PID 1. GPGME double-forks, leaving orphan
     # gpg processes for PID 1 to reap. Pacman does not do that, so a large package
     # set exhausts the PID limit. Bash's SIGCHLD handler reaps these children.

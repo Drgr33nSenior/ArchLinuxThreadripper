@@ -19,7 +19,7 @@ ws_build_jobs() { [[ $1 == normal ]] && printf '12\n' || printf '6\n'; }
 [[ "$(ws_build_environment memory-heavy)" == *'WORKSTATION_BUILD_JOBS=6'* ]]
 
 incomplete_config="$tmp_dir/incomplete-workstation.conf"
-grep -v '^MAKE_JOBS=' "$repo_root/config/workstation.conf.example" > "$incomplete_config"
+grep -v '^MAKE_JOBS=' "$repo_root/config/workstation.conf.example" >"$incomplete_config"
 export MAKE_JOBS=99
 if (ws_load_config "$incomplete_config") >/dev/null 2>&1; then
   printf 'missing workstation config value was inherited from the environment\n' >&2
@@ -30,7 +30,7 @@ ws_load_config "$repo_root/config/workstation.conf.example"
 
 git_dir="$tmp_dir/aur"
 git init -q "$git_dir"
-printf 'pkgname=test\n' > "$git_dir/PKGBUILD"
+printf 'pkgname=test\n' >"$git_dir/PKGBUILD"
 git -C "$git_dir" add PKGBUILD
 git -C "$git_dir" -c user.name=Test -c user.email=test@example.invalid commit -qm initial
 git -C "$git_dir" remote add origin https://example.invalid/test.git
@@ -42,13 +42,13 @@ if (ws_validate_clean_chroot /) >/dev/null 2>&1; then
   exit 1
 fi
 
-printf '# dirty\n' >> "$git_dir/PKGBUILD"
+printf '# dirty\n' >>"$git_dir/PKGBUILD"
 if (ws_assert_clean_locked_checkout "$git_dir" https://example.invalid/test.git "$commit") >/dev/null 2>&1; then
   printf 'dirty AUR checkout was accepted\n' >&2
   exit 1
 fi
 git -C "$git_dir" checkout -q -- PKGBUILD
-printf 'untracked\n' > "$git_dir/untracked"
+printf 'untracked\n' >"$git_dir/untracked"
 if (ws_assert_clean_locked_checkout "$git_dir" https://example.invalid/test.git "$commit") >/dev/null 2>&1; then
   printf 'untracked AUR content was accepted\n' >&2
   exit 1
@@ -56,7 +56,7 @@ fi
 
 fake_bin="$tmp_dir/bin"
 mkdir -p "$fake_bin" "$tmp_dir/model"
-cat > "$fake_bin/podman" <<'STUB'
+cat >"$fake_bin/podman" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$PODMAN_LOG"
 if [[ "$1 $2" == 'container exists' ]]; then exit "${PODMAN_EXISTS_RC:-0}"; fi
@@ -76,7 +76,7 @@ grep -Fq -- 'source /opt/intel/oneapi/setvars.sh --force' "$PODMAN_LOG"
 grep -Fq -- '--userns=keep-id' "$PODMAN_LOG"
 grep -Fq -- '-p 127.0.0.1:8000:8000' "$PODMAN_LOG"
 
-: > "$PODMAN_LOG"
+: >"$PODMAN_LOG"
 export PODMAN_EXISTS_RC=1
 ws_llm_down >/dev/null
 if grep -q '^stop ' "$PODMAN_LOG"; then

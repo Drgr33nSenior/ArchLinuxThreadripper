@@ -10,7 +10,7 @@ mkdir "$work/source with spaces"
 iso="$work/source with spaces/arch-workstation-test.iso"
 # A regular file, not a bootable ISO: test copy/checksum/length semantics only.
 dd if=/dev/zero of="$iso" bs=4096 count=1 2>/dev/null
-printf '%s  %s\n' "$(common::sha256_file "$iso")" "${iso##*/}" > "${iso%/*}/SHA256SUMS"
+printf '%s  %s\n' "$(common::sha256_file "$iso")" "${iso##*/}" >"${iso%/*}/SHA256SUMS"
 device=/dev/disk8
 policy='{}'
 layout_policy='{}'
@@ -18,15 +18,16 @@ phase=normal
 usb_platform() { :; }
 usb_plist() { command cat; }
 common::require_root() { [[ "$phase" != nonroot ]] || common::die 'fixture non-root'; }
-usb_size() { wc -c < "$1" | tr -d ' '; }
+usb_size() { wc -c <"$1" | tr -d ' '; }
 usb_source_device() { if [[ "$phase" == source-on-target ]]; then printf '/dev/disk8s1\n'; else printf '/dev/disk3s1\n'; fi; }
 usb_info() {
   case "$1" in
     /dev/disk8)
       jq -cn --argjson policy "$policy" '{DeviceNode:"/dev/disk8",DeviceIdentifier:"disk8",ParentWholeDisk:"disk8",
         Whole:true,Internal:false,VirtualOrPhysical:"Physical",BusProtocol:"USB",Writable:true,
-        MediaName:"Fixture Flash Drive",DeviceTreePath:"IODeviceTree:/fixture/usb",TotalSize:8192,DeviceBlockSize:512} + $policy' ;;
-    /|/dev/disk3s1) printf '{"DeviceIdentifier":"disk3s1","ParentWholeDisk":"disk3"}\n' ;;
+        MediaName:"Fixture Flash Drive",DeviceTreePath:"IODeviceTree:/fixture/usb",TotalSize:8192,DeviceBlockSize:512} + $policy'
+      ;;
+    / | /dev/disk3s1) printf '{"DeviceIdentifier":"disk3s1","ParentWholeDisk":"disk3"}\n' ;;
     /dev/disk8s1) printf '{"DeviceIdentifier":"disk8s1","ParentWholeDisk":"disk8"}\n' ;;
     *) return 1 ;;
   esac
@@ -41,7 +42,10 @@ usb_layout() {
 }
 usb_media() {
   local id=1234
-  if [[ "$phase" == missing-media ]]; then printf '[]\n'; return; fi
+  if [[ "$phase" == missing-media ]]; then
+    printf '[]\n'
+    return
+  fi
   if [[ "$phase" == duplicate-media ]]; then
     printf '[{"BSD Name":"disk8","Whole":true},{"BSD Name":"disk8","Whole":true}]\n'
     return
@@ -51,66 +55,80 @@ usb_media() {
 }
 usb_lock_path() { printf '%s/lock\n' "$work"; }
 usb_confirm() {
-  printf 'confirm\n' >> "$work/actions"
+  printf 'confirm\n' >>"$work/actions"
   [[ "$1" == "ERASE /dev/disk8 8192 "* ]] || return 1
   case "$phase" in
     cancel) common::die 'fixture confirmation cancelled' ;;
     replug-confirm) touch "$work/replaced" ;;
-    mutate-iso) printf x >> "$iso" ;;
+    mutate-iso) printf x >>"$iso" ;;
   esac
 }
 usb_diskutil() {
-  printf '%s\n' "$*" >> "$work/actions"
+  printf '%s\n' "$*" >>"$work/actions"
   case "$1" in
     list)
       [[ "$*" == 'list -plist external physical' ]] || return 1
-      printf '{"AllDisksAndPartitions":[{"DeviceIdentifier":"disk8"}]}\n' ;;
+      printf '{"AllDisksAndPartitions":[{"DeviceIdentifier":"disk8"}]}\n'
+      ;;
     unmountDisk)
       [[ "$2" == /dev/disk8 && "$phase" != failed-unmount ]] || return 1
       touch "$work/unmounted"
-      [[ "$phase" != replug-unmount ]] || touch "$work/replaced" ;;
+      [[ "$phase" != replug-unmount ]] || touch "$work/replaced"
+      ;;
     eject) [[ "$2" == /dev/disk8 && "$phase" != failed-eject ]] ;;
     *) return 99 ;;
   esac
 }
 usb_open() {
   [[ "$1" == /dev/disk8 && "$2" == /dev/rdisk8 ]] || return 1
-  printf 'open\n' >> "$work/actions"
-  exec 9> "$work/usb-file"
+  printf 'open\n' >>"$work/actions"
+  exec 9>"$work/usb-file"
   [[ "$phase" != replug-open ]] || touch "$work/replaced"
 }
 usb_copy() {
-  printf 'write\n' >> "$work/actions"
+  printf 'write\n' >>"$work/actions"
   [[ "$phase" != failed-write ]] || return 1
   if [[ "$phase" == signal ]]; then kill -TERM "$BASHPID"; fi
   command cat "$1" >&9
 }
-usb_flush() { printf 'flush\n' >> "$work/actions"; [[ "$phase" != failed-sync ]]; }
+usb_flush() {
+  printf 'flush\n' >>"$work/actions"
+  [[ "$phase" != failed-sync ]]
+}
 usb_read() {
-  printf 'compare\n' >> "$work/actions"
+  printf 'compare\n' >>"$work/actions"
   [[ "$1" == 4096 && "$2" == /dev/rdisk8 && "$phase" != failed-readback ]] || return 1
-  if [[ "$phase" == short-read ]]; then printf short; return; fi
+  if [[ "$phase" == short-read ]]; then
+    printf short
+    return
+  fi
   if [[ "$phase" == corrupt-read ]]; then printf corrupt; fi
   # Trailing device capacity is intentionally ignored; compare exactly ISO bytes.
-  printf 'unwritten trailing capacity' >> "$work/usb-file"
+  printf 'unwritten trailing capacity' >>"$work/usb-file"
   /usr/bin/head -c "$1" "$work/usb-file"
 }
 reset_case() {
-  phase=normal; policy='{}'; layout_policy='{}'
+  phase=normal
+  policy='{}'
+  layout_policy='{}'
   rm -f "$work/actions" "$work/replaced" "$work/usb-file" "$work/unmounted"
 }
 reject() {
-  if (main --execute write "$iso" "$device") > "$work/output" 2>&1; then
-    printf 'unsafe USB case accepted: %s %s %s\n' "$phase" "$policy" "$layout_policy" >&2; exit 1
+  if (main --execute write "$iso" "$device") >"$work/output" 2>&1; then
+    printf 'unsafe USB case accepted: %s %s %s\n' "$phase" "$policy" "$layout_policy" >&2
+    exit 1
   fi
-  [[ ! -d "$work/lock" ]] || { echo 'lock leaked' >&2; exit 1; }
+  [[ ! -d "$work/lock" ]] || {
+    echo 'lock leaked' >&2
+    exit 1
+  }
 }
 
-main list > "$work/list"
+main list >"$work/list"
 grep -q '/dev/disk8' "$work/list"
 [[ "$(cat "$work/actions")" == 'list -plist external physical' && ! -e "$work/usb-file" ]]
 reset_case
-main write "$iso" "$device" > "$work/preview" 2>&1
+main write "$iso" "$device" >"$work/preview" 2>&1
 [[ ! -e "$work/actions" && ! -e "$work/usb-file" && ! -e "$work/lock" ]]
 grep -q 'Preview only' "$work/preview"
 for policy in '{"Internal":true}' '{"Whole":false}' '{"VirtualOrPhysical":"Virtual"}' \
@@ -149,19 +167,22 @@ done
 reset_case
 phase=failed-eject
 reject
-grep -q 'bytes verified but eject failed' "$work/output" || { tail -40 "$work/output"; exit 1; }
+grep -q 'bytes verified but eject failed' "$work/output" || {
+  tail -40 "$work/output"
+  exit 1
+}
 reset_case
 mkdir "$work/lock"
 if (main --execute write "$iso" "$device") >/dev/null 2>&1; then exit 1; fi
 [[ -d "$work/lock" && ! -e "$work/actions" ]]
 rmdir "$work/lock"
-main --execute write "$iso" "$device" > "$work/output" 2>&1
-[[ "$(tr '\n' ' ' < "$work/actions")" == 'confirm unmountDisk /dev/disk8 open write flush compare eject /dev/disk8 ' ]]
+main --execute write "$iso" "$device" >"$work/output" 2>&1
+[[ "$(tr '\n' ' ' <"$work/actions")" == 'confirm unmountDisk /dev/disk8 open write flush compare eject /dev/disk8 ' ]]
 grep -q 'USB bytes verified' "$work/output"
 [[ ! -d "$work/lock" ]]
 reset_case
 cp "${iso%/*}/SHA256SUMS" "$work/checksums"
-printf '%064d  %s\n' 0 "${iso##*/}" > "${iso%/*}/SHA256SUMS"
+printf '%064d  %s\n' 0 "${iso##*/}" >"${iso%/*}/SHA256SUMS"
 reject
 [[ ! -e "$work/actions" ]]
 mv "${iso%/*}/SHA256SUMS" "$work/wrong-checksum"
@@ -174,7 +195,7 @@ iso="$work/link.iso"
 reject
 [[ ! -e "$work/actions" ]]
 iso="$original_iso"
-printf '%s  %s\n' "$(common::sha256_file "$iso")" "${iso##*/}" >> "${iso%/*}/SHA256SUMS"
+printf '%s  %s\n' "$(common::sha256_file "$iso")" "${iso##*/}" >>"${iso%/*}/SHA256SUMS"
 reject
 [[ ! -e "$work/actions" ]]
 cp "$work/checksums" "${iso%/*}/SHA256SUMS"

@@ -46,15 +46,31 @@ main() {
   local context=desktop-linux execute=false allow_mounts=false
   while (($#)); do
     case $1 in
-      --context) (($# >= 2)) || common::die '--context needs a name'; context=$2; shift 2 ;;
-      --execute) execute=true; shift ;;
-      --allow-iso-mounts) allow_mounts=true; shift ;;
-      -h|--help) usage; return ;;
+      --context)
+        (($# >= 2)) || common::die '--context needs a name'
+        context=$2
+        shift 2
+        ;;
+      --execute)
+        execute=true
+        shift
+        ;;
+      --allow-iso-mounts)
+        allow_mounts=true
+        shift
+        ;;
+      -h | --help)
+        usage
+        return
+        ;;
       --*) common::die 'unknown option; arbitrary Docker arguments are not accepted' ;;
       *) break ;;
     esac
   done
-  (($#)) || { usage; return 1; }
+  (($#)) || {
+    usage
+    return 1
+  }
   [[ $context =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || common::die 'invalid Docker context name'
   local action=$1 job='' output='' source='' public_key='' fingerprint='' endpoint digest image image_id='' file state
   shift
@@ -64,14 +80,16 @@ main() {
   digest=$(for file in infrastructure/iso/docker/Dockerfile infrastructure/iso/docker/setup.sh \
     infrastructure/iso/docker/entrypoint.sh infrastructure/iso/docker/pacstrap.sh \
     infrastructure/iso/.dockerignore infrastructure/iso/versions.lock; do
-      common::sha256_file "$root/$file"
-    done | common::sha256_file -)
+    common::sha256_file "$root/$file"
+  done | common::sha256_file -)
   image="arch-workstation-iso-builder:${digest:0:20}"
   case $action in
-    image|check) (($# == 0)) || common::die 'unexpected arguments' ;;
+    image | check) (($# == 0)) || common::die 'unexpected arguments' ;;
     packages)
       (($# == 3)) || common::die 'packages requires JOB, source directory and new output directory'
-      job=$1; source=$(directory_path "$2"); output=$(new_output_path "$3")
+      job=$1
+      source=$(directory_path "$2")
+      output=$(new_output_path "$3")
       for file in bootstrap-source.tar.gz source.lock PKGBUILD; do
         regular_file "$source/$file"
         mounts+=(--mount "type=bind,source=$source/$file,target=/input/$file,readonly")
@@ -79,7 +97,11 @@ main() {
       ;;
     iso)
       (($# == 5)) || common::die 'iso requires JOB, signed package directory, public key, fingerprint and new output directory'
-      job=$1; source=$(directory_path "$2"); public_key=$(file_path "$3"); fingerprint=$4; output=$(new_output_path "$5")
+      job=$1
+      source=$(directory_path "$2")
+      public_key=$(file_path "$3")
+      fingerprint=$4
+      output=$(new_output_path "$5")
       [[ $fingerprint =~ ^[A-F0-9]{40}$ ]] || common::die 'a full uppercase primary fingerprint is required'
       grep -qx -- '-----BEGIN PGP PUBLIC KEY BLOCK-----' "$public_key" || common::die 'only an armored public key may be supplied'
       if grep -q 'PRIVATE KEY' "$public_key"; then common::die 'private signing material is forbidden'; fi
@@ -90,7 +112,8 @@ main() {
       boot=("$source"/arch-workstation-boot-*.pkg.tar.zst)
       ((${#bootstrap[@]} == 1 && ${#boot[@]} == 1)) || common::die 'exactly one package of each split-package name is required'
       for file in "${bootstrap[0]}" "${boot[0]}" "$source/arch-workstation.db.tar.gz"; do
-        regular_file "$file"; regular_file "$file.sig"
+        regular_file "$file"
+        regular_file "$file.sig"
         [[ ${file##*/} =~ ^[A-Za-z0-9_.+-]+$ ]] || common::die 'invalid package filename'
         mounts+=(--mount "type=bind,source=$file,target=/release/${file##*/},readonly"
           --mount "type=bind,source=$file.sig,target=/release/${file##*/}.sig,readonly")
@@ -117,8 +140,8 @@ main() {
   if [[ $execute == true ]]; then
     endpoint=$("${docker[@]}" context inspect "$context" --format '{{.Endpoints.docker.Host}}')
     [[ $endpoint == unix:///* ]] || common::die 'only a local Unix-socket Docker context is permitted'
-    [[ $("${docker[@]}" info --format '{{.OperatingSystem}}') == 'Docker Desktop' ]] \
-      || common::die 'this wrapper only targets a local Docker Desktop dev context'
+    [[ $("${docker[@]}" info --format '{{.OperatingSystem}}') == 'Docker Desktop' ]] ||
+      common::die 'this wrapper only targets a local Docker Desktop dev context'
     if [[ $action != image ]]; then
       [[ $("${docker[@]}" image inspect "$image" --format '{{.Os}}/{{.Architecture}}') == linux/amd64 ]] || common::die 'build the amd64 image first'
       [[ $("${docker[@]}" image inspect "$image" --format '{{index .Config.Labels "io.arch-workstation.recipe"}}') == "$digest" ]] || common::die 'builder recipe label mismatch'
@@ -154,13 +177,13 @@ main() {
   [[ $execute == true ]] || return 0
   if [[ -n $job ]]; then
     # A failed state query is not evidence that a job is absent.
-    state=$("${docker[@]}" container ls --all --filter "name=$container" --format '{{.Names}}') \
-      || common::die 'cannot inspect job containers'
+    state=$("${docker[@]}" container ls --all --filter "name=$container" --format '{{.Names}}') ||
+      common::die 'cannot inspect job containers'
     if [[ $'\n'$state$'\n' == *$'\n'"$container"$'\n'* ]]; then
       common::die 'job state already exists; inspect it and choose a new job, never clean it automatically'
     fi
-    state=$("${docker[@]}" volume ls --filter "name=$volume" --format '{{.Name}}') \
-      || common::die 'cannot inspect job volumes'
+    state=$("${docker[@]}" volume ls --filter "name=$volume" --format '{{.Name}}') ||
+      common::die 'cannot inspect job volumes'
     if [[ $'\n'$state$'\n' == *$'\n'"$volume"$'\n'* ]]; then
       common::die 'job volume already exists; inspect it and choose a new job'
     fi

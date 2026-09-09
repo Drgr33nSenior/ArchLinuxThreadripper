@@ -12,4 +12,3 @@ while IFS= read -r test_file; do
 done < <(rg --files tests -g 'test_*.sh' | sort)
 
 printf 'PASS: %d test file(s)\n' "$test_count"
-

@@ -14,7 +14,7 @@ lock="$work/versions.lock"
 repo=https://github.com/ggml-org/llama.cpp.git
 source_dir="$work/llama.cpp"
 git init -q "$source_dir"
-printf '%s\n' 'cmake_minimum_required(VERSION 3.21)' > "$source_dir/CMakeLists.txt"
+printf '%s\n' 'cmake_minimum_required(VERSION 3.21)' >"$source_dir/CMakeLists.txt"
 git -C "$source_dir" add CMakeLists.txt
 git -C "$source_dir" -c user.name=Test -c user.email=test@example.invalid commit -qm initial
 git -C "$source_dir" remote add origin "$repo"
@@ -28,24 +28,24 @@ printf '%s\n' \
   'ROCM_AUR_COMMIT=ccac18259575a393b402ea90cd9ef3552081721e' \
   'ROCM_AUR_PKGBUILD_SHA256=578d394a3f82f4006fca1707a2bed85ffc9774b4ca24e75e723399ae52dbb4d8' \
   'ROCM_AUR_SOURCE_URL=https://stable.repo.amd.com/rocm/core/tarball/therock-dist-linux-gfx120X-all-10.0.0.tar.gz' \
-  'ROCM_AUR_SOURCE_SHA256=eb99db434a1738fd83b0c3b933146cdb76418f35fcf4647743fbdfef76e8c71f' > "$lock"
+  'ROCM_AUR_SOURCE_SHA256=eb99db434a1738fd83b0c3b933146cdb76418f35fcf4647743fbdfef76e8c71f' >"$lock"
 
 boot_id=11111111-2222-3333-4444-555555555555
 make_report() {
   local output=$1 current_boot=${2:-$boot_id} target=${3:-gfx1201} bdf=${4:-0000:01:00.0}
   mkdir -p -- "$output"
-  printf '%s\n' "$current_boot" > "$output/boot-id.txt"
+  printf '%s\n' "$current_boot" >"$output/boot-id.txt"
   jq -n --arg target "$target" --arg bdf "$bdf" \
     '{schema:1,status:"observed",os:"Linux",architecture:"x86_64",expected:{gpu_count:2},gpu_target:$target,
       pci_gpus:[{bdf:$bdf,device_id:"0x1234",driver:"amdgpu"},{bdf:"0000:02:00.0",device_id:"0x1234",driver:"amdgpu"}],
       rocm_agents:[{agent:"1",gfx:$target,uuid:"GPU-111"},{agent:"2",gfx:$target,uuid:"GPU-222"}]}' \
-    > "$output/hardware.json"
+    >"$output/hardware.json"
 }
 make_report "$work/recorded"
 
 fake_bin="$work/bin"
 mkdir -p -- "$fake_bin"
-cat > "$fake_bin/cmake" <<'STUB'
+cat >"$fake_bin/cmake" <<'STUB'
 #!/usr/bin/env bash
 printf 'CCACHE_DIR=%s CCACHE_CONFIGPATH=%s\n' "${CCACHE_DIR:-}" "${CCACHE_CONFIGPATH:-}" >> "$CMAKE_LOG"
 printf '%s\n' "$*" >> "$CMAKE_LOG"
@@ -83,12 +83,12 @@ if [[ ${MUTATE_SOURCE_AFTER_CONFIGURE:-0} == 1 ]]; then
   printf 'unexpected source change\n' > "$source_dir/untracked-after-configure"
 fi
 STUB
-cat > "$fake_bin/ninja" <<'STUB'
+cat >"$fake_bin/ninja" <<'STUB'
 #!/usr/bin/env bash
 printf 'CCACHE_DIR=%s CCACHE_CONFIGPATH=%s\n' "${CCACHE_DIR:-}" "${CCACHE_CONFIGPATH:-}" >> "$NINJA_LOG"
 printf '%s\n' "$*" >> "$NINJA_LOG"
 STUB
-cat > "$fake_bin/ccache" <<'STUB'
+cat >"$fake_bin/ccache" <<'STUB'
 #!/usr/bin/env bash
 if [[ ${1:-} == --show-config ]]; then
   printf 'cache_dir = %s\n' "${CCACHE_DIR:-}"
@@ -101,7 +101,7 @@ chmod +x "$fake_bin/cmake" "$fake_bin/ninja" "$fake_bin/ccache"
 export PATH="$fake_bin:$PATH" CMAKE_LOG="$work/cmake.log" NINJA_LOG="$work/ninja.log"
 CCACHE_DIRECTORY="$work/ccache"
 mkdir -p -- "$CCACHE_DIRECTORY"
-printf 'cache_dir = %s\nmax_size = 100G\n' "$CCACHE_DIRECTORY" > "$CCACHE_DIRECTORY/ccache.conf"
+printf 'cache_dir = %s\nmax_size = 100G\n' "$CCACHE_DIRECTORY" >"$CCACHE_DIRECTORY/ccache.conf"
 ws_require_arch() { :; }
 ws_require_user() { :; }
 uname() { [[ ${1:-} == -m ]] && printf 'x86_64\n' || printf 'Linux\n'; }
@@ -117,8 +117,8 @@ ws_rocm_llama_cmake_host_compilers_validate() {
 }
 ws_rocm_llama_record_toolchain() {
   local output=$1
-  printf 'stub toolchain\n' > "$output/toolchain.txt"
-  printf 'stub official packages\n' > "$output/rocm-packages.txt"
+  printf 'stub toolchain\n' >"$output/toolchain.txt"
+  printf 'stub official packages\n' >"$output/rocm-packages.txt"
 }
 ws_hardware_collect() {
   local output=$1
@@ -134,7 +134,10 @@ if owner_output=$(ws_rocm_llama_rocm_owner_output /opt/rocm/bin/amdclang++ /opt/
   printf 'partial pacman ownership output was accepted\n' >&2
   exit 1
 fi
-[[ -z $owner_output ]] || { printf 'partial pacman ownership output escaped validation\n' >&2; exit 1; }
+[[ -z $owner_output ]] || {
+  printf 'partial pacman ownership output escaped validation\n' >&2
+  exit 1
+}
 unset -f pacman
 
 ws_rocm_build_llama "$source_dir" "$work/recorded/hardware.json" "$work/output" "$lock" >/dev/null
@@ -192,7 +195,8 @@ for failure in stale-boot changed-gpu existing-output dirty-source; do
     stale-boot)
       FRESH_BOOT_ID=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
       if ws_rocm_build_llama "$source_dir" "$work/recorded/hardware.json" "$output" "$lock" >/dev/null 2>&1; then
-        printf 'stale boot evidence was accepted\n' >&2; exit 1
+        printf 'stale boot evidence was accepted\n' >&2
+        exit 1
       fi
       [[ ! -e $output/build ]]
       unset FRESH_BOOT_ID
@@ -200,7 +204,8 @@ for failure in stale-boot changed-gpu existing-output dirty-source; do
     changed-gpu)
       FRESH_BDF=0000:03:00.0
       if ws_rocm_build_llama "$source_dir" "$work/recorded/hardware.json" "$output" "$lock" >/dev/null 2>&1; then
-        printf 'changed GPU identity was accepted\n' >&2; exit 1
+        printf 'changed GPU identity was accepted\n' >&2
+        exit 1
       fi
       [[ ! -e $output/build ]]
       unset FRESH_BDF
@@ -208,13 +213,15 @@ for failure in stale-boot changed-gpu existing-output dirty-source; do
     existing-output)
       mkdir -p -- "$output"
       if ws_rocm_build_llama "$source_dir" "$work/recorded/hardware.json" "$output" "$lock" >/dev/null 2>&1; then
-        printf 'existing output directory was accepted\n' >&2; exit 1
+        printf 'existing output directory was accepted\n' >&2
+        exit 1
       fi
       ;;
     dirty-source)
-      printf 'dirty\n' > "$source_dir/untracked"
+      printf 'dirty\n' >"$source_dir/untracked"
       if ws_rocm_build_llama "$source_dir" "$work/recorded/hardware.json" "$output" "$lock" >/dev/null 2>&1; then
-        printf 'dirty llama.cpp source was accepted\n' >&2; exit 1
+        printf 'dirty llama.cpp source was accepted\n' >&2
+        exit 1
       fi
       rm -- "$source_dir/untracked"
       ;;

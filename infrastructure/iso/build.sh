@@ -6,8 +6,8 @@ source "$root/lib/common.sh"
 [[ ${2:---dry-run} == --dry-run || ${2:-} == --execute ]] || common::die 'unsupported mode'
 prepared=$(cd -- "$1" && pwd -P)
 [[ -f $prepared/release.lock && -f $prepared/artifacts.lock && -f $prepared/profile/profiledef.sh ]] || common::die 'not a prepared profile'
-[[ ! -e $prepared/work && ! -L $prepared/work && ! -e $prepared/out && ! -L $prepared/out ]] \
-  || common::die 'build state exists; prepare a new directory, never clean a partial build automatically'
+[[ ! -e $prepared/work && ! -L $prepared/work && ! -e $prepared/out && ! -L $prepared/out ]] ||
+  common::die 'build state exists; prepare a new directory, never clean a partial build automatically'
 common::print_command mkarchiso -v -w "$prepared/work" -o "$prepared/out" "$prepared/profile"
 [[ ${2:-} == --execute ]] || exit 0
 common::require_linux
@@ -20,5 +20,5 @@ mkarchiso -v -w "$prepared/work" -o "$prepared/out" "$prepared/profile"
 shopt -s nullglob
 images=("$prepared/out/"*.iso)
 [[ ${#images[@]} == 1 ]] || common::die 'expected exactly one ISO artifact'
-printf '%s  %s\n' "$(common::sha256_file "${images[0]}")" "${images[0]##*/}" > "$prepared/out/SHA256SUMS"
+printf '%s  %s\n' "$(common::sha256_file "${images[0]}")" "${images[0]##*/}" >"$prepared/out/SHA256SUMS"
 common::info 'ISO built, not signed or hardware-qualified. Review and sign it separately.'

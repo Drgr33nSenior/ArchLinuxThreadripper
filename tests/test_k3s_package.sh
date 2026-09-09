@@ -13,7 +13,7 @@ source "$startdir/PKGBUILD"
 [[ $pkgname == k3s-workstation-bin && $pkgver == 1.35.7.k3s1 ]]
 [[ ${source[0]} == "k3s-${_release}::https://github.com/k3s-io/k3s/releases/download/${_release}/k3s" ]]
 [[ ${sha256sums[1]} == "$(shasum -a 256 "$startdir/k3s.service" | awk '{print $1}')" ]]
-printf 'synthetic non-executable server contents\n' > "$srcdir/k3s-${_release}"
+printf 'synthetic non-executable server contents\n' >"$srcdir/k3s-${_release}"
 cp "$startdir/k3s.service" "$srcdir/k3s.service"
 package
 cmp "$srcdir/k3s-${_release}" "$pkgdir/usr/bin/k3s"

@@ -11,9 +11,9 @@ known_hosts="$temp_dir/known_hosts.k3s"
 ssh-keygen -q -t ed25519 -N '' -C developer@test -f "$private_key" </dev/null
 ssh-keygen -q -t ed25519 -N '' -C host@test -f "$host_key" </dev/null
 key_file="$private_key.pub"
-awk -v host=192.168.124.10 '{ print host, $1, $2 }' "$host_key.pub" > "$known_hosts"
+awk -v host=192.168.124.10 '{ print host, $1, $2 }' "$host_key.pub" >"$known_hosts"
 config_file="$temp_dir/k3s.conf"
-cat > "$config_file" <<EOF
+cat >"$config_file" <<EOF
 LAB_NAME=k3s-dev-01
 ADMIN_USER=developer
 SSH_PUBLIC_KEY_FILE=$key_file
@@ -113,7 +113,7 @@ fi
 offline_bin="$temp_dir/offline-bin"
 offline_log="$temp_dir/kubectl.log"
 mkdir -p "$offline_bin"
-cat > "$offline_bin/kubectl" <<'EOF'
+cat >"$offline_bin/kubectl" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$OFFLINE_KUBECTL_LOG"
 [[ ${1:-} == kustomize ]] || exit 90
@@ -121,7 +121,7 @@ printf '%s\n' 'apiVersion: networking.k8s.io/v1' 'kind: NetworkPolicy' \
   'reclaimPolicy: Retain' \
   'image: docker.io/library/busybox:1.37.0@sha256:9db7b59979c38555a39def84a31fb98b5296952f9e3afd4f6f11f05b07adfab0'
 EOF
-cat > "$offline_bin/curl" <<'EOF'
+cat >"$offline_bin/curl" <<'EOF'
 #!/usr/bin/env bash
 output=''; url=''
 while (($#)); do
@@ -137,7 +137,7 @@ case "$url" in
   *) exit 91 ;;
 esac
 EOF
-cat > "$offline_bin/sha256sum" <<'EOF'
+cat >"$offline_bin/sha256sum" <<'EOF'
 #!/usr/bin/env bash
 case "$1" in
   *cert-manager*) printf '%s  %s\n' '5f6a499b8c1857d57f560f536e0dcc830914b45c420899fe7ad0692c8624e408' "$1" ;;
@@ -158,7 +158,7 @@ fi
 # system namespace must be the first apply. All local-path resources use one
 # authoritative field manager and one merged desired manifest so a second
 # apply cannot conflict with an override manager.
-cat > "$offline_bin/kubectl" <<'EOF'
+cat >"$offline_bin/kubectl" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$OFFLINE_KUBECTL_LOG"
 case " $* " in
@@ -169,19 +169,22 @@ case " $* " in
 esac
 EOF
 chmod 0755 "$offline_bin/kubectl"
-printf '%s\n' 'apiVersion: v1' > "$temp_dir/empty-kubeconfig"
-: > "$offline_log"
+printf '%s\n' 'apiVersion: v1' >"$temp_dir/empty-kubeconfig"
+: >"$offline_log"
 OFFLINE_KUBECTL_LOG="$offline_log" PATH="$offline_bin:/usr/bin:/bin" \
   "$repo_root/kubernetes/install-pinned-addons.sh" apply \
-    --kubeconfig "$temp_dir/empty-kubeconfig" --context k3s-test \
-    --confirm-context k3s-test >/dev/null
+  --kubeconfig "$temp_dir/empty-kubeconfig" --context k3s-test \
+  --confirm-context k3s-test >/dev/null
 OFFLINE_KUBECTL_LOG="$offline_log" PATH="$offline_bin:/usr/bin:/bin" \
   "$repo_root/kubernetes/install-pinned-addons.sh" apply \
-    --kubeconfig "$temp_dir/empty-kubeconfig" --context k3s-test \
-    --confirm-context k3s-test >/dev/null
+  --kubeconfig "$temp_dir/empty-kubeconfig" --context k3s-test \
+  --confirm-context k3s-test >/dev/null
 first_apply=$(grep ' apply ' "$offline_log" | head -n1)
-[[ "$first_apply" == *'field-manager=k3s-lab-local-path'*'/local-path/namespace.yaml'* ]] \
-  || { echo 'local-path privileged namespace was not the first apply' >&2; exit 1; }
+[[ "$first_apply" == *'field-manager=k3s-lab-local-path'*'/local-path/namespace.yaml'* ]] ||
+  {
+    echo 'local-path privileged namespace was not the first apply' >&2
+    exit 1
+  }
 if grep -q 'field-manager=k3s-lab-local-path-override' "$offline_log"; then
   echo 'local-path apply still uses a competing override field manager' >&2
   exit 1
@@ -190,28 +193,28 @@ fi
 [ "$(grep -c 'field-manager=k3s-lab-local-path .*local-path-merged.yaml' "$offline_log")" -eq 2 ]
 
 bad_config="$temp_dir/bad-pool.conf"
-sed 's|^VM_POOL_DIR=.*|VM_POOL_DIR=/tmp/wrong-target|' "$config_file" > "$bad_config"
+sed 's|^VM_POOL_DIR=.*|VM_POOL_DIR=/tmp/wrong-target|' "$config_file" >"$bad_config"
 if (k3s_load_config "$bad_config" "$repo_root/versions.lock") >/dev/null 2>&1; then
   echo 'unsafe VM pool was accepted' >&2
   exit 1
 fi
 
 overlap_config="$temp_dir/overlap.conf"
-sed 's|^DMZ_IPV4=.*|DMZ_IPV4=192.168.124.20/24|; s|^DMZ_IPV4_GATEWAY=.*|DMZ_IPV4_GATEWAY=192.168.124.2|' "$config_file" > "$overlap_config"
+sed 's|^DMZ_IPV4=.*|DMZ_IPV4=192.168.124.20/24|; s|^DMZ_IPV4_GATEWAY=.*|DMZ_IPV4_GATEWAY=192.168.124.2|' "$config_file" >"$overlap_config"
 if (k3s_load_config "$overlap_config" "$repo_root/versions.lock") >/dev/null 2>&1; then
   echo 'overlapping management and DMZ CIDRs were accepted' >&2
   exit 1
 fi
 
 dhcp_config="$temp_dir/dhcp-collision.conf"
-sed 's|^MGMT_IP=.*|MGMT_IP=192.168.124.150|' "$config_file" > "$dhcp_config"
+sed 's|^MGMT_IP=.*|MGMT_IP=192.168.124.150|' "$config_file" >"$dhcp_config"
 if (k3s_load_config "$dhcp_config" "$repo_root/versions.lock") >/dev/null 2>&1; then
   echo 'management IP inside the libvirt DHCP range was accepted' >&2
   exit 1
 fi
 
 unsafe_lock="$temp_dir/unsafe-image.lock"
-sed 's|^ALMALINUX_IMAGE_NAME=.*|ALMALINUX_IMAGE_NAME=../../escape.qcow2|' "$repo_root/versions.lock" > "$unsafe_lock"
+sed 's|^ALMALINUX_IMAGE_NAME=.*|ALMALINUX_IMAGE_NAME=../../escape.qcow2|' "$repo_root/versions.lock" >"$unsafe_lock"
 if (k3s_load_config "$config_file" "$unsafe_lock") >/dev/null 2>&1; then
   echo 'unsafe AlmaLinux image filename was accepted' >&2
   exit 1
@@ -255,7 +258,10 @@ grep -q 'UUID={{ k3s_data_disk_uuid.stdout }}' "$repo_root/ansible/roles/k3s/tas
 source_assert_line=$(rg -n '^\- name: Assert local-path uses the expected dedicated virtio data disk' "$repo_root/ansible/roles/k3s/tasks/main.yml" | cut -d: -f1)
 mode_line=$(rg -n '^\- name: Reapply restrictive local-path mountpoint mode after source verification' "$repo_root/ansible/roles/k3s/tasks/main.yml" | cut -d: -f1)
 recursive_line=$(rg -n '^\- name: Recursively apply SELinux context only to fresh or empty first mount' "$repo_root/ansible/roles/k3s/tasks/main.yml" | cut -d: -f1)
-(( source_assert_line < mode_line && mode_line < recursive_line )) || { echo 'storage source must be verified before chmod/relabel' >&2; exit 1; }
+((source_assert_line < mode_line && mode_line < recursive_line)) || {
+  echo 'storage source must be verified before chmod/relabel' >&2
+  exit 1
+}
 grep -q 'restorecon -RFv {{ k3s_storage_path }}' "$repo_root/ansible/roles/k3s/tasks/main.yml"
 grep -q 'restorecon -Fv {{ k3s_storage_path }}' "$repo_root/ansible/roles/k3s/tasks/main.yml"
 grep -q 'k3s_storage_first_entry' "$repo_root/ansible/roles/k3s/tasks/main.yml"

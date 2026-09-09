@@ -42,35 +42,42 @@ ws_capture() {
   local output=$1 name=$2 status=0
   shift 2
   if command -v "$1" >/dev/null 2>&1; then
-    "$@" > "$output/$name.txt" 2>&1 || status=$?
+    "$@" >"$output/$name.txt" 2>&1 || status=$?
   else
-    printf 'unavailable: %s\n' "$1" > "$output/$name.txt"
+    printf 'unavailable: %s\n' "$1" >"$output/$name.txt"
     status=127
   fi
-  jq -n --arg name "$name" --argjson status "$status" '{command:$name,exit_code:$status}' >> "$output/commands.jsonl"
+  jq -n --arg name "$name" --argjson status "$status" '{command:$name,exit_code:$status}' >>"$output/commands.jsonl"
 }
 
 ws_capture_optional() {
   local output=$1 name=$2 status=0
   shift 2
   if command -v "$1" >/dev/null 2>&1; then
-    "$@" > "$output/$name.txt" 2>&1 || status=$?
+    "$@" >"$output/$name.txt" 2>&1 || status=$?
   else
-    printf 'unavailable: %s\n' "$1" > "$output/$name.txt"
+    printf 'unavailable: %s\n' "$1" >"$output/$name.txt"
     status=127
   fi
-  jq -n --arg name "$name" --argjson status "$status" '{command:$name,exit_code:$status,required:false}' >> "$output/optional-commands.jsonl"
+  jq -n --arg name "$name" --argjson status "$status" '{command:$name,exit_code:$status,required:false}' >>"$output/optional-commands.jsonl"
 }
 
 ws_hardware_cpu_list_json() {
   local list=${1:-} item first last cpu
-  [[ $list =~ ^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$ ]] || { jq -n 'null'; return; }
+  [[ $list =~ ^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$ ]] || {
+    jq -n 'null'
+    return
+  }
   {
-    IFS=',' read -r -a _ws_hardware_cpu_items <<< "$list"
+    IFS=',' read -r -a _ws_hardware_cpu_items <<<"$list"
     for item in "${_ws_hardware_cpu_items[@]}"; do
       if [[ $item == *-* ]]; then
-        first=${item%-*}; last=${item#*-}
-        ((first <= last)) || { jq -n 'null'; return; }
+        first=${item%-*}
+        last=${item#*-}
+        ((first <= last)) || {
+          jq -n 'null'
+          return
+        }
         for ((cpu = first; cpu <= last; cpu++)); do printf '%s\n' "$cpu"; done
       else
         printf '%s\n' "$item"
@@ -90,12 +97,15 @@ ws_hardware_number_or_null() {
 
 ws_hardware_read_value() {
   local path=$1
-  [[ -r $path ]] && tr -d '\n' < "$path" || true
+  [[ -r $path ]] && tr -d '\n' <"$path" || true
 }
 
 ws_hardware_numa_nodes_json() {
   local sys=${1:-/sys} node_path node cpulist memory_total
-  [[ -d $sys/devices/system/node ]] || { jq -n 'null'; return; }
+  [[ -d $sys/devices/system/node ]] || {
+    jq -n 'null'
+    return
+  }
   for node_path in "$sys"/devices/system/node/node[0-9]*; do
     [[ -d $node_path ]] || continue
     node=${node_path##*/node}
@@ -109,9 +119,15 @@ ws_hardware_numa_nodes_json() {
 ws_hardware_cpu_topology() {
   local sys=${1:-/sys} online_path online cpu_path cpu core socket siblings numa='' caches cache level type id shared
   online_path="$sys/devices/system/cpu/online"
-  [[ -r $online_path ]] || { jq -n 'null'; return; }
-  online="$(< "$online_path")"
-  ws_hardware_cpu_list_json "$online" | jq -e 'type == "array"' >/dev/null || { jq -n 'null'; return; }
+  [[ -r $online_path ]] || {
+    jq -n 'null'
+    return
+  }
+  online="$(<"$online_path")"
+  ws_hardware_cpu_list_json "$online" | jq -e 'type == "array"' >/dev/null || {
+    jq -n 'null'
+    return
+  }
   {
     while IFS= read -r cpu; do
       cpu_path="$sys/devices/system/cpu/cpu$cpu"
@@ -149,7 +165,10 @@ ws_hardware_cpu_topology() {
 
 ws_hardware_memory_json() {
   local proc=${1:-/proc} total available
-  [[ -r $proc/meminfo ]] || { jq -n 'null'; return; }
+  [[ -r $proc/meminfo ]] || {
+    jq -n 'null'
+    return
+  }
   total=$(awk '$1 == "MemTotal:" {printf "%.0f\n", $2 * 1024}' "$proc/meminfo")
   available=$(awk '$1 == "MemAvailable:" {printf "%.0f\n", $2 * 1024}' "$proc/meminfo")
   jq -n --argjson total "$(ws_hardware_number_or_null "$total")" --argjson available "$(ws_hardware_number_or_null "$available")" \
@@ -158,7 +177,10 @@ ws_hardware_memory_json() {
 
 ws_hardware_dimms_json() {
   local report=$1 records
-  [[ -r $report ]] || { jq -n 'null'; return; }
+  [[ -r $report ]] || {
+    jq -n 'null'
+    return
+  }
   records=$(awk '
     BEGIN { RS=""; FS="\n" }
     /Memory Device/ {
@@ -173,7 +195,10 @@ ws_hardware_dimms_json() {
       if (locator != "" || size != "") print locator "\t" bank "\t" size "\t" speed "\t" configured
     }
   ' "$report")
-  [[ -n $records ]] || { jq -n 'null'; return; }
+  [[ -n $records ]] || {
+    jq -n 'null'
+    return
+  }
   printf '%s\n' "$records" | jq -Rn '
     [inputs | split("\t") |
       {locator:(if .[0] == "" then null else .[0] end),bank_locator:(if .[1] == "" then null else .[1] end),
@@ -185,9 +210,16 @@ ws_hardware_dimms_json() {
 ws_hardware_platform_json() {
   local sys=${1:-/sys} dmi board_vendor board_name board_version bios_vendor bios_version bios_date
   dmi="$sys/class/dmi/id"
-  [[ -d $dmi ]] || { jq -n 'null'; return; }
-  board_vendor="$(ws_hardware_read_value "$dmi/board_vendor")"; board_name="$(ws_hardware_read_value "$dmi/board_name")"; board_version="$(ws_hardware_read_value "$dmi/board_version")"
-  bios_vendor="$(ws_hardware_read_value "$dmi/bios_vendor")"; bios_version="$(ws_hardware_read_value "$dmi/bios_version")"; bios_date="$(ws_hardware_read_value "$dmi/bios_date")"
+  [[ -d $dmi ]] || {
+    jq -n 'null'
+    return
+  }
+  board_vendor="$(ws_hardware_read_value "$dmi/board_vendor")"
+  board_name="$(ws_hardware_read_value "$dmi/board_name")"
+  board_version="$(ws_hardware_read_value "$dmi/board_version")"
+  bios_vendor="$(ws_hardware_read_value "$dmi/bios_vendor")"
+  bios_version="$(ws_hardware_read_value "$dmi/bios_version")"
+  bios_date="$(ws_hardware_read_value "$dmi/bios_date")"
   jq -n --arg board_vendor "$board_vendor" --arg board_name "$board_name" --arg board_version "$board_version" \
     --arg bios_vendor "$bios_vendor" --arg bios_version "$bios_version" --arg bios_date "$bios_date" \
     '{board_vendor:(if $board_vendor == "" then null else $board_vendor end),board_name:(if $board_name == "" then null else $board_name end),board_version:(if $board_version == "" then null else $board_version end),bios_vendor:(if $bios_vendor == "" then null else $bios_vendor end),bios_version:(if $bios_version == "" then null else $bios_version end),bios_date:(if $bios_date == "" then null else $bios_date end)}'
@@ -213,21 +245,28 @@ ws_hardware_capture_nvme_smart() {
 
 ws_hardware_nvme_json() {
   local sys=${1:-/sys} output=${2:-} controller name namespace sectors sector_size capacity model serial firmware state namespaces smart thermal
-  [[ -d $sys/class/nvme ]] || { jq -n 'null'; return; }
+  [[ -d $sys/class/nvme ]] || {
+    jq -n 'null'
+    return
+  }
   for controller in "$sys"/class/nvme/nvme[0-9]*; do
     [[ -d $controller ]] || continue
     name=${controller##*/}
-    model="$(ws_hardware_read_value "$controller/model")"; serial="$(ws_hardware_read_value "$controller/serial")"
-    firmware="$(ws_hardware_read_value "$controller/firmware_rev")"; state="$(ws_hardware_read_value "$controller/state")"
-    smart=null; thermal=null
+    model="$(ws_hardware_read_value "$controller/model")"
+    serial="$(ws_hardware_read_value "$controller/serial")"
+    firmware="$(ws_hardware_read_value "$controller/firmware_rev")"
+    state="$(ws_hardware_read_value "$controller/state")"
+    smart=null
+    thermal=null
     if [[ -n $output ]]; then
       smart="$(ws_hardware_json_report_or_null "$output/$name-smart.txt")"
-      thermal=$(jq -c '(.temperature // .temperature_sensor_1 // null)' <<< "$smart")
+      thermal=$(jq -c '(.temperature // .temperature_sensor_1 // null)' <<<"$smart")
     fi
     namespaces=$(
       for namespace in "$sys"/block/"$name"n*; do
         [[ -d $namespace ]] || continue
-        sectors="$(ws_hardware_read_value "$namespace/size")"; sector_size="$(ws_hardware_read_value "$namespace/queue/logical_block_size")"
+        sectors="$(ws_hardware_read_value "$namespace/size")"
+        sector_size="$(ws_hardware_read_value "$namespace/queue/logical_block_size")"
         capacity=''
         # Linux block sysfs `size` is always a count of 512-byte sectors,
         # including namespaces formatted with 4096-byte logical blocks.
@@ -254,7 +293,8 @@ ws_pci_amd_gpus() {
   local sys=${1:-/sys} path vendor class driver render renders render_mappings bars link_speed link_width max_link_speed max_link_width numa
   for path in "$sys"/bus/pci/devices/*; do
     [[ -r $path/vendor && -r $path/class ]] || continue
-    read -r vendor < "$path/vendor"; read -r class < "$path/class"
+    read -r vendor <"$path/vendor"
+    read -r class <"$path/class"
     [[ $vendor == 0x1002 && $class == 0x03* ]] || continue
     driver=''
     [[ ! -L $path/driver ]] || driver=$(basename -- "$(readlink "$path/driver")")
@@ -267,8 +307,11 @@ ws_pci_amd_gpus() {
     if [[ -r "$path/resource" ]]; then
       bars=$(awk '$1 !~ /^0x0+$/ {print $1 "\t" $2 "\t" $3}' "$path/resource" | jq -Rn '[inputs | split("\t") | {start:.[0],end:.[1],flags:.[2]}]')
     fi
-    link_speed="$(ws_hardware_read_value "$path/current_link_speed")"; link_width="$(ws_hardware_read_value "$path/current_link_width")"
-    max_link_speed="$(ws_hardware_read_value "$path/max_link_speed")"; max_link_width="$(ws_hardware_read_value "$path/max_link_width")"; numa="$(ws_hardware_read_value "$path/numa_node")"
+    link_speed="$(ws_hardware_read_value "$path/current_link_speed")"
+    link_width="$(ws_hardware_read_value "$path/current_link_width")"
+    max_link_speed="$(ws_hardware_read_value "$path/max_link_speed")"
+    max_link_width="$(ws_hardware_read_value "$path/max_link_width")"
+    numa="$(ws_hardware_read_value "$path/numa_node")"
     jq -n --arg bdf "${path##*/}" --arg driver "$driver" --arg device "$(<"$path/device")" --argjson renders "$renders" --argjson render_mappings "$render_mappings" --argjson bars "$bars" \
       --arg speed "$link_speed" --arg width "$link_width" --arg max_speed "$max_link_speed" --arg max_width "$max_link_width" --argjson numa "$(ws_hardware_number_or_null "$numa")" \
       '{bdf:$bdf,driver:$driver,device_id:$device,render_nodes:$renders,render_mappings:$render_mappings,numa_node:$numa,bars:$bars,
@@ -284,7 +327,8 @@ ws_hardware_collect() (
   [[ ! -e $output ]] || ws_die 'hardware output directory already exists; select a new observation directory'
   umask 077
   mkdir -p -- "$output"
-  os=$(uname -s); arch=$(uname -m)
+  os=$(uname -s)
+  arch=$(uname -m)
   if [[ $os == Linux && $arch == x86_64 ]]; then
     ws_capture "$output" lscpu lscpu
     ws_capture "$output" lspci lspci -nnk
@@ -314,26 +358,29 @@ ws_hardware_collect() (
     cpu_topology=$(ws_hardware_cpu_topology)
     memory=$(ws_hardware_memory_json)
     dimms=$(ws_hardware_dimms_json "$output/dmidecode-memory.txt")
-    memory=$(jq --argjson dimms "$dimms" 'if . == null then null else .dimms = $dimms end' <<< "$memory")
+    memory=$(jq --argjson dimms "$dimms" 'if . == null then null else .dimms = $dimms end' <<<"$memory")
     platform=$(ws_hardware_platform_json)
     nvme_devices=$(ws_hardware_nvme_json /sys "$output")
     trim_evidence=$(ws_hardware_trim_json "$output/lsblk-discard.txt" "$output/fstrim-timer.txt")
-    if (ws_no_swap_check) > "$output/no-swap.txt" 2>&1; then
+    if (ws_no_swap_check) >"$output/no-swap.txt" 2>&1; then
       if ws_hardware_assert_json "$pci" "$agents" "$EXPECTED_GPU_COUNT"; then
         checks=$(jq -s '[.[] | select(.exit_code != 0)] | length' "$output/commands.jsonl")
         if ((checks == 0)); then
-          status=observed; reason='GPU count, matching ROCm targets, driver binding and no-swap policy passed; workload validation still required'
+          status=observed
+          reason='GPU count, matching ROCm targets, driver binding and no-swap policy passed; workload validation still required'
         else
           reason='one or more required collection commands failed; see commands.json'
         fi
       else
-        status=failed; reason='GPU count, driver or ROCm agent validation failed'
+        status=failed
+        reason='GPU count, driver or ROCm agent validation failed'
       fi
     else
-      status=failed; reason='no-swap policy validation failed'
+      status=failed
+      reason='no-swap policy validation failed'
     fi
-    jq -s . "$output/commands.jsonl" > "$output/commands.json"
-    jq -s . "$output/optional-commands.jsonl" > "$output/optional-commands.json"
+    jq -s . "$output/commands.jsonl" >"$output/commands.json"
+    jq -s . "$output/optional-commands.jsonl" >"$output/optional-commands.json"
   fi
   jq -n --arg status "$status" --arg reason "$reason" --arg os "$os" --arg arch "$arch" \
     --arg date "$(date -u +%FT%TZ)" --arg model "$EXPECTED_GPU_MODEL" --argjson count "$EXPECTED_GPU_COUNT" \
@@ -343,7 +390,7 @@ ws_hardware_collect() (
     '{schema:1,status:$status,reason:$reason,collected_at:$date,os:$os,architecture:$arch,
       expected:{gpu_count:$count,gpu_model:$model},pci_gpus:$pci,rocm_agents:$agents,
       gpu_target:(if ($agents|length)>0 then $agents[0].gfx else null end),hardware_workloads_validated:false,
-      cpu_topology:$cpu_topology,cpu_power:$cpu_power,memory:$memory,platform:$platform,nvme_devices:$nvme_devices,trim_evidence:$trim_evidence}' > "$output/hardware.json"
+      cpu_topology:$cpu_topology,cpu_power:$cpu_power,memory:$memory,platform:$platform,nvme_devices:$nvme_devices,trim_evidence:$trim_evidence}' >"$output/hardware.json"
   ws_note "hardware evidence: $output/hardware.json ($status)"
   [[ $status != failed ]]
 )
@@ -366,8 +413,8 @@ ws_detected_gpu_target() {
     .expected.gpu_count == $count and (.pci_gpus|length) == $count and
     (.rocm_agents|length) == $count and (.gpu_target|test("^gfx[0-9a-f]+$"))
   ' "$report" >/dev/null || ws_die 'an observed target-workstation report with every GPU is required'
-  ws_hardware_assert_json "$(jq -c .pci_gpus "$report")" "$(jq -c .rocm_agents "$report")" "$EXPECTED_GPU_COUNT" \
-    || ws_die 'hardware report contains inconsistent GPU evidence'
+  ws_hardware_assert_json "$(jq -c .pci_gpus "$report")" "$(jq -c .rocm_agents "$report")" "$EXPECTED_GPU_COUNT" ||
+    ws_die 'hardware report contains inconsistent GPU evidence'
   jq -er '.gpu_target as $target | select(all(.rocm_agents[]; .gfx == $target)) | .gpu_target' "$report"
 }
 
@@ -385,18 +432,18 @@ ws_argon2_calibrate() (
   mkdir -p -- "$output"
   raw="$output/argon2id.txt"
   cryptsetup benchmark --pbkdf argon2id --iter-time "$LUKS_ITER_TIME_MS" \
-    --pbkdf-memory "$LUKS_MEMORY_KIB" --pbkdf-parallel "$LUKS_PARALLEL" > "$raw" || ws_die 'Argon2id benchmark failed'
+    --pbkdf-memory "$LUKS_MEMORY_KIB" --pbkdf-parallel "$LUKS_PARALLEL" >"$raw" || ws_die 'Argon2id benchmark failed'
   read -r iterations memory parallel < <(awk '$1 == "argon2id" {print $2,$4,$6}' "$raw") || ws_die 'Argon2id benchmark produced no parameters'
   local parameter
   for parameter in "$iterations" "$memory" "$parallel"; do
     ws_positive_integer "$parameter" || ws_die 'could not parse Argon2id benchmark'
   done
-  ((memory >= 262144 && memory <= LUKS_MEMORY_KIB && parallel <= LUKS_PARALLEL)) \
-    || ws_die 'calibrated Argon2id parameters are outside the installation policy; review the raw benchmark'
+  ((memory >= 262144 && memory <= LUKS_MEMORY_KIB && parallel <= LUKS_PARALLEL)) ||
+    ws_die 'calibrated Argon2id parameters are outside the installation policy; review the raw benchmark'
   jq -n --argjson time "$LUKS_ITER_TIME_MS" --argjson memory "$memory" --argjson iterations "$iterations" \
     --argjson parallel "$parallel" --arg version "$(cryptsetup --version)" --arg date "$(date -u +%FT%TZ)" \
     '{schema:1,pbkdf:"argon2id",requested_unlock_ms:$time,memory_kib:$memory,iterations:$iterations,parallelism:$parallel,
-      cryptsetup:$version,measured_at:$date,scope:"in-memory benchmark; installation recalibrates and records actual keyslot parameters"}' > "$output/argon2id.json"
-  printf 'LUKS_ITER_TIME_MS=%s\nLUKS_MEMORY_KIB=%s\nLUKS_PARALLEL=%s\n' "$LUKS_ITER_TIME_MS" "$memory" "$parallel" > "$output/install-values.conf"
+      cryptsetup:$version,measured_at:$date,scope:"in-memory benchmark; installation recalibrates and records actual keyslot parameters"}' >"$output/argon2id.json"
+  printf 'LUKS_ITER_TIME_MS=%s\nLUKS_MEMORY_KIB=%s\nLUKS_PARALLEL=%s\n' "$LUKS_ITER_TIME_MS" "$memory" "$parallel" >"$output/install-values.conf"
   ws_note "Argon2id calibration: $output/argon2id.json; no storage was changed"
 )

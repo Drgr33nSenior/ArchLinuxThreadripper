@@ -10,12 +10,18 @@ trap 'rm -rf -- "$work"' EXIT
 ws_require_arch() { :; }
 # shellcheck disable=SC2329
 cryptsetup() {
-  printf '%s\n' "$*" >> "$work/cryptsetup-arguments"
-  if [[ $1 == --version ]]; then printf 'cryptsetup synthetic-test\n'; return; fi
+  printf '%s\n' "$*" >>"$work/cryptsetup-arguments"
+  if [[ $1 == --version ]]; then
+    printf 'cryptsetup synthetic-test\n'
+    return
+  fi
   [[ $1 == benchmark ]] || return 1
   case ${benchmark_case:-valid} in
     valid) printf 'argon2id 4 iterations, 524288 memory, 4 parallel threads (CPUs) for 2000 ms (requested 2000 ms)\n' ;;
-    failed) printf 'argon2id 4 iterations, 524288 memory, 4 parallel threads\n'; return 1 ;;
+    failed)
+      printf 'argon2id 4 iterations, 524288 memory, 4 parallel threads\n'
+      return 1
+      ;;
     malformed) printf 'unrecognized output\n' ;;
     weak) printf 'argon2id 4 iterations, 65536 memory, 4 parallel threads\n' ;;
   esac
@@ -31,12 +37,13 @@ if (ws_argon2_calibrate "$repo_root/config/install.conf.example" "$work/valid") 
 
 for benchmark_case in failed malformed weak; do
   if (ws_argon2_calibrate "$repo_root/config/install.conf.example" "$work/$benchmark_case") >/dev/null 2>&1; then
-    echo "invalid Argon2id benchmark accepted: $benchmark_case" >&2; exit 1
+    echo "invalid Argon2id benchmark accepted: $benchmark_case" >&2
+    exit 1
   fi
   [[ ! -e $work/$benchmark_case/argon2id.json ]]
 done
 benchmark_case=valid
-sed 's/^LUKS_PARALLEL=.*/LUKS_PARALLEL=48/' "$repo_root/config/install.conf.example" > "$work/invalid.conf"
+sed 's/^LUKS_PARALLEL=.*/LUKS_PARALLEL=48/' "$repo_root/config/install.conf.example" >"$work/invalid.conf"
 if (ws_argon2_calibrate "$work/invalid.conf" "$work/invalid") >/dev/null 2>&1; then exit 1; fi
 [[ ! -e $work/invalid ]]
 echo 'Argon2id calibration parsing, bounds and benchmark-only tests passed'

@@ -1,5 +1,8 @@
 # Performance validation: September 2026 audit
 
+See [validation of e5281734](VALIDATION-e5281734.md) for the dependency-prepared
+follow-up checks, retained logs, corrections and remaining qualification blockers.
+
 Reviewed 2026-09-09 against checkout `bd4077f58afb6f81f3bfdd33986d001d46170dcc`,
 the same revision reviewed externally on 8 September. Existing uncommitted
 template annotations were preserved. No installer, GPU workload, live cluster,

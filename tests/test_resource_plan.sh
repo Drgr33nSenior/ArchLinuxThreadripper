@@ -13,13 +13,13 @@ trap 'rm -rf -- "$work"' EXIT
 write_hardware() {
   local path=$1 memory_bytes=$2 dimm_count=$3 topology=$4 dimms='[]' number
   for ((number = 1; number <= dimm_count; number++)); do
-    dimms=$(jq --arg locator "DIMM_${number}" '. + [{locator:$locator,size:"32 GiB"}]' <<< "$dimms")
+    dimms=$(jq --arg locator "DIMM_${number}" '. + [{locator:$locator,size:"32 GiB"}]' <<<"$dimms")
   done
   jq -n --argjson memory "$memory_bytes" --argjson dimms "$dimms" --argjson topology "$topology" '
     {schema:1,status:"observed",os:"Linux",architecture:"x86_64",expected:{gpu_count:2,gpu_model:"R9700"},gpu_target:"gfx1201",
      pci_gpus:[{bdf:"0000:01:00.0",device_id:"0x1234",driver:"amdgpu",render_nodes:["renderD128"]},{bdf:"0000:02:00.0",device_id:"0x1234",driver:"amdgpu",render_nodes:["renderD129"]}],
      rocm_agents:[{agent:"1",gfx:"gfx1201",uuid:"GPU-1"},{agent:"2",gfx:"gfx1201",uuid:"GPU-2"}],
-     cpu_topology:$topology,memory:{total_bytes:$memory,available_bytes:($memory - 1073741824),dimms:$dimms}}' > "$path"
+     cpu_topology:$topology,memory:{total_bytes:$memory,available_bytes:($memory - 1073741824),dimms:$dimms}}' >"$path"
 }
 
 contiguous_topology=$(jq -cn '{
@@ -58,7 +58,7 @@ if (ws_resources_plan "$work/unknown-topology.json" "$work/unknown-plan") >/dev/
 fi
 [[ ! -e $work/unknown-plan ]]
 
-asymmetric_topology=$(jq '.cpus[1].thread_siblings = [1]' <<< "$contiguous_topology")
+asymmetric_topology=$(jq '.cpus[1].thread_siblings = [1]' <<<"$contiguous_topology")
 write_hardware "$work/asymmetric-topology.json" $((64 * 1024 * 1024 * 1024)) 2 "$asymmetric_topology"
 if (ws_resources_plan "$work/asymmetric-topology.json" "$work/asymmetric-plan") >/dev/null 2>&1; then
   printf 'asymmetric SMT topology was accepted\n' >&2
@@ -66,7 +66,7 @@ if (ws_resources_plan "$work/asymmetric-topology.json" "$work/asymmetric-plan") 
 fi
 [[ ! -e $work/asymmetric-plan ]]
 
-printf 'K3S_VERSION=v1.36.0+k3s1\n' > "$work/unsupported.lock"
+printf 'K3S_VERSION=v1.36.0+k3s1\n' >"$work/unsupported.lock"
 if (ws_resources_plan "$work/two-dimm.json" "$work/unsupported-plan" "$work/unsupported.lock") >/dev/null 2>&1; then
   printf 'unsupported K3s minor was accepted\n' >&2
   exit 1
@@ -85,14 +85,14 @@ uname() { [[ ${1:-} == -s ]] && printf 'Linux\n'; }
 nproc() { printf '48\n'; }
 ws_available_memory_mib() { printf '65536\n'; }
 [[ $(ws_build_jobs normal) == 20 ]]
-printf 'gaming transition\n' > "$work/build-inhibit"
+printf 'gaming transition\n' >"$work/build-inhibit"
 if (ws_build_jobs normal) >/dev/null 2>&1; then
   printf 'active managed-build inhibit marker was ignored\n' >&2
   exit 1
 fi
 chmod 000 "$work/build-inhibit"
 if [[ ! -r $work/build-inhibit ]]; then
-  if (ws_build_jobs normal) > "$work/unreadable-marker.txt" 2>&1; then
+  if (ws_build_jobs normal) >"$work/unreadable-marker.txt" 2>&1; then
     printf 'unreadable managed-build inhibit marker was ignored\n' >&2
     exit 1
   fi

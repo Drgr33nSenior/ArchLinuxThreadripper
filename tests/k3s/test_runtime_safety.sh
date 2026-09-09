@@ -12,13 +12,13 @@ valid_records="pub:-:4096:1:TEST:0:0::-:::sc::::::23::0:
 fpr:::::::::$fingerprint:
 sub:-:4096:1:SUBKEY:0:0:::::e:
 fpr:::::::::2222222222222222222222222222222222222222:"
-k3s_gpg_primary_matches "$fingerprint" <<< "$valid_records"
-if k3s_gpg_primary_matches 3333333333333333333333333333333333333333 <<< "$valid_records"; then exit 1; fi
-if k3s_gpg_primary_matches 2222222222222222222222222222222222222222 <<< "$valid_records"; then exit 1; fi
-if k3s_gpg_primary_matches "$fingerprint" <<< "$valid_records
+k3s_gpg_primary_matches "$fingerprint" <<<"$valid_records"
+if k3s_gpg_primary_matches 3333333333333333333333333333333333333333 <<<"$valid_records"; then exit 1; fi
+if k3s_gpg_primary_matches 2222222222222222222222222222222222222222 <<<"$valid_records"; then exit 1; fi
+if k3s_gpg_primary_matches "$fingerprint" <<<"$valid_records
 pub:-:4096:1:FOREIGN:0:0::-:::sc:
 fpr:::::::::3333333333333333333333333333333333333333:"; then exit 1; fi
-if k3s_gpg_primary_matches "$fingerprint" <<< "pub:::::::::
+if k3s_gpg_primary_matches "$fingerprint" <<<"pub:::::::::
 :fpr:::::::::$fingerprint:"; then exit 1; fi
 
 [[ $(k3s_service_dns 10.43.0.0/16) == 10.43.0.10 ]]
@@ -88,7 +88,7 @@ K3S_LOCK_SOURCE="$root/versions.lock"
 mkdir -p "$VM_POOL_DIR/base" "$VM_POOL_DIR/cloud-init" "$VM_POOL_DIR/generated"
 base_name=AlmaLinux-9-GenericCloud-synthetic.x86_64.qcow2
 for file in system.qcow2 data.qcow2 cloud-init.iso create.conf ansible-vars.yml inventory.ini "base/$base_name"; do
-  printf 'synthetic fixture\n' > "$VM_POOL_DIR/$file"
+  printf 'synthetic fixture\n' >"$VM_POOL_DIR/$file"
 done
 # The macOS sha256sum alias need not implement GNU long flags. This adapter
 # still computes and verifies real fixture hashes, never a canned digest.
@@ -96,9 +96,12 @@ sha256sum() {
   if [[ ${1:-} == --check ]]; then shasum -a 256 --check --status; else shasum -a 256 "$@"; fi
 }
 base_hash=$(sha256sum "$VM_POOL_DIR/base/$base_name" | awk '{print $1}')
-printf 'ALMALINUX_IMAGE_NAME=%s\nALMALINUX_IMAGE_SHA256=%s\n' "$base_name" "$base_hash" > "$VM_POOL_DIR/create.lock"
+printf 'ALMALINUX_IMAGE_NAME=%s\nALMALINUX_IMAGE_SHA256=%s\n' "$base_name" "$base_hash" >"$VM_POOL_DIR/create.lock"
 qemu-img() {
-  [[ ${1:-} != --version ]] || { printf 'synthetic qemu\n'; return; }
+  [[ ${1:-} != --version ]] || {
+    printf 'synthetic qemu\n'
+    return
+  }
   [[ $1 == info && $2 == --backing-chain && $3 == --output=json ]] || return 90
   local disk=$4 base="$VM_POOL_DIR/base/$base_name"
   [[ ${chain_case:-valid} != foreign ]] || base=/unapproved/backing.qcow2
@@ -110,18 +113,24 @@ qemu-img() {
 }
 k3s_backup_check_chain "$VM_POOL_DIR/system.qcow2" "$VM_POOL_DIR/base/$base_name"
 k3s_backup_check_chain "$VM_POOL_DIR/data.qcow2"
-if (chain_case=foreign; k3s_backup_check_chain "$VM_POOL_DIR/system.qcow2" "$VM_POOL_DIR/base/$base_name") 2>/dev/null; then exit 1; fi
+if (
+  chain_case=foreign
+  k3s_backup_check_chain "$VM_POOL_DIR/system.qcow2" "$VM_POOL_DIR/base/$base_name"
+) 2>/dev/null; then exit 1; fi
 
 if command -v xmllint >/dev/null; then
   # Firmware paths are metadata fixtures. Only this file-validation mock sees
   # them; no host firmware/NVRAM is opened or copied by the test.
   k3s_backup_regular_file() {
     case $1 in
-      /usr/share/edk2/x64/OVMF_CODE.fd|/usr/share/edk2/x64/OVMF_VARS.fd|/var/lib/libvirt/qemu/nvram/synthetic-k3s_VARS.fd) return 0 ;;
+      /usr/share/edk2/x64/OVMF_CODE.fd | /usr/share/edk2/x64/OVMF_VARS.fd | /var/lib/libvirt/qemu/nvram/synthetic-k3s_VARS.fd) return 0 ;;
       *) [[ -f $1 && ! -L $1 ]] || k3s_die 'missing synthetic backup file' ;;
     esac
   }
-  readlink() { [[ $1 == -f && $2 == -- && $3 == /usr/share/edk2/* ]] || return 91; printf '%s\n' "$3"; }
+  readlink() {
+    [[ $1 == -f && $2 == -- && $3 == /usr/share/edk2/* ]] || return 91
+    printf '%s\n' "$3"
+  }
   virsh() {
     case " $* " in
       *' --version '*) printf 'synthetic libvirt\n' ;;
@@ -144,8 +153,11 @@ if command -v xmllint >/dev/null; then
   seed_attached=no
   k3s_backup_prepare
   if printf '%s\n' "${K3S_BACKUP_INPUTS[@]}" | grep -Fxq "$VM_POOL_DIR/cloud-init.iso"; then exit 1; fi
-  if (foreign_device=yes; k3s_backup_prepare) 2>/dev/null; then exit 1; fi
-  printf 'changed backing fixture\n' > "$VM_POOL_DIR/base/$base_name"
+  if (
+    foreign_device=yes
+    k3s_backup_prepare
+  ) 2>/dev/null; then exit 1; fi
+  printf 'changed backing fixture\n' >"$VM_POOL_DIR/base/$base_name"
   if (k3s_backup_prepare) 2>/dev/null; then exit 1; fi
 else
   echo 'SKIP: full synthetic backup XML checks require xmllint (libxml2)'

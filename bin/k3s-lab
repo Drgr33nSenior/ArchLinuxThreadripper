@@ -29,15 +29,32 @@ uses qemu:///system and never configures VM autostart.
 EOF
 }
 
-config=''; operation=''; operation_argument=''; operation_argument_count=0; K3S_DRY_RUN=false
+config=''
+operation=''
+operation_argument=''
+operation_argument_count=0
+K3S_DRY_RUN=false
 while (($#)); do
   case "$1" in
-    --config) (($# >= 2)) || { usage >&2; exit 2; }; config=$2; shift 2 ;;
-    --dry-run) K3S_DRY_RUN=true; shift ;;
-    -h|--help) usage; exit 0 ;;
+    --config)
+      (($# >= 2)) || {
+        usage >&2
+        exit 2
+      }
+      config=$2
+      shift 2
+      ;;
+    --dry-run)
+      K3S_DRY_RUN=true
+      shift
+      ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
     --skip-etcd-snapshot)
-      [[ $operation == down && $operation_argument_count -eq 0 ]] \
-        || k3s_die '--skip-etcd-snapshot is accepted only once after down'
+      [[ $operation == down && $operation_argument_count -eq 0 ]] ||
+        k3s_die '--skip-etcd-snapshot is accepted only once after down'
       operation_argument_count=1
       operation_argument=$1
       shift
@@ -55,7 +72,10 @@ while (($#)); do
       ;;
   esac
 done
-[[ -n $config && -n $operation ]] || { usage >&2; exit 2; }
+[[ -n $config && -n $operation ]] || {
+  usage >&2
+  exit 2
+}
 if ((operation_argument_count == 0)); then set --; else set -- "$operation_argument"; fi
 k3s_load_config "$config" "$script_dir/../versions.lock"
 
@@ -65,15 +85,48 @@ if [[ $K3S_DRY_RUN == true ]]; then
 fi
 
 case "$operation" in
-  network-create) [ "$#" -eq 0 ] || k3s_die 'network-create accepts no additional arguments'; k3s_network_create ;;
-  create) [ "$#" -eq 0 ] || k3s_die 'create accepts no additional arguments'; k3s_create ;;
-  provision) [ "$#" -eq 0 ] || k3s_die 'provision accepts no additional arguments'; k3s_provision ;;
-  up) [ "$#" -eq 0 ] || k3s_die 'up accepts no additional arguments'; k3s_up ;;
-  down) [ "$#" -le 1 ] || k3s_die 'down accepts at most one option'; k3s_down "${1:-}" ;;
-  status) [ "$#" -eq 0 ] || k3s_die 'status accepts no additional arguments'; k3s_status ;;
-  backup-init) [ "$#" -eq 0 ] || k3s_die 'backup-init accepts no additional arguments'; k3s_backup_init ;;
-  backup) [ "$#" -eq 0 ] || k3s_die 'backup accepts no additional arguments'; k3s_backup ;;
-  upgrade) [ "$#" -eq 1 ] || k3s_die 'upgrade requires one version'; k3s_upgrade "$1" ;;
-  restore-test) [ "$#" -eq 1 ] || k3s_die 'restore-test requires a snapshot path'; k3s_restore_test "$1" ;;
-  *) usage >&2; exit 2 ;;
+  network-create)
+    [ "$#" -eq 0 ] || k3s_die 'network-create accepts no additional arguments'
+    k3s_network_create
+    ;;
+  create)
+    [ "$#" -eq 0 ] || k3s_die 'create accepts no additional arguments'
+    k3s_create
+    ;;
+  provision)
+    [ "$#" -eq 0 ] || k3s_die 'provision accepts no additional arguments'
+    k3s_provision
+    ;;
+  up)
+    [ "$#" -eq 0 ] || k3s_die 'up accepts no additional arguments'
+    k3s_up
+    ;;
+  down)
+    [ "$#" -le 1 ] || k3s_die 'down accepts at most one option'
+    k3s_down "${1:-}"
+    ;;
+  status)
+    [ "$#" -eq 0 ] || k3s_die 'status accepts no additional arguments'
+    k3s_status
+    ;;
+  backup-init)
+    [ "$#" -eq 0 ] || k3s_die 'backup-init accepts no additional arguments'
+    k3s_backup_init
+    ;;
+  backup)
+    [ "$#" -eq 0 ] || k3s_die 'backup accepts no additional arguments'
+    k3s_backup
+    ;;
+  upgrade)
+    [ "$#" -eq 1 ] || k3s_die 'upgrade requires one version'
+    k3s_upgrade "$1"
+    ;;
+  restore-test)
+    [ "$#" -eq 1 ] || k3s_die 'restore-test requires a snapshot path'
+    k3s_restore_test "$1"
+    ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
 esac

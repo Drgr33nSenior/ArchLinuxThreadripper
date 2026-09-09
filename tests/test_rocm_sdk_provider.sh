@@ -17,7 +17,7 @@ printf '%s\n' \
   'ROCM_AUR_COMMIT=ccac18259575a393b402ea90cd9ef3552081721e' \
   'ROCM_AUR_PKGBUILD_SHA256=578d394a3f82f4006fca1707a2bed85ffc9774b4ca24e75e723399ae52dbb4d8' \
   'ROCM_AUR_SOURCE_URL=https://stable.repo.amd.com/rocm/core/tarball/therock-dist-linux-gfx120X-all-10.0.0.tar.gz' \
-  'ROCM_AUR_SOURCE_SHA256=eb99db434a1738fd83b0c3b933146cdb76418f35fcf4647743fbdfef76e8c71f' > "$lock"
+  'ROCM_AUR_SOURCE_SHA256=eb99db434a1738fd83b0c3b933146cdb76418f35fcf4647743fbdfef76e8c71f' >"$lock"
 
 unset ROCM_SDK_PROVIDER
 [[ $(ws_rocm_sdk_provider) == arch ]]
@@ -25,7 +25,7 @@ unset ROCM_SDK_PROVIDER
 ws_load_config "$repo_root/config/workstation.conf.example"
 [[ $ROCM_SDK_PROVIDER == arch ]]
 
-sed 's/^ROCM_SDK_PROVIDER=arch$/ROCM_SDK_PROVIDER=unsupported/' "$repo_root/config/workstation.conf.example" > "$work/unsupported.conf"
+sed 's/^ROCM_SDK_PROVIDER=arch$/ROCM_SDK_PROVIDER=unsupported/' "$repo_root/config/workstation.conf.example" >"$work/unsupported.conf"
 if (ws_load_config "$work/unsupported.conf") >/dev/null 2>&1; then
   printf 'unsupported ROCm SDK provider configuration was accepted\n' >&2
   exit 1
@@ -39,12 +39,12 @@ ws_rocm_sdk_aur_lock_validate "$lock" >/dev/null
 make_aur_layout() {
   local root=$1 core="$1/core"
   mkdir -p -- "$core/bin" "$core/include" "$core/lib/cmake/hip" "$core/lib/cmake/hipblas" "$core/lib/cmake/rocblas"
-  : > "$core/bin/amdclang++"
-  : > "$core/bin/hipcc"
+  : >"$core/bin/amdclang++"
+  : >"$core/bin/hipcc"
   chmod +x "$core/bin/amdclang++" "$core/bin/hipcc"
-  : > "$core/lib/cmake/hip/hip-config.cmake"
-  : > "$core/lib/cmake/hipblas/hipblas-config.cmake"
-  : > "$core/lib/cmake/rocblas/rocblas-config.cmake"
+  : >"$core/lib/cmake/hip/hip-config.cmake"
+  : >"$core/lib/cmake/hipblas/hipblas-config.cmake"
+  : >"$core/lib/cmake/rocblas/rocblas-config.cmake"
   ln -s "$core/bin" "$root/bin"
   ln -s "$core/lib" "$root/lib"
   ln -s "$core/include" "$root/include"
@@ -70,7 +70,7 @@ if (ws_rocm_sdk_provider) >/dev/null 2>&1; then
 fi
 ROCM_SDK_PROVIDER=aur-gfx120x-bin
 
-sed 's/ROCM_AUR_PACKAGE_VERSION=10.0.0-2/ROCM_AUR_PACKAGE_VERSION=10.0.1-1/' "$lock" > "$work/unreviewed.lock"
+sed 's/ROCM_AUR_PACKAGE_VERSION=10.0.0-2/ROCM_AUR_PACKAGE_VERSION=10.0.1-1/' "$lock" >"$work/unreviewed.lock"
 if (ws_rocm_sdk_aur_lock_validate "$work/unreviewed.lock") >/dev/null 2>&1; then
   printf 'unreviewed ROCm AUR lock was accepted\n' >&2
   exit 1
@@ -98,7 +98,7 @@ pacman() {
 ws_rocm_llama_aur_owner_output rocm-gfx120x-bin 10.0.0-2 \
   "$layout_root/core/bin/hipcc" "$layout_root/core/lib/cmake/hip/hip-config.cmake" >/dev/null
 
-: > "$layout_root/core/bin/hipcc.target"
+: >"$layout_root/core/bin/hipcc.target"
 ln -s "$layout_root/core/bin/hipcc.target" "$layout_root/core/bin/hipcc.symlink"
 TEST_ROCM_FOREIGN_TARGET=$(ws_rocm_realpath_existing "$layout_root/core/bin/hipcc.target")
 if (ws_rocm_llama_aur_owner_output rocm-gfx120x-bin 10.0.0-2 "$layout_root/core/bin/hipcc.symlink") >/dev/null 2>&1; then

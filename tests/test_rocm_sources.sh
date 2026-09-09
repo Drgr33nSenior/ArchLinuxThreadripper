@@ -18,13 +18,16 @@ git() {
     'remote get-url') printf '%s\n' "${source_origin:-https://github.com/ROCm/TheRock.git}" ;;
     'status --porcelain=v1') [[ ${source_case:-} != dirty-root ]] || printf ' M README.md\n' ;;
     'submodule status')
-      if [[ ${source_case:-} == missing ]]; then printf '%s\n' '-1111111111111111111111111111111111111111 compiler';
-      else printf ' 1111111111111111111111111111111111111111 compiler\n'; fi ;;
+      if [[ ${source_case:-} == missing ]]; then
+        printf '%s\n' '-1111111111111111111111111111111111111111 compiler'
+      else printf ' 1111111111111111111111111111111111111111 compiler\n'; fi
+      ;;
     'submodule foreach')
       [[ ${source_case:-} != dirty-submodule ]] || return 1
       [[ $* == *--ignore-submodules=all* ]] || return 1
       printf 'compiler\thttps://example.invalid/compiler.git\t%s\t%s\t%s\n' \
-        1111111111111111111111111111111111111111 2222222222222222222222222222222222222222 3333333333333333333333333333333333333333 ;;
+        1111111111111111111111111111111111111111 2222222222222222222222222222222222222222 3333333333333333333333333333333333333333
+      ;;
     'verify-commit '*) return 1 ;;
     *) return 1 ;;
   esac
@@ -36,7 +39,8 @@ jq -e --arg commit "$locked_commit" '
 ' "$work/sources.json" >/dev/null
 for source_case in dirty-root missing dirty-submodule; do
   if (ws_rocm_source_manifest "$work/TheRock" "$work/$source_case.json") >/dev/null 2>&1; then
-    echo "unsafe source inventory accepted: $source_case" >&2; exit 1
+    echo "unsafe source inventory accepted: $source_case" >&2
+    exit 1
   fi
   [[ ! -e $work/$source_case.json ]]
 done

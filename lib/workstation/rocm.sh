@@ -40,7 +40,7 @@ ws_rocm_plan() {
         "Use pinned TheRock compiler_check for bootstrapped compilers; scope any sloppiness to this build",
         "Recalculate available-memory concurrency and verify nested Ninja limits before compilation",
         "Record effective per-component compiler flags, CMake caches and package hashes"],
-      release_gate:"HIP, PyTorch, RCCL, inference and reboot tests on both physical GPUs; retain last-known-good packages"}' > "$output/build-plan.json"
+      release_gate:"HIP, PyTorch, RCCL, inference and reboot tests on both physical GPUs; retain last-known-good packages"}' >"$output/build-plan.json"
   cp -- "$report" "$output/hardware.json"
   ws_note "generated reviewable TheRock plan: $output/build-plan.json; source build and dependency sealing remain pending"
 }
@@ -51,13 +51,13 @@ ws_rocm_source_manifest() (
   commit=$(ws_read_lock ROCM_THEROCK_COMMIT)
   repository=$(ws_read_lock ROCM_THEROCK_REPOSITORY)
   [[ -d $source/.git && ! -e $output ]] || ws_die 'require an existing TheRock checkout and a new output filename'
-  [[ $(git -C "$source" rev-parse HEAD) == "$commit" && $(git -C "$source" remote get-url origin) == "$repository" ]] \
-    || ws_die 'TheRock checkout differs from versions.lock'
+  [[ $(git -C "$source" rev-parse HEAD) == "$commit" && $(git -C "$source" remote get-url origin) == "$repository" ]] ||
+    ws_die 'TheRock checkout differs from versions.lock'
   top_status=$(git -C "$source" status --porcelain=v1 --untracked-files=all --ignore-submodules=all) || ws_die 'cannot inspect TheRock checkout status'
   [[ -z $top_status ]] || ws_die 'top-level TheRock checkout contains modifications or untracked files'
   status=$(git -C "$source" submodule status --recursive) || ws_die 'cannot inspect source submodules'
   [[ -n $status ]] || ws_die 'TheRock has no initialized source submodules'
-  if grep -Eq '^[-U]' <<< "$status"; then
+  if grep -Eq '^[-U]' <<<"$status"; then
     ws_die 'source submodules are missing or conflicted'
   fi
   records=$(mktemp)
@@ -73,27 +73,27 @@ ws_rocm_source_manifest() (
     actual=$(git rev-parse HEAD) || exit 1
     tree=$(git rev-parse HEAD^{tree}) || exit 1
     printf "%s\t%s\t%s\t%s\t%s\n" "$displaypath" "$origin" "$sha1" "$actual" "$tree"
-  ' > "$records" || ws_die 'a source submodule is dirty or has no origin'
+  ' >"$records" || ws_die 'a source submodule is dirty or has no origin'
   if git -C "$source" verify-commit "$commit" >/dev/null 2>&1; then signature=verified-local-keyring; fi
   jq -Rn --arg repository "$repository" --arg commit "$commit" --arg signature "$signature" \
     '[inputs | split("\t") | {path:.[0],repository:.[1],gitlink:.[2],commit:.[3],tree:.[4],patched:(.[2]!=.[3])}] |
       {schema:1,source:{repository:$repository,commit:$commit,signature:$signature},submodules:.,
        status:"source-inventory-not-build-proof",requires_review:true,
        limitations:["External downloads/Python wheels/build-root packages must be sealed separately",
-                    "Patched submodule commits must be reviewed against the pinned upstream patch set"]}' < "$records" > "$output"
+                    "Patched submodule commits must be reviewed against the pinned upstream patch set"]}' <"$records" >"$output"
 )
 
 ws_rocm_llama_checkout_validate() {
   local source=$1 lock=${2:-$(ws_repo_root)/versions.lock} repository commit status
   repository=$(ws_read_lock ROCM_LLAMA_CPP_REPOSITORY "$lock")
   commit=$(ws_read_lock ROCM_LLAMA_CPP_COMMIT "$lock")
-  [[ $repository == https://github.com/ggml-org/llama.cpp.git && $commit =~ ^[a-f0-9]{40}$ ]] \
-    || ws_die 'llama.cpp source lock is invalid'
+  [[ $repository == https://github.com/ggml-org/llama.cpp.git && $commit =~ ^[a-f0-9]{40}$ ]] ||
+    ws_die 'llama.cpp source lock is invalid'
   [[ -d $source/.git ]] || ws_die 'llama.cpp checkout must contain .git'
-  [[ $(git -C "$source" rev-parse HEAD) == "$commit" && $(git -C "$source" remote get-url origin) == "$repository" ]] \
-    || ws_die 'llama.cpp checkout differs from versions.lock'
-  status=$(git -C "$source" status --porcelain=v1 --untracked-files=all --ignore-submodules=all) \
-    || ws_die 'cannot inspect llama.cpp checkout status'
+  [[ $(git -C "$source" rev-parse HEAD) == "$commit" && $(git -C "$source" remote get-url origin) == "$repository" ]] ||
+    ws_die 'llama.cpp checkout differs from versions.lock'
+  status=$(git -C "$source" status --porcelain=v1 --untracked-files=all --ignore-submodules=all) ||
+    ws_die 'cannot inspect llama.cpp checkout status'
   [[ -z $status ]] || ws_die 'llama.cpp checkout contains modifications or untracked files'
 }
 
@@ -101,8 +101,8 @@ ws_rocm_boot_id_read() {
   local file=$1 boot_id
   [[ -r $file ]] || ws_die "hardware boot ID is unavailable: $file"
   boot_id=$(<"$file")
-  [[ $boot_id =~ ^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$ ]] \
-    || ws_die "hardware boot ID is invalid: $file"
+  [[ $boot_id =~ ^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$ ]] ||
+    ws_die "hardware boot ID is invalid: $file"
   printf '%s\n' "$boot_id"
 }
 
@@ -134,8 +134,11 @@ ws_rocm_llama_environment_validate() {
 ws_rocm_sdk_provider() {
   local provider=${ROCM_SDK_PROVIDER:-arch}
   case $provider in
-    arch|aur-gfx120x-bin) ;;
-    *) ws_die 'ROCM_SDK_PROVIDER must be arch or aur-gfx120x-bin'; return 1 ;;
+    arch | aur-gfx120x-bin) ;;
+    *)
+      ws_die 'ROCM_SDK_PROVIDER must be arch or aur-gfx120x-bin'
+      return 1
+      ;;
   esac
   printf '%s\n' "$provider"
 }
@@ -150,12 +153,15 @@ ws_rocm_sdk_aur_lock_validate() {
   recipe_hash=$(ws_read_lock ROCM_AUR_PKGBUILD_SHA256 "$lock")
   source_url=$(ws_read_lock ROCM_AUR_SOURCE_URL "$lock")
   source_hash=$(ws_read_lock ROCM_AUR_SOURCE_SHA256 "$lock")
-  [[ $repository == https://aur.archlinux.org/rocm-gfx120x-bin.git \
-    && $package == rocm-gfx120x-bin && $version == 10.0.0-2 \
-    && $commit =~ ^[a-f0-9]{40}$ && $recipe_hash =~ ^[a-f0-9]{64}$ \
-    && $source_url == "https://stable.repo.amd.com/rocm/core/tarball/therock-dist-linux-gfx120X-all-$release_version.tar.gz" \
-    && $source_hash =~ ^[a-f0-9]{64}$ ]] \
-    || { ws_die 'the reviewed ROCm 10 AUR provider lock does not match rocm-gfx120x-bin 10.0.0-2'; return 1; }
+  [[ $repository == https://aur.archlinux.org/rocm-gfx120x-bin.git &&
+    $package == rocm-gfx120x-bin && $version == 10.0.0-2 &&
+    $commit =~ ^[a-f0-9]{40}$ && $recipe_hash =~ ^[a-f0-9]{64}$ &&
+    $source_url == "https://stable.repo.amd.com/rocm/core/tarball/therock-dist-linux-gfx120X-all-$release_version.tar.gz" &&
+    $source_hash =~ ^[a-f0-9]{64}$ ]] ||
+    {
+      ws_die 'the reviewed ROCm 10 AUR provider lock does not match rocm-gfx120x-bin 10.0.0-2'
+      return 1
+    }
 }
 
 ws_rocm_sdk_prefix() {
@@ -163,13 +169,19 @@ ws_rocm_sdk_prefix() {
   case $provider in
     arch) printf '%s\n' /opt/rocm ;;
     aur-gfx120x-bin) printf '%s\n' /opt/rocm/core ;;
-    *) ws_die 'unknown ROCm SDK provider'; return 1 ;;
+    *)
+      ws_die 'unknown ROCm SDK provider'
+      return 1
+      ;;
   esac
 }
 
 ws_rocm_realpath_existing() {
   local path=$1
-  [[ -e $path || -L $path ]] || { ws_die "cannot resolve missing ROCm path: $path"; return 1; }
+  [[ -e $path || -L $path ]] || {
+    ws_die "cannot resolve missing ROCm path: $path"
+    return 1
+  }
   realpath -e -- "$path" 2>/dev/null || realpath "$path"
 }
 
@@ -177,29 +189,41 @@ ws_rocm_sdk_aur_layout_validate() {
   local root=$1 rocm=$2 path resolved directory link_target
   root=$(ws_rocm_realpath_existing "$root") || return 1
   rocm=$(ws_rocm_realpath_existing "$rocm") || return 1
-  [[ $root == /* && $rocm == "$root/core" && -d $rocm \
-    && -x $rocm/bin/amdclang++ && -x $rocm/bin/hipcc \
-    && -r $rocm/lib/cmake/hip/hip-config.cmake \
-    && -r $rocm/lib/cmake/hipblas/hipblas-config.cmake \
-    && -r $rocm/lib/cmake/rocblas/rocblas-config.cmake ]] \
-    || { ws_die 'ROCm 10 AUR core layout is incomplete'; return 1; }
+  [[ $root == /* && $rocm == "$root/core" && -d $rocm &&
+    -x $rocm/bin/amdclang++ && -x $rocm/bin/hipcc &&
+    -r $rocm/lib/cmake/hip/hip-config.cmake &&
+    -r $rocm/lib/cmake/hipblas/hipblas-config.cmake &&
+    -r $rocm/lib/cmake/rocblas/rocblas-config.cmake ]] ||
+    {
+      ws_die 'ROCm 10 AUR core layout is incomplete'
+      return 1
+    }
   for directory in bin lib include; do
     link_target=$(readlink -- "$root/$directory") || return 1
-    [[ -L $root/$directory && $link_target == /* \
-      && $(ws_rocm_realpath_existing "$root/$directory") == "$rocm/$directory" ]] \
-      || { ws_die "ROCm 10 AUR compatibility path is not the reviewed core symlink: $root/$directory"; return 1; }
+    [[ -L $root/$directory && $link_target == /* &&
+      $(ws_rocm_realpath_existing "$root/$directory") == "$rocm/$directory" ]] ||
+      {
+        ws_die "ROCm 10 AUR compatibility path is not the reviewed core symlink: $root/$directory"
+        return 1
+      }
   done
   for path in "$rocm/bin/amdclang++" "$rocm/bin/hipcc" \
     "$rocm/lib/cmake/hip/hip-config.cmake" "$rocm/lib/cmake/hipblas/hipblas-config.cmake" \
     "$rocm/lib/cmake/rocblas/rocblas-config.cmake"; do
     resolved=$(ws_rocm_realpath_existing "$path") || return 1
-    [[ $resolved == "$rocm/"* ]] || { ws_die "ROCm 10 AUR path resolves outside the reviewed core: $path"; return 1; }
+    [[ $resolved == "$rocm/"* ]] || {
+      ws_die "ROCm 10 AUR path resolves outside the reviewed core: $path"
+      return 1
+    }
   done
 }
 
 ws_rocm_llama_rocm_owner_output() {
   local ownership
-  ownership=$(pacman -Qqo "$@") || { ws_die 'could not identify every installed ROCm path owner'; return 1; }
+  ownership=$(pacman -Qqo "$@") || {
+    ws_die 'could not identify every installed ROCm path owner'
+    return 1
+  }
   printf '%s\n' "$ownership"
 }
 
@@ -214,8 +238,8 @@ ws_rocm_llama_official_owner_output() {
     if pacman -Qm "$package" >/dev/null 2>&1; then
       ws_die "path owner is a foreign package: $package"
     fi
-    pacman -Si "$package" | awk -F: '$1 ~ /^[[:space:]]*Repository[[:space:]]*$/ && $2 ~ /^[[:space:]]*(core|extra|multilib)[[:space:]]*$/ {found=1} END {exit !found}' \
-      || ws_die "path owner is not present in an official Arch sync repository: $package"
+    pacman -Si "$package" | awk -F: '$1 ~ /^[[:space:]]*Repository[[:space:]]*$/ && $2 ~ /^[[:space:]]*(core|extra|multilib)[[:space:]]*$/ {found=1} END {exit !found}' ||
+      ws_die "path owner is not present in an official Arch sync repository: $package"
   done
   printf '%s\n' "${owners[@]}"
 }
@@ -233,13 +257,22 @@ ws_rocm_llama_aur_owner_output() {
   ownership=$(ws_rocm_llama_rocm_owner_output "${ownership_paths[@]}") || return 1
   while IFS= read -r owner; do
     [[ -n $owner ]] && owners+=("${owner%% *}")
-  done <<< "$ownership"
-  ((${#owners[@]} > 0)) || { ws_die 'could not identify installed ROCm package owners'; return 1; }
+  done <<<"$ownership"
+  ((${#owners[@]} > 0)) || {
+    ws_die 'could not identify installed ROCm package owners'
+    return 1
+  }
   for owner in "${owners[@]}"; do
-    [[ $owner == "$package" ]] || { ws_die "ROCm 10 AUR path owner is not the reviewed package: $owner"; return 1; }
+    [[ $owner == "$package" ]] || {
+      ws_die "ROCm 10 AUR path owner is not the reviewed package: $owner"
+      return 1
+    }
   done
-  [[ $(pacman -Q "$package") == "$package $version" ]] \
-    || { ws_die "ROCm 10 AUR package version does not match the reviewed lock: $package"; return 1; }
+  [[ $(pacman -Q "$package") == "$package $version" ]] ||
+    {
+      ws_die "ROCm 10 AUR package version does not match the reviewed lock: $package"
+      return 1
+    }
   printf '%s\n' "$package"
 }
 
@@ -247,17 +280,20 @@ ws_rocm_llama_rocm_validate() {
   local lock=${1:-$(ws_repo_root)/versions.lock} provider rocm ownership package version
   provider=$(ws_rocm_sdk_provider) || return 1
   rocm=$(ws_rocm_sdk_prefix "$provider") || return 1
-  [[ -d $rocm && -x $rocm/bin/amdclang++ && -x $rocm/bin/hipcc \
-    && -r $rocm/lib/cmake/hip/hip-config.cmake \
-    && -r $rocm/lib/cmake/hipblas/hipblas-config.cmake \
-    && -r $rocm/lib/cmake/rocblas/rocblas-config.cmake ]] \
-    || { ws_die "a coherent $provider ROCm installation is required at $rocm"; return 1; }
+  [[ -d $rocm && -x $rocm/bin/amdclang++ && -x $rocm/bin/hipcc &&
+    -r $rocm/lib/cmake/hip/hip-config.cmake &&
+    -r $rocm/lib/cmake/hipblas/hipblas-config.cmake &&
+    -r $rocm/lib/cmake/rocblas/rocblas-config.cmake ]] ||
+    {
+      ws_die "a coherent $provider ROCm installation is required at $rocm"
+      return 1
+    }
   command -v pacman >/dev/null || ws_die 'pacman is required to inspect the installed ROCm ownership'
   case $provider in
     arch)
       ownership=$(ws_rocm_llama_official_owner_output "$rocm/bin/amdclang++" "$rocm/lib/cmake/hip/hip-config.cmake" \
-        "$rocm/lib/cmake/hipblas/hipblas-config.cmake" "$rocm/lib/cmake/rocblas/rocblas-config.cmake") \
-        || ws_die 'could not identify every installed ROCm path owner'
+        "$rocm/lib/cmake/hipblas/hipblas-config.cmake" "$rocm/lib/cmake/rocblas/rocblas-config.cmake") ||
+        ws_die 'could not identify every installed ROCm path owner'
       ;;
     aur-gfx120x-bin)
       ws_rocm_sdk_aur_lock_validate "$lock" >/dev/null || return 1
@@ -269,8 +305,8 @@ ws_rocm_llama_rocm_validate() {
         "$rocm/lib/cmake/hipblas/hipblas-config.cmake" "$rocm/lib/cmake/rocblas/rocblas-config.cmake" \
         /opt/rocm/bin/amdclang++ /opt/rocm/bin/hipcc \
         /opt/rocm/lib/cmake/hip/hip-config.cmake /opt/rocm/lib/cmake/hipblas/hipblas-config.cmake \
-        /opt/rocm/lib/cmake/rocblas/rocblas-config.cmake) \
-        || ws_die 'could not identify every reviewed ROCm 10 AUR path owner'
+        /opt/rocm/lib/cmake/rocblas/rocblas-config.cmake) ||
+        ws_die 'could not identify every reviewed ROCm 10 AUR path owner'
       ;;
   esac
   printf '%s\n' "$ownership"
@@ -283,8 +319,8 @@ ws_rocm_llama_host_compilers_validate() {
 
 ws_rocm_llama_cmake_cache_value() {
   local cache=$1 key=$2 value
-  value=$(awk -F= -v key="$key" '$1 ~ "^" key ":[^=]+$" {if (found++) exit 1; print $2} END {exit found == 1 ? 0 : 1}' "$cache") \
-    || ws_die "CMake cache has no unique $key value"
+  value=$(awk -F= -v key="$key" '$1 ~ "^" key ":[^=]+$" {if (found++) exit 1; print $2} END {exit found == 1 ? 0 : 1}' "$cache") ||
+    ws_die "CMake cache has no unique $key value"
   [[ -n $value ]] || ws_die "CMake cache has an empty $key value"
   printf '%s\n' "$value"
 }
@@ -305,8 +341,11 @@ ws_rocm_llama_cmake_rocm_validate() {
       hipblas_DIR) config='hipblas-config.cmake' ;;
       rocblas_DIR) config='rocblas-config.cmake' ;;
     esac
-    [[ $directory == "$rocm/lib/cmake/${key%_DIR}" && -d $directory && -r $directory/$config ]] \
-      || { ws_die "CMake resolved $key outside the canonical $provider ROCm installation"; return 1; }
+    [[ $directory == "$rocm/lib/cmake/${key%_DIR}" && -d $directory && -r $directory/$config ]] ||
+      {
+        ws_die "CMake resolved $key outside the canonical $provider ROCm installation"
+        return 1
+      }
     case $provider in
       arch) ws_rocm_llama_official_owner_output "$directory/$config" >/dev/null ;;
       aur-gfx120x-bin)
@@ -320,16 +359,16 @@ ws_rocm_llama_cmake_host_compilers_validate() {
   local cache=$1 c_compiler cxx_compiler
   c_compiler=$(ws_rocm_llama_cmake_cache_value "$cache" CMAKE_C_COMPILER) || return 1
   cxx_compiler=$(ws_rocm_llama_cmake_cache_value "$cache" CMAKE_CXX_COMPILER) || return 1
-  [[ $c_compiler == /usr/bin/cc && $cxx_compiler == /usr/bin/c++ ]] \
-    || ws_die 'CMake did not retain the installed Arch host compiler paths'
+  [[ $c_compiler == /usr/bin/cc && $cxx_compiler == /usr/bin/c++ ]] ||
+    ws_die 'CMake did not retain the installed Arch host compiler paths'
 }
 
 ws_rocm_llama_ccache_validate() {
   local config="$CCACHE_DIRECTORY/ccache.conf"
-  [[ -d $CCACHE_DIRECTORY && ! -L $CCACHE_DIRECTORY && -O $CCACHE_DIRECTORY ]] \
-    || ws_die 'ccache directory must be an existing, non-symlink directory owned by the build user'
-  [[ -f $config && ! -L $config && -r $config && -O $config ]] \
-    || ws_die 'run ccache configure before building llama.cpp'
+  [[ -d $CCACHE_DIRECTORY && ! -L $CCACHE_DIRECTORY && -O $CCACHE_DIRECTORY ]] ||
+    ws_die 'ccache directory must be an existing, non-symlink directory owned by the build user'
+  [[ -f $config && ! -L $config && -r $config && -O $config ]] ||
+    ws_die 'run ccache configure before building llama.cpp'
   printf '%s\n' "$config"
 }
 
@@ -344,7 +383,7 @@ ws_rocm_llama_record_toolchain() {
     /usr/bin/c++ --version
     "$rocm/bin/amdclang++" --version
     "$rocm/bin/hipcc" --version
-  } > "$output/toolchain.txt"
+  } >"$output/toolchain.txt"
   {
     printf '== installed package metadata ==\n'
     pacman -Qi "$@"
@@ -352,10 +391,10 @@ ws_rocm_llama_record_toolchain() {
     for package in "$@"; do
       pacman -Qm "$package" >/dev/null 2>&1 || pacman -Si "$package"
     done
-  } > "$output/rocm-packages.txt"
+  } >"$output/rocm-packages.txt"
   while IFS= read -r package; do
     pacman -Qi "$package"
-  done < "$output/host-compiler-owners.txt" > "$output/host-compiler-packages.txt"
+  done <"$output/host-compiler-owners.txt" >"$output/host-compiler-packages.txt"
 }
 
 ws_rocm_build_llama() (
@@ -386,19 +425,19 @@ ws_rocm_build_llama() (
   host_compiler_owners=$(ws_rocm_llama_host_compilers_validate) || ws_die 'could not verify the installed host compiler ownership'
   while IFS= read -r package; do
     [[ -n $package ]] && owners+=("$package")
-  done <<< "$owners_raw"
+  done <<<"$owners_raw"
   ((${#owners[@]} > 0)) || ws_die 'ROCm package ownership verification produced no packages'
 
   umask 077
   mkdir -p -- "$output"
   # shellcheck disable=SC2030,SC2031 # intentionally scoped to this retained build subprocess
   export CCACHE_DIR="$CCACHE_DIRECTORY" CCACHE_CONFIGPATH="$ccache_config"
-  common::sha256_file "$CCACHE_CONFIGPATH" > "$output/ccache-config.sha256"
+  common::sha256_file "$CCACHE_CONFIGPATH" >"$output/ccache-config.sha256"
   # Do not record `ccache --show-config`: its remote-storage configuration can
   # contain credentials. The selected path and content hash are sufficient
   # provenance for this bounded local build.
-  printf 'CCACHE_DIR=%s\nCCACHE_CONFIGPATH=%s\n' "$CCACHE_DIR" "$CCACHE_CONFIGPATH" > "$output/ccache-selection.txt"
-  printf '%s\n' "$host_compiler_owners" > "$output/host-compiler-owners.txt"
+  printf 'CCACHE_DIR=%s\nCCACHE_CONFIGPATH=%s\n' "$CCACHE_DIR" "$CCACHE_CONFIGPATH" >"$output/ccache-selection.txt"
+  printf '%s\n' "$host_compiler_owners" >"$output/host-compiler-owners.txt"
   {
     printf 'provider=%s\nprefix=%s\n' "$provider" "$rocm"
     if [[ $provider == aur-gfx120x-bin ]]; then
@@ -410,26 +449,26 @@ ws_rocm_build_llama() (
         "$(ws_read_lock ROCM_AUR_SOURCE_URL "$lock")" "$(ws_read_lock ROCM_AUR_SOURCE_SHA256 "$lock")" \
         "$(pacman -Q "$(ws_read_lock ROCM_AUR_PACKAGE "$lock")")"
     fi
-  } > "$output/rocm-sdk-provider.txt"
+  } >"$output/rocm-sdk-provider.txt"
   cp -- "$report" "$output/input-hardware.json"
-  printf '%s\n' "$input_boot" > "$output/input-boot-id.txt"
+  printf '%s\n' "$input_boot" >"$output/input-boot-id.txt"
   ws_hardware_collect "$output/hardware"
   fresh_target=$(ws_detected_gpu_target "$output/hardware/hardware.json") || exit 1
   fresh_boot=$(ws_rocm_boot_id_read "$output/hardware/boot-id.txt") || exit 1
   [[ $input_boot == "$fresh_boot" ]] || ws_die 'hardware report is from a different boot; collect a fresh report before building'
   [[ $target == "$fresh_target" ]] || ws_die 'fresh hardware observation has a different GPU target'
-  ws_rocm_hardware_identities_match "$report" "$output/hardware/hardware.json" \
-    || ws_die 'fresh hardware observation does not match the recorded dual-GPU identities'
+  ws_rocm_hardware_identities_match "$report" "$output/hardware/hardware.json" ||
+    ws_die 'fresh hardware observation does not match the recorded dual-GPU identities'
 
   pool_args_raw=$(ws_cmake_ninja_args memory-heavy) || ws_die 'could not calculate safe CMake/Ninja resource pools'
   # shellcheck disable=SC2030,SC2031 # array is consumed only inside this build subprocess
   while IFS= read -r package; do
     [[ -n $package ]] && pool_args+=("$package")
-  done <<< "$pool_args_raw"
+  done <<<"$pool_args_raw"
   ((${#pool_args[@]} == 3)) || ws_die 'CMake/Ninja resource pool helper returned an unexpected argument count'
   jobs=$(ws_build_jobs memory-heavy) || ws_die 'could not calculate the memory-heavy Ninja concurrency'
-  [[ ${pool_args[0]} == "-DCMAKE_JOB_POOLS=compile=$jobs;link=$BUILD_LINK_JOBS" ]] \
-    || ws_die 'CMake/Ninja pool measurement changed unexpectedly; rerun the build'
+  [[ ${pool_args[0]} == "-DCMAKE_JOB_POOLS=compile=$jobs;link=$BUILD_LINK_JOBS" ]] ||
+    ws_die 'CMake/Ninja pool measurement changed unexpectedly; rerun the build'
   build_dir="$output/build"
   cmake_args=(
     -S "$source" -B "$build_dir" -G Ninja
@@ -452,27 +491,27 @@ ws_rocm_build_llama() (
     "${pool_args[@]}"
   )
   command_file="$output/cmake-command.txt"
-  printf '%q ' env "ROCM_PATH=$rocm" cmake "${cmake_args[@]}" > "$command_file"
-  printf '\n' >> "$command_file"
+  printf '%q ' env "ROCM_PATH=$rocm" cmake "${cmake_args[@]}" >"$command_file"
+  printf '\n' >>"$command_file"
   env "ROCM_PATH=$rocm" cmake "${cmake_args[@]}"
   [[ -r $build_dir/CMakeCache.txt ]] || ws_die 'CMake did not produce CMakeCache.txt'
-  grep -Eq '^GGML_HIP:(BOOL|UNINITIALIZED)=ON$' "$build_dir/CMakeCache.txt" \
-    || ws_die 'CMake did not retain GGML_HIP=ON'
-  if ! grep -Eq '^GGML_HIP_GRAPHS:(BOOL|UNINITIALIZED)=ON$' "$build_dir/CMakeCache.txt" \
-    || ! grep -Eq '^GGML_HIP_RCCL:(BOOL|UNINITIALIZED)=OFF$' "$build_dir/CMakeCache.txt" \
-    || ! grep -Fq -- '-DGGML_HIP_GRAPHS' "$build_dir/build.ninja"; then
+  grep -Eq '^GGML_HIP:(BOOL|UNINITIALIZED)=ON$' "$build_dir/CMakeCache.txt" ||
+    ws_die 'CMake did not retain GGML_HIP=ON'
+  if ! grep -Eq '^GGML_HIP_GRAPHS:(BOOL|UNINITIALIZED)=ON$' "$build_dir/CMakeCache.txt" ||
+    ! grep -Eq '^GGML_HIP_RCCL:(BOOL|UNINITIALIZED)=OFF$' "$build_dir/CMakeCache.txt" ||
+    ! grep -Fq -- '-DGGML_HIP_GRAPHS' "$build_dir/build.ninja"; then
     ws_die 'pinned HIP graphs/RCCL settings are not reflected in the generated build'
   fi
-  grep -Eq '^GGML_NATIVE:(BOOL|UNINITIALIZED)=ON$' "$build_dir/CMakeCache.txt" \
-    || ws_die 'CMake did not retain GGML_NATIVE=ON'
-  grep -Eq "^CMAKE_HIP_ARCHITECTURES:[^=]+=$target$" "$build_dir/CMakeCache.txt" \
-    || ws_die 'CMake did not retain the observed HIP architecture'
+  grep -Eq '^GGML_NATIVE:(BOOL|UNINITIALIZED)=ON$' "$build_dir/CMakeCache.txt" ||
+    ws_die 'CMake did not retain GGML_NATIVE=ON'
+  grep -Eq "^CMAKE_HIP_ARCHITECTURES:[^=]+=$target$" "$build_dir/CMakeCache.txt" ||
+    ws_die 'CMake did not retain the observed HIP architecture'
   ws_rocm_llama_cmake_rocm_validate "$build_dir/CMakeCache.txt" "$lock" || exit 1
   ws_rocm_llama_cmake_host_compilers_validate "$build_dir/CMakeCache.txt" || exit 1
   cp -- "$build_dir/CMakeCache.txt" "$output/CMakeCache.txt"
   grep -Eq '^LLAMA_BUILD_TESTS:(BOOL|UNINITIALIZED)=ON$' "$build_dir/CMakeCache.txt" || ws_die 'quality-test targets were not enabled'
-  printf '%q ' ninja -C "$build_dir" -j "$jobs" llama-cli llama-bench llama-perplexity test-backend-ops > "$output/ninja-command.txt"
-  printf '\n' >> "$output/ninja-command.txt"
+  printf '%q ' ninja -C "$build_dir" -j "$jobs" llama-cli llama-bench llama-perplexity test-backend-ops >"$output/ninja-command.txt"
+  printf '\n' >>"$output/ninja-command.txt"
   ninja -C "$build_dir" -j "$jobs" llama-cli llama-bench llama-perplexity test-backend-ops
   for binary in "$build_dir/bin/llama-cli" "$build_dir/bin/llama-bench" "$build_dir/bin/llama-perplexity" "$build_dir/bin/test-backend-ops"; do
     [[ -x $binary ]] || ws_die "expected llama.cpp build output is missing or non-executable: $binary"
@@ -485,7 +524,7 @@ ws_rocm_build_llama() (
     printf 'repository=%s\n' "$(git -C "$source" remote get-url origin)"
     printf 'commit=%s\ntree=%s\n' "$source_commit" "$source_tree"
     git -C "$source" status --porcelain=v1 --untracked-files=all --ignore-submodules=all
-  } > "$output/source.txt"
+  } >"$output/source.txt"
   ws_rocm_llama_record_toolchain "$output" "$rocm" "${owners[@]}"
   args_json=$(printf '%s\n' "${cmake_args[@]}" | jq -Rn '[inputs]')
   jq -n --arg source_commit "$source_commit" --arg source_tree "$source_tree" --arg target "$target" --arg provider "$provider" --arg rocm "$rocm" \
@@ -501,7 +540,7 @@ ws_rocm_build_llama() (
       cmake_cache_sha256:$cache_hash,outputs:{llama_cli_sha256:$cli_hash,llama_bench_sha256:$bench_hash,llama_perplexity_sha256:$ppl_hash,backend_ops_sha256:$ops_hash},
       cmake_args:$cmake_args,rocm_sdk_provider:$provider,rocm_prefix:$rocm,rocm_packages:$packages,
       installed:false,qualification_required:["dual-GPU inference","llama-bench review","reboot repeat","sustained soak"]}' \
-    > "$output/build-result.json"
+    >"$output/build-result.json"
   ws_note "llama.cpp ROCm candidate built in $build_dir; it is retained for direct experimental execution and is not pacman-installed or qualified"
 )
 
@@ -525,8 +564,8 @@ ws_rocm_llama_vulkan_record_toolchain() {
     /usr/bin/cc --version
     /usr/bin/c++ --version
     /usr/bin/glslc --version
-  } > "$output/toolchain.txt"
-  pacman -Qi "$@" > "$output/packages.txt"
+  } >"$output/toolchain.txt"
+  pacman -Qi "$@" >"$output/packages.txt"
 }
 
 ws_rocm_build_llama_vulkan() (
@@ -555,38 +594,38 @@ ws_rocm_build_llama_vulkan() (
   glslc_owners=$(ws_rocm_llama_vulkan_glslc_validate) || ws_die 'could not verify installed glslc ownership'
   while IFS= read -r package; do
     [[ -n $package ]] && packages+=("$package")
-  done <<< "$host_compiler_owners"
+  done <<<"$host_compiler_owners"
   while IFS= read -r package; do
     [[ -n $package ]] && packages+=("$package")
-  done <<< "$glslc_owners"
+  done <<<"$glslc_owners"
 
   umask 077
   mkdir -p -- "$output"
   # shellcheck disable=SC2030,SC2031 # intentionally scoped to this retained build subprocess
   export CCACHE_DIR="$CCACHE_DIRECTORY" CCACHE_CONFIGPATH="$ccache_config"
-  common::sha256_file "$CCACHE_CONFIGPATH" > "$output/ccache-config.sha256"
-  printf 'CCACHE_DIR=%s\nCCACHE_CONFIGPATH=%s\n' "$CCACHE_DIR" "$CCACHE_CONFIGPATH" > "$output/ccache-selection.txt"
-  printf '%s\n' "$host_compiler_owners" > "$output/host-compiler-owners.txt"
-  printf '%s\n' "$glslc_owners" > "$output/glslc-owners.txt"
+  common::sha256_file "$CCACHE_CONFIGPATH" >"$output/ccache-config.sha256"
+  printf 'CCACHE_DIR=%s\nCCACHE_CONFIGPATH=%s\n' "$CCACHE_DIR" "$CCACHE_CONFIGPATH" >"$output/ccache-selection.txt"
+  printf '%s\n' "$host_compiler_owners" >"$output/host-compiler-owners.txt"
+  printf '%s\n' "$glslc_owners" >"$output/glslc-owners.txt"
   cp -- "$report" "$output/input-hardware.json"
-  printf '%s\n' "$input_boot" > "$output/input-boot-id.txt"
+  printf '%s\n' "$input_boot" >"$output/input-boot-id.txt"
   ws_hardware_collect "$output/hardware"
   fresh_target=$(ws_detected_gpu_target "$output/hardware/hardware.json") || exit 1
   fresh_boot=$(ws_rocm_boot_id_read "$output/hardware/boot-id.txt") || exit 1
   [[ $input_boot == "$fresh_boot" ]] || ws_die 'hardware report is from a different boot; collect a fresh report before building'
   [[ $target == "$fresh_target" ]] || ws_die 'fresh hardware observation has a different GPU target'
-  ws_rocm_hardware_identities_match "$report" "$output/hardware/hardware.json" \
-    || ws_die 'fresh hardware observation does not match the recorded dual-GPU identities'
+  ws_rocm_hardware_identities_match "$report" "$output/hardware/hardware.json" ||
+    ws_die 'fresh hardware observation does not match the recorded dual-GPU identities'
 
   pool_args_raw=$(ws_cmake_ninja_args memory-heavy) || ws_die 'could not calculate safe CMake/Ninja resource pools'
   # shellcheck disable=SC2030,SC2031 # array is consumed only inside this build subprocess
   while IFS= read -r package; do
     [[ -n $package ]] && pool_args+=("$package")
-  done <<< "$pool_args_raw"
+  done <<<"$pool_args_raw"
   ((${#pool_args[@]} == 3)) || ws_die 'CMake/Ninja resource pool helper returned an unexpected argument count'
   jobs=$(ws_build_jobs memory-heavy) || ws_die 'could not calculate the memory-heavy Ninja concurrency'
-  [[ ${pool_args[0]} == "-DCMAKE_JOB_POOLS=compile=$jobs;link=$BUILD_LINK_JOBS" ]] \
-    || ws_die 'CMake/Ninja pool measurement changed unexpectedly; rerun the build'
+  [[ ${pool_args[0]} == "-DCMAKE_JOB_POOLS=compile=$jobs;link=$BUILD_LINK_JOBS" ]] ||
+    ws_die 'CMake/Ninja pool measurement changed unexpectedly; rerun the build'
   build_dir="$output/build"
   cmake_args=(
     -S "$source" -B "$build_dir" -G Ninja
@@ -603,21 +642,21 @@ ws_rocm_build_llama_vulkan() (
     -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
     "${pool_args[@]}"
   )
-  printf '%q ' cmake "${cmake_args[@]}" > "$output/cmake-command.txt"
-  printf '\n' >> "$output/cmake-command.txt"
+  printf '%q ' cmake "${cmake_args[@]}" >"$output/cmake-command.txt"
+  printf '\n' >>"$output/cmake-command.txt"
   cmake "${cmake_args[@]}"
   [[ -r $build_dir/CMakeCache.txt ]] || ws_die 'CMake did not produce CMakeCache.txt'
-  grep -Eq '^GGML_VULKAN:(BOOL|UNINITIALIZED)=ON$' "$build_dir/CMakeCache.txt" \
-    || ws_die 'CMake did not retain GGML_VULKAN=ON'
-  grep -Eq '^GGML_NATIVE:(BOOL|UNINITIALIZED)=ON$' "$build_dir/CMakeCache.txt" \
-    || ws_die 'CMake did not retain GGML_NATIVE=ON'
-  grep -Eq '^Vulkan_GLSLC_EXECUTABLE:[^=]+=/usr/bin/glslc$' "$build_dir/CMakeCache.txt" \
-    || ws_die 'CMake did not retain the installed Arch glslc path'
+  grep -Eq '^GGML_VULKAN:(BOOL|UNINITIALIZED)=ON$' "$build_dir/CMakeCache.txt" ||
+    ws_die 'CMake did not retain GGML_VULKAN=ON'
+  grep -Eq '^GGML_NATIVE:(BOOL|UNINITIALIZED)=ON$' "$build_dir/CMakeCache.txt" ||
+    ws_die 'CMake did not retain GGML_NATIVE=ON'
+  grep -Eq '^Vulkan_GLSLC_EXECUTABLE:[^=]+=/usr/bin/glslc$' "$build_dir/CMakeCache.txt" ||
+    ws_die 'CMake did not retain the installed Arch glslc path'
   ws_rocm_llama_cmake_host_compilers_validate "$build_dir/CMakeCache.txt" || exit 1
   cp -- "$build_dir/CMakeCache.txt" "$output/CMakeCache.txt"
   grep -Eq '^LLAMA_BUILD_TESTS:(BOOL|UNINITIALIZED)=ON$' "$build_dir/CMakeCache.txt" || ws_die 'quality-test targets were not enabled'
-  printf '%q ' ninja -C "$build_dir" -j "$jobs" llama-cli llama-bench llama-perplexity test-backend-ops > "$output/ninja-command.txt"
-  printf '\n' >> "$output/ninja-command.txt"
+  printf '%q ' ninja -C "$build_dir" -j "$jobs" llama-cli llama-bench llama-perplexity test-backend-ops >"$output/ninja-command.txt"
+  printf '\n' >>"$output/ninja-command.txt"
   ninja -C "$build_dir" -j "$jobs" llama-cli llama-bench llama-perplexity test-backend-ops
   for binary in "$build_dir/bin/llama-cli" "$build_dir/bin/llama-bench" "$build_dir/bin/llama-perplexity" "$build_dir/bin/test-backend-ops"; do
     [[ -x $binary ]] || ws_die "expected llama.cpp build output is missing or non-executable: $binary"
@@ -630,7 +669,7 @@ ws_rocm_build_llama_vulkan() (
     printf 'repository=%s\n' "$(git -C "$source" remote get-url origin)"
     printf 'commit=%s\ntree=%s\n' "$source_commit" "$source_tree"
     git -C "$source" status --porcelain=v1 --untracked-files=all --ignore-submodules=all
-  } > "$output/source.txt"
+  } >"$output/source.txt"
   ws_rocm_llama_vulkan_record_toolchain "$output" "${packages[@]}"
   args_json=$(printf '%s\n' "${cmake_args[@]}" | jq -Rn '[inputs]')
   jq -n --arg source_commit "$source_commit" --arg source_tree "$source_tree" --arg target "$target" \
@@ -646,7 +685,7 @@ ws_rocm_build_llama_vulkan() (
       cmake_cache_sha256:$cache_hash,outputs:{llama_cli_sha256:$cli_hash,llama_bench_sha256:$bench_hash,llama_perplexity_sha256:$ppl_hash,backend_ops_sha256:$ops_hash},
       cmake_args:$cmake_args,packages:$packages,installed:false,
       qualification_required:["explicit HIP/Vulkan device mapping","paired benchmark review","reboot repeat","sustained soak"]}' \
-    > "$output/build-result.json"
+    >"$output/build-result.json"
   ws_note "llama.cpp Vulkan candidate built in $build_dir; it is retained for direct experimental execution and is not pacman-installed or qualified"
 )
 
@@ -660,23 +699,36 @@ ws_llama_runtime_config_validate() {
   local key
   ws_llama_defaults
   for key in LLAMA_CONTEXT_SIZE LLAMA_BATCH_SIZE LLAMA_UBATCH_SIZE; do
-    ws_positive_integer "${!key:-}" || { ws_die "$key must be a positive integer"; return 1; }
+    ws_positive_integer "${!key:-}" || {
+      ws_die "$key must be a positive integer"
+      return 1
+    }
   done
-  case ${LLAMA_FLASH_ATTN:-} in on|off|auto) ;; *) ws_die 'LLAMA_FLASH_ATTN must be on, off or auto'; return 1 ;; esac
+  case ${LLAMA_FLASH_ATTN:-} in on | off | auto) ;; *)
+    ws_die 'LLAMA_FLASH_ATTN must be on, off or auto'
+    return 1
+    ;;
+  esac
 }
 
 ws_llama_benchmark_config_validate() {
   local key
   ws_llama_runtime_config_validate
   for key in LLAMA_BENCH_PROMPT_TOKENS LLAMA_BENCH_GENERATION_TOKENS LLAMA_BENCH_REPETITIONS; do
-    ws_positive_integer "${!key:-}" || { ws_die "$key must be a positive integer"; return 1; }
+    ws_positive_integer "${!key:-}" || {
+      ws_die "$key must be a positive integer"
+      return 1
+    }
   done
-  ((LLAMA_BENCH_REPETITIONS >= 3)) || { ws_die 'LLAMA_BENCH_REPETITIONS must be at least 3 to report spread'; return 1; }
+  ((LLAMA_BENCH_REPETITIONS >= 3)) || {
+    ws_die 'LLAMA_BENCH_REPETITIONS must be at least 3 to report spread'
+    return 1
+  }
   ws_positive_integer "$LLAMA_THREADS" || ws_die 'LLAMA_THREADS must be positive'
   [[ $LLAMA_BENCH_PAIRS =~ ^[2-8]$ ]] || ws_die 'LLAMA_BENCH_PAIRS must be 2..8 for alternating order'
-  case $LLAMA_SPLIT_MODE in auto|none|layer|row) ;; *) ws_die 'unsupported llama split policy' ;; esac
+  case $LLAMA_SPLIT_MODE in auto | none | layer | row) ;; *) ws_die 'unsupported llama split policy' ;; esac
   for key in LLAMA_KV_K LLAMA_KV_V; do
-    case ${!key} in f16|q8_0|q4_0) ;; *) ws_die 'KV candidates are f16, q8_0 or q4_0; qualify each backend' ;; esac
+    case ${!key} in f16 | q8_0 | q4_0) ;; *) ws_die 'KV candidates are f16, q8_0 or q4_0; qualify each backend' ;; esac
   done
   ((LLAMA_UBATCH_SIZE <= LLAMA_BATCH_SIZE)) || ws_die 'microbatch must not exceed logical batch'
 }
@@ -685,8 +737,8 @@ ws_llama_bench_result_validate() {
   local binary=$1 result=$2 backend=$3 hash
   [[ -x $binary && -r $result ]] || ws_die 'each llama-bench binary must be executable and retain its build-result.json'
   hash=$(common::sha256_file "$binary")
-  jq -e --arg hash "$hash" --arg backend "$backend" '.status == "built-not-qualified" and .backend == $backend and .source.commit and .source.tree and .outputs.llama_bench_sha256 == $hash' "$result" >/dev/null \
-    || ws_die "llama-bench provenance does not match its retained binary: $binary"
+  jq -e --arg hash "$hash" --arg backend "$backend" '.status == "built-not-qualified" and .backend == $backend and .source.commit and .source.tree and .outputs.llama_bench_sha256 == $hash' "$result" >/dev/null ||
+    ws_die "llama-bench provenance does not match its retained binary: $binary"
 }
 
 # Slurp each file separately: jq -e on multiple inputs only checks the last
@@ -704,32 +756,35 @@ ws_llama_metrics_validate() {
           (.samples_ns | type == "array" and length == $repeats and all(.[]; positive))) and
         ([.[] | select(.n_prompt == $prompt and .n_gen == 0)] | length == 1) and
         ([.[] | select(.n_prompt == 0 and .n_gen == $generation)] | length == 1))
-    ' "$file" >/dev/null || { ws_die "unusable or missing llama-bench workload metrics: $file"; return 1; }
+    ' "$file" >/dev/null || {
+      ws_die "unusable or missing llama-bench workload metrics: $file"
+      return 1
+    }
   done
 }
 
 ws_llama_bench_device_map_validate() {
   local binary=$1 devices=$2 output=$3 name count=0
-  [[ $devices =~ ^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$ ]] \
-    || ws_die 'device mappings must contain explicit slash-delimited llama device names'
-  "$binary" --list-devices > "$output"
-  IFS=/ read -r -a _ws_llama_devices <<< "$devices"
+  [[ $devices =~ ^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$ ]] ||
+    ws_die 'device mappings must contain explicit slash-delimited llama device names'
+  "$binary" --list-devices >"$output"
+  IFS=/ read -r -a _ws_llama_devices <<<"$devices"
   for name in "${_ws_llama_devices[@]}"; do
     awk -v name="$name:" '$1 == name {found=1} END {exit !found}' "$output" || ws_die "requested llama device is absent from $binary: $name"
     count=$((count + 1))
   done
   ((count >= 1 && count <= EXPECTED_GPU_COUNT)) || ws_die 'selection exceeds physical inventory'
-  [[ $(printf '%s\n' "${_ws_llama_devices[@]}" | sort -u | awk 'END {print NR}') == "$count" ]] \
-    || ws_die 'device mapping repeats a device instead of covering every GPU'
+  [[ $(printf '%s\n' "${_ws_llama_devices[@]}" | sort -u | awk 'END {print NR}') == "$count" ]] ||
+    ws_die 'device mapping repeats a device instead of covering every GPU'
 }
 
 ws_llama_allocations_validate() {
   local devices=$1 log=$2 name
   local -a selected
-  IFS=/ read -r -a selected <<< "$devices"
+  IFS=/ read -r -a selected <<<"$devices"
   for name in "${selected[@]}"; do
-    awk -v name="$name" 'index($0,name " model buffer size") && $0 ~ /=[[:space:]]*[1-9]/ {found=1} END {exit !found}' "$log" \
-      || ws_die "no positive model allocation for selected $name; measurement refused"
+    awk -v name="$name" 'index($0,name " model buffer size") && $0 ~ /=[[:space:]]*[1-9]/ {found=1} END {exit !found}' "$log" ||
+      ws_die "no positive model allocation for selected $name; measurement refused"
   done
   awk -v selected="/$devices/" '
     /model buffer size[[:space:]]*=/ {
@@ -750,8 +805,8 @@ ws_rocm_benchmark_llama() (
   local report_dir input_boot fresh_boot target fresh_target hip_result vulkan_result hip_commit vulkan_commit hip_tree vulkan_tree locked_commit
   local -a common_args
   local model_hash round backend binary devices split shares selected_count run_dir
-  [[ -f $report && -x $hip && -x $vulkan && -f $model && ! -e $output && ! -L $output ]] \
-    || ws_die 'provide observed hardware, retained executable benchmarks, one local model and a new non-symlink output directory'
+  [[ -f $report && -x $hip && -x $vulkan && -f $model && ! -e $output && ! -L $output ]] ||
+    ws_die 'provide observed hardware, retained executable benchmarks, one local model and a new non-symlink output directory'
   target=$(ws_detected_gpu_target "$report") || exit 1
   report_dir=$(cd -- "$(dirname -- "$report")" && pwd -P)
   input_boot=$(ws_rocm_boot_id_read "$report_dir/boot-id.txt") || exit 1
@@ -763,33 +818,33 @@ ws_rocm_benchmark_llama() (
   vulkan_commit=$(jq -er '.source.commit' "$vulkan_result")
   hip_tree=$(jq -er '.source.tree' "$hip_result")
   vulkan_tree=$(jq -er '.source.tree' "$vulkan_result")
-  [[ $hip_commit == "$vulkan_commit" && $hip_tree == "$vulkan_tree" ]] \
-    || ws_die 'HIP and Vulkan benchmarks must come from the same pinned llama.cpp source revision'
+  [[ $hip_commit == "$vulkan_commit" && $hip_tree == "$vulkan_tree" ]] ||
+    ws_die 'HIP and Vulkan benchmarks must come from the same pinned llama.cpp source revision'
   locked_commit=$(ws_read_lock ROCM_LLAMA_CPP_COMMIT)
-  [[ $hip_commit == "$locked_commit" ]] \
-    || ws_die 'HIP and Vulkan benchmarks must match the locked llama.cpp source commit'
+  [[ $hip_commit == "$locked_commit" ]] ||
+    ws_die 'HIP and Vulkan benchmarks must match the locked llama.cpp source commit'
 
   umask 077
   mkdir -p -- "$output"
   cp -- "$report" "$output/input-hardware.json"
-  printf '%s\n' "$input_boot" > "$output/input-boot-id.txt"
+  printf '%s\n' "$input_boot" >"$output/input-boot-id.txt"
   ws_hardware_collect "$output/hardware"
   fresh_target=$(ws_detected_gpu_target "$output/hardware/hardware.json") || exit 1
   fresh_boot=$(ws_rocm_boot_id_read "$output/hardware/boot-id.txt") || exit 1
-  [[ $input_boot == "$fresh_boot" && $target == "$fresh_target" ]] \
-    || ws_die 'benchmark hardware evidence is not from the same boot and GPU target'
-  ws_rocm_hardware_identities_match "$report" "$output/hardware/hardware.json" \
-    || ws_die 'benchmark hardware observation does not match recorded dual-GPU identities'
+  [[ $input_boot == "$fresh_boot" && $target == "$fresh_target" ]] ||
+    ws_die 'benchmark hardware evidence is not from the same boot and GPU target'
+  ws_rocm_hardware_identities_match "$report" "$output/hardware/hardware.json" ||
+    ws_die 'benchmark hardware observation does not match recorded dual-GPU identities'
   ws_llama_bench_device_map_validate "$hip" "$hip_devices" "$output/hip-devices.txt"
   ws_llama_bench_device_map_validate "$vulkan" "$vulkan_devices" "$output/vulkan-devices.txt"
-  selected_count=$(awk -F/ '{print NF}' <<< "$hip_devices")
-  [[ $selected_count == "$(awk -F/ '{print NF}' <<< "$vulkan_devices")" ]] || ws_die 'HIP/Vulkan selected device counts differ'
+  selected_count=$(awk -F/ '{print NF}' <<<"$hip_devices")
+  [[ $selected_count == "$(awk -F/ '{print NF}' <<<"$vulkan_devices")" ]] || ws_die 'HIP/Vulkan selected device counts differ'
   split=$LLAMA_SPLIT_MODE
   if [[ $split == auto ]]; then
     if ((selected_count == 1)); then split=none; else split=layer; fi
   fi
   shares=1
-  for ((round=1; round<selected_count; round++)); do shares+=/1; done
+  for ((round = 1; round < selected_count; round++)); do shares+=/1; done
   model_hash=$(common::sha256_file "$model")
 
   common_args=(
@@ -801,19 +856,23 @@ ws_rocm_benchmark_llama() (
     --n-prompt "$LLAMA_BENCH_PROMPT_TOKENS" --n-gen "$LLAMA_BENCH_GENERATION_TOKENS"
     --repetitions "$LLAMA_BENCH_REPETITIONS" --output json
   )
-  for ((round=1; round<=LLAMA_BENCH_PAIRS; round++)); do
+  for ((round = 1; round <= LLAMA_BENCH_PAIRS; round++)); do
     local order='hip vulkan'
     ((round % 2 == 1)) || order='vulkan hip'
     for backend in $order; do
-      binary=$hip; devices=$hip_devices
-      if [[ $backend == vulkan ]]; then binary=$vulkan; devices=$vulkan_devices; fi
+      binary=$hip
+      devices=$hip_devices
+      if [[ $backend == vulkan ]]; then
+        binary=$vulkan
+        devices=$vulkan_devices
+      fi
       run_dir="$output/$round-$backend"
       [[ $(common::sha256_file "$model") == "$model_hash" ]] || ws_die 'model changed between benchmark runs'
-      printf '%s\n' "$round $backend" >> "$output/order.txt"
-      printf '%q ' "$binary" "${common_args[@]}" --device "$devices" > "$output/$backend-command.txt"
-      printf '\n' >> "$output/$backend-command.txt"
-      ws_measure_command "$run_dir" 1800 "$binary" "${common_args[@]}" --device "$devices" \
-        || ws_die 'llama-bench process failed; no successful measurement record'
+      printf '%s\n' "$round $backend" >>"$output/order.txt"
+      printf '%q ' "$binary" "${common_args[@]}" --device "$devices" >"$output/$backend-command.txt"
+      printf '\n' >>"$output/$backend-command.txt"
+      ws_measure_command "$run_dir" 1800 "$binary" "${common_args[@]}" --device "$devices" ||
+        ws_die 'llama-bench process failed; no successful measurement record'
       ws_llama_metrics_validate "$run_dir/stdout.txt"
       ws_llama_allocations_validate "$devices" "$run_dir/stderr.txt"
     done
@@ -823,8 +882,8 @@ ws_rocm_benchmark_llama() (
   ws_llama_bench_result_validate "$vulkan" "$vulkan_result" vulkan
   for backend in hip vulkan; do
     local -a files=()
-    for ((round=1; round<=LLAMA_BENCH_PAIRS; round++)); do files+=("$output/$round-$backend/stdout.txt"); done
-    jq -s 'add' "${files[@]}" > "$output/$backend-metrics.json"
+    for ((round = 1; round <= LLAMA_BENCH_PAIRS; round++)); do files+=("$output/$round-$backend/stdout.txt"); done
+    jq -s 'add' "${files[@]}" >"$output/$backend-metrics.json"
   done
   jq -n --arg target "$target" --arg model_hash "$model_hash" \
     --arg hip_hash "$(common::sha256_file "$hip")" --arg vulkan_hash "$(common::sha256_file "$vulkan")" \
@@ -846,7 +905,7 @@ ws_rocm_benchmark_llama() (
       device_mapping:{hip:$hip_devices,vulkan:$vulkan_devices,assertion:"operator-supplied selection; allocations checked; complete physical inventory validated; backend names do not independently prove PCI identity"},
       metrics:{hip:$hip_metrics,vulkan:$vulkan_metrics},
       qualification_required:["review JSON throughput and spread","validate backend device mapping against PCI/UUID evidence","repeat after reboot","sustained soak"]}' \
-    > "$output/benchmark-result.json"
+    >"$output/benchmark-result.json"
   ws_note "paired HIP/Vulkan benchmark recorded in $output; results are measured evidence, not a qualification or promotion"
 )
 
@@ -865,76 +924,81 @@ ws_rocm_validate() (
   ws_build_session_guard
   hipcc=$(command -v hipcc) || ws_die 'hipcc is unavailable in the selected ROCm environment'
   command -v "$python" >/dev/null || ws_die 'selected PyTorch Python executable is unavailable'
-  "$hipcc" --version > "$output/hipcc.txt"
+  "$hipcc" --version >"$output/hipcc.txt"
   "$hipcc" -O2 --offload-arch="$target" "$(ws_repo_root)/tests/hardware/hip-smoke.cpp" -o "$output/hip-smoke"
   "$output/hip-smoke" "$EXPECTED_GPU_COUNT" "$target" "$EXPECTED_GPU_MODEL" | tee "$output/hip.txt"
   "$hipcc" -O2 --offload-arch="$target" "$(ws_repo_root)/tests/hardware/hip-ipc.cpp" -o "$output/hip-ipc"
-  timeout 180 "$output/hip-ipc" > "$output/hip-ipc.txt"
+  timeout 180 "$output/hip-ipc" >"$output/hip-ipc.txt"
   "$hipcc" -O2 --offload-arch="$target" "$(ws_repo_root)/tests/hardware/hip-peer-copy.cpp" -o "$output/hip-peer-copy"
-  timeout 180 "$output/hip-peer-copy" > "$output/hip-peer-copy.txt"
+  timeout 180 "$output/hip-peer-copy" >"$output/hip-peer-copy.txt"
   "$python" "$(ws_repo_root)/tests/hardware/torch-rocm.py" --count "$EXPECTED_GPU_COUNT" --model "$EXPECTED_GPU_MODEL" \
-    > "$output/pytorch.json"
+    >"$output/pytorch.json"
   NCCL_DEBUG=INFO NCCL_DEBUG_SUBSYS=INIT,GRAPH,P2P,SHM,NET NCCL_DEBUG_FILE="$output/rccl-transport.%h.%p.log" timeout 300 "$python" "$(ws_repo_root)/tests/hardware/torch-rocm.py" --count "$EXPECTED_GPU_COUNT" \
-    --model "$EXPECTED_GPU_MODEL" --collective > "$output/rccl.json" 2> "$output/rccl-transport.txt"
-  rocm-smi > "$output/rocm-smi-after.txt"
+    --model "$EXPECTED_GPU_MODEL" --collective >"$output/rccl.json" 2>"$output/rccl-transport.txt"
+  rocm-smi >"$output/rocm-smi-after.txt"
   jq -n --arg target "$target" --argjson count "$EXPECTED_GPU_COUNT" \
     '{schema:1,status:"passed",gpu_target:$target,gpu_count:$count,tests:["HIP-each-device","HIP-IPC-import-export","HIP-peer-copy","FP32","FP16","BF16-if-supported","RCCL-all-reduce-size-sweep"],
-      pending:["multi-GPU-inference","reboot-repeat","sustained-soak"]}' > "$output/result.json"
+      pending:["multi-GPU-inference","reboot-repeat","sustained-soak"]}' >"$output/result.json"
   ws_note "GPU validation passed: $output/result.json; inference, reboot and soak remain separate gates"
 )
 
 ws_rocm_qualify_llama() (
   set -euo pipefail
-  ws_require_arch; ws_require_user; ws_rocm_unfiltered; ws_llama_benchmark_config_validate
+  ws_require_arch
+  ws_require_user
+  ws_rocm_unfiltered
+  ws_llama_benchmark_config_validate
   local hardware=$1 candidate=$2 model=$3 corpus=$4 output=$5 devices=$6 target backend result model_hash corpus_hash device binary key
   local -a selected
   [[ ! -e $output && ! -L $output && -f $model && -s $corpus ]] || ws_die 'require local model/corpus and a new output directory'
   target=$(ws_detected_gpu_target "$hardware")
   result="$candidate/build-result.json"
   backend=$(jq -er .backend "$result")
-  case $backend in hip|vulkan) ;; *) ws_die 'only retained HIP/Vulkan candidates can be qualified' ;; esac
+  case $backend in hip | vulkan) ;; *) ws_die 'only retained HIP/Vulkan candidates can be qualified' ;; esac
   [[ $(jq -r .source.commit "$result") == "$(ws_read_lock ROCM_LLAMA_CPP_COMMIT)" ]] || ws_die 'candidate is not from the pinned source'
   for binary in llama-perplexity test-backend-ops; do
     key=llama_perplexity_sha256
     [[ $binary != test-backend-ops ]] || key=backend_ops_sha256
-    [[ -x $candidate/build/bin/$binary && $(jq -r --arg key "$key" '.outputs[$key]' "$result") == "$(common::sha256_file "$candidate/build/bin/$binary")" ]] \
-      || ws_die 'rebuild the candidate with retained quality binary hashes'
+    [[ -x $candidate/build/bin/$binary && $(jq -r --arg key "$key" '.outputs[$key]' "$result") == "$(common::sha256_file "$candidate/build/bin/$binary")" ]] ||
+      ws_die 'rebuild the candidate with retained quality binary hashes'
   done
-  umask 077; mkdir -- "$output"
+  umask 077
+  mkdir -- "$output"
   ws_hardware_collect "$output/hardware"
   [[ $(ws_detected_gpu_target "$output/hardware/hardware.json") == "$target" &&
-    $(ws_rocm_boot_id_read "$(dirname -- "$hardware")/boot-id.txt") == "$(ws_rocm_boot_id_read "$output/hardware/boot-id.txt")" ]] || ws_die 'quality hardware is stale'
+  $(ws_rocm_boot_id_read "$(dirname -- "$hardware")/boot-id.txt") == "$(ws_rocm_boot_id_read "$output/hardware/boot-id.txt")" ]] || ws_die 'quality hardware is stale'
   ws_rocm_hardware_identities_match "$hardware" "$output/hardware/hardware.json" || ws_die 'quality hardware identities changed'
   ws_llama_bench_result_validate "$candidate/build/bin/llama-bench" "$result" "$backend"
   ws_llama_bench_device_map_validate "$candidate/build/bin/llama-bench" "$devices" "$output/devices.txt"
-  model_hash=$(common::sha256_file "$model"); corpus_hash=$(common::sha256_file "$corpus")
-  IFS=/ read -r -a selected <<< "$devices"
+  model_hash=$(common::sha256_file "$model")
+  corpus_hash=$(common::sha256_file "$corpus")
+  IFS=/ read -r -a selected <<<"$devices"
   for device in "${selected[@]}"; do
     ws_measure_command "$output/ops-$device" 1800 "$candidate/build/bin/test-backend-ops" test \
-      -b "$device" -o MUL_MAT,RMS_NORM,SOFT_MAX --output csv \
-      || ws_die 'numerical executable or telemetry failed; quality qualification refused'
+      -b "$device" -o MUL_MAT,RMS_NORM,SOFT_MAX --output csv ||
+      ws_die 'numerical executable or telemetry failed; quality qualification refused'
     "$(ws_measure_python)" "$(ws_repo_root)/lib/workstation/quality_metrics.py" ops "$output/ops-$device/stdout.txt" \
-      --backend "$device" --run-record "$output/ops-$device/run.json" > "$output/ops-$device/result.json" \
-      || ws_die 'numerical CSV validation failed; quality qualification refused'
+      --backend "$device" --run-record "$output/ops-$device/run.json" >"$output/ops-$device/result.json" ||
+      ws_die 'numerical CSV validation failed; quality qualification refused'
   done
   ws_measure_command "$output/perplexity" 3600 "$candidate/build/bin/llama-perplexity" \
     --model "$model" --file "$corpus" --device "${devices//\//,}" --n-gpu-layers 999 \
     --ctx-size "$LLAMA_CONTEXT_SIZE" --threads "$LLAMA_THREADS" --batch-size "$LLAMA_BATCH_SIZE" --ubatch-size "$LLAMA_UBATCH_SIZE" \
-    --flash-attn "$LLAMA_FLASH_ATTN" --cache-type-k "$LLAMA_KV_K" --cache-type-v "$LLAMA_KV_V" \
-    || ws_die 'perplexity executable or telemetry failed; quality qualification refused'
+    --flash-attn "$LLAMA_FLASH_ATTN" --cache-type-k "$LLAMA_KV_K" --cache-type-v "$LLAMA_KV_V" ||
+    ws_die 'perplexity executable or telemetry failed; quality qualification refused'
   ws_llama_allocations_validate "$devices" "$output/perplexity/stderr.txt"
-  "$(ws_measure_python)" "$(ws_repo_root)/lib/workstation/quality_metrics.py" perplexity "$output/perplexity/stderr.txt" > "$output/perplexity/result.json" \
-    || ws_die 'perplexity output validation failed; quality qualification refused'
+  "$(ws_measure_python)" "$(ws_repo_root)/lib/workstation/quality_metrics.py" perplexity "$output/perplexity/stderr.txt" >"$output/perplexity/result.json" ||
+    ws_die 'perplexity output validation failed; quality qualification refused'
   [[ $(common::sha256_file "$model") == "$model_hash" && $(common::sha256_file "$corpus") == "$corpus_hash" ]] || ws_die 'quality inputs changed'
   for binary in llama-perplexity test-backend-ops; do
     key=llama_perplexity_sha256
     [[ $binary != test-backend-ops ]] || key=backend_ops_sha256
-    [[ $(jq -r --arg key "$key" '.outputs[$key]' "$result") == "$(common::sha256_file "$candidate/build/bin/$binary")" ]] \
-      || ws_die 'quality executable changed during measurement'
+    [[ $(jq -r --arg key "$key" '.outputs[$key]' "$result") == "$(common::sha256_file "$candidate/build/bin/$binary")" ]] ||
+      ws_die 'quality executable changed during measurement'
   done
   jq -n --arg model "$model_hash" --arg corpus "$corpus_hash" --arg backend "$backend" --slurpfile build "$result" \
     '{schema:1,status:"numerical-checks-passed-model-review-required",model_sha256:$model,corpus_sha256:$corpus,backend:$backend,build:$build[0],
-      scope:"selected CPU-reference operations plus retained perplexity; not comprehensive model or tool-call quality qualification"}' > "$output/quality.json"
+      scope:"selected CPU-reference operations plus retained perplexity; not comprehensive model or tool-call quality qualification"}' >"$output/quality.json"
 )
 
 ws_rocm_inference() (
@@ -949,9 +1013,9 @@ ws_rocm_inference() (
   mkdir -p -- "$output"
   ws_hardware_collect "$output/hardware"
   target=$(ws_detected_gpu_target "$output/hardware/hardware.json") || exit 1
-  "$binary" --version > "$output/version.txt" 2>&1
+  "$binary" --version >"$output/version.txt" 2>&1
   grep -Fq "${commit:0:7}" "$output/version.txt" || ws_die 'llama-cli version does not match the source commit in versions.lock'
-  "$binary" --list-devices > "$output/devices.txt" 2>&1
+  "$binary" --list-devices >"$output/devices.txt" 2>&1
   devices=$(awk '$1 ~ /^ROCm[0-9]+:$/ {sub(/:$/, "", $1); print $1}' "$output/devices.txt")
   [[ $(printf '%s\n' "$devices" | awk 'NF {n++} END {print n+0}') == "$EXPECTED_GPU_COUNT" ]] || ws_die 'llama.cpp did not expose every ROCm GPU'
   shares=$(printf '%s\n' "$devices" | awk '{printf "%s1", sep;sep=","}')
@@ -959,15 +1023,15 @@ ws_rocm_inference() (
   timeout 600 "$binary" --model "$model" --device "$devices" --split-mode layer --tensor-split "$shares" \
     --n-gpu-layers 999 --ctx-size "$LLAMA_CONTEXT_SIZE" --batch-size "$LLAMA_BATCH_SIZE" --ubatch-size "$LLAMA_UBATCH_SIZE" \
     --flash-attn "$LLAMA_FLASH_ATTN" --seed 42 --temp 0 --n-predict 64 --prompt 'Explain why reproducible builds matter.' \
-    > "$output/inference.txt" 2>&1
+    >"$output/inference.txt" 2>&1
   # A successful process is only evidence; verify log allocations and output
   # quality before recording this workload as accepted.
-  common::sha256_file "$model" > "$output/model.sha256"
-  IFS=',' read -r -a _ws_llama_devices <<< "$devices"
+  common::sha256_file "$model" >"$output/model.sha256"
+  IFS=',' read -r -a _ws_llama_devices <<<"$devices"
   for device in "${_ws_llama_devices[@]}"; do
-    grep -Eq "$device.*model buffer size[[:space:]]*=[[:space:]]*[1-9]" "$output/inference.txt" \
-      || ws_die "no positive model allocation recorded for $device; do not accept a one-GPU/CPU fallback"
+    grep -Eq "$device.*model buffer size[[:space:]]*=[[:space:]]*[1-9]" "$output/inference.txt" ||
+      ws_die "no positive model allocation recorded for $device; do not accept a one-GPU/CPU fallback"
   done
-  printf '%s\n' "$target" > "$output/gpu-target.txt"
+  printf '%s\n' "$target" >"$output/gpu-target.txt"
   ws_note "inference completed; review per-GPU allocations and output in $output/inference.txt before promotion"
 )

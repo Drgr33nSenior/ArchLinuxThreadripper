@@ -7,21 +7,28 @@ k3s_render_template() {
   local template="$1" output="$2" key value public_key
   public_key="$(<"$SSH_PUBLIC_KEY_FILE")"
   [[ "$(awk 'END { print NR }' "$SSH_PUBLIC_KEY_FILE")" == 1 ]] || k3s_die 'SSH public key file must contain exactly one line'
-  [[ "$public_key" =~ ^(ssh-ed25519|sk-ssh-ed25519@openssh.com|ecdsa-sha2-nistp256|sk-ecdsa-sha2-nistp256@openssh.com)[[:space:]][A-Za-z0-9+/=]+([[:space:]].*)?$ ]] \
-    || k3s_die 'SSH public key has an unsupported or malformed format'
+  [[ "$public_key" =~ ^(ssh-ed25519|sk-ssh-ed25519@openssh.com|ecdsa-sha2-nistp256|sk-ecdsa-sha2-nistp256@openssh.com)[[:space:]][A-Za-z0-9+/=]+([[:space:]].*)?$ ]] ||
+    k3s_die 'SSH public key has an unsupported or malformed format'
   cp -- "$template" "$output"
   for key in LAB_NAME ADMIN_USER MGMT_MAC DMZ_MAC MGMT_INTERFACE DMZ_INTERFACE MGMT_IP MGMT_GATEWAY DMZ_IPV4 DMZ_IPV4_GATEWAY DMZ_IPV6 DMZ_IPV6_GATEWAY DOMAIN ACME_EMAIL ROUTE53_ZONE_ID AWS_REGION; do
-    value="${!key}"; value="${value//\\/\\\\}"; value="${value//&/\\&}"; value="${value//|/\\|}"
-    sed -i.bak "s|__${key}__|${value}|g" "$output"; rm -f -- "${output}.bak"
+    value="${!key}"
+    value="${value//\\/\\\\}"
+    value="${value//&/\\&}"
+    value="${value//|/\\|}"
+    sed -i.bak "s|__${key}__|${value}|g" "$output"
+    rm -f -- "${output}.bak"
   done
-  public_key="${public_key//\\/\\\\}"; public_key="${public_key//&/\\&}"; public_key="${public_key//|/\\|}"
-  sed -i.bak "s|__SSH_PUBLIC_KEY__|${public_key}|g" "$output"; rm -f -- "${output}.bak"
+  public_key="${public_key//\\/\\\\}"
+  public_key="${public_key//&/\\&}"
+  public_key="${public_key//|/\\|}"
+  sed -i.bak "s|__SSH_PUBLIC_KEY__|${public_key}|g" "$output"
+  rm -f -- "${output}.bak"
   ! grep -q '__[A-Z].*__' "$output" || k3s_die "unrendered placeholder in $output"
 }
 
 k3s_write_ansible_vars() {
   local output="$1"
-  cat > "$output" <<EOF
+  cat >"$output" <<EOF
 ---
 k3s_version: "${K3S_VERSION}"
 k3s_binary_sha256: "${K3S_BINARY_SHA256}"
@@ -52,7 +59,7 @@ EOF
 
 k3s_write_inventory() {
   local output="$1"
-  cat > "$output" <<EOF
+  cat >"$output" <<EOF
 [k3s_servers]
 ${LAB_NAME} ansible_host=${MGMT_IP} ansible_user=${ADMIN_USER} ansible_ssh_private_key_file=${SSH_PRIVATE_KEY_FILE} ansible_ssh_common_args='-o StrictHostKeyChecking=yes -o UserKnownHostsFile=${SSH_KNOWN_HOSTS_FILE}'
 
@@ -74,8 +81,8 @@ k3s_require_ansible_access() {
   k3s_need_command ssh-keygen
   [[ -r "$SSH_PRIVATE_KEY_FILE" ]] || k3s_die "SSH private-key handle is unreadable: $SSH_PRIVATE_KEY_FILE"
   [[ -r "$SSH_KNOWN_HOSTS_FILE" ]] || k3s_die "dedicated K3s known-hosts file is unreadable: $SSH_KNOWN_HOSTS_FILE"
-  ssh-keygen -F "$MGMT_IP" -f "$SSH_KNOWN_HOSTS_FILE" >/dev/null \
-    || k3s_die 'dedicated known-hosts file does not contain the management IP; verify the guest host key out of band first'
+  ssh-keygen -F "$MGMT_IP" -f "$SSH_KNOWN_HOSTS_FILE" >/dev/null ||
+    k3s_die 'dedicated known-hosts file does not contain the management IP; verify the guest host key out of band first'
 }
 
 k3s_ansible_extra_vars() {
@@ -86,7 +93,8 @@ k3s_ansible_extra_vars() {
 
 k3s_download_base_image() {
   local base_dir image checksum signature keyring keyfile expected
-  base_dir="$VM_POOL_DIR/base"; image="$base_dir/$ALMALINUX_IMAGE_NAME"
+  base_dir="$VM_POOL_DIR/base"
+  image="$base_dir/$ALMALINUX_IMAGE_NAME"
   # QEMU needs search permission on the pool and backing-image directory. The
   # directory remains non-listable, while generated configuration stays 0700.
   install -d -m 0711 "$VM_POOL_DIR" "$base_dir"
@@ -94,9 +102,13 @@ k3s_download_base_image() {
     chmod 0444 "$image"
     return 0
   fi
-  k3s_need_command curl; k3s_need_command gpg; k3s_need_command sha256sum
+  k3s_need_command curl
+  k3s_need_command gpg
+  k3s_need_command sha256sum
   keyring="$(mktemp -d)"
-  checksum="$keyring/CHECKSUM"; signature="$keyring/CHECKSUM.asc"; keyfile="$keyring/almalinux.key"
+  checksum="$keyring/CHECKSUM"
+  signature="$keyring/CHECKSUM.asc"
+  keyfile="$keyring/almalinux.key"
   curl --fail --location --proto '=https' --tlsv1.2 -o "$checksum" "$ALMALINUX_CHECKSUM_URL"
   curl --fail --location --proto '=https' --tlsv1.2 -o "$signature" "$ALMALINUX_CHECKSUM_SIGNATURE_URL"
   curl --fail --location --proto '=https' --tlsv1.2 -o "$keyfile" 'https://repo.almalinux.org/almalinux/RPM-GPG-KEY-AlmaLinux-9'
@@ -115,24 +127,26 @@ k3s_download_base_image() {
 k3s_define_management_network() {
   local network_xml="$1/k3s-mgmt.xml" existing_xml network_info dhcp_start dhcp_end mgmt_integer start_integer end_integer
   if network_info="$(virsh -c qemu:///system net-info "$MGMT_NETWORK_NAME" 2>/dev/null)"; then
-    grep -q '^Autostart:.*no$' <<< "$network_info" \
-      || k3s_die 'existing management network must have autostart disabled'
+    grep -q '^Autostart:.*no$' <<<"$network_info" ||
+      k3s_die 'existing management network must have autostart disabled'
     existing_xml="$(virsh -c qemu:///system net-dumpxml "$MGMT_NETWORK_NAME")"
-    { grep -Fq "<forward mode='nat'" <<< "$existing_xml" || grep -Fq '<forward mode="nat"' <<< "$existing_xml"; } || k3s_die 'existing management network does not use NAT'
-    { grep -Fq "<bridge name='${MGMT_BRIDGE}'" <<< "$existing_xml" || grep -Fq "<bridge name=\"${MGMT_BRIDGE}\"" <<< "$existing_xml"; } || k3s_die 'existing management network bridge differs from configuration'
-    { grep -Fq "<ip address='${MGMT_GATEWAY}' netmask='255.255.255.0'" <<< "$existing_xml" || grep -Fq "<ip address=\"${MGMT_GATEWAY}\" netmask=\"255.255.255.0\"" <<< "$existing_xml"; } || k3s_die 'existing management network gateway differs from configuration'
-    dhcp_start="$(sed -nE "s/.*start=['\"]([0-9.]+)['\"].*/\1/p" <<< "$existing_xml" | head -n1)"
-    dhcp_end="$(sed -nE "s/.*end=['\"]([0-9.]+)['\"].*/\1/p" <<< "$existing_xml" | head -n1)"
+    { grep -Fq "<forward mode='nat'" <<<"$existing_xml" || grep -Fq '<forward mode="nat"' <<<"$existing_xml"; } || k3s_die 'existing management network does not use NAT'
+    { grep -Fq "<bridge name='${MGMT_BRIDGE}'" <<<"$existing_xml" || grep -Fq "<bridge name=\"${MGMT_BRIDGE}\"" <<<"$existing_xml"; } || k3s_die 'existing management network bridge differs from configuration'
+    { grep -Fq "<ip address='${MGMT_GATEWAY}' netmask='255.255.255.0'" <<<"$existing_xml" || grep -Fq "<ip address=\"${MGMT_GATEWAY}\" netmask=\"255.255.255.0\"" <<<"$existing_xml"; } || k3s_die 'existing management network gateway differs from configuration'
+    dhcp_start="$(sed -nE "s/.*start=['\"]([0-9.]+)['\"].*/\1/p" <<<"$existing_xml" | head -n1)"
+    dhcp_end="$(sed -nE "s/.*end=['\"]([0-9.]+)['\"].*/\1/p" <<<"$existing_xml" | head -n1)"
     if [[ -n "$dhcp_start" || -n "$dhcp_end" ]]; then
       [[ -n "$dhcp_start" && -n "$dhcp_end" ]] || k3s_die 'existing management network has an incomplete DHCP range'
-      mgmt_integer="$(k3s_ipv4_to_int "$MGMT_IP")"; start_integer="$(k3s_ipv4_to_int "$dhcp_start")"; end_integer="$(k3s_ipv4_to_int "$dhcp_end")" \
-        || k3s_die 'existing management network has an invalid DHCP range'
-      ((mgmt_integer < start_integer || mgmt_integer > end_integer)) \
-        || k3s_die 'MGMT_IP overlaps the existing libvirt DHCP range'
+      mgmt_integer="$(k3s_ipv4_to_int "$MGMT_IP")"
+      start_integer="$(k3s_ipv4_to_int "$dhcp_start")"
+      end_integer="$(k3s_ipv4_to_int "$dhcp_end")" ||
+        k3s_die 'existing management network has an invalid DHCP range'
+      ((mgmt_integer < start_integer || mgmt_integer > end_integer)) ||
+        k3s_die 'MGMT_IP overlaps the existing libvirt DHCP range'
     fi
     return 0
   fi
-  cat > "$network_xml" <<EOF
+  cat >"$network_xml" <<EOF
 <network>
   <name>${MGMT_NETWORK_NAME}</name>
   <forward mode='nat'/>
@@ -160,9 +174,14 @@ k3s_validate_dmz_bridge() {
 
 k3s_network_create() {
   local bridge_connection="k3s-${LAB_NAME}-dmz-bridge" vlan_connection="k3s-${LAB_NAME}-dmz-vlan" response
-  k3s_require_root; k3s_need_command nmcli; k3s_need_command ip
+  k3s_require_root
+  k3s_need_command nmcli
+  k3s_need_command ip
   ip link show dev "$DMZ_PARENT" >/dev/null 2>&1 || k3s_die "DMZ parent does not exist: $DMZ_PARENT"
-  if ip link show dev "$DMZ_BRIDGE" >/dev/null 2>&1; then k3s_validate_dmz_bridge; return 0; fi
+  if ip link show dev "$DMZ_BRIDGE" >/dev/null 2>&1; then
+    k3s_validate_dmz_bridge
+    return 0
+  fi
   ! nmcli -t -f NAME connection show | grep -Fxq "$bridge_connection" || k3s_die "NetworkManager connection already exists: $bridge_connection"
   ! nmcli -t -f NAME connection show | grep -Fxq "$vlan_connection" || k3s_die "NetworkManager connection already exists: $vlan_connection"
   ! ip -o addr show dev "$DMZ_PARENT" | grep -Eq ' (inet|inet6) ' || k3s_die 'DMZ parent has a host IP; use a dedicated unnumbered NIC'
@@ -191,7 +210,8 @@ k3s_activate_dmz_bridge() {
 }
 
 k3s_dry_run_plan() {
-  local operation="$1"; shift
+  local operation="$1"
+  shift
   case "$operation" in
     network-create)
       [[ $# -eq 0 ]] || k3s_die 'dry-run network-create accepts no argument'
@@ -205,17 +225,23 @@ k3s_dry_run_plan() {
       [[ $# -eq 0 ]] || k3s_die 'dry-run provision accepts no argument'
       printf 'PLAN: run bounded Ansible inventory %s against %s, then detach and remove the cloud-init seed ISO\n' "$(k3s_inventory)" "$LAB_NAME"
       ;;
-    up|status|backup) [[ $# -eq 0 ]] || k3s_die "dry-run $operation accepts no argument"; printf 'PLAN: %s development VM %s only\n' "$operation" "$LAB_NAME" ;;
+    up | status | backup)
+      [[ $# -eq 0 ]] || k3s_die "dry-run $operation accepts no argument"
+      printf 'PLAN: %s development VM %s only\n' "$operation" "$LAB_NAME"
+      ;;
     down)
-      [[ $# -eq 0 || ( $# -eq 1 && ${1:-} == --skip-etcd-snapshot ) ]] \
-        || k3s_die 'dry-run down accepts only --skip-etcd-snapshot'
+      [[ $# -eq 0 || ($# -eq 1 && ${1:-} == --skip-etcd-snapshot) ]] ||
+        k3s_die 'dry-run down accepts only --skip-etcd-snapshot'
       printf 'PLAN: down development VM %s only%s\n' "$LAB_NAME" "${1:+ without a new etcd snapshot}"
       ;;
     backup-init)
       [[ $# -eq 0 ]] || k3s_die 'dry-run backup-init accepts no argument'
       printf 'PLAN: initialize the exact encrypted Restic prefix for %s in bucket %s\n' "$LAB_NAME" "$RESTIC_BUCKET"
       ;;
-    upgrade) [[ ${1:-} == "$K3S_VERSION" ]] || k3s_die 'dry-run upgrade version must match versions.lock'; printf 'PLAN: snapshot, cold-backup, and upgrade %s to %s\n' "$LAB_NAME" "$K3S_VERSION" ;;
+    upgrade)
+      [[ ${1:-} == "$K3S_VERSION" ]] || k3s_die 'dry-run upgrade version must match versions.lock'
+      printf 'PLAN: snapshot, cold-backup, and upgrade %s to %s\n' "$LAB_NAME" "$K3S_VERSION"
+      ;;
     restore-test)
       [[ ${1:-} =~ ^/[^[:space:]]+$ ]] || k3s_die 'dry-run restore-test requires an absolute snapshot path in the detached clone'
       printf 'PLAN: restore %s only through a separately supplied detached-clone inventory\n' "$1"
@@ -226,11 +252,13 @@ k3s_dry_run_plan() {
 
 k3s_create() {
   local root dir cloud_iso system_disk data_disk xml base_image
-  root="$(k3s_repo_root)"; k3s_require_root
+  root="$(k3s_repo_root)"
+  k3s_require_root
   for cmd in virsh qemu-img cloud-localds virt-install sha256sum; do k3s_need_command "$cmd"; done
   k3s_validate_dmz_bridge
   k3s_download_base_image
-  dir="$(k3s_runtime_dir)"; base_image="$dir/base/$ALMALINUX_IMAGE_NAME"
+  dir="$(k3s_runtime_dir)"
+  base_image="$dir/base/$ALMALINUX_IMAGE_NAME"
   [ ! -e "$dir/cloud-init.iso" ] && [ ! -e "$dir/system.qcow2" ] && [ ! -e "$dir/data.qcow2" ] || k3s_die "refusing to reuse VM storage: $dir"
   ! virsh -c qemu:///system dominfo "$LAB_NAME" >/dev/null 2>&1 || k3s_die "domain already exists: $LAB_NAME"
   install -d -m 0700 "$dir/cloud-init" "$dir/generated"
@@ -244,17 +272,27 @@ k3s_create() {
   k3s_render_template "$root/kubernetes/cert-manager/templates/route53-cluster-issuer.yaml.tmpl" "$dir/generated/route53-cluster-issuer.yaml"
   k3s_write_ansible_vars "$dir/ansible-vars.yml"
   k3s_write_inventory "$dir/inventory.ini"
-  cloud_iso="$dir/cloud-init.iso"; system_disk="$dir/system.qcow2"; data_disk="$dir/data.qcow2"
+  cloud_iso="$dir/cloud-init.iso"
+  system_disk="$dir/system.qcow2"
+  data_disk="$dir/data.qcow2"
   cloud-localds --network-config="$dir/cloud-init/network-config" "$cloud_iso" "$dir/cloud-init/user-data" "$dir/cloud-init/meta-data"
   qemu-img create -f qcow2 -F qcow2 -b "$base_image" "$system_disk" "${VM_SYSTEM_DISK_GIB}G"
   qemu-img create -f qcow2 "$data_disk" "${VM_DATA_DISK_GIB}G"
-  k3s_define_management_network "$dir"; xml="$dir/domain.xml"
-  virt-install --connect qemu:///system --name "$LAB_NAME" --machine q35 --memory "$VM_MEMORY_MIB" --vcpus "$VM_VCPUS",sockets=1,cores="$VM_VCPUS",threads=1 --cpu host-passthrough --boot uefi --import --osinfo detect=on,require=off --disk "path=$system_disk,format=qcow2,bus=virtio,cache=none,io=native,discard=unmap,serial=k3s-system" --disk "path=$data_disk,format=qcow2,bus=virtio,cache=none,io=native,discard=unmap,serial=k3s-data" --disk "path=$cloud_iso,device=cdrom,readonly=on" --network "network=$MGMT_NETWORK_NAME,mac=$MGMT_MAC,model=virtio" --network "bridge=$DMZ_BRIDGE,mac=$DMZ_MAC,model=virtio" --channel unix,target.type=virtio,target.name=org.qemu.guest_agent.0 --graphics none --console pty,target_type=serial --noautoconsole --print-xml > "$xml"
-  virsh -c qemu:///system define "$xml"; virsh -c qemu:///system autostart "$LAB_NAME" --disable
+  k3s_define_management_network "$dir"
+  xml="$dir/domain.xml"
+  virt-install --connect qemu:///system --name "$LAB_NAME" --machine q35 --memory "$VM_MEMORY_MIB" --vcpus "$VM_VCPUS",sockets=1,cores="$VM_VCPUS",threads=1 --cpu host-passthrough --boot uefi --import --osinfo detect=on,require=off --disk "path=$system_disk,format=qcow2,bus=virtio,cache=none,io=native,discard=unmap,serial=k3s-system" --disk "path=$data_disk,format=qcow2,bus=virtio,cache=none,io=native,discard=unmap,serial=k3s-data" --disk "path=$cloud_iso,device=cdrom,readonly=on" --network "network=$MGMT_NETWORK_NAME,mac=$MGMT_MAC,model=virtio" --network "bridge=$DMZ_BRIDGE,mac=$DMZ_MAC,model=virtio" --channel unix,target.type=virtio,target.name=org.qemu.guest_agent.0 --graphics none --console pty,target_type=serial --noautoconsole --print-xml >"$xml"
+  virsh -c qemu:///system define "$xml"
+  virsh -c qemu:///system autostart "$LAB_NAME" --disable
   printf 'Created %s; it is intentionally powered off.\n' "$LAB_NAME"
 }
 
-k3s_up() { k3s_require_root; virsh -c qemu:///system dominfo "$LAB_NAME" >/dev/null || k3s_die 'domain does not exist'; k3s_activate_dmz_bridge; k3s_start_management_network; virsh -c qemu:///system domstate "$LAB_NAME" | grep -qx running || virsh -c qemu:///system start "$LAB_NAME"; }
+k3s_up() {
+  k3s_require_root
+  virsh -c qemu:///system dominfo "$LAB_NAME" >/dev/null || k3s_die 'domain does not exist'
+  k3s_activate_dmz_bridge
+  k3s_start_management_network
+  virsh -c qemu:///system domstate "$LAB_NAME" | grep -qx running || virsh -c qemu:///system start "$LAB_NAME"
+}
 k3s_inventory() { printf '%s' "${K3S_ANSIBLE_INVENTORY:-$VM_POOL_DIR/inventory.ini}"; }
 
 k3s_guest_snapshot() {
@@ -268,7 +306,9 @@ k3s_guest_snapshot() {
 
 k3s_provision() {
   local root seed_target
-  root="$(k3s_repo_root)"; k3s_require_root; k3s_need_command ansible-playbook
+  root="$(k3s_repo_root)"
+  k3s_require_root
+  k3s_need_command ansible-playbook
   k3s_require_ansible_access
   virsh -c qemu:///system domstate "$LAB_NAME" | grep -qx running || k3s_die 'start the VM before provisioning'
   # Refresh mutable release locks immediately before applying them. The cold
@@ -286,18 +326,24 @@ k3s_provision() {
 
 k3s_down() {
   local skip_snapshot="${1:-}"
-  [[ -z "$skip_snapshot" || "$skip_snapshot" == --skip-etcd-snapshot ]] \
-    || k3s_die 'down accepts only --skip-etcd-snapshot'
+  [[ -z "$skip_snapshot" || "$skip_snapshot" == --skip-etcd-snapshot ]] ||
+    k3s_die 'down accepts only --skip-etcd-snapshot'
   k3s_require_root
   if virsh -c qemu:///system domstate "$LAB_NAME" | grep -qx running; then
     [ "$skip_snapshot" = '--skip-etcd-snapshot' ] || k3s_guest_snapshot
     virsh -c qemu:///system shutdown "$LAB_NAME"
-    for _ in $(seq 1 60); do virsh -c qemu:///system domstate "$LAB_NAME" | grep -qx 'shut off' && return 0; sleep 2; done
+    for _ in $(seq 1 60); do
+      virsh -c qemu:///system domstate "$LAB_NAME" | grep -qx 'shut off' && return 0
+      sleep 2
+    done
     k3s_die 'guest did not shut down cleanly; inspect it rather than destroying it'
   fi
 }
 
-k3s_status() { virsh -c qemu:///system dominfo "$LAB_NAME"; virsh -c qemu:///system domifaddr "$LAB_NAME" --source agent || true; }
+k3s_status() {
+  virsh -c qemu:///system dominfo "$LAB_NAME"
+  virsh -c qemu:///system domifaddr "$LAB_NAME" --source agent || true
+}
 
 k3s_backup_regular_file() {
   [[ -f $1 && ! -L $1 ]] || k3s_die "backup input must be a regular, non-symlink file: $1"
@@ -315,7 +361,7 @@ k3s_backup_check_chain() {
     (if $base == "" then length == 1 and (.[0] | has("backing-filename") | not)
      else length == 2 and .[0]["full-backing-filename"] == $base and
        .[1].filename == $base and (.[1] | has("backing-filename") | not) end)
-  ' <<< "$chain" >/dev/null || k3s_die 'foreign or unsupported qcow2 backing chain; no backup was started'
+  ' <<<"$chain" >/dev/null || k3s_die 'foreign or unsupported qcow2 backing chain; no backup was started'
 }
 
 k3s_backup_prepare() {
@@ -336,7 +382,7 @@ k3s_backup_prepare() {
   umask 077
   metadata=$(mktemp -d "$VM_POOL_DIR/backup-metadata.XXXXXX")
   xml="$metadata/domain.xml"
-  virsh -c qemu:///system dumpxml --inactive "$LAB_NAME" > "$xml" || k3s_die 'cannot record inactive domain XML'
+  virsh -c qemu:///system dumpxml --inactive "$LAB_NAME" >"$xml" || k3s_die 'cannot record inactive domain XML'
   [[ $(xmllint --nonet --xpath 'string(/domain/name)' "$xml") == "$LAB_NAME" ]] || k3s_die 'domain XML identity mismatch'
   count=$(xmllint --nonet --xpath 'count(/domain/devices/disk[@device="disk"])' "$xml")
   [[ $count == 2 && $(xmllint --nonet --xpath 'count(/domain/devices/hostdev | /domain/devices/filesystem | /domain/devices/tpm)' "$xml") == 0 ]] || k3s_die 'foreign disk, passthrough or TPM state in backup domain'
@@ -373,12 +419,12 @@ k3s_backup_prepare() {
     k3s_backup_regular_file "$VM_POOL_DIR/cloud-init.iso"
     K3S_BACKUP_INPUTS+=("$VM_POOL_DIR/cloud-init.iso")
   fi
-  virsh -c qemu:///system net-dumpxml "$MGMT_NETWORK_NAME" > "$metadata/management-network.xml"
+  virsh -c qemu:///system net-dumpxml "$MGMT_NETWORK_NAME" >"$metadata/management-network.xml"
   cp -- "$K3S_LOCK_SOURCE" "$metadata/backup-request.lock"
-  qemu-img --version > "$metadata/qemu-version.txt"
-  virsh --version > "$metadata/libvirt-version.txt"
+  qemu-img --version >"$metadata/qemu-version.txt"
+  virsh --version >"$metadata/libvirt-version.txt"
   printf '%s\n' "${K3S_BACKUP_INPUTS[@]}" | jq -Rsc --arg name "$LAB_NAME" --arg pool "$VM_POOL_DIR" --arg base "$base_hash" \
-    '{schema:1,domain:$name,original_pool:$pool,base_sha256:$base,inputs:(split("\n")[:-1]),restore_requires_path_review:true}' > "$metadata/backup-manifest.json"
+    '{schema:1,domain:$name,original_pool:$pool,base_sha256:$base,inputs:(split("\n")[:-1]),restore_requires_path_review:true}' >"$metadata/backup-manifest.json"
 }
 
 k3s_restic() {
@@ -386,9 +432,10 @@ k3s_restic() {
   local password_credential=/etc/credstore.encrypted/workstation-restic-password.cred
   local aws_credential=/etc/credstore.encrypted/workstation-restic-aws.cred
   local credential_dir
-  k3s_need_command restic; k3s_need_command systemd-creds
-  [[ -r "$password_credential" && -r "$aws_credential" ]] \
-    || k3s_die 'encrypted Restic password or AWS credential is missing; create it with workstationctl'
+  k3s_need_command restic
+  k3s_need_command systemd-creds
+  [[ -r "$password_credential" && -r "$aws_credential" ]] ||
+    k3s_die 'encrypted Restic password or AWS credential is missing; create it with workstationctl'
   credential_dir="$(mktemp -d /run/k3s-lab-restic.XXXXXX)"
   (
     trap 'rm -rf -- "$credential_dir"' EXIT
@@ -421,8 +468,8 @@ k3s_backup_init() {
 
 k3s_backup() {
   k3s_require_root
-  virsh -c qemu:///system domstate "$LAB_NAME" | grep -qx 'shut off' \
-    || k3s_die 'cold overlay backup requires a shut-off VM; use down first'
+  virsh -c qemu:///system domstate "$LAB_NAME" | grep -qx 'shut off' ||
+    k3s_die 'cold overlay backup requires a shut-off VM; use down first'
   k3s_backup_prepare
   virsh -c qemu:///system domstate "$LAB_NAME" | grep -qx 'shut off' || k3s_die 'VM state changed during backup preparation'
   k3s_restic backup
@@ -431,7 +478,8 @@ k3s_backup() {
 k3s_upgrade() {
   local requested="$1" root
   [ "$requested" = "$K3S_VERSION" ] || k3s_die 'upgrade version must exactly equal K3S_VERSION in versions.lock'
-  k3s_require_root; k3s_need_command restic
+  k3s_require_root
+  k3s_need_command restic
   virsh -c qemu:///system domstate "$LAB_NAME" | grep -qx running || k3s_die 'upgrade requires a running VM so it can make a tagged etcd snapshot'
   k3s_down
   k3s_backup
@@ -445,7 +493,8 @@ k3s_upgrade() {
 k3s_restore_test() {
   local snapshot="$1" root inventory clone_name
   [[ "$snapshot" =~ ^/[^[:space:]]+$ ]] || k3s_die 'restore-test snapshot must be an absolute path in the detached clone'
-  inventory="${K3S_RESTORE_TEST_INVENTORY:-}"; clone_name="${K3S_RESTORE_TEST_NAME:-}"
+  inventory="${K3S_RESTORE_TEST_INVENTORY:-}"
+  clone_name="${K3S_RESTORE_TEST_NAME:-}"
   [ -r "$inventory" ] || k3s_die 'set K3S_RESTORE_TEST_INVENTORY to a readable detached clone inventory'
   [[ "$clone_name" =~ ^[a-z][a-z0-9-]{0,62}$ && "$clone_name" != "$LAB_NAME" ]] || k3s_die 'set K3S_RESTORE_TEST_NAME to a detached clone hostname distinct from the primary node'
   root="$(k3s_repo_root)"

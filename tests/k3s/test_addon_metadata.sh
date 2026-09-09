@@ -5,7 +5,10 @@ work=$(mktemp -d)
 trap 'rm -rf -- "$work"' EXIT
 cp -R "$root/kubernetes" "$work/kubernetes"
 cp "$root/versions.lock" "$work/versions.lock"
-kubectl() { [[ $# == 2 && $1 == kustomize ]] || return 90; printf 'synthetic offline render\n'; }
+kubectl() {
+  [[ $# == 2 && $1 == kustomize ]] || return 90
+  printf 'synthetic offline render\n'
+}
 export -f kubectl
 bash "$work/kubernetes/install-pinned-addons.sh" render >/dev/null
 # Advancing a release without its immutable audit record must fail before any

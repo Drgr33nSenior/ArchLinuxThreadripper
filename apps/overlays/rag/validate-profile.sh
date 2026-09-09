@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Pilot guardrails, not a full Open WebUI configuration schema.
 set -euo pipefail
-fail() { printf 'Invalid RAG pilot setting: %s\n' "$1" >&2; exit 1; }
+fail() {
+  printf 'Invalid RAG pilot setting: %s\n' "$1" >&2
+  exit 1
+}
 
 [[ ${UVICORN_WORKERS:-} == 1 && ${VECTOR_DB:-} == chroma ]] || fail 'single-worker local Chroma required'
 for key in ENABLE_PERSISTENT_CONFIG USE_CUDA_DOCKER RAG_FULL_CONTEXT RAG_EMBEDDING_MODEL_AUTO_UPDATE RAG_EMBEDDING_MODEL_TRUST_REMOTE_CODE RAG_RERANKING_MODEL_AUTO_UPDATE RAG_RERANKING_MODEL_TRUST_REMOTE_CODE ENABLE_ASYNC_EMBEDDING; do

@@ -3,10 +3,10 @@
 
 ws_package_signature() {
   local file=$1 fingerprint=$2 valid
-  valid=$(gpg --batch --status-fd 1 --verify "$file.sig" "$file" 2>/dev/null) \
-    || ws_die "invalid package/signature: $file"
-  awk -v key="$fingerprint" '$2 == "VALIDSIG" && ($3 == key || $NF == key) {ok=1} END {exit !ok}' <<< "$valid" \
-    || ws_die "signature is not from the selected signing key: $file"
+  valid=$(gpg --batch --status-fd 1 --verify "$file.sig" "$file" 2>/dev/null) ||
+    ws_die "invalid package/signature: $file"
+  awk -v key="$fingerprint" '$2 == "VALIDSIG" && ($3 == key || $NF == key) {ok=1} END {exit !ok}' <<<"$valid" ||
+    ws_die "signature is not from the selected signing key: $file"
 }
 
 ws_package_snapshot() (
@@ -22,8 +22,8 @@ ws_package_snapshot() (
   command -v bsdtar >/dev/null || ws_die 'bsdtar is required'
   # Validate the whole supplied set before signing/copying any output.
   for package in "$@"; do
-    [[ -f $package && -f $package.sig && ${package##*/} =~ ^[a-zA-Z0-9@._+:-]+\.pkg\.tar\.(zst|xz)$ ]] \
-      || ws_die 'every input must be a signed Arch package archive'
+    [[ -f $package && -f $package.sig && ${package##*/} =~ ^[a-zA-Z0-9@._+:-]+\.pkg\.tar\.(zst|xz)$ ]] ||
+      ws_die 'every input must be a signed Arch package archive'
     ws_package_signature "$package" "$key"
   done
   mkdir -p -- "$(dirname -- "$output")"
@@ -37,18 +37,18 @@ ws_package_snapshot() (
     cp -- "$package" "$package.sig" "$staged/" || ws_die 'cannot copy package into snapshot'
     ws_package_signature "$staged/$name" "$key"
     metadata=$(bsdtar -xOf "$staged/$name" .PKGINFO) || ws_die 'cannot read package metadata'
-    pkgname=$(awk -F' = ' '$1 == "pkgname" {print $2}' <<< "$metadata")
-    version=$(awk -F' = ' '$1 == "pkgver" {print $2}' <<< "$metadata")
+    pkgname=$(awk -F' = ' '$1 == "pkgname" {print $2}' <<<"$metadata")
+    version=$(awk -F' = ' '$1 == "pkgver" {print $2}' <<<"$metadata")
     [[ -n $pkgname && -n $version ]] || ws_die 'package metadata is incomplete'
     archives+=("$name")
     sha=$(common::sha256_file "$staged/$name") || ws_die 'cannot hash staged package'
     jq -n --arg file "$name" --arg name "$pkgname" --arg version "$version" --arg sha "$sha" \
-      '{file:$file,name:$name,version:$version,sha256:$sha,optimization:"unverified-see-build-manifest"}' >> "$staged/packages.jsonl"
+      '{file:$file,name:$name,version:$version,sha256:$sha,optimization:"unverified-see-build-manifest"}' >>"$staged/packages.jsonl"
   done
   jq -s --arg profile "$profile" --arg key "$key" \
     'if (map(.name)|unique|length) != length then error("multiple versions of a package") else
       {schema:1,profile:$profile,signing_fingerprint:$key,hardware_accepted:false,packages:.} end' \
-    "$staged/packages.jsonl" > "$staged/manifest.json" || ws_die 'cannot construct a complete snapshot manifest'
+    "$staged/packages.jsonl" >"$staged/manifest.json" || ws_die 'cannot construct a complete snapshot manifest'
   (
     cd "$staged" || exit 1
     repo-add --sign --key "$key" workstation-rocm.db.tar.gz "${archives[@]}" || ws_die 'local repository creation failed'

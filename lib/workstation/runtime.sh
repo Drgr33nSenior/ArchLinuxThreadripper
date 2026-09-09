@@ -24,7 +24,10 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/agents.sh"
 # shellcheck source=lib/workstation/performance.sh
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/performance.sh"
 
-ws_die() { printf 'workstationctl: %s\n' "$*" >&2; exit 1; }
+ws_die() {
+  printf 'workstationctl: %s\n' "$*" >&2
+  exit 1
+}
 ws_note() { printf '%s\n' "$*"; }
 ws_command() { command "$@"; }
 
@@ -61,7 +64,7 @@ ws_read_lock() {
       [[ -z "$found" ]] || ws_die "duplicate lock key: $key"
       found="${line#*=}"
     fi
-  done < "$lock"
+  done <"$lock"
   [[ -n "$found" ]] || ws_die "missing lock key: $key"
   printf '%s\n' "$found"
 }
@@ -90,7 +93,7 @@ ws_load_config() {
   [[ "$LLM_LISTEN" == 127.0.0.1:8000 ]] || ws_die 'LLM_LISTEN must remain 127.0.0.1:8000'
   [[ "$LLM_SHM_SIZE" =~ ^[1-9][0-9]*[mMgG]$ ]] || ws_die 'LLM_SHM_SIZE is invalid'
   [[ "$MAKE_JOBS" =~ ^[1-9][0-9]*$ && "$MEMORY_HEAVY_JOBS" =~ ^[1-9][0-9]*$ ]] || ws_die 'build job counts must be positive integers'
-  case "$DEFAULT_TUNED_PROFILE" in server|desktop|build|ai|game|vm) ;; *) ws_die 'DEFAULT_TUNED_PROFILE is invalid' ;; esac
+  case "$DEFAULT_TUNED_PROFILE" in server | desktop | build | ai | game | vm) ;; *) ws_die 'DEFAULT_TUNED_PROFILE is invalid' ;; esac
   ws_rocm_sdk_provider >/dev/null
   WORKSTATION_LLM_DATA_DIR=$LLM_DATA_DIR
   WORKSTATION_LLM_LISTEN=$LLM_LISTEN
@@ -120,10 +123,10 @@ ws_validate_clean_chroot() {
   local requested="$1" resolved
   [[ "$requested" == /* ]] || ws_die 'clean-chroot directory must be an absolute path'
   resolved="$(realpath -e -- "$requested")" || ws_die 'clean-chroot directory does not exist'
-  [[ "$resolved" == /var/lib/archbuild/* ]] \
-    || ws_die 'clean-chroot directory must resolve below /var/lib/archbuild'
-  [[ -d "$resolved/root/var/lib/pacman/local" && -x "$resolved/root/usr/bin/pacman" && -r "$resolved/root/etc/arch-release" ]] \
-    || ws_die 'clean-chroot root is not an initialized mkarchroot environment'
+  [[ "$resolved" == /var/lib/archbuild/* ]] ||
+    ws_die 'clean-chroot directory must resolve below /var/lib/archbuild'
+  [[ -d "$resolved/root/var/lib/pacman/local" && -x "$resolved/root/usr/bin/pacman" && -r "$resolved/root/etc/arch-release" ]] ||
+    ws_die 'clean-chroot root is not an initialized mkarchroot environment'
   printf '%s\n' "$resolved"
 }
 
@@ -193,12 +196,12 @@ ws_build_environment() {
 ws_kernel_stage_native_config() {
   local source_dir="$1" expected_commit="$2" build_dir="$3" template="$4" pristine
   [[ -r "$template" ]] || ws_die "native kernel configuration template is not readable: $template"
-  [[ -f "$build_dir/config.user" && ! -L "$build_dir/config.user" ]] \
-    || ws_die 'copied AUR tree has no regular config.user file; refusing configuration collision'
+  [[ -f "$build_dir/config.user" && ! -L "$build_dir/config.user" ]] ||
+    ws_die 'copied AUR tree has no regular config.user file; refusing configuration collision'
   pristine="$(mktemp "$build_dir/.config.user.pristine.XXXXXX")"
-  git -C "$source_dir" show "$expected_commit:config.user" > "$pristine"
-  cmp -s "$pristine" "$build_dir/config.user" \
-    || ws_die 'copied AUR config.user differs from the locked checkout; refusing configuration collision'
+  git -C "$source_dir" show "$expected_commit:config.user" >"$pristine"
+  cmp -s "$pristine" "$build_dir/config.user" ||
+    ws_die 'copied AUR config.user differs from the locked checkout; refusing configuration collision'
   rm -- "$pristine"
   install -m 0644 -- "$template" "$build_dir/config.user"
 }
@@ -207,24 +210,24 @@ ws_kernel_reject_chroot_overrides() {
   local chroot_dir="$1" relative path
   for relative in etc/linux-git/config etc/linux-git/remote etc/linux-git/patches/patches; do
     path="$chroot_dir/root/$relative"
-    [[ ! -e "$path" && ! -L "$path" ]] \
-      || ws_die "clean chroot contains a linux-git user override; refusing to build with $path"
+    [[ ! -e "$path" && ! -L "$path" ]] ||
+      ws_die "clean chroot contains a linux-git user override; refusing to build with $path"
   done
 }
 
 ws_kernel_extract_effective_config() {
   local headers_package="$1" destination="$2" config_member makefile_member
-  config_member="$(bsdtar -tf "$headers_package" | awk '/\/build\/\.config$/ { n++; value=$0 } END { if (n == 1) print value; else exit 1 }')" \
-    || ws_die 'linux-git-headers package does not contain one effective build/.config'
-  makefile_member="$(bsdtar -tf "$headers_package" | awk '/\/build\/arch\/x86\/Makefile$/ { n++; value=$0 } END { if (n == 1) print value; else exit 1 }')" \
-    || ws_die 'linux-git-headers package does not contain one arch/x86/Makefile'
-  bsdtar -xOf "$headers_package" "$config_member" > "$destination"
+  config_member="$(bsdtar -tf "$headers_package" | awk '/\/build\/\.config$/ { n++; value=$0 } END { if (n == 1) print value; else exit 1 }')" ||
+    ws_die 'linux-git-headers package does not contain one effective build/.config'
+  makefile_member="$(bsdtar -tf "$headers_package" | awk '/\/build\/arch\/x86\/Makefile$/ { n++; value=$0 } END { if (n == 1) print value; else exit 1 }')" ||
+    ws_die 'linux-git-headers package does not contain one arch/x86/Makefile'
+  bsdtar -xOf "$headers_package" "$config_member" >"$destination"
   # The effective headers must preserve the native Kconfig mapping in both the
   # C and Rust compiler paths, rather than relying on caller CFLAGS/RUSTFLAGS.
-  bsdtar -xOf "$headers_package" "$makefile_member" | grep -Eq '^[[:space:]]*KBUILD_CFLAGS[[:space:]]*\+=[[:space:]]*-march=native$' \
-    || ws_die 'linux-git headers do not map CONFIG_X86_NATIVE_CPU to -march=native'
-  bsdtar -xOf "$headers_package" "$makefile_member" | grep -Eq '^[[:space:]]*KBUILD_RUSTFLAGS[[:space:]]*\+=[[:space:]]*-Ctarget-cpu=native$' \
-    || ws_die 'linux-git headers do not map CONFIG_X86_NATIVE_CPU to Rust target-cpu=native'
+  bsdtar -xOf "$headers_package" "$makefile_member" | grep -Eq '^[[:space:]]*KBUILD_CFLAGS[[:space:]]*\+=[[:space:]]*-march=native$' ||
+    ws_die 'linux-git headers do not map CONFIG_X86_NATIVE_CPU to -march=native'
+  bsdtar -xOf "$headers_package" "$makefile_member" | grep -Eq '^[[:space:]]*KBUILD_RUSTFLAGS[[:space:]]*\+=[[:space:]]*-Ctarget-cpu=native$' ||
+    ws_die 'linux-git headers do not map CONFIG_X86_NATIVE_CPU to Rust target-cpu=native'
 }
 
 ws_kernel_validate_effective_config() {
@@ -237,31 +240,31 @@ ws_kernel_validate_effective_config() {
     CONFIG_MODULE_SIG=y \
     CONFIG_IOMMU_SUPPORT=y \
     CONFIG_AMD_IOMMU=y; do
-    grep -Fxq -- "$option" "$config" \
-      || ws_die "effective kernel configuration is missing required option: $option"
+    grep -Fxq -- "$option" "$config" ||
+      ws_die "effective kernel configuration is missing required option: $option"
   done
   for option in CONFIG_DRM_AMDGPU CONFIG_HSA_AMD; do
-    grep -Eq "^${option}=[ym]$" "$config" \
-      || ws_die "effective kernel configuration is missing required option: $option"
+    grep -Eq "^${option}=[ym]$" "$config" ||
+      ws_die "effective kernel configuration is missing required option: $option"
   done
 }
 
 ws_kernel_write_toolchain_metadata() {
   local headers_package="$1" destination="$2" buildinfo_member
-  buildinfo_member="$(bsdtar -tf "$headers_package" | awk '/(^|\/)\.BUILDINFO$/ { n++; value=$0 } END { if (n == 1) print value; else exit 1 }')" \
-    || ws_die 'linux-git-headers package does not contain one .BUILDINFO file'
-  bsdtar -xOf "$headers_package" "$buildinfo_member" > "$destination"
+  buildinfo_member="$(bsdtar -tf "$headers_package" | awk '/(^|\/)\.BUILDINFO$/ { n++; value=$0 } END { if (n == 1) print value; else exit 1 }')" ||
+    ws_die 'linux-git-headers package does not contain one .BUILDINFO file'
+  bsdtar -xOf "$headers_package" "$buildinfo_member" >"$destination"
   [[ -s "$destination" ]] || ws_die 'linux-git-headers .BUILDINFO is empty'
 }
 
 ws_kernel_write_toolchain_summary() {
   local buildinfo="$1" destination="$2" tool
-  : > "$destination"
+  : >"$destination"
   for tool in gcc clang rust binutils make; do
     if grep -Eq "^installed = ${tool}-[0-9]" "$buildinfo"; then
-      awk -v tool="$tool" '$0 ~ "^installed = " tool "-[0-9]" { sub("^installed = " tool "-", ""); print tool "=" $0; exit }' "$buildinfo" >> "$destination"
+      awk -v tool="$tool" '$0 ~ "^installed = " tool "-[0-9]" { sub("^installed = " tool "-", ""); print tool "=" $0; exit }' "$buildinfo" >>"$destination"
     else
-      printf '%s=absent-from-package-buildinfo\n' "$tool" >> "$destination"
+      printf '%s=absent-from-package-buildinfo\n' "$tool" >>"$destination"
     fi
   done
 }
@@ -269,7 +272,7 @@ ws_kernel_write_toolchain_summary() {
 ws_kernel_namcap_audit() {
   local report="$1"
   shift
-  namcap "$@" > "$report" 2>&1 || ws_die "namcap could not audit kernel packages: $report"
+  namcap "$@" >"$report" 2>&1 || ws_die "namcap could not audit kernel packages: $report"
   if grep -Eq '(^|[[:space:]])(E|ERROR|Error):' "$report"; then
     ws_die "namcap reported errors; review $report"
   fi
@@ -298,7 +301,7 @@ ws_kernel_build() {
   git -C "$source_dir" archive --format=tar "$expected_commit" | tar -xf - -C "$build_dir"
   template="$(ws_repo_root)/templates/workstation/linux-git.config"
   ws_kernel_stage_native_config "$source_dir" "$expected_commit" "$build_dir" "$template"
-  printf 'REMOTE=%q\nCOMMIT=%q\n' "$source_repo" "$source_commit" > "$build_dir/remote"
+  printf 'REMOTE=%q\nCOMMIT=%q\n' "$source_repo" "$source_commit" >"$build_dir/remote"
   (
     cd -- "$build_dir"
     # User-space flags and its ccache are not shared with the clean chroot.
@@ -307,7 +310,7 @@ ws_kernel_build() {
     env -u CFLAGS -u CXXFLAGS -u RUSTFLAGS -u KCFLAGS -u KCPPFLAGS \
       -u CCACHE_DIR -u CCACHE_CONFIGPATH -u CCACHE_BASEDIR -u CCACHE_NAMESPACE MAKEFLAGS="-j$jobs" \
       makechrootpkg -c -n -r "$chroot_dir" -- --syncdeps
-    printf '%s\n' "$jobs" > "$build_dir/linux-git.measured-jobs"
+    printf '%s\n' "$jobs" >"$build_dir/linux-git.measured-jobs"
   )
   shopt -s nullglob
   local packages=("$build_dir"/*.pkg.tar.*)
@@ -323,10 +326,10 @@ ws_kernel_build() {
   effective_config="$build_dir/linux-git.effective.config"
   ws_kernel_extract_effective_config "$headers_package" "$effective_config"
   ws_kernel_validate_effective_config "$effective_config"
-  jobs="$(< "$build_dir/linux-git.measured-jobs")"
+  jobs="$(<"$build_dir/linux-git.measured-jobs")"
   [[ $jobs =~ ^[1-9][0-9]*$ ]] || ws_die 'kernel build did not record a valid measured job count'
   config_delta="$build_dir/linux-git.config.delta"
-  diff -u --label aur-base-config --label effective-config "$build_dir/config" "$effective_config" > "$config_delta" || {
+  diff -u --label aur-base-config --label effective-config "$build_dir/config" "$effective_config" >"$config_delta" || {
     diff_status=$?
     ((diff_status == 1)) || ws_die 'could not generate effective kernel configuration delta'
   }
@@ -341,11 +344,11 @@ ws_kernel_build() {
   ws_copy_built_packages "$build_dir" "$output_dir"
   install -m 0644 -- "$effective_config" "$config_delta" "$buildinfo" "$toolchain_metadata" "$namcap_report" "$output_dir/"
   package_hashes="$output_dir/linux-git.package-sha256"
-  : > "$package_hashes"
+  : >"$package_hashes"
   shopt -s nullglob
   for package in "$output_dir"/*.pkg.tar.*; do
     [[ $package != *.sig ]] || continue
-    printf '%s  %s\n' "$(common::sha256_file "$package")" "$(basename -- "$package")" >> "$package_hashes"
+    printf '%s  %s\n' "$(common::sha256_file "$package")" "$(basename -- "$package")" >>"$package_hashes"
   done
   shopt -u nullglob
   printf 'AUR_REPOSITORY=%s\nAUR_COMMIT=%s\nKERNEL_SOURCE_REPOSITORY=%s\nKERNEL_SOURCE_COMMIT=%s\nNATIVE_CFLAGS=-march=native\nNATIVE_RUSTFLAGS=-Ctarget-cpu=native\nMEASURED_BUILD_JOBS=%s\nMAKEFLAGS=-j%s\nNATIVE_CONFIG_USER_SHA256=%s\nEFFECTIVE_CONFIG_SHA256=%s\nCONFIG_DELTA_SHA256=%s\nHEADERS_BUILDINFO_SHA256=%s\nCHROOT_TOOLCHAIN_SHA256=%s\nNAMCAP_REPORT_SHA256=%s\nPACKAGE_SHA256_FILE=%s\nPACKAGE_SHA256_FILE_SHA256=%s\n' \
@@ -354,7 +357,7 @@ ws_kernel_build() {
     "$(common::sha256_file "$template")" "$(common::sha256_file "$output_dir/linux-git.effective.config")" \
     "$(common::sha256_file "$output_dir/linux-git.config.delta")" "$(common::sha256_file "$output_dir/linux-git.headers.BUILDINFO")" "$(common::sha256_file "$output_dir/linux-git.chroot-toolchain.txt")" \
     "$(common::sha256_file "$output_dir/linux-git.namcap.txt")" "$(basename -- "$package_hashes")" \
-    "$(common::sha256_file "$package_hashes")" > "$output_dir/linux-git.build-lock"
+    "$(common::sha256_file "$package_hashes")" >"$output_dir/linux-git.build-lock"
   if grep -Eq '(^|[[:space:]])(W|WARNING|Warning):' "$namcap_report"; then
     ws_note "namcap reported warnings; review $output_dir/linux-git.namcap.txt"
   fi
@@ -420,17 +423,17 @@ ws_select_boot_label() {
     *) ws_die 'unsupported workstation boot label' ;;
   esac
   common::validate_esp_pair / || ws_die 'ESP identity validation failed'
-  selected="$(ws_bootnum_for_label "$label" "$COMMON_ESP_A_PARTUUID" "\\EFI\\Linux\\$filename")" \
-    || ws_die "UEFI entry is absent, ambiguous or targets an unexpected ESP/loader: $label"
+  selected="$(ws_bootnum_for_label "$label" "$COMMON_ESP_A_PARTUUID" "\\EFI\\Linux\\$filename")" ||
+    ws_die "UEFI entry is absent, ambiguous or targets an unexpected ESP/loader: $label"
   inventory=$(efibootmgr) || ws_die 'cannot read firmware BootOrder'
-  order=$(awk -F': ' '$1 == "BootOrder" { n++; value=$2 } END {if(n!=1)exit 1; print value}' <<< "$inventory") \
-    || ws_die 'firmware did not report a unique BootOrder'
+  order=$(awk -F': ' '$1 == "BootOrder" { n++; value=$2 } END {if(n!=1)exit 1; print value}' <<<"$inventory") ||
+    ws_die 'firmware did not report a unique BootOrder'
   [[ $order =~ ^[0-9A-Fa-f]{4}(,[0-9A-Fa-f]{4})*$ ]] || ws_die 'firmware reported an invalid BootOrder'
   new_order=$selected
-  IFS=',' read -r -a _ws_boot_order <<< "$order"
+  IFS=',' read -r -a _ws_boot_order <<<"$order"
   for entry in "${_ws_boot_order[@]}"; do
-    [[ "$(printf '%s' "$entry" | tr '[:lower:]' '[:upper:]')" == "$(printf '%s' "$selected" | tr '[:lower:]' '[:upper:]')" ]] \
-      || new_order="$new_order,$entry"
+    [[ "$(printf '%s' "$entry" | tr '[:lower:]' '[:upper:]')" == "$(printf '%s' "$selected" | tr '[:lower:]' '[:upper:]')" ]] ||
+      new_order="$new_order,$entry"
   done
   efibootmgr --bootorder "$new_order"
   ws_note "preferred UEFI entry: $label (Boot$selected)"
@@ -440,8 +443,8 @@ ws_create_git_boot_entry() {
   local esp="$1" label="$2" part_number
   [[ $esp == /efi && $label == 'Arch Linux (git)' ]] || ws_die 'unexpected git UKI boot target'
   common::validate_esp_pair / || ws_die 'ESP identity validation failed before firmware creation'
-  part_number=$(lsblk --nodeps --noheadings --raw --output PARTN "$COMMON_ESP_A_DEVICE") \
-    || ws_die 'cannot inspect the primary ESP partition number'
+  part_number=$(lsblk --nodeps --noheadings --raw --output PARTN "$COMMON_ESP_A_DEVICE") ||
+    ws_die 'cannot inspect the primary ESP partition number'
   [[ $part_number =~ ^[1-9][0-9]*$ ]] || ws_die 'invalid primary ESP partition number'
   efibootmgr --create --disk "$COMMON_ESP_A_DISK" --part "$part_number" --label "$label" --loader '\EFI\Linux\arch-linux-git.efi'
 }
@@ -451,9 +454,10 @@ ws_kernel_promote() {
   ws_require_root
   local candidate="$1" source="$2" esp_a="$3" esp_b="$4" cert="${5:-/var/lib/sbctl/keys/db/db.pem}"
   local relative='EFI/Linux/' filename label staged_a staged_b boot_status=0
-  filename="$(ws_candidate_filename "$candidate")"; label="$(ws_candidate_label "$candidate")"
-  [[ -f "$source" && "$(basename -- "$source")" == "$filename" ]] \
-    || ws_die "UKI source must be an existing file named $filename"
+  filename="$(ws_candidate_filename "$candidate")"
+  label="$(ws_candidate_label "$candidate")"
+  [[ -f "$source" && "$(basename -- "$source")" == "$filename" ]] ||
+    ws_die "UKI source must be an existing file named $filename"
   command -v sbverify >/dev/null || ws_die 'sbverify is required to promote a UKI'
   command -v efibootmgr >/dev/null || ws_die 'efibootmgr is required to promote a UKI'
   [[ -r "$cert" ]] || ws_die "Secure Boot db certificate is not readable: $cert"
@@ -467,7 +471,8 @@ ws_kernel_promote() {
   for mountpoint in "$esp_a" "$esp_b"; do
     install -d -m 0755 -- "$mountpoint/$relative"
   done
-  staged_a="$esp_a/$relative.$filename.new.$$"; staged_b="$esp_b/$relative.$filename.new.$$"
+  staged_a="$esp_a/$relative.$filename.new.$$"
+  staged_b="$esp_b/$relative.$filename.new.$$"
   install -m 0644 -- "$source" "$staged_a"
   install -m 0644 -- "$source" "$staged_b"
   sbverify --cert "$cert" "$staged_a" >/dev/null
@@ -504,8 +509,8 @@ ws_gpu_validate() {
   driver="$(lspci -k -s "$bdf" | awk -F': ' '/Kernel driver in use/{print $2}')"
   [[ "$driver" == xe ]] || ws_die "B70 at $bdf is not bound to xe (found: ${driver:-none})"
   pci_details="$(lspci -vv -s "$bdf")"
-  grep -Eq 'Memory at .+\[size=32G\]' <<< "$pci_details" || ws_die 'B70 does not expose the expected 32 GiB large BAR; verify Above 4G Decoding and ReBAR'
-  grep -Eq 'LnkSta:.*Speed 32GT/s.*Width x16' <<< "$pci_details" || ws_die 'B70 is not negotiated at PCIe 5.0 x16; verify slot choice and firmware settings'
+  grep -Eq 'Memory at .+\[size=32G\]' <<<"$pci_details" || ws_die 'B70 does not expose the expected 32 GiB large BAR; verify Above 4G Decoding and ReBAR'
+  grep -Eq 'LnkSta:.*Speed 32GT/s.*Width x16' <<<"$pci_details" || ws_die 'B70 is not negotiated at PCIe 5.0 x16; verify slot choice and firmware settings'
   card="$(readlink -f -- "/dev/dri/by-path/pci-$bdf-card")"
   render="$(readlink -f -- "/dev/dri/by-path/pci-$bdf-render")"
   [[ "$card" == /dev/dri/card* && -c "$card" ]] || ws_die "no card node for $bdf"
@@ -548,12 +553,14 @@ ws_llm_up() {
   [[ -d "$model_dir" ]] || ws_die "model directory does not exist: $model_dir"
   ws_gpu_validate "$bdf" >/dev/null
   devices="$(ws_llm_devices "$bdf")"
-  card=${devices%%$'\n'*}; render=${devices#*$'\n'}
+  card=${devices%%$'\n'*}
+  render=${devices#*$'\n'}
   [[ "$card" != "$render" ]] || ws_die 'GPU device discovery did not return distinct card and render nodes'
   [[ "$shm_size" =~ ^[1-9][0-9]*[mMgG]$ ]] || ws_die 'WORKSTATION_LLM_SHM_SIZE must be a positive MiB or GiB value (for example 8g)'
   listen=${WORKSTATION_LLM_LISTEN:-127.0.0.1:8000}
   [[ "$listen" == 127.0.0.1:8000 ]] || ws_die 'LLM listener must remain 127.0.0.1:8000'
-  host=${listen%:*}; port=${listen##*:}
+  host=${listen%:*}
+  port=${listen##*:}
   podman run -d --name workstation-b70-llm --replace --rm --pull=never \
     --network=slirp4netns:allow_host_loopback=false \
     -p "$listen:$port" \
@@ -646,11 +653,11 @@ ws_zsh_setup() {
 ws_toolbox_archive_root() {
   local archive=$1 version=$2 entries top
   entries=$(tar -tzf "$archive") || ws_die 'cannot enumerate JetBrains Toolbox archive'
-  if ! awk '/^\// || /(^|\/)\.\.($|\/)/ { bad=1 } END { exit bad }' <<< "$entries"; then
+  if ! awk '/^\// || /(^|\/)\.\.($|\/)/ { bad=1 } END { exit bad }' <<<"$entries"; then
     ws_die 'JetBrains Toolbox archive contains an unsafe path'
   fi
-  top=$(awk -F/ 'NF {if(root=="")root=$1; if($1!=root)bad=1} END {if(bad)exit 1; print root}' <<< "$entries") \
-    || ws_die 'JetBrains Toolbox archive contains more than one top-level path'
+  top=$(awk -F/ 'NF {if(root=="")root=$1; if($1!=root)bad=1} END {if(bad)exit 1; print root}' <<<"$entries") ||
+    ws_die 'JetBrains Toolbox archive contains more than one top-level path'
   [[ $top == "jetbrains-toolbox-$version" ]] || ws_die 'JetBrains Toolbox archive root does not match the locked version'
   printf '%s\n' "$top"
 }
@@ -664,15 +671,16 @@ ws_toolbox_setup() {
   expected="$(ws_read_lock JETBRAINS_TOOLBOX_SHA256 "$lock_file")"
   [[ "$version" =~ ^[0-9][0-9A-Za-z.-]+$ && "$expected" =~ ^[a-f0-9]{64}$ ]] || ws_die 'JetBrains Toolbox lock values are invalid'
   for command_name in curl tar sha256sum; do command -v "$command_name" >/dev/null || ws_die "required command is unavailable: $command_name"; done
-  temp="$(mktemp -d "${TMPDIR:-/tmp}/workstationctl-toolbox.XXXXXX")"; archive="$temp/toolbox.tar.gz"
+  temp="$(mktemp -d "${TMPDIR:-/tmp}/workstationctl-toolbox.XXXXXX")"
+  archive="$temp/toolbox.tar.gz"
   curl --fail --location --proto '=https' --tlsv1.2 -o "$archive" "$url"
   printf '%s  %s\n' "$expected" "$archive" | sha256sum --check --status || ws_die 'JetBrains Toolbox checksum mismatch'
   top=$(ws_toolbox_archive_root "$archive" "$version") || return 1
   mkdir -p -- "$temp/extract"
   tar --no-same-owner --no-same-permissions -xzf "$archive" -C "$temp/extract"
   while IFS= read -r link; do
-    [[ "$(readlink -f -- "$link")" == "$temp/extract/$top/"* ]] \
-      || ws_die "JetBrains Toolbox archive contains an escaping or broken symlink: $link"
+    [[ "$(readlink -f -- "$link")" == "$temp/extract/$top/"* ]] ||
+      ws_die "JetBrains Toolbox archive contains an escaping or broken symlink: $link"
   done < <(find "$temp/extract/$top" -type l -print)
   [[ -x "$temp/extract/$top/bin/jetbrains-toolbox" ]] || ws_die 'JetBrains Toolbox executable is missing from the archive'
   target="$HOME/.local/opt/$top"
@@ -707,26 +715,32 @@ ws_backup_credential() {
   case "$kind" in
     repository)
       printf 'Restic repository URL (input hidden): ' >&2
-      IFS= read -r -s value; printf '\n' >&2
+      IFS= read -r -s value
+      printf '\n' >&2
       [[ -n "$value" ]] || ws_die 'repository URL cannot be empty'
       printf '%s\n' "$value" | systemd-creds encrypt --name=restic_repository - "$temporary"
       ;;
     password)
       printf 'Restic repository password (input hidden): ' >&2
-      IFS= read -r -s value; printf '\n' >&2
+      IFS= read -r -s value
+      printf '\n' >&2
       [[ -n "$value" ]] || ws_die 'Restic password cannot be empty'
       printf 'Confirm Restic repository password (input hidden): ' >&2
-      IFS= read -r -s confirmation; printf '\n' >&2
+      IFS= read -r -s confirmation
+      printf '\n' >&2
       [[ "$value" == "$confirmation" ]] || ws_die 'Restic password confirmation did not match'
       printf '%s\n' "$value" | systemd-creds encrypt --name=restic_password - "$temporary"
       ;;
     aws)
       printf 'Least-privilege AWS access key ID (input hidden): ' >&2
-      IFS= read -r -s access_key; printf '\n' >&2
+      IFS= read -r -s access_key
+      printf '\n' >&2
       printf 'AWS secret access key (input hidden): ' >&2
-      IFS= read -r -s secret_key; printf '\n' >&2
+      IFS= read -r -s secret_key
+      printf '\n' >&2
       printf 'Optional AWS session token (input hidden; press Enter to omit): ' >&2
-      IFS= read -r -s session_token; printf '\n' >&2
+      IFS= read -r -s session_token
+      printf '\n' >&2
       [[ -n "$access_key" && -n "$secret_key" ]] || ws_die 'AWS access key ID and secret are required'
       {
         printf '[default]\naws_access_key_id=%s\naws_secret_access_key=%s\n' "$access_key" "$secret_key"
@@ -785,7 +799,7 @@ ws_backup_run() {
   ws_require_arch
   ws_require_root
   local action="${1:-}"
-  case "$action" in init|backup|check|retention|snapshots) ;; *) ws_die 'backup run action must be init, backup, check, retention, or snapshots' ;; esac
+  case "$action" in init | backup | check | retention | snapshots) ;; *) ws_die 'backup run action must be init, backup, check, retention, or snapshots' ;; esac
   ws_backup_require_package
   systemctl start --wait "workstation-restic@$action.service"
 }
@@ -806,13 +820,23 @@ ws_aur_checkout() {
   ws_require_user
   local name="$1" destination="$2" lock_file="${3:-$(ws_repo_root)/versions.lock}" repo_key commit_key repository commit
   case "$name" in
-    paru) repo_key=PARU_AUR_REPOSITORY; commit_key=PARU_AUR_COMMIT ;;
-    linux-git) repo_key=LINUX_GIT_AUR_REPOSITORY; commit_key=LINUX_GIT_AUR_COMMIT ;;
-    aws-ssm) repo_key=AWS_SSM_AUR_REPOSITORY; commit_key=AWS_SSM_AUR_COMMIT ;;
+    paru)
+      repo_key=PARU_AUR_REPOSITORY
+      commit_key=PARU_AUR_COMMIT
+      ;;
+    linux-git)
+      repo_key=LINUX_GIT_AUR_REPOSITORY
+      commit_key=LINUX_GIT_AUR_COMMIT
+      ;;
+    aws-ssm)
+      repo_key=AWS_SSM_AUR_REPOSITORY
+      commit_key=AWS_SSM_AUR_COMMIT
+      ;;
     *) ws_die 'AUR checkout name must be paru, linux-git, or aws-ssm' ;;
   esac
   [[ ! -e "$destination" ]] || ws_die "refusing to replace destination: $destination"
-  repository="$(ws_read_lock "$repo_key" "$lock_file")"; commit="$(ws_read_lock "$commit_key" "$lock_file")"
+  repository="$(ws_read_lock "$repo_key" "$lock_file")"
+  commit="$(ws_read_lock "$commit_key" "$lock_file")"
   [[ "$commit" =~ ^[a-f0-9]{40}$ ]] || ws_die 'AUR commit lock is invalid'
   git clone --no-checkout -- "$repository" "$destination"
   git -C "$destination" checkout --detach "$commit"
@@ -838,7 +862,7 @@ ws_paru_bootstrap() {
     makechrootpkg -c -n -r "$chroot_dir" -- --syncdeps
   )
   ws_copy_built_packages "$build_dir" "$output_dir"
-  printf 'AUR_COMMIT=%s\n' "$expected_commit" > "$output_dir/paru.build-lock"
+  printf 'AUR_COMMIT=%s\n' "$expected_commit" >"$output_dir/paru.build-lock"
   ws_note "Paru was built but not installed; review $output_dir and add it to the signed local repository"
 }
 
@@ -846,7 +870,7 @@ ws_dev_setup() {
   ws_require_arch
   ws_require_root
   local profile="$1" manifest="$2" package line packages=()
-  case "$profile" in server|workstation|gpu|ai|gaming|shell|cloud|virtualization|backup) ;; *) ws_die 'unknown package profile';; esac
+  case "$profile" in server | workstation | gpu | ai | gaming | shell | cloud | virtualization | backup) ;; *) ws_die 'unknown package profile' ;; esac
   [[ -r "$manifest" ]] || ws_die "package manifest is not readable: $manifest"
   while IFS= read -r line || [[ -n "$line" ]]; do
     [[ -z "$line" || "$line" == \#* ]] && continue
@@ -854,12 +878,13 @@ ws_dev_setup() {
       [[ "$package" =~ ^[a-z0-9@._+:-]+$ ]] || ws_die "unsafe package name in manifest: $package"
       if [[ $profile == server ]]; then
         case $package in
-          gnome|gnome-*|gdm|tuned-ppd|steam|gamescope|gamemode|mangohud|lib32-*|virt-manager|virt-viewer|qemu-desktop)
-            ws_die "desktop/local-gaming package is not part of the server profile: $package" ;;
+          gnome | gnome-* | gdm | tuned-ppd | steam | gamescope | gamemode | mangohud | lib32-* | virt-manager | virt-viewer | qemu-desktop)
+            ws_die "desktop/local-gaming package is not part of the server profile: $package"
+            ;;
         esac
       fi
       case "$profile" in
-        server|workstation) packages+=("$package") ;;
+        server | workstation) packages+=("$package") ;;
         gpu) [[ "$package" == *intel* || "$package" == linux-firmware-amdgpu || "$package" == mesa* || "$package" == lib32-mesa || "$package" == vulkan* || "$package" == lib32-vulkan-* || "$package" == level-zero* || "$package" == ocl-* || "$package" == clinfo || "$package" == libva-* || "$package" == hwloc || "$package" == numactl || "$package" == perf ]] && packages+=("$package") ;;
         ai) [[ "$package" == rocm-* || "$package" == rocminfo || "$package" == rccl || "$package" == python-pytorch-opt-rocm || "$package" == python-pytorch-xpu || "$package" == python-pytorch-opt-xpu || "$package" == openvino || "$package" == python-openvino || "$package" == openvino-intel-gpu-plugin || "$package" == ggml-sycl || "$package" == intel-compute-runtime || "$package" == level-zero-loader || "$package" == clinfo || "$package" == hwloc || "$package" == numactl ]] && packages+=("$package") ;;
         gaming) [[ "$package" == steam || "$package" == gamescope || "$package" == gamemode || "$package" == lib32-gamemode || "$package" == mangohud || "$package" == lib32-mangohud || "$package" == mesa || "$package" == lib32-mesa || "$package" == vulkan-radeon || "$package" == lib32-vulkan-radeon || "$package" == vulkan-intel || "$package" == lib32-vulkan-intel ]] && packages+=("$package") ;;
@@ -869,7 +894,7 @@ ws_dev_setup() {
         backup) [[ "$package" == restic || "$package" == pacman-contrib || "$package" == arch-audit || "$package" == rebuild-detector ]] && packages+=("$package") ;;
       esac
     done
-  done < "$manifest"
+  done <"$manifest"
   ((${#packages[@]} > 0)) || ws_die "no packages selected for profile: $profile"
   pacman -Syu --needed -- "${packages[@]}"
 }
@@ -894,8 +919,8 @@ ws_virtualization_validate() {
   command -v virt-host-validate >/dev/null || ws_die 'virt-host-validate is required'
   grep -qw svm /proc/cpuinfo || ws_die 'AMD SVM is not exposed by firmware'
   [[ -d /sys/kernel/iommu_groups ]] || ws_die 'IOMMU groups are unavailable; verify firmware IOMMU and the signed kernel command line'
-  find /sys/kernel/iommu_groups -mindepth 1 -maxdepth 1 -type d -print -quit | grep -q . \
-    || ws_die 'the kernel exposed no IOMMU groups'
+  find /sys/kernel/iommu_groups -mindepth 1 -maxdepth 1 -type d -print -quit | grep -q . ||
+    ws_die 'the kernel exposed no IOMMU groups'
   [[ "$(virsh -c qemu:///system uri)" == qemu:///system ]] || ws_die 'qemu:///system is unavailable'
   virt-host-validate qemu
 }
