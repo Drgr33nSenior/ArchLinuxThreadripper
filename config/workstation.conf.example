@@ -59,6 +59,11 @@ EXPECTED_GPU_MODEL=R9700
 # aur-gfx120x-bin = the reviewed, locked ROCm 10 AUR experiment.
 # This does not replace host amdgpu or change the ROCm container image.
 ROCM_SDK_PROVIDER=arch
+# Optional HIP diagnostics build (0/1). 1 enables upstream kernel-resource
+# remarks and saved compiler temporaries; it is not a runtime metrics endpoint.
+# Use a fresh output directory, retain build.log, and budget extra disk space.
+# Compare an ordinary build separately; this does not enable faster kernels.
+LLAMA_HIP_EXPORT_METRICS=0
 
 # --- Client-side agent bundles ---
 # `agent configure <new-directory>` generates a bundle on the Mac/IDE host.

@@ -6,6 +6,11 @@ repo_root=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 source "$repo_root/lib/common.sh"
 # shellcheck source=lib/workstation/runtime.sh
 source "$repo_root/lib/workstation/runtime.sh"
+# Compiler fixtures produce shell stubs, not native ELF artifacts.
+ws_llama_runtime_manifest() {
+  [[ $1 == capture ]] || return 1
+  printf '{"fixture":true}\n' >"$3"
+}
 
 work=$(mktemp -d)
 trap 'rm -rf -- "$work"' EXIT
@@ -15,7 +20,9 @@ repo=https://github.com/ggml-org/llama.cpp.git
 source_dir="$work/llama.cpp"
 git init -q "$source_dir"
 printf '%s\n' 'cmake_minimum_required(VERSION 3.21)' >"$source_dir/CMakeLists.txt"
-git -C "$source_dir" add CMakeLists.txt
+mkdir -p "$source_dir/ggml/src/ggml-hip"
+printf '%s\n' 'if (GGML_HIP_EXPORT_METRICS)' 'endif()' >"$source_dir/ggml/src/ggml-hip/CMakeLists.txt"
+git -C "$source_dir" add CMakeLists.txt ggml/src/ggml-hip/CMakeLists.txt
 git -C "$source_dir" -c user.name=Test -c user.email=test@example.invalid commit -qm initial
 git -C "$source_dir" remote add origin "$repo"
 commit=$(git -C "$source_dir" rev-parse HEAD)
@@ -50,6 +57,7 @@ cat >"$fake_bin/cmake" <<'STUB'
 printf 'CCACHE_DIR=%s CCACHE_CONFIGPATH=%s\n' "${CCACHE_DIR:-}" "${CCACHE_CONFIGPATH:-}" >> "$CMAKE_LOG"
 printf '%s\n' "$*" >> "$CMAKE_LOG"
 while (($#)); do
+  if [[ $1 == -DGGML_HIP_EXPORT_METRICS=ON ]]; then metrics=1; fi
   if [[ $1 == -S ]]; then source_dir=$2; shift 2; continue; fi
   if [[ $1 == -B ]]; then build=$2; shift 2; continue; fi
   shift
@@ -75,6 +83,12 @@ printf '#!/usr/bin/env bash\nexit 0\n' > "$build/bin/llama-cli"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$build/bin/llama-bench"
 printf '%s\n' 'LLAMA_BUILD_TESTS:BOOL=ON' >> "$build/CMakeCache.txt"
 printf '%s\n' 'DEFINES = -DGGML_HIP_GRAPHS' > "$build/build.ninja"
+if [[ ${metrics:-0} == 1 ]]; then
+  printf '%s\n' 'GGML_HIP_EXPORT_METRICS:BOOL=ON' >> "$build/CMakeCache.txt"
+  if [[ ${DROP_METRICS_FLAGS:-0} != 1 ]]; then
+    printf '%s\n' 'FLAGS = -Rpass-analysis=kernel-resource-usage --save-temps' >> "$build/build.ninja"
+  fi
+fi
 cp "$build/bin/llama-bench" "$build/bin/llama-perplexity"
 cp "$build/bin/llama-bench" "$build/bin/test-backend-ops"
 chmod +x "$build/bin/llama-perplexity" "$build/bin/test-backend-ops"
@@ -271,5 +285,13 @@ if ws_rocm_build_llama "$source_dir" "$work/recorded/hardware.json" "$work/mixed
   exit 1
 fi
 unset ROCM_PATH
+
+LLAMA_HIP_EXPORT_METRICS=1 ws_rocm_build_llama "$source_dir" "$work/recorded/hardware.json" "$work/metrics" "$lock" >/dev/null
+grep -Fq -- '-DGGML_HIP_EXPORT_METRICS=ON' "$work/metrics/cmake-command.txt"
+[[ -f $work/metrics/build.log ]]
+if LLAMA_HIP_EXPORT_METRICS=1 DROP_METRICS_FLAGS=1 ws_rocm_build_llama "$source_dir" "$work/recorded/hardware.json" "$work/dropped-metrics" "$lock" >/dev/null 2>&1; then
+  printf 'ineffective HIP metrics flags accepted\n' >&2
+  exit 1
+fi
 
 printf 'ROCm llama.cpp build tests passed\n'

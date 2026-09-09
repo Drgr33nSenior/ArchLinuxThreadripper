@@ -1,5 +1,12 @@
 # Performance validation: September 2026 audit
 
+The [opt-in model-kernel workflow](MODEL-KERNELS.md) adds independent compilation,
+warmup, restart-reuse and numerical/dispatch evidence without promoting defaults.
+
+See [the 9 September implementation record](AUDIT-FOLLOWUP-2026-09-09.md) for
+runtime-library provenance, matching benchmark/quality configuration, installed
+kernel verification, provider-aware monitoring and strict-check results.
+
 See [validation of e5281734](VALIDATION-e5281734.md) for the dependency-prepared
 follow-up checks, retained logs, corrections and remaining qualification blockers.
 

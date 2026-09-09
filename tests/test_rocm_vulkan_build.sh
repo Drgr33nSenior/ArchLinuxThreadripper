@@ -6,6 +6,11 @@ repo_root=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 source "$repo_root/lib/common.sh"
 # shellcheck source=lib/workstation/runtime.sh
 source "$repo_root/lib/workstation/runtime.sh"
+# Compiler fixtures produce shell stubs, not native ELF artifacts.
+ws_llama_runtime_manifest() {
+  [[ $1 == capture ]] || return 1
+  printf '{"fixture":true}\n' >"$3"
+}
 
 work=$(mktemp -d)
 trap 'rm -rf -- "$work"' EXIT

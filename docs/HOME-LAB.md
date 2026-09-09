@@ -177,12 +177,18 @@ tested backups or GPU qualification. See the [architecture](https://docs.k3s.io/
 [RKE2 comparison](https://docs.rke2.io/#how-is-this-different-from-rke-or-k3s).
 
 `infrastructure/packages/k3s/PKGBUILD` reads `K3S_VERSION` and
-`K3S_BINARY_SHA256` from `versions.lock`. The pin is `v1.35.7+k3s1`, which keeps
-the previous Kubernetes minor and patch. Its binary hash matches both the
+`K3S_BINARY_SHA256` from `versions.lock`. The pin is `v1.35.8+k3s1`, a reviewed
+same-minor maintenance update. Its binary hash matches both the
 upstream checksum file and release-asset metadata. The package owns
 `/usr/bin/k3s` and `k3s.service`, adapted from that release's service definition.
 It omits uninstall/killall helpers and does not start services. Review, build
 and sign it with makepkg as a non-root user, then install the signed package.
+
+The update includes containerd 2.2.7-k3s1 and Traefik chart v40. Existing
+ingress-nginx migration settings must use `kubernetesIngressNGINX` instead of
+`kubernetesIngressNginx`. Review the [release notes](https://github.com/k3s-io/k3s/releases/tag/v1.35.8%2Bk3s1)
+and the [audit follow-up](AUDIT-FOLLOWUP-2026-09-09.md) before upgrading.
+No running cluster has been upgraded or restore-qualified by this source change.
 
 Use a fresh K3s data directory. The role refuses existing `/var/lib/rancher/rke2`
 state. An existing RKE2 installation needs a separate workload/PVC migration and

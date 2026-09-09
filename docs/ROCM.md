@@ -115,9 +115,14 @@ Use a new output directory for each observation:
 ```
 
 Collection records `lscpu`, `lspci -nnk`, `free -h`, the requested `lsblk` fields,
-GCC/Clang versions, GCC native features, `rocminfo`, `rocm-smi`, installed packages,
+GCC/Clang versions, GCC native features, `rocminfo`, provider-aware AMD SMI or
+legacy ROCm SMI inventory, installed packages,
 PCI topology and boot ID. Missing tools remain visible in `commands.json`.
 On another OS/architecture, `hardware.json` says `pending` and has no GPU target.
+Inspect `gpu-monitor.json` for the selected provider and command/schema status.
+See the [audit follow-up](AUDIT-FOLLOWUP-2026-09-09.md) for runtime-library
+manifests and matching benchmark/quality configuration. Older llama builds
+without sealed runtime manifests need rebuilding in new directories.
 An observed report requires two distinct AMD PCI devices bound to `amdgpu` and
 two ROCm agents with the same `gfx*` target. HIP testing also checks the R9700
 model and independent PCI addresses. Never substitute a guessed architecture.

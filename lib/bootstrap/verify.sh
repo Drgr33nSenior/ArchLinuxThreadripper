@@ -22,6 +22,7 @@ bootstrap_verify_bootnum_for_label() {
 }
 
 bootstrap_verify_boot_order() {
+  local policy=${1:-installed} first selected label_candidate
   local labels=(
     'Arch Linux (stable)' 'Arch Linux (LTS)' 'Arch Linux (recovery)'
     'Arch Linux (stable backup)' 'Arch Linux (LTS backup)' 'Arch Linux (recovery backup)'
@@ -39,15 +40,43 @@ bootstrap_verify_boot_order() {
     return 1
   }
   actual=$(awk -F': ' '$1 == "BootOrder" {n++; value=toupper($2)} END {if(n != 1) exit 1; print value}' <<<"$inventory") || return 1
-  [[ $actual == "$expected" || $actual == "$expected,"* ]] ||
-    {
-      bootstrap_die "UEFI BootOrder does not begin $expected"
+  [[ $actual =~ ^[A-F0-9]{4}(,[A-F0-9]{4})*$ ]] || return 1
+  if [[ $policy == initial ]]; then
+    [[ $actual == "$expected" || $actual == "$expected,"* ]] || {
+      bootstrap_die "initial UEFI BootOrder does not begin $expected"
       return 1
     }
+    return 0
+  fi
+  [[ $policy == installed ]] || return 1
+  # All six identity-checked recovery entries must still be reachable, even
+  # after kernel select/promote moves an explicitly supported entry to first.
+  local -a required
+  IFS=, read -r -a required <<<"$expected"
+  for number in "${required[@]}"; do
+    [[ ,$actual, == *",$number,"* ]] || {
+      bootstrap_die 'required recovery entry missing from BootOrder'
+      return 1
+    }
+  done
+  first=${actual%%,*}
+  for label_candidate in 'Arch Linux (stable)' 'Arch Linux (LTS)'; do
+    selected=$(bootstrap_verify_bootnum_for_label "$label_candidate") || return 1
+    [[ $first != "$selected" ]] || return 0
+  done
+  selected=$(common::bootnum_for_label 'Arch Linux (git)' "$COMMON_ESP_A_PARTUUID" '\EFI\Linux\arch-linux-git.efi') || return 1
+  [[ $first == "$selected" ]] || {
+    bootstrap_die 'preferred entry is not a supported workstation kernel'
+    return 1
+  }
+  bootstrap_verify_file /efi/EFI/Linux/arch-linux-git.efi || return 1
+  bootstrap_verify_file /efi2/EFI/Linux/arch-linux-git.efi || return 1
+  cmp -s "$BOOTSTRAP_TARGET/efi/EFI/Linux/arch-linux-git.efi" "$BOOTSTRAP_TARGET/efi2/EFI/Linux/arch-linux-git.efi" || return 1
+  bootstrap_verify_uki_signature "$BOOTSTRAP_TARGET/efi/EFI/Linux/arch-linux-git.efi" "$BOOTSTRAP_TARGET/var/lib/sbctl/keys/db/db.pem"
 }
 
 bootstrap_verify() {
-  local cert uki helper hook state
+  local cert uki helper hook state policy=${1:-installed}
   BOOTSTRAP_TARGET=${BOOTSTRAP_TARGET:-/}
   cert="$BOOTSTRAP_TARGET/var/lib/sbctl/keys/db/db.pem"
   bootstrap_require_root || return 1
@@ -168,6 +197,6 @@ bootstrap_verify() {
     /efi/EFI/BOOT/BOOTX64.EFI /efi2/EFI/BOOT/BOOTX64.EFI; do
     bootstrap_verify_uki_signature "$BOOTSTRAP_TARGET$uki" "$cert" || return 1
   done
-  bootstrap_verify_boot_order || return 1
+  bootstrap_verify_boot_order "$policy" || return 1
   bootstrap_log 'post-install filesystem, dual-ESP identity, and db-certificate UKI signature checks passed'
 }

@@ -1,0 +1,12 @@
+# Validation only: CPython 3.11, macOS arm64 wheels. Not target runtime packages.
+# Verified wheel closure from the retained e5281734 validation environment.
+# A different platform needs a separately reviewed wheel lock; do not drop hashes.
+Jinja2==3.1.6 --hash=sha256:85ece4451f492d0c13c5dd7c13a64681a86afae63a5f347908daf103ce6d2f67
+MarkupSafe==3.0.3 --hash=sha256:4bd4cd07944443f5a265608cc6aab442e4f74dff8088b0dfc8238647b8f6ae9a
+PyYAML==6.0.3 --hash=sha256:652cb6edd41e718550aad172851962662ff2681490a8a711af6a4d288dd96824
+ansible-core==2.19.13 --hash=sha256:d4a256d0891b3cb31ddbc9ff8a7bf6fd359379007799c54390b66b8f94fed3d3
+cffi==2.1.1 --hash=sha256:398aff33cee2767e3e781d2554c54bd0dff386bb437581e0d8011fde1a942ec1
+cryptography==50.0.1 --hash=sha256:b8f852c65863251b9e3a1b8c150ce21e59b522dbb6a7d4bc80e680d38388e986
+packaging==26.3 --hash=sha256:d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c
+pycparser==3.0 --hash=sha256:b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992
+resolvelib==1.2.1 --hash=sha256:fb06b66c8da04172d9e72a21d7d06186d8919e32ae5ab5cdf5b9d920be805ac2

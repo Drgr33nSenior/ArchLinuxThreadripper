@@ -1,8 +1,11 @@
 SHELL := /bin/bash
 
-.PHONY: check syntax test bats shellcheck shfmt yaml ansible kubernetes systemd
+.PHONY: check check-strict syntax test bats shellcheck shfmt yaml ansible kubernetes systemd
 
 check: syntax shellcheck shfmt yaml test bats ansible kubernetes systemd
+
+check-strict:
+	@bash tests/check-strict.sh
 
 syntax:
 	@bash tests/syntax.sh

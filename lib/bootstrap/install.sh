@@ -378,7 +378,8 @@ bootstrap_create_firmware_entries() {
   # efibootmgr prepends newly created entries. Create stable last so it is the
   # preferred direct-UEFI path while preserving all recovery entries.
   bootstrap_run efibootmgr --create --disk "$BOOTSTRAP_DISK_A_REAL" --part 1 --label 'Arch Linux (stable)' --loader '\EFI\Linux\arch-linux.efi' || return 1
-  bootstrap_set_boot_order
+  bootstrap_set_boot_order || return 1
+  ((BOOTSTRAP_DRY_RUN)) || bootstrap_verify_boot_order initial
 }
 
 bootstrap_install() {

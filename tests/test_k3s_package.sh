@@ -10,7 +10,7 @@ pkgdir="$work/package"
 mkdir -p "$srcdir" "$pkgdir/usr/bin" "$pkgdir/usr/lib/systemd/system"
 # shellcheck source=infrastructure/packages/k3s/PKGBUILD
 source "$startdir/PKGBUILD"
-[[ $pkgname == k3s-workstation-bin && $pkgver == 1.35.7.k3s1 ]]
+[[ $pkgname == k3s-workstation-bin && $pkgver == 1.35.8.k3s1 ]]
 [[ ${source[0]} == "k3s-${_release}::https://github.com/k3s-io/k3s/releases/download/${_release}/k3s" ]]
 [[ ${sha256sums[1]} == "$(shasum -a 256 "$startdir/k3s.service" | awk '{print $1}')" ]]
 printf 'synthetic non-executable server contents\n' >"$srcdir/k3s-${_release}"

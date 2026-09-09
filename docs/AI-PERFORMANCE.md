@@ -1,5 +1,9 @@
 # AI performance and experimental builds
 
+See [opt-in model-kernel compilation and tuning](MODEL-KERNELS.md) for bounded
+Inductor workers, matched graph profiles, cache-restart evidence, dispatch
+profiling and HIP compiler diagnostics. The existing serving baseline is unchanged.
+
 This is the 2026-09-07 source audit for the Threadripper 9960X, dual R9700 and
 64 GiB host. The changes below provide targeted build controls and a measurement
 path. They are not evidence of a measured speedup on that hardware.
@@ -233,8 +237,10 @@ local-path PVCs. The existing KVM/AlmaLinux lab is a separate retained workflow.
 | Persistent storage | Model/creative/game PVCs, ccache; HF cache previously ephemeral | [K3s local storage](https://docs.k3s.io/storage) | Extend, retain layout | Separate 16 GiB HF cache PVC; read-only model mount retained. Existing gaming home holds shader caches; existing TRIM timer/encryption discard and backup design unchanged | Render/PVC tests and read-only discovery; actual cooling/TRIM/retention NOT RUN |
 | Functional peer transfers | BAR/PCI metadata cannot prove a transfer | [HIP peer API](https://rocm.docs.amd.com/projects/HIP/en/latest/doxygen/html/group___peer_to_peer.html) | Explicit diagnostic only | `tests/hardware/hip-peer-copy.cpp`: ordered pairs, 16 MiB transfer, UUID/PCI identity and readback verification | Compiled mock-HIP API tests; actual HIP compile and physical transfer NOT RUN |
 
-No dependency pins were advanced. `versions.lock` remains authoritative:
-K3s `v1.35.7+k3s1`, llama.cpp
+No dependency pins were advanced in that first tranche. The subsequent
+[9 September follow-up](AUDIT-FOLLOWUP-2026-09-09.md) selects K3s
+`v1.35.8+k3s1` and Qwen Code 0.23.2. `versions.lock` remains authoritative;
+the retained llama.cpp pin is
 `427291b5b34cd914a31b3fd3b61a68f6184f4b9f`, TheRock
 `b927c1865f37fa7bbecf5c7e35dee41b02afbb4f`, and the existing kernel/AUR pair.
 The operator chart remains `v1.5.1`, with archive and image digests in

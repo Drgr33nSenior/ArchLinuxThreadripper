@@ -62,7 +62,7 @@ k3s_load_config "$config_file" "$repo_root/versions.lock"
 KWIN_DEBIAN_VERSION=invalid
 k3s_load_config "$config_file" "$repo_root/versions.lock"
 [ "$KWIN_DEBIAN_VERSION" = '4:6.3.6-1' ]
-[ "$K3S_VERSION" = 'v1.35.7+k3s1' ]
+[ "$K3S_VERSION" = 'v1.35.8+k3s1' ]
 [ "$K3S_SELINUX_RPM_VERSION" = '1.6-1.el9' ]
 [ "$VM_VCPUS" = 8 ]
 k3s_require_ansible_access

@@ -17,6 +17,10 @@ EXPECTED_GPU_COUNT=2
 ws_require_arch() { :; }
 ws_require_user() { :; }
 ws_rocm_unfiltered() { :; }
+# Synthetic CLI fixtures have no ELF loader; real manifest regression is separate.
+ws_llama_runtime_manifest() {
+  if [[ $1 == capture ]]; then printf '{"fixture":true}\n' >"$3"; else jq -e '.fixture == true' "$3" >/dev/null; fi
+}
 ws_hardware_collect() {
   mkdir -p -- "$1"
   printf '11111111-2222-3333-4444-555555555555\n' >"$1/boot-id.txt"
@@ -40,6 +44,7 @@ for backend in hip vulkan; do
     --arg hash "$(common::sha256_file "$candidate/build/bin/llama-bench")" \
     '{status:"built-not-qualified",backend:$backend,source:{commit:$commit,tree:"fixture-tree"},outputs:{llama_bench_sha256:$hash,llama_perplexity_sha256:$hash,backend_ops_sha256:$hash}}' \
     >"$candidate/build-result.json"
+  ws_llama_runtime_seal "$candidate"
   # Real qualification function -> runner subprocess -> CLI stub -> CSV parser.
   for fixture in ops ops-with-skips; do
     export QUALITY_CSV="$root/tests/fixtures/llama-quality/$fixture.csv"
@@ -53,6 +58,44 @@ for backend in hip vulkan; do
       jq -e --argjson unsupported "$unsupported" '.supported_passes == 3 and .unsupported == $unsupported' \
         "$output/ops-$device/result.json" >/dev/null
     done
+  done
+  for split in row layer auto; do
+    LLAMA_SPLIT_MODE=$split
+    selection="${QUALITY_BACKEND}0/${QUALITY_BACKEND}1"
+    expected=$split
+    shares=1,1
+    if [[ $split == auto ]]; then
+      selection="${QUALITY_BACKEND}1"
+      expected=none
+      shares=1
+    fi
+    output="$work/split-$backend-$split"
+    ws_rocm_qualify_llama "$work/hardware/hardware.json" "$candidate" "$work/model.gguf" "$work/corpus.txt" "$output" "$selection"
+    jq -e --arg split "$expected" '.configuration.split_mode == $split and .configuration.threads == 12 and .quality_context_size == 2048' "$output/quality.json" >/dev/null
+    tail -n 1 "$QUALITY_ARG_LOG" | grep -Fq -- "--split-mode $expected --tensor-split $shares --main-gpu 0"
+  done
+  LLAMA_SPLIT_MODE=auto
+  # Binding to a paired experiment refuses changed settings/model/runtime.
+  paired="$work/paired-$backend"
+  mkdir "$paired"
+  cp -R "$work/hardware" "$paired/hardware"
+  ws_llama_effective_config "${QUALITY_BACKEND}0" >"$paired/$backend-effective-config.json"
+  cp "$candidate/runtime-manifest.json" "$paired/$backend-runtime-manifest.json"
+  jq -n --arg model "$(common::sha256_file "$work/model.gguf")" --arg commit "$(ws_read_lock ROCM_LLAMA_CPP_COMMIT)" \
+    '{status:"measured-not-qualified",provenance:{model_sha256:$model,source_commit:$commit}}' >"$paired/benchmark-result.json"
+  ws_rocm_qualify_llama "$work/hardware/hardware.json" "$candidate" "$work/model.gguf" "$work/corpus.txt" \
+    "$work/bound-$backend" "${QUALITY_BACKEND}0" "$paired"
+  for mismatch in settings model runtime; do
+    case $mismatch in
+      settings) LLAMA_THREADS=8 ;;
+      model) printf 'changed model\n' >>"$work/model.gguf" ;;
+      runtime) printf 'changed runtime\n' >"$paired/$backend-runtime-manifest.json" ;;
+    esac
+    if ws_rocm_qualify_llama "$work/hardware/hardware.json" "$candidate" "$work/model.gguf" "$work/corpus.txt" \
+      "$work/mismatch-$backend-$mismatch" "${QUALITY_BACKEND}0" "$paired" >"$work/mismatch.log" 2>&1; then exit 1; fi
+    [[ ! -e $work/mismatch-$backend-$mismatch/quality.json ]]
+    LLAMA_THREADS=12
+    printf 'fixture model\n' >"$work/model.gguf"
   done
   export QUALITY_CSV="$root/tests/fixtures/llama-quality/ops.csv"
   for failure in exit-failure malformed missing unsupported error ppl-failure ppl-malformed; do

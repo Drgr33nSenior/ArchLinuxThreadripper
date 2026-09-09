@@ -47,8 +47,9 @@ ws_serving_evidence() (
 
 ws_serving_benchmark() (
   set -euo pipefail
-  local workload=$1 evidence=$2 output=$3 pod before after port_dir port_pid port attempt boot
+  local workload=$1 evidence=$2 output=$3 mode=${4:-serving} pod before after port_dir port_pid port attempt boot
   local -a identity=()
+  case $mode in serving | kernel-warmup | kernel-profile) ;; *) ws_die 'unsupported serving measurement mode' ;; esac
   ws_require_arch
   ws_require_user
   [[ -f $evidence/pod.json ]] || ws_die 'collect serving-evidence first'
@@ -80,8 +81,15 @@ ws_serving_benchmark() (
   export AGENT_BASE_URL="http://127.0.0.1:$port/v1"
   ws_session_kubectl -n "$SESSION_NAMESPACE" exec -i "$pod" -c sglang -- python3 - snapshot \
     <"$(ws_repo_root)/lib/workstation/measurement.py" >"$port_dir/pod-before.json"
-  timeout --kill-after=5s 21600 "$(ws_measure_python)" "$(ws_repo_root)/lib/workstation/serving.py" "$workload" "$evidence" "$output" ||
-    ws_die 'serving benchmark failed; no successful measurement record'
+  if [[ $mode == serving ]]; then
+    timeout --kill-after=5s 21600 "$(ws_measure_python)" "$(ws_repo_root)/lib/workstation/serving.py" "$workload" "$evidence" "$output" ||
+      ws_die 'serving benchmark failed; no successful measurement record'
+  else
+    ws_kernel_probe "$pod" >"$port_dir/compiler-before.json"
+    timeout --kill-after=5s 21600 "$(ws_measure_python)" "$(ws_repo_root)/lib/workstation/kernel_run.py" \
+      "$mode" "$workload" "$evidence" "$port_dir/compiler-before.json" "$output" ||
+      ws_die 'kernel experiment failed; retain incomplete/failed evidence'
+  fi
   cp -- "$port_dir/pod-before.json" "$output/pod-resources-before.json"
   ws_hardware_collect "$output/hardware"
   ws_detected_gpu_target "$output/hardware/hardware.json" >/dev/null
@@ -97,8 +105,29 @@ ws_serving_benchmark() (
     mv -- "$output/result.failed.json" "$output/result.json"
     ws_die 'model/runtime provenance changed during serving benchmark'
   fi
+  if [[ $mode != serving ]]; then
+    ws_kernel_probe "$pod" >"$output/compiler-after.json"
+    "$(ws_measure_python)" "$(ws_repo_root)/lib/workstation/kernel_run.py" finish "$output" ||
+      ws_die 'kernel experiment memory/runtime check failed'
+    [[ $(ws_serving_pod "$pod" | jq -cS .) == "$(jq -cS . "$evidence/pod.json")" ]] ||
+      ws_die 'pod changed during final compiler observation; result remains unverified'
+  fi
   jq '.status="measured-not-qualified"' "$output/result.json" >"$output/result.verified.json"
   mv -- "$output/result.verified.json" "$output/result.json"
+)
+
+ws_kernel_probe() {
+  ws_session_kubectl -n "$SESSION_NAMESPACE" exec -i "$1" -c sglang -- python3 - \
+    <"$(ws_repo_root)/tests/hardware/sglang-kernel-evidence.py"
+}
+
+ws_kernel_evidence() (
+  set -euo pipefail
+  local pod=$1 output=$2
+  ws_serving_evidence "$pod" "$output"
+  ws_kernel_probe "$pod" >"$output/compiler.json"
+  [[ $(jq -cS . "$output/pod.json") == "$(ws_serving_pod "$pod" | jq -cS .)" ]] || ws_die 'pod changed during compiler evidence'
+  ws_note 'Compiler/cache evidence retained; no compilation, restart or tuning performed'
 )
 
 ws_serving_startup() (

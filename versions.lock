@@ -7,10 +7,11 @@ ALMALINUX_IMAGE_SHA256=6bdab6376d46d42e4203ace3733efafc7c5d37c7cb443a6cc74750097
 ALMALINUX_CHECKSUM_URL=https://repo.almalinux.org/almalinux/9/cloud/x86_64/images/CHECKSUM
 ALMALINUX_CHECKSUM_SIGNATURE_URL=https://repo.almalinux.org/almalinux/9/cloud/x86_64/images/CHECKSUM.asc
 ALMALINUX_SIGNING_FINGERPRINT=BF18AC2876178908D6E71267D36CB86CB86B3716
-# K3s replacement: same Kubernetes minor/patch as the previous RKE2 pin.
-# Binary digest matches release checksums and GitHub asset metadata (2026-09-06).
-K3S_VERSION=v1.35.7+k3s1
-K3S_BINARY_SHA256=5fc25309c53031e0cf03f7ee85f6f60969381ff3649039ffda19e30f5c26947a
+# Same-minor maintenance update reviewed 2026-09-09. No live upgrade performed.
+# Digest matches release checksums and GitHub asset metadata. See audit runbook
+# for bundled Traefik chart v40 migration and restore prerequisites.
+K3S_VERSION=v1.35.8+k3s1
+K3S_BINARY_SHA256=12f81c9bb5b71e098a4f7a2d187e350902a9339a6c3d5e56c20a03f7a417e07f
 K3S_MINOR=1.35
 K3S_SELINUX_RPM_VERSION=1.6-1.el9
 K3S_SELINUX_RPM_SHA256=23d0095a766b89317d2bdbe8773825987db7221e48743417930a994ca1096793
@@ -58,6 +59,11 @@ ROCM_AUR_SOURCE_SHA256=eb99db434a1738fd83b0c3b933146cdb76418f35fcf4647743fbdfef7
 SGLANG_ROCM_IMAGE=docker.io/rocm/sgl-dev:v0.5.15.post1-ubuntu24.04-py3.14-rocm10.0.0@sha256:51f63a2d201ca944a43b8f1a18ac7da73ed9f6743c45bb82bbc40b44e6cf18d2
 SGLANG_ROCM_INDEX_DIGEST=sha256:13171073ebf66fee0a1473d43ae8080cc7f8500fa213ddf1507f158fbb6dd63a
 SGLANG_ROCM_CONFIG_DIGEST=sha256:8474934b5049db5e3dbd9ee220e41b9d1a397a25ca0daac8a0b38850f2478495
+# Optional model-kernel workflow: exact source files inspected in the pinned
+# image's digest-verified COPY layer c31ff2cd... on 2026-09-09. Runtime must match.
+SGLANG_SERVER_ARGS_SHA256=ad470ede790c2b5fdf13d82dbf24ea6821747b8a5c581e81224ed7603bc23710
+SGLANG_COMPILE_DECORATION_SHA256=77b1e38dba14788800b6b6351af1b5b8a80d9e42b91b57e9484ea4561d33a48c
+SGLANG_QWEN35_SOURCE_SHA256=48a8e32043f1bcf711243152e53db5a1bdec0372913a28acd6fd59bc0feedf6b
 # Model choices reviewed 2026-09-08. Revisions resolved from official HF repos;
 # weights were not downloaded. Stage these revisions, not moving main branches.
 SGLANG_DUAL_MODEL_REPOSITORY=Qwen/Qwen3.8-27B-FP8
@@ -83,9 +89,9 @@ OPEN_WEBUI_IMAGE=ghcr.io/open-webui/open-webui:v0.11.3@sha256:9cd136effce6bb12a6
 RAG_EMBEDDING_REPOSITORY=Qwen/Qwen3-Embedding-0.6B
 RAG_EMBEDDING_REVISION=97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3
 # Per-file SHA-256 inputs: apps/overlays/rag/SHA256SUMS (safetensors, no pickle).
-# Client harness schemas reviewed 2026-09-08. These pins are not a claim that
-# clients were installed or qualified. Qwen commit is the npm 0.23.0 gitHead.
-QWEN_CODE_VERSION=0.23.0
-QWEN_CODE_COMMIT=98a9c964158697dd5631d15a62174684ff7bbb53
+# Qwen CLI schema and output-limit contract rechecked 2026-09-09; npm gitHead,
+# not the separately released SDK. Client execution remains unqualified.
+QWEN_CODE_VERSION=0.23.2
+QWEN_CODE_COMMIT=f56de980b316cd5410f067fbb62357481ebd66b8
 DSH_COMMIT=c389f96bf3a9b6807cb71ed6bdad5849be0df6d8
 HERMES_AGENT_COMMIT=13fb5e1eceba51fc45a48b5d95a357e144d42689

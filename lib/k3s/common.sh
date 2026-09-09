@@ -23,6 +23,7 @@ k3s_gpg_primary_matches() {
 
 k3s_allowed_key() {
   case "$1" in
+    SGLANG_SERVER_ARGS_SHA256 | SGLANG_COMPILE_DECORATION_SHA256 | SGLANG_QWEN35_SOURCE_SHA256) return 0 ;;
     QWEN_CODE_VERSION | QWEN_CODE_COMMIT | DSH_COMMIT | HERMES_AGENT_COMMIT) return 0 ;;
     K3S_SELINUX_RPM_SHA256) return 0 ;;
     OPEN_WEBUI_VERSION | OPEN_WEBUI_COMMIT | OPEN_WEBUI_IMAGE | RAG_EMBEDDING_REPOSITORY | RAG_EMBEDDING_REVISION) return 0 ;;
@@ -38,6 +39,7 @@ k3s_allowed_key() {
 k3s_validate_value() {
   local key="$1" value="$2"
   case "$key" in
+    SGLANG_SERVER_ARGS_SHA256 | SGLANG_COMPILE_DECORATION_SHA256 | SGLANG_QWEN35_SOURCE_SHA256) [[ "$value" =~ ^[a-f0-9]{64}$ ]] || k3s_die "$key must be a SHA-256 digest" ;;
     QWEN_CODE_VERSION) [[ "$value" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || k3s_die "$key must be an exact Qwen Code release" ;;
     QWEN_CODE_COMMIT | DSH_COMMIT | HERMES_AGENT_COMMIT) [[ "$value" =~ ^[a-f0-9]{40}$ ]] || k3s_die "$key must be an exact agent source revision" ;;
     K3S_VERSION) [[ "$value" =~ ^v1\.35\.[0-9]+\+k3s[0-9]+$ ]] || k3s_die "$key must be an exact K3s release" ;;
@@ -155,6 +157,7 @@ k3s_load_kv_file() {
 
 k3s_load_config() {
   local config_file="$1" lock_file="$2"
+  unset SGLANG_SERVER_ARGS_SHA256 SGLANG_COMPILE_DECORATION_SHA256 SGLANG_QWEN35_SOURCE_SHA256
   unset QWEN_CODE_VERSION QWEN_CODE_COMMIT DSH_COMMIT HERMES_AGENT_COMMIT
   unset K3S_SELINUX_RPM_SHA256
   unset OPEN_WEBUI_VERSION OPEN_WEBUI_COMMIT OPEN_WEBUI_IMAGE RAG_EMBEDDING_REPOSITORY RAG_EMBEDDING_REVISION

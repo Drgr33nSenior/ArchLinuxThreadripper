@@ -49,7 +49,15 @@ Commands:
   rocm serving-startup <pod-name> <cold|warm> <new-output-directory>
   rocm benchmark-serving <workload.json> <evidence-directory> <new-output-directory>
   rocm serving-sweep <rendered-sglang-deployment.json> <new-output-directory>
-  rocm qualify-llama <hardware.json> <candidate-directory> <model.gguf> <corpus.txt> <new-output-directory> <devices>
+  rocm kernel-evidence <pod-name> <new-output-directory>
+  rocm kernel-plan <deployment.json> <workload.json> <evidence-directory> <new-output-directory> --profile <cache|capture|legacy-compile> --reserve-mib N --worker-mib N [--workers 1,2] [--experimental]
+  rocm kernel-warmup <workload.json> <evidence-directory> <new-output-directory>
+  rocm kernel-profile <workload.json> <evidence-directory> <new-output-directory>
+  rocm kernel-compare <cold-run> <warm-run> <cold-startup.json> <warm-startup.json> <new-result.json> --rank-log FILE [--rank-log FILE] --atol N --rtol N
+  rocm kernel-dispatch <trace.json[.gz]> <profile-run/result.json> <new-result.json>
+  rocm kernel-quality <baseline/result.json> <candidate/result.json> <new-result.json> --atol N --rtol N
+  rocm kernel-seal-tuning <profile-result.json> <dispatch.json> <review.json> <tuning-file> <new-directory> --kind <triton|hipblaslt>
+  rocm qualify-llama <hardware.json> <candidate-directory> <model.gguf> <corpus.txt> <new-output-directory> <devices> [paired-benchmark-directory]
   rocm validate-pod <pod-name> <new-output-directory>
   performance tuned <balanced|accelerator-performance|throughput-performance> <new-output-directory> -- <command> [arguments]
   performance storage <owned-scratch-directory> <new-output-directory> <size-GiB>
@@ -255,8 +263,21 @@ main() {
       (($# == 4)) || return 2
       "$(ws_measure_python)" "$repo_root/lib/workstation/serving_sweep.py" "$3" "$4"
       ;;
+    rocm:kernel-evidence)
+      (($# == 4)) || return 2
+      ws_kernel_evidence "$3" "$4"
+      ;;
+    rocm:kernel-warmup | rocm:kernel-profile)
+      (($# == 5)) || return 2
+      ws_serving_benchmark "$3" "$4" "$5" "$2"
+      ;;
+    rocm:kernel-plan | rocm:kernel-compare | rocm:kernel-dispatch | rocm:kernel-seal-tuning | rocm:kernel-quality)
+      local kernel_mode=${2#kernel-}
+      shift 2
+      "$(ws_measure_python)" "$repo_root/lib/workstation/model_kernels.py" "$kernel_mode" "$@"
+      ;;
     rocm:qualify-llama)
-      (($# == 8)) || return 2
+      (($# == 8 || $# == 9)) || return 2
       shift 2
       ws_rocm_qualify_llama "$@"
       ;;

@@ -27,6 +27,6 @@ if (common::load_config "$tmp_dir/duplicate.conf" FOO) >/dev/null 2>&1; then
   exit 1
 fi
 
-[ "$(common::lock_get "$repo_root/versions.lock" K3S_VERSION)" = 'v1.35.7+k3s1' ]
+[ "$(common::lock_get "$repo_root/versions.lock" K3S_VERSION)" = 'v1.35.8+k3s1' ]
 
 printf 'common helpers passed\n'

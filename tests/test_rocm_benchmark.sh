@@ -6,6 +6,10 @@ repo_root=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 source "$repo_root/lib/common.sh"
 # shellcheck source=lib/workstation/runtime.sh
 source "$repo_root/lib/workstation/runtime.sh"
+# No ELF runtime in these synthetic invocation fixtures.
+ws_llama_runtime_manifest() {
+  if [[ $1 == capture ]]; then printf '{"fixture":true}\n' >"$3"; else jq -e '.fixture == true' "$3" >/dev/null; fi
+}
 
 work=$(mktemp -d)
 trap 'rm -rf -- "$work"' EXIT
@@ -63,6 +67,7 @@ STUB
   jq -n --arg backend "$backend" --arg hash "$(common::sha256_file "$output/build/bin/llama-bench")" \
     '{status:"built-not-qualified",backend:$backend,source:{commit:"427291b5b34cd914a31b3fd3b61a68f6184f4b9f",tree:"tree-1"},outputs:{llama_bench_sha256:$hash}}' \
     >"$output/build-result.json"
+  ws_llama_runtime_seal "$output"
 }
 
 make_report "$work/recorded"

@@ -62,6 +62,68 @@ ws_capture_optional() {
   jq -n --arg name "$name" --argjson status "$status" '{command:$name,exit_code:$status,required:false}' >>"$output/optional-commands.jsonl"
 }
 
+ws_gpu_monitor_provider() {
+  if [[ ${ROCM_SDK_PROVIDER:-arch} == arch ]] && command -v rocm-smi >/dev/null 2>&1; then
+    printf 'rocm-smi\n'
+  elif command -v amd-smi >/dev/null 2>&1; then
+    printf 'amd-smi\n'
+  elif command -v rocm-smi >/dev/null 2>&1; then
+    printf 'rocm-smi\n'
+  else
+    return 127
+  fi
+}
+
+ws_gpu_monitor_json() {
+  local provider=$1 file=$2
+  case $provider in
+    amd-smi)
+      # Upstream CLI JSON is an array (even for one GPU), with lowercase keys.
+      jq -es 'length == 1 and (.[0] | type == "array" and length > 0 and
+        all(.[]; type == "object" and (.gpu|type == "number") and
+          (.bdf|type == "string" and test("^[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\\.[0-7]$")) and
+          (.uuid|type == "string" and length > 0 and . != "N/A") and .error == null) and
+        ([.[].bdf]|unique|length) == length and ([.[].gpu]|unique|length) == length)' "$file" >/dev/null
+      ;;
+    rocm-smi)
+      jq -es 'length == 1 and (.[0] | type == "object" and length > 0 and
+        all(to_entries[]; (.key|test("^card[0-9]+$")) and (.value|type == "object" and length > 0) and .value.error == null))' "$file" >/dev/null
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+ws_gpu_monitor_capture() {
+  local output=$1 provider=unavailable status=0 validation=unavailable
+  provider=$(ws_gpu_monitor_provider) || status=$?
+  if ((status == 0)); then
+    if [[ $provider == amd-smi ]]; then
+      timeout 30 amd-smi list --json >"$output/gpu-monitor-raw.json" 2>"$output/gpu-monitor.stderr" || status=$?
+    else
+      timeout 30 rocm-smi --json >"$output/gpu-monitor-raw.json" 2>"$output/gpu-monitor.stderr" || status=$?
+    fi
+    validation=command-failed
+    if ((status == 0)); then
+      if ws_gpu_monitor_json "$provider" "$output/gpu-monitor-raw.json"; then
+        validation=observed
+      else
+        status=65
+        validation=unsupported-or-invalid-json
+      fi
+    fi
+  fi
+  jq -n --arg provider "${provider:-unavailable}" --arg status "$validation" --argjson code "$status" \
+    '{schema:1,provider:$provider,status:$status,exit_code:$code,
+      scope:"read-only provider inventory; workload sampling uses BDF-keyed sysfs sensors"}' >"$output/gpu-monitor.json"
+  jq -n --argjson status "$status" '{command:"gpu-monitor",exit_code:$status}' >>"$output/commands.jsonl"
+  # Optional metric payload stays raw: unsupported Radeon sensors are not zero.
+  if [[ $validation == observed && $provider == amd-smi ]]; then
+    ws_capture_optional "$output" amd-smi-version timeout 30 amd-smi version --json
+    ws_capture_optional "$output" amd-smi-metric timeout 30 amd-smi metric --json
+  fi
+  return "$status"
+}
+
 ws_hardware_cpu_list_json() {
   local list=${1:-} item first last cpu
   [[ $list =~ ^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$ ]] || {
@@ -338,7 +400,7 @@ ws_hardware_collect() (
     ws_capture "$output" clang clang --version
     ws_capture "$output" gcc-native gcc -march=native -Q --help=target
     ws_capture "$output" rocminfo rocminfo
-    ws_capture "$output" rocm-smi rocm-smi
+    ws_gpu_monitor_capture "$output" || : # failure is retained in required commands
     ws_capture "$output" packages pacman -Q
     ws_capture "$output" topology lspci -tv
     # Read-only PCI capability evidence (links, ACS and Resizable BAR where
@@ -387,10 +449,11 @@ ws_hardware_collect() (
     --argjson pci "$pci" --argjson agents "$agents" --argjson cpu_topology "$cpu_topology" --argjson memory "$memory" \
     --argjson platform "$platform" --argjson nvme_devices "$nvme_devices" --argjson trim_evidence "$trim_evidence" \
     --argjson cpu_power "$(ws_hardware_json_report_or_null "$output/cpu-power.txt")" \
+    --argjson gpu_monitor "$(ws_hardware_json_report_or_null "$output/gpu-monitor.json")" \
     '{schema:1,status:$status,reason:$reason,collected_at:$date,os:$os,architecture:$arch,
       expected:{gpu_count:$count,gpu_model:$model},pci_gpus:$pci,rocm_agents:$agents,
       gpu_target:(if ($agents|length)>0 then $agents[0].gfx else null end),hardware_workloads_validated:false,
-      cpu_topology:$cpu_topology,cpu_power:$cpu_power,memory:$memory,platform:$platform,nvme_devices:$nvme_devices,trim_evidence:$trim_evidence}' >"$output/hardware.json"
+      cpu_topology:$cpu_topology,cpu_power:$cpu_power,gpu_monitor:$gpu_monitor,memory:$memory,platform:$platform,nvme_devices:$nvme_devices,trim_evidence:$trim_evidence}' >"$output/hardware.json"
   ws_note "hardware evidence: $output/hardware.json ($status)"
   [[ $status != failed ]]
 )

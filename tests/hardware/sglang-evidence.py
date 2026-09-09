@@ -19,7 +19,10 @@ def main():
             "CONTEXT_LENGTH", "TENSOR_PARALLEL", "MEM_FRACTION_STATIC", "MAX_RUNNING_REQUESTS",
             "ATTENTION_BACKEND", "SGLANG_USE_AITER", "SGLANG_USE_AITER_RMSNORM",
             "SGLANG_USE_AITER_AR", "SGLANG_ROCM_FUSED_DECODE_MLA",
-            "HSA_OVERRIDE_CPU_AFFINITY_DEBUG", "TRITON_HIP_USE_BLOCK_PINGPONG")
+            "HSA_OVERRIDE_CPU_AFFINITY_DEBUG", "TRITON_HIP_USE_BLOCK_PINGPONG",
+            "TORCHINDUCTOR_COMPILE_THREADS", "TORCHINDUCTOR_FX_GRAPH_CACHE", "TORCH_LOGS",
+            "TRITON_CACHE_DIR", "TORCHINDUCTOR_CACHE_DIR", "SGLANG_TORCH_COMPILE_MODE",
+            "HIPBLASLT_TUNING_OVERRIDE_FILE")
     settings = {key: os.environ.get(key) for key in keys}
     model = Path(settings["MODEL_PATH"] or "")
     if not model.is_absolute() or not model.is_dir() or not settings["MODEL_REVISION"]:
@@ -32,6 +35,9 @@ def main():
             files[str(path.relative_to(model))] = {"bytes": path.stat().st_size, "sha256": digest(path)}
     if not any(name.endswith(".safetensors") for name in files):
         raise RuntimeError("model has no safetensors weights")
+    config = json.loads((model / "config.json").read_text())
+    model_contract = {"architectures": config.get("architectures"), "model_type": config.get("model_type"),
+                      "quant_method": (config.get("quantization_config") or {}).get("quant_method")}
     packages = {}
     for name in ("sglang", "torch", "triton", "pytorch-triton-rocm", "aiter", "transformers"):
         try:
@@ -50,7 +56,8 @@ def main():
         raise RuntimeError("allocated devices do not report gfx1201")
     allowed = {"--model-path", "--revision", "--served-model-name", "--dtype", "--tp", "--tp-size",
                "--context-length", "--mem-fraction-static", "--max-running-requests",
-               "--chunked-prefill-size", "--attention-backend", "--stream-interval"}
+               "--chunked-prefill-size", "--attention-backend", "--stream-interval", "--torch-compile-max-bs",
+               "--cuda-graph-backend-decode", "--cuda-graph-backend-prefill", "--cuda-graph-tc-compiler"}
     launch = []
     for process in Path("/proc").glob("[0-9]*/cmdline"):
         try:
@@ -58,10 +65,20 @@ def main():
         except (OSError, UnicodeError):
             continue
         if "sglang.launch_server" in args:
-            launch.append({a: args[i + 1] for i, a in enumerate(args[:-1]) if a in allowed})
+            observed = {a: args[i + 1] for i, a in enumerate(args[:-1]) if a in allowed}
+            observed["--enable-torch-compile"] = "--enable-torch-compile" in args
+            for option in ("--cuda-graph-bs-decode", "--cuda-graph-bs-prefill"):
+                if option in args:
+                    values = []
+                    for value in args[args.index(option)+1:]:
+                        if not value or value.startswith("--"):
+                            break
+                        values.append(value)
+                    observed[option] = values
+            launch.append(observed)
     print(json.dumps({"schema": 1, "settings": settings, "packages": packages,
                       "hip": torch.version.hip, "devices": devices, "launch": launch,
-                      "model_files": files}, indent=2))
+                      "model_files": files, "model_contract": model_contract}, indent=2))
 
 
 if __name__ == "__main__":
