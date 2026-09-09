@@ -6,6 +6,8 @@ metadata:
     ai-home-lab.local/qualification: pending-rocm10-target-and-model-validation
 spec:
   replicas: 0
+  # Startup/JIT may consume the full 1800-second probe window.
+  progressDeadlineSeconds: 2100
   strategy: {type: Recreate}
   selector:
     matchLabels: {app.kubernetes.io/name: sglang}

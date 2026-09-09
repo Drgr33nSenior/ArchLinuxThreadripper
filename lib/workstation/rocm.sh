@@ -433,8 +433,10 @@ ws_rocm_build_llama() (
   build_dir="$output/build"
   cmake_args=(
     -S "$source" -B "$build_dir" -G Ninja
-    -DCMAKE_BUILD_TYPE=Release
+    -DCMAKE_BUILD_TYPE=Release -DLLAMA_BUILD_TESTS=ON
     -DGGML_HIP=ON
+    # Preserve the selected commit's defaults explicitly, not floating options.
+    -DGGML_HIP_GRAPHS=ON -DGGML_HIP_RCCL=OFF
     "-DCMAKE_HIP_ARCHITECTURES=$target"
     -DGGML_NATIVE=ON
     "-DCMAKE_PREFIX_PATH=$rocm"
@@ -456,6 +458,11 @@ ws_rocm_build_llama() (
   [[ -r $build_dir/CMakeCache.txt ]] || ws_die 'CMake did not produce CMakeCache.txt'
   grep -Eq '^GGML_HIP:(BOOL|UNINITIALIZED)=ON$' "$build_dir/CMakeCache.txt" \
     || ws_die 'CMake did not retain GGML_HIP=ON'
+  if ! grep -Eq '^GGML_HIP_GRAPHS:(BOOL|UNINITIALIZED)=ON$' "$build_dir/CMakeCache.txt" \
+    || ! grep -Eq '^GGML_HIP_RCCL:(BOOL|UNINITIALIZED)=OFF$' "$build_dir/CMakeCache.txt" \
+    || ! grep -Fq -- '-DGGML_HIP_GRAPHS' "$build_dir/build.ninja"; then
+    ws_die 'pinned HIP graphs/RCCL settings are not reflected in the generated build'
+  fi
   grep -Eq '^GGML_NATIVE:(BOOL|UNINITIALIZED)=ON$' "$build_dir/CMakeCache.txt" \
     || ws_die 'CMake did not retain GGML_NATIVE=ON'
   grep -Eq "^CMAKE_HIP_ARCHITECTURES:[^=]+=$target$" "$build_dir/CMakeCache.txt" \
@@ -463,10 +470,11 @@ ws_rocm_build_llama() (
   ws_rocm_llama_cmake_rocm_validate "$build_dir/CMakeCache.txt" "$lock" || exit 1
   ws_rocm_llama_cmake_host_compilers_validate "$build_dir/CMakeCache.txt" || exit 1
   cp -- "$build_dir/CMakeCache.txt" "$output/CMakeCache.txt"
-  printf '%q ' ninja -C "$build_dir" -j "$jobs" llama-cli llama-bench > "$output/ninja-command.txt"
+  grep -Eq '^LLAMA_BUILD_TESTS:(BOOL|UNINITIALIZED)=ON$' "$build_dir/CMakeCache.txt" || ws_die 'quality-test targets were not enabled'
+  printf '%q ' ninja -C "$build_dir" -j "$jobs" llama-cli llama-bench llama-perplexity test-backend-ops > "$output/ninja-command.txt"
   printf '\n' >> "$output/ninja-command.txt"
-  ninja -C "$build_dir" -j "$jobs" llama-cli llama-bench
-  for binary in "$build_dir/bin/llama-cli" "$build_dir/bin/llama-bench"; do
+  ninja -C "$build_dir" -j "$jobs" llama-cli llama-bench llama-perplexity test-backend-ops
+  for binary in "$build_dir/bin/llama-cli" "$build_dir/bin/llama-bench" "$build_dir/bin/llama-perplexity" "$build_dir/bin/test-backend-ops"; do
     [[ -x $binary ]] || ws_die "expected llama.cpp build output is missing or non-executable: $binary"
   done
 
@@ -485,12 +493,12 @@ ws_rocm_build_llama() (
     --arg fresh_report_hash "$(common::sha256_file "$output/hardware/hardware.json")" \
     --arg cache_hash "$(common::sha256_file "$output/CMakeCache.txt")" \
     --arg cli_hash "$(common::sha256_file "$build_dir/bin/llama-cli")" \
-    --arg bench_hash "$(common::sha256_file "$build_dir/bin/llama-bench")" \
+    --arg bench_hash "$(common::sha256_file "$build_dir/bin/llama-bench")" --arg ppl_hash "$(common::sha256_file "$build_dir/bin/llama-perplexity")" --arg ops_hash "$(common::sha256_file "$build_dir/bin/test-backend-ops")" \
     --argjson cmake_args "$args_json" \
     --argjson packages "$(printf '%s\n' "${owners[@]}" | jq -Rn '[inputs]')" \
     '{schema:1,status:"built-not-qualified",profile:"experimental",backend:"hip",source:{commit:$source_commit,tree:$source_tree},
       gpu_target:$target,hardware_report_sha256:$report_hash,fresh_hardware_report_sha256:$fresh_report_hash,
-      cmake_cache_sha256:$cache_hash,outputs:{llama_cli_sha256:$cli_hash,llama_bench_sha256:$bench_hash},
+      cmake_cache_sha256:$cache_hash,outputs:{llama_cli_sha256:$cli_hash,llama_bench_sha256:$bench_hash,llama_perplexity_sha256:$ppl_hash,backend_ops_sha256:$ops_hash},
       cmake_args:$cmake_args,rocm_sdk_provider:$provider,rocm_prefix:$rocm,rocm_packages:$packages,
       installed:false,qualification_required:["dual-GPU inference","llama-bench review","reboot repeat","sustained soak"]}' \
     > "$output/build-result.json"
@@ -582,7 +590,7 @@ ws_rocm_build_llama_vulkan() (
   build_dir="$output/build"
   cmake_args=(
     -S "$source" -B "$build_dir" -G Ninja
-    -DCMAKE_BUILD_TYPE=Release
+    -DCMAKE_BUILD_TYPE=Release -DLLAMA_BUILD_TESTS=ON
     -DGGML_VULKAN=ON
     -DGGML_NATIVE=ON
     -DCMAKE_FIND_USE_PACKAGE_REGISTRY=FALSE
@@ -607,10 +615,11 @@ ws_rocm_build_llama_vulkan() (
     || ws_die 'CMake did not retain the installed Arch glslc path'
   ws_rocm_llama_cmake_host_compilers_validate "$build_dir/CMakeCache.txt" || exit 1
   cp -- "$build_dir/CMakeCache.txt" "$output/CMakeCache.txt"
-  printf '%q ' ninja -C "$build_dir" -j "$jobs" llama-cli llama-bench > "$output/ninja-command.txt"
+  grep -Eq '^LLAMA_BUILD_TESTS:(BOOL|UNINITIALIZED)=ON$' "$build_dir/CMakeCache.txt" || ws_die 'quality-test targets were not enabled'
+  printf '%q ' ninja -C "$build_dir" -j "$jobs" llama-cli llama-bench llama-perplexity test-backend-ops > "$output/ninja-command.txt"
   printf '\n' >> "$output/ninja-command.txt"
-  ninja -C "$build_dir" -j "$jobs" llama-cli llama-bench
-  for binary in "$build_dir/bin/llama-cli" "$build_dir/bin/llama-bench"; do
+  ninja -C "$build_dir" -j "$jobs" llama-cli llama-bench llama-perplexity test-backend-ops
+  for binary in "$build_dir/bin/llama-cli" "$build_dir/bin/llama-bench" "$build_dir/bin/llama-perplexity" "$build_dir/bin/test-backend-ops"; do
     [[ -x $binary ]] || ws_die "expected llama.cpp build output is missing or non-executable: $binary"
   done
 
@@ -629,12 +638,12 @@ ws_rocm_build_llama_vulkan() (
     --arg fresh_report_hash "$(common::sha256_file "$output/hardware/hardware.json")" \
     --arg cache_hash "$(common::sha256_file "$output/CMakeCache.txt")" \
     --arg cli_hash "$(common::sha256_file "$build_dir/bin/llama-cli")" \
-    --arg bench_hash "$(common::sha256_file "$build_dir/bin/llama-bench")" \
+    --arg bench_hash "$(common::sha256_file "$build_dir/bin/llama-bench")" --arg ppl_hash "$(common::sha256_file "$build_dir/bin/llama-perplexity")" --arg ops_hash "$(common::sha256_file "$build_dir/bin/test-backend-ops")" \
     --argjson cmake_args "$args_json" \
     --argjson packages "$(printf '%s\n' "${packages[@]}" | sort -u | jq -Rn '[inputs]')" \
     '{schema:1,status:"built-not-qualified",profile:"experimental",backend:"vulkan",source:{commit:$source_commit,tree:$source_tree},
       gpu_target:$target,hardware_report_sha256:$report_hash,fresh_hardware_report_sha256:$fresh_report_hash,
-      cmake_cache_sha256:$cache_hash,outputs:{llama_cli_sha256:$cli_hash,llama_bench_sha256:$bench_hash},
+      cmake_cache_sha256:$cache_hash,outputs:{llama_cli_sha256:$cli_hash,llama_bench_sha256:$bench_hash,llama_perplexity_sha256:$ppl_hash,backend_ops_sha256:$ops_hash},
       cmake_args:$cmake_args,packages:$packages,installed:false,
       qualification_required:["explicit HIP/Vulkan device mapping","paired benchmark review","reboot repeat","sustained soak"]}' \
     > "$output/build-result.json"
@@ -644,6 +653,7 @@ ws_rocm_build_llama_vulkan() (
 ws_llama_defaults() {
   : "${LLAMA_CONTEXT_SIZE:=2048}" "${LLAMA_BATCH_SIZE:=2048}" "${LLAMA_UBATCH_SIZE:=512}"
   : "${LLAMA_FLASH_ATTN:=auto}" "${LLAMA_BENCH_PROMPT_TOKENS:=512}" "${LLAMA_BENCH_GENERATION_TOKENS:=128}" "${LLAMA_BENCH_REPETITIONS:=3}"
+  : "${LLAMA_THREADS:=12}" "${LLAMA_SPLIT_MODE:=auto}" "${LLAMA_KV_K:=f16}" "${LLAMA_KV_V:=f16}" "${LLAMA_BENCH_PAIRS:=2}"
 }
 
 ws_llama_runtime_config_validate() {
@@ -662,6 +672,13 @@ ws_llama_benchmark_config_validate() {
     ws_positive_integer "${!key:-}" || { ws_die "$key must be a positive integer"; return 1; }
   done
   ((LLAMA_BENCH_REPETITIONS >= 3)) || { ws_die 'LLAMA_BENCH_REPETITIONS must be at least 3 to report spread'; return 1; }
+  ws_positive_integer "$LLAMA_THREADS" || ws_die 'LLAMA_THREADS must be positive'
+  [[ $LLAMA_BENCH_PAIRS =~ ^[2-8]$ ]] || ws_die 'LLAMA_BENCH_PAIRS must be 2..8 for alternating order'
+  case $LLAMA_SPLIT_MODE in auto|none|layer|row) ;; *) ws_die 'unsupported llama split policy' ;; esac
+  for key in LLAMA_KV_K LLAMA_KV_V; do
+    case ${!key} in f16|q8_0|q4_0) ;; *) ws_die 'KV candidates are f16, q8_0 or q4_0; qualify each backend' ;; esac
+  done
+  ((LLAMA_UBATCH_SIZE <= LLAMA_BATCH_SIZE)) || ws_die 'microbatch must not exceed logical batch'
 }
 
 ws_llama_bench_result_validate() {
@@ -672,19 +689,52 @@ ws_llama_bench_result_validate() {
     || ws_die "llama-bench provenance does not match its retained binary: $binary"
 }
 
+# Slurp each file separately: jq -e on multiple inputs only checks the last
+# result. Require exactly one JSON document and both requested workload cases.
+ws_llama_metrics_validate() {
+  local file
+  for file in "$@"; do
+    jq -es --argjson prompt "$LLAMA_BENCH_PROMPT_TOKENS" --argjson generation "$LLAMA_BENCH_GENERATION_TOKENS" \
+      --argjson repeats "$LLAMA_BENCH_REPETITIONS" '
+      def positive: type == "number" and isfinite and . > 0;
+      def spread: type == "number" and isfinite and . >= 0;
+      length == 1 and (.[0] | type == "array" and length == 2 and
+        all(.[]; (.avg_ts | positive) and (.stddev_ts | spread) and
+          (.samples_ts | type == "array" and length == $repeats and all(.[]; positive)) and
+          (.samples_ns | type == "array" and length == $repeats and all(.[]; positive))) and
+        ([.[] | select(.n_prompt == $prompt and .n_gen == 0)] | length == 1) and
+        ([.[] | select(.n_prompt == 0 and .n_gen == $generation)] | length == 1))
+    ' "$file" >/dev/null || { ws_die "unusable or missing llama-bench workload metrics: $file"; return 1; }
+  done
+}
+
 ws_llama_bench_device_map_validate() {
   local binary=$1 devices=$2 output=$3 name count=0
-  [[ $devices =~ ^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)+$ ]] \
-    || ws_die 'device mappings must contain explicit slash-delimited llama device names for both GPUs'
+  [[ $devices =~ ^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$ ]] \
+    || ws_die 'device mappings must contain explicit slash-delimited llama device names'
   "$binary" --list-devices > "$output"
   IFS=/ read -r -a _ws_llama_devices <<< "$devices"
   for name in "${_ws_llama_devices[@]}"; do
-    grep -Fq -- "$name:" "$output" || ws_die "requested llama device is absent from $binary: $name"
+    awk -v name="$name:" '$1 == name {found=1} END {exit !found}' "$output" || ws_die "requested llama device is absent from $binary: $name"
     count=$((count + 1))
   done
-  [[ $count == "$EXPECTED_GPU_COUNT" ]] || ws_die 'device mapping must explicitly cover every expected physical GPU'
-  [[ $(printf '%s\n' "${_ws_llama_devices[@]}" | sort -u | awk 'END {print NR}') == "$EXPECTED_GPU_COUNT" ]] \
+  ((count >= 1 && count <= EXPECTED_GPU_COUNT)) || ws_die 'selection exceeds physical inventory'
+  [[ $(printf '%s\n' "${_ws_llama_devices[@]}" | sort -u | awk 'END {print NR}') == "$count" ]] \
     || ws_die 'device mapping repeats a device instead of covering every GPU'
+}
+
+ws_llama_allocations_validate() {
+  local devices=$1 log=$2 name
+  local -a selected
+  IFS=/ read -r -a selected <<< "$devices"
+  for name in "${selected[@]}"; do
+    awk -v name="$name" 'index($0,name " model buffer size") && $0 ~ /=[[:space:]]*[1-9]/ {found=1} END {exit !found}' "$log" \
+      || ws_die "no positive model allocation for selected $name; measurement refused"
+  done
+  awk -v selected="/$devices/" '
+    /model buffer size[[:space:]]*=/ {
+      for (i=1;i<=NF;i++) if ($i ~ /^(ROCm|Vulkan)[0-9]+$/ && index(selected,"/" $i "/") == 0 && $0 ~ /=[[:space:]]*[1-9]/) bad=1
+    } END {exit bad}' "$log" || ws_die 'an unselected GPU has a model allocation'
 }
 
 ws_rocm_benchmark_llama() (
@@ -699,6 +749,7 @@ ws_rocm_benchmark_llama() (
   local report=$1 hip=$2 vulkan=$3 model=$4 output=$5 hip_devices=$6 vulkan_devices=$7
   local report_dir input_boot fresh_boot target fresh_target hip_result vulkan_result hip_commit vulkan_commit hip_tree vulkan_tree locked_commit
   local -a common_args
+  local model_hash round backend binary devices split shares selected_count run_dir
   [[ -f $report && -x $hip && -x $vulkan && -f $model && ! -e $output && ! -L $output ]] \
     || ws_die 'provide observed hardware, retained executable benchmarks, one local model and a new non-symlink output directory'
   target=$(ws_detected_gpu_target "$report") || exit 1
@@ -731,24 +782,51 @@ ws_rocm_benchmark_llama() (
     || ws_die 'benchmark hardware observation does not match recorded dual-GPU identities'
   ws_llama_bench_device_map_validate "$hip" "$hip_devices" "$output/hip-devices.txt"
   ws_llama_bench_device_map_validate "$vulkan" "$vulkan_devices" "$output/vulkan-devices.txt"
+  selected_count=$(awk -F/ '{print NF}' <<< "$hip_devices")
+  [[ $selected_count == "$(awk -F/ '{print NF}' <<< "$vulkan_devices")" ]] || ws_die 'HIP/Vulkan selected device counts differ'
+  split=$LLAMA_SPLIT_MODE
+  if [[ $split == auto ]]; then
+    if ((selected_count == 1)); then split=none; else split=layer; fi
+  fi
+  shares=1
+  for ((round=1; round<selected_count; round++)); do shares+=/1; done
+  model_hash=$(common::sha256_file "$model")
 
   common_args=(
     --model "$model" --n-gpu-layers 999
     --batch-size "$LLAMA_BATCH_SIZE" --ubatch-size "$LLAMA_UBATCH_SIZE"
     --flash-attn "$LLAMA_FLASH_ATTN"
+    --threads "$LLAMA_THREADS" --split-mode "$split" --tensor-split "$shares"
+    --cache-type-k "$LLAMA_KV_K" --cache-type-v "$LLAMA_KV_V" --verbose
     --n-prompt "$LLAMA_BENCH_PROMPT_TOKENS" --n-gen "$LLAMA_BENCH_GENERATION_TOKENS"
     --repetitions "$LLAMA_BENCH_REPETITIONS" --output json
   )
-  printf '%q ' "$hip" "${common_args[@]}" --device "$hip_devices" > "$output/hip-command.txt"
-  printf '\n' >> "$output/hip-command.txt"
-  timeout 1800 "$hip" "${common_args[@]}" --device "$hip_devices" > "$output/hip-metrics.json" 2> "$output/hip-stderr.txt"
-  printf '%q ' "$vulkan" "${common_args[@]}" --device "$vulkan_devices" > "$output/vulkan-command.txt"
-  printf '\n' >> "$output/vulkan-command.txt"
-  timeout 1800 "$vulkan" "${common_args[@]}" --device "$vulkan_devices" > "$output/vulkan-metrics.json" 2> "$output/vulkan-stderr.txt"
-  jq -e 'type == "array" and length > 0 and all(.[]; (.avg_ts|type) == "number" and (.stddev_ts|type) == "number")' \
-    "$output/hip-metrics.json" "$output/vulkan-metrics.json" >/dev/null \
-    || ws_die 'llama-bench did not return JSON throughput and spread metrics'
-  jq -n --arg target "$target" --arg model_hash "$(common::sha256_file "$model")" \
+  for ((round=1; round<=LLAMA_BENCH_PAIRS; round++)); do
+    local order='hip vulkan'
+    ((round % 2 == 1)) || order='vulkan hip'
+    for backend in $order; do
+      binary=$hip; devices=$hip_devices
+      if [[ $backend == vulkan ]]; then binary=$vulkan; devices=$vulkan_devices; fi
+      run_dir="$output/$round-$backend"
+      [[ $(common::sha256_file "$model") == "$model_hash" ]] || ws_die 'model changed between benchmark runs'
+      printf '%s\n' "$round $backend" >> "$output/order.txt"
+      printf '%q ' "$binary" "${common_args[@]}" --device "$devices" > "$output/$backend-command.txt"
+      printf '\n' >> "$output/$backend-command.txt"
+      ws_measure_command "$run_dir" 1800 "$binary" "${common_args[@]}" --device "$devices" \
+        || ws_die 'llama-bench process failed; no successful measurement record'
+      ws_llama_metrics_validate "$run_dir/stdout.txt"
+      ws_llama_allocations_validate "$devices" "$run_dir/stderr.txt"
+    done
+  done
+  [[ $(common::sha256_file "$model") == "$model_hash" ]] || ws_die 'model changed during benchmark'
+  ws_llama_bench_result_validate "$hip" "$hip_result" hip
+  ws_llama_bench_result_validate "$vulkan" "$vulkan_result" vulkan
+  for backend in hip vulkan; do
+    local -a files=()
+    for ((round=1; round<=LLAMA_BENCH_PAIRS; round++)); do files+=("$output/$round-$backend/stdout.txt"); done
+    jq -s 'add' "${files[@]}" > "$output/$backend-metrics.json"
+  done
+  jq -n --arg target "$target" --arg model_hash "$model_hash" \
     --arg hip_hash "$(common::sha256_file "$hip")" --arg vulkan_hash "$(common::sha256_file "$vulkan")" \
     --arg source_commit "$hip_commit" --arg source_tree "$hip_tree" \
     --arg hip_devices "$hip_devices" --arg vulkan_devices "$vulkan_devices" \
@@ -756,14 +834,16 @@ ws_rocm_benchmark_llama() (
     --argjson context "$LLAMA_CONTEXT_SIZE" --argjson batch "$LLAMA_BATCH_SIZE" --argjson ubatch "$LLAMA_UBATCH_SIZE" \
     --argjson prompt "$LLAMA_BENCH_PROMPT_TOKENS" --argjson generation "$LLAMA_BENCH_GENERATION_TOKENS" \
     --argjson repetitions "$LLAMA_BENCH_REPETITIONS" --arg flash "$LLAMA_FLASH_ATTN" \
+    --argjson pairs "$LLAMA_BENCH_PAIRS" --argjson threads "$LLAMA_THREADS" --arg split "$split" --arg shares "$shares" --arg kv_k "$LLAMA_KV_K" --arg kv_v "$LLAMA_KV_V" \
     '{schema:1,status:"measured-not-qualified",gpu_target:$target,
       provenance:{model_sha256:$model_hash,source_commit:$source_commit,source_tree:$source_tree,
         hip_binary_sha256:$hip_hash,vulkan_binary_sha256:$vulkan_hash},
       configuration:{context_size:{value:$context,scope:"recorded only; pinned llama-bench has no context option"},
         batch_size:$batch,ubatch_size:$ubatch,prompt_tokens:$prompt,generation_tokens:$generation,
-        repetitions:$repetitions,flash_attention:$flash,warmup:"native llama-bench warmup retained",
+        repetitions:$repetitions,pairs:$pairs,threads:$threads,split_mode:$split,tensor_split:$shares,kv_k:$kv_k,kv_v:$kv_v,
+        flash_attention:$flash,warmup:"native llama-bench warmup retained",
         cache_policy:"warm compute throughput; cold file-cache state uncontrolled"},
-      device_mapping:{hip:$hip_devices,vulkan:$vulkan_devices,assertion:"operator-supplied full two-GPU mapping; backend names do not independently prove PCI identity"},
+      device_mapping:{hip:$hip_devices,vulkan:$vulkan_devices,assertion:"operator-supplied selection; allocations checked; complete physical inventory validated; backend names do not independently prove PCI identity"},
       metrics:{hip:$hip_metrics,vulkan:$vulkan_metrics},
       qualification_required:["review JSON throughput and spread","validate backend device mapping against PCI/UUID evidence","repeat after reboot","sustained soak"]}' \
     > "$output/benchmark-result.json"
@@ -788,15 +868,68 @@ ws_rocm_validate() (
   "$hipcc" --version > "$output/hipcc.txt"
   "$hipcc" -O2 --offload-arch="$target" "$(ws_repo_root)/tests/hardware/hip-smoke.cpp" -o "$output/hip-smoke"
   "$output/hip-smoke" "$EXPECTED_GPU_COUNT" "$target" "$EXPECTED_GPU_MODEL" | tee "$output/hip.txt"
+  "$hipcc" -O2 --offload-arch="$target" "$(ws_repo_root)/tests/hardware/hip-ipc.cpp" -o "$output/hip-ipc"
+  timeout 180 "$output/hip-ipc" > "$output/hip-ipc.txt"
+  "$hipcc" -O2 --offload-arch="$target" "$(ws_repo_root)/tests/hardware/hip-peer-copy.cpp" -o "$output/hip-peer-copy"
+  timeout 180 "$output/hip-peer-copy" > "$output/hip-peer-copy.txt"
   "$python" "$(ws_repo_root)/tests/hardware/torch-rocm.py" --count "$EXPECTED_GPU_COUNT" --model "$EXPECTED_GPU_MODEL" \
     > "$output/pytorch.json"
-  timeout 180 "$python" "$(ws_repo_root)/tests/hardware/torch-rocm.py" --count "$EXPECTED_GPU_COUNT" \
-    --model "$EXPECTED_GPU_MODEL" --collective > "$output/rccl.json"
+  NCCL_DEBUG=INFO NCCL_DEBUG_SUBSYS=INIT,GRAPH,P2P,SHM,NET NCCL_DEBUG_FILE="$output/rccl-transport.%h.%p.log" timeout 300 "$python" "$(ws_repo_root)/tests/hardware/torch-rocm.py" --count "$EXPECTED_GPU_COUNT" \
+    --model "$EXPECTED_GPU_MODEL" --collective > "$output/rccl.json" 2> "$output/rccl-transport.txt"
   rocm-smi > "$output/rocm-smi-after.txt"
   jq -n --arg target "$target" --argjson count "$EXPECTED_GPU_COUNT" \
-    '{schema:1,status:"passed",gpu_target:$target,gpu_count:$count,tests:["HIP-each-device","FP32","FP16","BF16-if-supported","RCCL-all-reduce"],
+    '{schema:1,status:"passed",gpu_target:$target,gpu_count:$count,tests:["HIP-each-device","HIP-IPC-import-export","HIP-peer-copy","FP32","FP16","BF16-if-supported","RCCL-all-reduce-size-sweep"],
       pending:["multi-GPU-inference","reboot-repeat","sustained-soak"]}' > "$output/result.json"
   ws_note "GPU validation passed: $output/result.json; inference, reboot and soak remain separate gates"
+)
+
+ws_rocm_qualify_llama() (
+  set -euo pipefail
+  ws_require_arch; ws_require_user; ws_rocm_unfiltered; ws_llama_benchmark_config_validate
+  local hardware=$1 candidate=$2 model=$3 corpus=$4 output=$5 devices=$6 target backend result model_hash corpus_hash device binary key
+  local -a selected
+  [[ ! -e $output && ! -L $output && -f $model && -s $corpus ]] || ws_die 'require local model/corpus and a new output directory'
+  target=$(ws_detected_gpu_target "$hardware")
+  result="$candidate/build-result.json"
+  backend=$(jq -er .backend "$result")
+  case $backend in hip|vulkan) ;; *) ws_die 'only retained HIP/Vulkan candidates can be qualified' ;; esac
+  [[ $(jq -r .source.commit "$result") == "$(ws_read_lock ROCM_LLAMA_CPP_COMMIT)" ]] || ws_die 'candidate is not from the pinned source'
+  for binary in llama-perplexity test-backend-ops; do
+    key=llama_perplexity_sha256
+    [[ $binary != test-backend-ops ]] || key=backend_ops_sha256
+    [[ -x $candidate/build/bin/$binary && $(jq -r --arg key "$key" '.outputs[$key]' "$result") == "$(common::sha256_file "$candidate/build/bin/$binary")" ]] \
+      || ws_die 'rebuild the candidate with retained quality binary hashes'
+  done
+  umask 077; mkdir -- "$output"
+  ws_hardware_collect "$output/hardware"
+  [[ $(ws_detected_gpu_target "$output/hardware/hardware.json") == "$target" &&
+    $(ws_rocm_boot_id_read "$(dirname -- "$hardware")/boot-id.txt") == "$(ws_rocm_boot_id_read "$output/hardware/boot-id.txt")" ]] || ws_die 'quality hardware is stale'
+  ws_rocm_hardware_identities_match "$hardware" "$output/hardware/hardware.json" || ws_die 'quality hardware identities changed'
+  ws_llama_bench_result_validate "$candidate/build/bin/llama-bench" "$result" "$backend"
+  ws_llama_bench_device_map_validate "$candidate/build/bin/llama-bench" "$devices" "$output/devices.txt"
+  model_hash=$(common::sha256_file "$model"); corpus_hash=$(common::sha256_file "$corpus")
+  IFS=/ read -r -a selected <<< "$devices"
+  for device in "${selected[@]}"; do
+    ws_measure_command "$output/ops-$device" 1800 "$candidate/build/bin/test-backend-ops" test \
+      -b "$device" -o MUL_MAT,RMS_NORM,SOFT_MAX --output csv
+    "$(ws_measure_python)" "$(ws_repo_root)/lib/workstation/quality_metrics.py" ops "$output/ops-$device/stdout.txt" --backend "$device" > "$output/ops-$device/result.json"
+  done
+  ws_measure_command "$output/perplexity" 3600 "$candidate/build/bin/llama-perplexity" \
+    --model "$model" --file "$corpus" --device "${devices//\//,}" --n-gpu-layers 999 \
+    --ctx-size "$LLAMA_CONTEXT_SIZE" --threads "$LLAMA_THREADS" --batch-size "$LLAMA_BATCH_SIZE" --ubatch-size "$LLAMA_UBATCH_SIZE" \
+    --flash-attn "$LLAMA_FLASH_ATTN" --cache-type-k "$LLAMA_KV_K" --cache-type-v "$LLAMA_KV_V"
+  ws_llama_allocations_validate "$devices" "$output/perplexity/stderr.txt"
+  "$(ws_measure_python)" "$(ws_repo_root)/lib/workstation/quality_metrics.py" perplexity "$output/perplexity/stderr.txt" > "$output/perplexity/result.json"
+  [[ $(common::sha256_file "$model") == "$model_hash" && $(common::sha256_file "$corpus") == "$corpus_hash" ]] || ws_die 'quality inputs changed'
+  for binary in llama-perplexity test-backend-ops; do
+    key=llama_perplexity_sha256
+    [[ $binary != test-backend-ops ]] || key=backend_ops_sha256
+    [[ $(jq -r --arg key "$key" '.outputs[$key]' "$result") == "$(common::sha256_file "$candidate/build/bin/$binary")" ]] \
+      || ws_die 'quality executable changed during measurement'
+  done
+  jq -n --arg model "$model_hash" --arg corpus "$corpus_hash" --arg backend "$backend" --slurpfile build "$result" \
+    '{schema:1,status:"numerical-checks-passed-model-review-required",model_sha256:$model,corpus_sha256:$corpus,backend:$backend,build:$build[0],
+      scope:"selected CPU-reference operations plus retained perplexity; not comprehensive model or tool-call quality qualification"}' > "$output/quality.json"
 )
 
 ws_rocm_inference() (

@@ -11,6 +11,10 @@ ws_sunshine_config_validate() {
   SUNSHINE_VAAPI_STRICT_RC_BUFFER=${SUNSHINE_VAAPI_STRICT_RC_BUFFER:-disabled}
   GAMING_WIDTH=${GAMING_WIDTH:-1920}
   GAMING_HEIGHT=${GAMING_HEIGHT:-1080}
+  GAMING_REFRESH_HZ=${GAMING_REFRESH_HZ:-60}
+  if [[ ! $GAMING_REFRESH_HZ =~ ^[1-9][0-9]{1,2}$ ]] || ((GAMING_REFRESH_HZ < 30 || GAMING_REFRESH_HZ > 240)); then
+    ws_die 'GAMING_REFRESH_HZ must be 30..240; the selected compositor must support the requested mode'
+  fi
   case $SUNSHINE_ENCODER in vaapi|vulkan) ;; *) ws_die 'SUNSHINE_ENCODER must be vaapi or vulkan' ;; esac
   case $SUNSHINE_CAPTURE in x11|kms|wlr|kwin|portal) ;; *) ws_die 'SUNSHINE_CAPTURE must explicitly select x11, kms, wlr, kwin or portal' ;; esac
   [[ $SUNSHINE_ENCODER != vulkan || ( $SUNSHINE_CAPTURE != x11 && $SUNSHINE_CAPTURE != wlr ) ]] \
@@ -37,7 +41,7 @@ ws_sunshine_new_output() {
 ws_sunshine_env() {
   local key
   ws_sunshine_config_validate
-  for key in SUNSHINE_ENCODER SUNSHINE_CAPTURE SUNSHINE_OUTPUT_NAME SUNSHINE_HEVC_MODE SUNSHINE_AV1_MODE SUNSHINE_VK_TUNE SUNSHINE_VAAPI_STRICT_RC_BUFFER GAMING_WIDTH GAMING_HEIGHT; do
+  for key in SUNSHINE_ENCODER SUNSHINE_CAPTURE SUNSHINE_OUTPUT_NAME SUNSHINE_HEVC_MODE SUNSHINE_AV1_MODE SUNSHINE_VK_TUNE SUNSHINE_VAAPI_STRICT_RC_BUFFER GAMING_WIDTH GAMING_HEIGHT GAMING_REFRESH_HZ; do
     printf '%s=%s\n' "$key" "${!key}"
   done
 }

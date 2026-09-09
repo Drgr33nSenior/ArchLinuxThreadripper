@@ -1,27 +1,53 @@
-# QEMU storage/boot test only. Resolve the actual two by-id links in the guest.
+# QEMU/KVM storage and boot-test configuration only; never use on physical hardware.
+# Copy into the guest, then resolve the actual two /dev/disk/by-id links there.
+# The parser accepts one literal KEY=VALUE per active line. Use no quotes, shell
+# expansion, spaces, inline comments, duplicate keys, or /dev/nvmeNnM paths.
+
+# VM_TEST_MODE must be true for this fixture. It only permits the documented QEMU
+# hardware checks; it does not relax disk identity, encryption, or erase safety.
 VM_TEST_MODE=true
+
+# Identity and package profile. HOST_PROFILE is headless or desktop. This test
+# omits TUNED_PROFILE, so the installer uses the headless default: auto/balanced.
 HOSTNAME=archlab-test
 HOST_PROFILE=headless
 USERNAME=operator
 LOCALE=en_GB.UTF-8
 KEYMAP=uk
 TIMEZONE=Europe/London
+
+# Storage identity. Replace the two placeholder paths with the guest's by-id links;
+# keep the synthetic serials exact for this fixture. The real install erases both
+# approved guest disks only with --execute; inspect the dry-run plan first.
 PRIMARY_DISK=/dev/disk/by-id/nvme-REPLACE_QEMU_A
 SECONDARY_DISK=/dev/disk/by-id/nvme-REPLACE_QEMU_B
 PRIMARY_DISK_SERIAL=ARCHLAB_TEST_A
 SECONDARY_DISK_SERIAL=ARCHLAB_TEST_B
+
+# Approved storage layout: two ESPs, then RAID0 -> LUKS2 -> XFS. RAID_NAME and
+# LUKS_NAME must differ. RAID_DEVICE must be /dev/md0 or /dev/md/RAID_NAME.
 RAID_NAME=vm-root
 RAID_DEVICE=/dev/md0
 LUKS_NAME=crypt_root
+# Fixed, approved geometry: ESP_SIZE_MIB must be 2048 and RAID_CHUNK_KIB must be 512.
 ESP_SIZE_MIB=2048
 RAID_CHUNK_KIB=512
+
+# Argon2id password-unlock calibration: time in milliseconds, memory in KiB, and
+# parallel lanes. Allowed ranges are 1000-10000 ms, 262144-4194304 KiB, and 1-4.
 LUKS_ITER_TIME_MS=2000
 LUKS_MEMORY_KIB=1048576
 LUKS_PARALLEL=4
+# Boot unlock is fido2 or tpm2-pin. Enrol and test the selected recovery path after install.
 BOOT_UNLOCK=tpm2-pin
+# The approved design requires true. This enables SSD discard through the encrypted stack.
 ALLOW_DISCARDS=true
+
+# Fixed ESP mount points for the two independently bootable copies.
 PRIMARY_ESP_MOUNT=/efi
 SECONDARY_ESP_MOUNT=/efi2
+
+# Optional host services. Values must be true or false; SSH is an explicit opt-in.
 ENABLE_SSH=false
 ENABLE_BLUETOOTH=false
 ENABLE_PRINTING=false

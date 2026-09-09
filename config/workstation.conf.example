@@ -1,79 +1,179 @@
-# Non-secret post-install workstation configuration.
+# Post-install workstation CLI configuration (non-secret).
+# Copy to config/workstation.conf, then use:
+#   ./bin/workstationctl --config config/workstation.conf <command> ...
+# This is literal KEY=VALUE data, not a shell script. Do not use export, quotes,
+# shell variables, ~ expansion, or trailing inline comments. Use absolute paths.
+# --config replaces the supported environment settings before applying defaults;
+# it does not merge with an installed config or automatically change services.
+# Keep credentials out of this file. See docs/WORKSTATION.md and docs/AI-PERFORMANCE.md.
+
+# --- Legacy Intel/B70 standalone LLM container ---
+# These keys apply to `llm up`, not the AMD/SGLang K3s manifests.
+# Existing host model directory, mounted read-only as /models in that container.
+# An explicit model-directory argument to `llm up` overrides this path.
 LLM_DATA_DIR=/srv/ai/vllm/models
+# Fixed loopback listener; other addresses/ports are rejected. Use a secure tunnel.
 LLM_LISTEN=127.0.0.1:8000
+# Container /dev/shm limit: positive integer plus m/g (MiB/GiB); not preallocated RAM.
 LLM_SHM_SIZE=8g
-# Used by `workstationctl profile`; server selects balanced for comparison.
+
+# --- Host power/performance profile ---
+# Used by `profile` when no profile argument is supplied; loading this file alone
+# does not change TuneD or switch a K3s session. Choices and their TuneD mappings:
+# server=balanced, desktop=desktop, build/game=throughput-performance,
+# ai=accelerator-performance, vm=virtual-host. Apply on the Arch host as root.
 DEFAULT_TUNED_PROFILE=ai
+
+# --- Bounded compilation and persistent compiler cache ---
+# Positive job ceilings for normal and memory-heavy builds, not fixed -j values.
+# Actual jobs are limited by available CPUs and RAM on the Linux build host.
 MAKE_JOBS=24
 MEMORY_HEAVY_JOBS=16
-# Job counts above are ceilings, not fixed concurrency. Reserve RAM for the
-# desktop/VM plus each link; recalculate before each large build.
+# RAM for the host and other workloads, in MiB (1024 MiB = 1 GiB).
+# Job budget = available MiB - this reserve - BUILD_LINK_MIB * BUILD_LINK_JOBS.
+# The command refuses compilation if the remaining budget cannot fit one job.
 BUILD_RESERVE_MIB=16384
+# Estimated MiB per normal compiler job; increase if observed peak usage is higher.
 BUILD_JOB_MIB=2048
+# Estimated MiB per memory-heavy job; do not assume two DIMMs can feed 48 jobs.
 BUILD_HEAVY_JOB_MIB=4096
+# MiB reserved per concurrent linker, in addition to BUILD_RESERVE_MIB.
 BUILD_LINK_MIB=8192
+# Concurrent linker ceiling for generated CMake/Ninja pools; positive integer.
 BUILD_LINK_JOBS=1
+# ccache storage budget: positive integer plus uppercase M or G, for example 100G.
+# `ccache configure` creates the user-owned cache; editing this value alone does
+# not resize existing cache config. Inspect it with `ccache stats`.
 CCACHE_MAX_SIZE=100G
-# CCACHE_DIRECTORY defaults to the invoking user's XDG cache/workstation/ccache.
-# A literal absolute path may be configured. Never share it by running as root.
+# Optional CCACHE_DIRECTORY defaults below the user's XDG cache (or ~/.cache),
+# under workstation/ccache. Add a literal absolute path for NVMe-backed storage.
+# Never configure or share this user cache by running the command as root.
+
+# --- Expected inventory and native HIP build provider ---
+# Validation expectations, not discovery results, GPU selection or pooled VRAM.
+# COUNT is a positive physical GPU count; MODEL is the expected name token used
+# by target diagnostics. Keep these aligned with actual hardware evidence.
 EXPECTED_GPU_COUNT=2
 EXPECTED_GPU_MODEL=R9700
-# Native llama.cpp HIP build provider. `arch` accepts only official Arch ROCm
-# packages. The AUR provider is an explicit, reviewed ROCm 10 experiment.
+# Native llama.cpp HIP builds only: arch = official Arch ROCm packages;
+# aur-gfx120x-bin = the reviewed, locked ROCm 10 AUR experiment.
+# This does not replace host amdgpu or change the ROCm container image.
 ROCM_SDK_PROVIDER=arch
 
-# Client-side local agents. Generate on the Mac/IDE host; nothing is installed,
-# launched or exposed by configuration. Preference: Qwen Code, DSH, Hermes.
-# The loopback URL requires an owner-established authenticated tunnel first.
-# Never put credentials here; launch reads WORKSTATION_AGENT_API_KEY from env.
+# --- Client-side agent bundles ---
+# `agent configure <new-directory>` generates a bundle on the Mac/IDE host.
+# No client/model is installed or started. Regenerate after edits: `agent launch`
+# reads the saved bundle, not these values. See docs/AI-PERFORMANCE.md.
+# Choices: qwen, dsh, hermes. Selection is explicit; there is no automatic fallback.
+# The pinned DSH requires ACP mode in an IDE; Qwen/Hermes also have CLI modes.
 AGENT_HARNESS=qwen
+# OpenAI-compatible /v1 route: HTTP only on localhost/127.0.0.1 via an owner-set
+# authenticated tunnel, or an authenticated HTTPS endpoint. No embedded passwords,
+# query strings or fragments. Supply WORKSTATION_AGENT_API_KEY via the environment.
 AGENT_BASE_URL=http://127.0.0.1:18000/v1
+# Exact model ID advertised by the server; this does not download or select weights.
 AGENT_MODEL=Qwen3.8-27B-FP8
+# Client context budget in tokens: 2048..262144; must match server-qualified capacity.
+# Raising this does not increase the server's context or available GPU memory.
 AGENT_CONTEXT_TOKENS=32768
+# Generated request cap: 128..half AGENT_CONTEXT_TOKENS. The pinned Hermes adapter
+# does not enforce this setting; its output cap remains provider-owned.
 AGENT_MAX_OUTPUT_TOKENS=4096
 
-# Applies to the pinned llama.cpp tools, not SGLang, wheels or other engines.
-# Context remains the previous CLI default. Bench has no context-size switch.
+# --- Pinned llama.cpp inference and paired benchmarks ---
+# Applies to `rocm inference` / `rocm benchmark-llama`, not SGLang or other engines.
+# Context window in tokens for llama-cli; llama-bench has no context-size switch.
 LLAMA_CONTEXT_SIZE=2048
+# Logical batch size in tokens; larger batches can increase prompt-workspace usage.
 LLAMA_BATCH_SIZE=2048
+# Physical microbatch size in tokens; keep within the chosen logical batch budget.
 LLAMA_UBATCH_SIZE=512
+# Flash Attention choice: on, off or auto. Verify against the pinned GPU/backend.
 LLAMA_FLASH_ATTN=auto
+# Prompt and generated token counts for both HIP/Vulkan benchmark inputs.
+# Keep these, the model and quantisation identical when comparing runs.
 LLAMA_BENCH_PROMPT_TOKENS=512
 LLAMA_BENCH_GENERATION_TOKENS=128
+# At least 3 repetitions; output reports spread, not a guaranteed speedup.
 LLAMA_BENCH_REPETITIONS=3
+# Alternate HIP/Vulkan order for each pair; 2..8 pairs, each retaining repetitions.
+LLAMA_BENCH_PAIRS=2
+# Explicit CPU threads for comparable runs. auto selects none for one GPU, layer for two.
+LLAMA_THREADS=12
+LLAMA_SPLIT_MODE=auto
+# KV candidates f16/q8_0/q4_0 require per-backend quality qualification; no automatic promotion.
+LLAMA_KV_K=f16
+LLAMA_KV_V=f16
+# Standard-library measurement helpers; select the intended target interpreter.
+# WORKSTATION_PYTHON=/usr/bin/python3
 
-# Offline resource plan: choose complete discovered SMT groups, never CPU IDs.
-# Recollect hardware and regenerate after the four-DIMM upgrade.
+# --- Offline K3s resource planning ---
+# `resources plan <hardware.json> <new-directory>` generates files; it does not
+# apply CPU Manager settings. Review the plan and migration procedure first.
+# These reserves are separate from the live compilation budget above.
+# Recollect topology and retune after the four-DIMM upgrade; do not just double jobs.
+# Physical cores kept for host/K3s, including all discovered SMT siblings.
+# This does not move host processes or interrupts onto those CPUs.
 RESOURCE_RESERVED_CORES=3
+# Host-service reserve, K3s reserve and eviction headroom, respectively, in MiB.
+# Their sum is subtracted from total RAM; capacity is not currently free memory.
 RESOURCE_HOST_RESERVE_MIB=12288
 RESOURCE_KUBE_RESERVE_MIB=4096
 RESOURCE_EVICTION_MIB=2048
 
-# Optional explicit single-node session control. No cluster contact until a
-# session command is selected; switch/restore also require root and --execute.
-# Set context/node to the actual reviewed non-production target before use.
+# --- Explicit AI / gaming / maintenance handover ---
+# `session plan` is offline. switch/restore require the actual host, a qualified
+# workload, current hardware evidence, root and --execute; loading config does not
+# contact K3s. See docs/AI-PERFORMANCE.md for migration and restore procedures.
+# Uncomment and set all three: exact kube-context, actual node name, and the
+# reviewed environment classification (dev, tst or int; production is rejected).
 # SESSION_CONTEXT=reviewed-kube-context
 # SESSION_NODE=actual-node-name
 # SESSION_ENVIRONMENT=dev
+# Namespace containing both managed Deployments.
 SESSION_NAMESPACE=ai-home-lab
+# Exact Deployment names from the selected overlay, not model names or pod names.
+# Handover stops/unloads the managed AI workload; it does not promise simultaneous
+# AI on the other GPU. Unmanaged workloads must be dealt with separately.
 SESSION_AI_DEPLOYMENT=sglang
 SESSION_GAME_DEPLOYMENT=parent-steam-headless
+# Positive timeout in seconds for handover waits; not a request/stream duration.
 SESSION_TIMEOUT_SECONDS=300
+# Separate AI startup budget: 1800-second startup probe plus scheduling margin.
+# Does not lengthen GPU-release/termination waits. Match Deployment progressDeadlineSeconds.
+SESSION_AI_STARTUP_TIMEOUT_SECONDS=2100
+# sunshine (Moonlight clients) or steam (Steam Remote Play), not both session paths.
+# The selected manifest must match; steam requires Sunshine disabled separately.
 SESSION_STREAMING_PATH=sunshine
 
-# Gaming candidate only; these settings do not qualify or enable a Deployment.
-# Generate sunshine.env for the existing Kustomize ConfigMap with `sunshine profile`.
-# The default is the KWin/PipeWire Wayland path. Portal capture is also explicit.
-# X11 is retained only for the separately built `sunshine image-build OUT x11`
-# rollback image and cannot be used with Vulkan Video.
+# --- Sunshine / headless Wayland gaming candidate ---
+# `sunshine profile <new-directory>` writes sunshine.env for review and copying to
+# the existing Kustomize ConfigMap. It does not update or qualify a Deployment.
+# See docs/SUNSHINE.md for image builds, input/consent gates and target diagnostics.
+# Encoder choices: vulkan or vaapi. Compare on the same qualified capture path.
 SUNSHINE_ENCODER=vulkan
+# kwin = native KWin/PipeWire capture; portal = explicit desktop-portal consent.
+# Both require the actual Wayland session. Native input/gamepads need separate
+# qualification. No silent X11 fallback. Legacy x11 requires `image-build OUT x11`.
+# kms/wlr need separately qualified sessions; Vulkan rejects both x11 and wlr.
 SUNSHINE_CAPTURE=kwin
+# Empty = no CLI override of saved output selection. Otherwise use an observed
+# output name, not a card number or numeric ordinal. This is not GPU allocation.
 SUNSHINE_OUTPUT_NAME=
+# HEVC/AV1 capability advertisement: 0=detect, 1=disable, 2=8-bit, 3=10-bit/HDR.
+# Do not advertise HDR until qualified; the Moonlight client chooses codec/FPS/bitrate.
 SUNSHINE_HEVC_MODE=0
 SUNSHINE_AV1_MODE=0
+# Vulkan latency tuning: 2=low latency; 3=experimental ultra-low latency.
+# Change only after comparable latency, drop and image-quality measurements.
 SUNSHINE_VK_TUNE=2
+# VA-API only: enabled/disabled strict rate-control buffer. Default is disabled;
+# test scene-change drops and quality before enabling. No effect on Vulkan tuning.
 SUNSHINE_VAAPI_STRICT_RC_BUFFER=disabled
-# KWin virtual-output dimensions. Change only with a matching profile/image
-# rollout; values must be even and remain within the validated limits.
+# KWin virtual-output size in pixels: even width 640..7680, even height 480..4320.
+# Requires a session restart/profile rollout; this does not force client resolution.
 GAMING_WIDTH=1920
 GAMING_HEIGHT=1080
+# Requested refresh is checked against the actual Wayland mode before apps start.
+# Pinned KWin 6.3.6 virtual backend supplies only 60 Hz; higher requests fail closed.
+GAMING_REFRESH_HZ=60

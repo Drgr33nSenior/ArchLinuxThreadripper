@@ -66,6 +66,10 @@ require_check(locked_image.match?(/\Adocker\.io\/rocm\/sgl-dev:v0\.5\.15\.post1-
   require_check(spec.dig('securityContext', 'runAsNonRoot') == true && spec.dig('securityContext', 'runAsUser') == 1000 &&
                 spec.dig('securityContext', 'seccompProfile', 'type') == 'RuntimeDefault', 'Do not inherit the vendor image root user or unconfined seccomp')
   candidate = spec['containers'][0]
+  require_check(deployment.dig('spec', 'progressDeadlineSeconds') == 2100 &&
+                candidate.dig('startupProbe', 'periodSeconds') * candidate.dig('startupProbe', 'failureThreshold') == 1800 &&
+                spec['terminationGracePeriodSeconds'] == 120,
+                'AI startup allowance must stay separate from unchanged termination grace')
   require_check(candidate['image'] == locked_image, 'Rendered SGLang image differs from versions.lock')
   require_check(candidate['workingDir'] == '/tmp' && candidate.dig('securityContext', 'allowPrivilegeEscalation') == false &&
                 candidate.dig('securityContext', 'capabilities', 'drop') == ['ALL'] &&
@@ -163,7 +167,8 @@ require_check(env.any? { |e| e == {'name' => 'HSA_OVERRIDE_GFX_VERSION', 'value'
   settings = named(family, 'ConfigMap', reference).fetch('data')
   require_check(settings == {'SUNSHINE_ENCODER' => 'vulkan', 'SUNSHINE_CAPTURE' => 'kwin', 'SUNSHINE_OUTPUT_NAME' => '',
                              'SUNSHINE_HEVC_MODE' => '0', 'SUNSHINE_AV1_MODE' => '0', 'SUNSHINE_VK_TUNE' => '2',
-                             'SUNSHINE_VAAPI_STRICT_RC_BUFFER' => 'disabled', 'GAMING_WIDTH' => '1920', 'GAMING_HEIGHT' => '1080'}, 'Streaming baseline changed without review')
+                             'SUNSHINE_VAAPI_STRICT_RC_BUFFER' => 'disabled', 'GAMING_WIDTH' => '1920', 'GAMING_HEIGHT' => '1080',
+                             'GAMING_REFRESH_HZ' => '60'}, 'Streaming baseline changed without review')
   require_check(game['env'].none? { |env| settings.key?(env['name']) || env['name'] == 'AMD_DEBUG' }, 'Do not shadow profile settings or duplicate upstream lowlatencyenc')
 end
 kids_env = named(family, 'Deployment', 'kids-steam-headless').dig('spec', 'template', 'spec', 'containers')[0]['env']

@@ -31,6 +31,7 @@ Commands:
   sunshine diagnose <new-output-directory>
   sunshine launch <sunshine-binary> <existing-sunshine.conf>
   sunshine compare <baseline.json> <candidate.json> <new-output-directory>
+  sunshine qualify-frames <decoded.framemd5> <requested-Hz> <new-output.json>
   rag stage-models <new-output-directory>
   rag verify-models <staged-model-directory>
   rag corpus <new-output-directory> <docs/file.md...>
@@ -44,6 +45,17 @@ Commands:
   rocm build-llama <checkout> <hardware.json> <new-output-directory> [versions.lock]
   rocm build-llama-vulkan <checkout> <hardware.json> <new-output-directory> [versions.lock]
   rocm benchmark-llama <hardware.json> <hip-bench> <vulkan-bench> <model.gguf> <new-output-directory> <hip-devices> <vulkan-devices>
+  rocm serving-evidence <pod-name> <new-output-directory>
+  rocm serving-startup <pod-name> <cold|warm> <new-output-directory>
+  rocm benchmark-serving <workload.json> <evidence-directory> <new-output-directory>
+  rocm serving-sweep <rendered-sglang-deployment.json> <new-output-directory>
+  rocm qualify-llama <hardware.json> <candidate-directory> <model.gguf> <corpus.txt> <new-output-directory> <devices>
+  rocm validate-pod <pod-name> <new-output-directory>
+  performance tuned <balanced|accelerator-performance|throughput-performance> <new-output-directory> -- <command> [arguments]
+  performance storage <owned-scratch-directory> <new-output-directory> <size-GiB>
+  performance memory <workers> <MiB-per-array> <new-output-directory>
+  performance stack
+  performance run <new-output-directory> <timeout-seconds> -- <command> [arguments]
   rocm validate <new-output-directory> [python-executable]
   rocm inference <llama-cli> <GGUF-model> <new-output-directory>
   packages snapshot <stable|experimental> <new-directory> <signing-fingerprint> <signed-packages...>
@@ -74,7 +86,7 @@ EOF
 }
 
 main() {
-  local config_file=''
+  local config_file='' output seconds
   if [[ ${1:-} == --config ]]; then
     (($# >= 3)) || { usage >&2; return 2; }
     config_file=$2
@@ -103,6 +115,7 @@ main() {
     sunshine:diagnose) (($# == 3)) || return 2; ws_sunshine_diagnose "$3" ;;
     sunshine:launch) (($# == 4)) || return 2; ws_sunshine_launch "$3" "$4" ;;
     sunshine:compare) (($# == 5)) || return 2; ws_sunshine_compare "$3" "$4" "$5" ;;
+    sunshine:qualify-frames) (($# == 5)) || return 2; "$(ws_measure_python)" "$repo_root/lib/workstation/frame_metrics.py" "$3" "$4" "$5" ;;
     rag:stage-models) (($# == 3)) || return 2; ws_rag_stage_models "$3" ;;
     rag:verify-models) (($# == 3)) || return 2; ws_rag_verify_models "$3" ;;
     rag:corpus) (($# >= 4)) || return 2; shift 2; ws_rag_corpus "$@" ;;
@@ -116,6 +129,17 @@ main() {
     rocm:build-llama) (($# == 5 || $# == 6)) || return 2; shift 2; ws_rocm_build_llama "$@" ;;
     rocm:build-llama-vulkan) (($# == 5 || $# == 6)) || return 2; shift 2; ws_rocm_build_llama_vulkan "$@" ;;
     rocm:benchmark-llama) (($# == 9)) || return 2; shift 2; ws_rocm_benchmark_llama "$@" ;;
+    rocm:serving-evidence) (($# == 4)) || return 2; ws_serving_evidence "$3" "$4" ;;
+    rocm:serving-startup) (($# == 5)) || return 2; ws_serving_startup "$3" "$4" "$5" ;;
+    rocm:benchmark-serving) (($# == 5)) || return 2; ws_serving_benchmark "$3" "$4" "$5" ;;
+    rocm:serving-sweep) (($# == 4)) || return 2; "$(ws_measure_python)" "$repo_root/lib/workstation/serving_sweep.py" "$3" "$4" ;;
+    rocm:qualify-llama) (($# == 8)) || return 2; shift 2; ws_rocm_qualify_llama "$@" ;;
+    rocm:validate-pod) (($# == 4)) || return 2; ws_rocm_validate_pod "$3" "$4" ;;
+    performance:tuned) (($# >= 6)) || return 2; shift 2; ws_performance_tuned "$@" ;;
+    performance:storage) (($# == 5)) || return 2; ws_require_arch; ws_require_user; "$(ws_measure_python)" "$repo_root/lib/workstation/storage_benchmark.py" "$3" "$4" "$5" ;;
+    performance:memory) (($# == 5)) || return 2; ws_performance_memory "$3" "$4" "$5" ;;
+    performance:stack) (($# == 2)) || return 2; ws_require_arch; "$(ws_measure_python)" "$repo_root/lib/workstation/stack_inventory.py" ;;
+    performance:run) (($# >= 6)) && [[ $5 == -- ]] || return 2; ws_require_arch; shift 2; output=$1; seconds=$2; shift 3; ws_measure_command "$output" "$seconds" "$@" ;;
     rocm:validate) (($# == 3 || $# == 4)) || return 2; ws_rocm_validate "$3" "${4:-python}" ;;
     rocm:inference) (($# == 5)) || return 2; ws_rocm_inference "$3" "$4" "$5" ;;
     packages:snapshot) (($# >= 6)) || return 2; shift 2; ws_package_snapshot "$@" ;;

@@ -62,6 +62,22 @@ gaming_renderer() {
     || gaming_fail 'KWin renderer is not identifiable as AMD; inspect local supportInformation'
 }
 
+gaming_display() {
+  local info modes expected
+  # KWin 6.3.6's virtual backend creates one 60000 mHz mode. There is no
+  # --refresh-rate launch switch. Never mistake a client FPS request for a mode.
+  [[ ${GAMING_REFRESH_HZ:-60} == 60 ]] || gaming_fail 'pinned KWin virtual backend supports 60 Hz only; qualify a newer custom-mode backend before requesting high refresh'
+  info=$(timeout --kill-after=2s 10s wayland-info) || gaming_fail 'cannot observe the actual Wayland output mode'
+  # wayland-info prints Hz to three decimal places, not the protocol's mHz.
+  modes=$(sed -nE 's/^[[:space:]]*width: ([0-9]+) px, height: ([0-9]+) px, refresh: ([0-9]+\.[0-9]{3}) Hz,?$/\1 \2 \3/p' <<< "$info")
+  expected="${GAMING_WIDTH:-1920} ${GAMING_HEIGHT:-1080} 60.000"
+  [[ $modes == "$expected" ]] || gaming_fail 'expected exactly one observed virtual mode matching configured dimensions at 60.000 Hz'
+  jq -n --argjson requested "${GAMING_REFRESH_HZ:-60}" \
+    --argjson width "${GAMING_WIDTH:-1920}" --argjson height "${GAMING_HEIGHT:-1080}" \
+    '{requested_hz:$requested,actual_millihz:60000,width:$width,height:$height,source:"wayland-info",distinct_captured_frames:"NOT RUN"}' \
+    > "$XDG_RUNTIME_DIR/workstation-display.json"
+}
+
 gaming_start() {
   # Each managed process owns a session/group, so shutdown also reaches its
   # children. No arbitrary command strings or shell evaluation from config.
@@ -102,6 +118,7 @@ gaming_apps() {
     || gaming_fail 'KWin must launch the session hook with its D-Bus, Wayland and Xwayland environment'
   [[ -S $XDG_RUNTIME_DIR/$WAYLAND_DISPLAY ]] || gaming_fail 'KWin Wayland socket is unavailable'
   gaming_renderer
+  gaming_display
   # D-Bus activated portals need this session's actual compositor environment.
   dbus-update-activation-environment WAYLAND_DISPLAY DISPLAY XAUTHORITY XDG_RUNTIME_DIR XDG_CURRENT_DESKTOP XDG_SESSION_TYPE
   trap gaming_cleanup EXIT
@@ -140,6 +157,7 @@ gaming_main() {
   # shellcheck source=lib/workstation/runtime.sh
   source /opt/workstation/lib/workstation/runtime.sh
   ws_sunshine_config_validate
+  [[ $GAMING_REFRESH_HZ == 60 ]] || gaming_fail 'pinned KWin virtual backend supports 60 Hz only; no unsupported refresh flag will be passed'
   case $SUNSHINE_CAPTURE in kwin|portal) ;; *) gaming_fail 'Wayland image requires kwin or portal capture; select the x11 image explicitly for rollback' ;; esac
   for enabled in "${ENABLE_STEAM:-true}" "${ENABLE_SUNSHINE:-true}"; do
     [[ $enabled == true || $enabled == false ]] || gaming_fail 'ENABLE_STEAM and ENABLE_SUNSHINE must be true or false'

@@ -13,3 +13,4 @@ configMapGenerator:
       - SUNSHINE_VAAPI_STRICT_RC_BUFFER=disabled
       - GAMING_WIDTH=1920
       - GAMING_HEIGHT=1080
+      - GAMING_REFRESH_HZ=60

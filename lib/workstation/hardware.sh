@@ -304,6 +304,7 @@ ws_hardware_collect() (
     ws_capture_optional "$output" lsblk-discard lsblk -J -b -o NAME,KNAME,TYPE,MOUNTPOINTS,DISC-GRAN,DISC-MAX,DISC-ZERO
     ws_capture_optional "$output" fstrim-timer systemctl is-enabled fstrim.timer
     ws_capture_optional "$output" nvme-list nvme list -o json
+    ws_capture_optional "$output" cpu-power "${WORKSTATION_PYTHON:-python3}" "$(ws_repo_root)/lib/workstation/measurement.py" cpu-power
     ws_capture_optional "$output" smartctl-scan smartctl --scan-open -j
     ws_hardware_capture_nvme_smart "$output"
     cp /proc/meminfo "$output/meminfo.txt"
@@ -338,10 +339,11 @@ ws_hardware_collect() (
     --arg date "$(date -u +%FT%TZ)" --arg model "$EXPECTED_GPU_MODEL" --argjson count "$EXPECTED_GPU_COUNT" \
     --argjson pci "$pci" --argjson agents "$agents" --argjson cpu_topology "$cpu_topology" --argjson memory "$memory" \
     --argjson platform "$platform" --argjson nvme_devices "$nvme_devices" --argjson trim_evidence "$trim_evidence" \
+    --argjson cpu_power "$(ws_hardware_json_report_or_null "$output/cpu-power.txt")" \
     '{schema:1,status:$status,reason:$reason,collected_at:$date,os:$os,architecture:$arch,
       expected:{gpu_count:$count,gpu_model:$model},pci_gpus:$pci,rocm_agents:$agents,
       gpu_target:(if ($agents|length)>0 then $agents[0].gfx else null end),hardware_workloads_validated:false,
-      cpu_topology:$cpu_topology,memory:$memory,platform:$platform,nvme_devices:$nvme_devices,trim_evidence:$trim_evidence}' > "$output/hardware.json"
+      cpu_topology:$cpu_topology,cpu_power:$cpu_power,memory:$memory,platform:$platform,nvme_devices:$nvme_devices,trim_evidence:$trim_evidence}' > "$output/hardware.json"
   ws_note "hardware evidence: $output/hardware.json ($status)"
   [[ $status != failed ]]
 )

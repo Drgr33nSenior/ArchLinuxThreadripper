@@ -4,6 +4,11 @@ This is the 2026-09-07 source audit for the Threadripper 9960X, dual R9700 and
 64 GiB host. The changes below provide targeted build controls and a measurement
 path. They are not evidence of a measured speedup on that hardware.
 
+The [2026-09-09 performance validation record](PERFORMANCE-VALIDATION.md) extends
+this audit with private SGLang serving tests, one/two-card paired runs, numerical
+checks, IPC/collective diagnostics, CPU/storage comparisons and exact target
+commands. Its coverage matrix separates tooling from physical qualification.
+
 The [local RAG pilot and context notes](RAG.md) were added on 2026-09-08. They
 cover pinned CPU embeddings, hybrid retrieval, source provenance, the current
 64 GiB/context budgets and a paired workstation test procedure. Graph retrieval,
@@ -89,8 +94,9 @@ tuned-adm verify
 sudo ./bin/workstationctl profile server
 ```
 
-These selections persist until changed; there is no automatic reset after a
-benchmark. The workstation config example defaults the explicit configured
+These `profile` selections persist until changed. The separate
+`performance tuned` experiment command restores the prior verified TuneD
+profile on completion or failure. The workstation config example defaults the explicit configured
 `profile` command to `ai`, but merely loading that file does not tune the host.
 The upstream [accelerator profile](https://raw.githubusercontent.com/redhat-performance/tuned/master/profiles/accelerator-performance/tuned.conf)
 requests performance-oriented CPU and latency settings. Expect higher idle
@@ -311,13 +317,15 @@ No host affinity or IRQ isolation claim is made by this tranche.
 ### Workload and session selection
 
 All application replicas remain zero in source until qualification. Limits are
-unchanged: SGLang single GPU 20 CPU/32 GiB; dual GPU 24 CPU/42 GiB; SwarmUI
+unchanged: SGLang single GPU 20 CPU/32 GiB; dual GPU 24 CPU/38 GiB; SwarmUI
 12 CPU/12 GiB; gaming 12 CPU/12 GiB. Requests now equal these limits. The Swarm
 seed init container requests/limits 2 CPU/64 MiB. SGLang's 16 GiB memory-backed
 `/dev/shm` counts within its memory limit, not as additional free memory.
-The existing models, AWQ choice and 4096 serving context remain unchanged.
-Explicit CPU-offload changes await an immutable, image-local verified serving
-engine; the placeholder image does not establish support for a new flag.
+The default dual-GPU model is Qwen3.8-27B-FP8 at 32768 context tokens; the
+explicit single-GPU option is Qwen3.5-9B in BF16 at 4096. Neither forces AWQ.
+The AMD SGLang 0.5.15.post1/ROCm 10 image is digest-pinned, but target
+qualification is still pending. CPU offload stays unchanged. These different
+models are not a controlled one-versus-two-GPU scaling comparison.
 
 Set these optional keys in `config/workstation.conf` to your actual reviewed
 target; the example values below are not discovered node/context identities:
@@ -330,12 +338,15 @@ SESSION_NAMESPACE=ai-home-lab
 SESSION_AI_DEPLOYMENT=sglang
 SESSION_GAME_DEPLOYMENT=parent-steam-headless
 SESSION_TIMEOUT_SECONDS=300
+SESSION_AI_STARTUP_TIMEOUT_SECONDS=2100
 SESSION_STREAMING_PATH=sunshine
 ```
 
 Use `steam-headless` instead of the parent-prefixed deployment for the base
 overlay, or the exact kids deployment when selected. These commands manage only
-the named AI/game Deployments. An unrelated SwarmUI or pending GPU Pod blocks
+the named AI/game Deployments. AI rollout now has a separate 2100-second allowance for the
+1800-second startup probe window; termination/release waits remain 300 seconds.
+An unrelated SwarmUI or pending GPU Pod blocks
 handover; it is not silently stopped. The target must be the local Arch host,
 have the current boot identity, a qualified static CPU setup and exactly one
 accelerator node with two advertised GPUs. Root can inspect all host DRM
@@ -408,12 +419,15 @@ artifacts/llama-vulkan-02/build/bin/llama-bench --list-devices
   artifacts/paired-02 ROCm0/ROCm1 Vulkan0/Vulkan1
 ```
 
-Use the actual names printed by each binary and verify both refer to the complete
-two-card set. Their ordinals alone do not prove PCI identity. The command checks
+Use the actual names printed by each binary. Select one card per backend for a
+one-card run, or both for a two-card run. The complete physical inventory must
+still contain both cards. Their ordinals alone do not prove PCI identity. The command checks
 retained binary hashes and the same locked source revision; it records identical
 model hash, batch/ubatch/FA and prompt/generation inputs. Defaults are batch 2048,
 microbatch 512, Flash Attention `auto`, 512 prompt and 128 generation tokens,
-three repetitions with upstream warm-up. CLI inference context remains 2048;
+three repetitions with upstream warm-up in each of two alternating backend
+pairs. Explicit defaults are 12 CPU threads, `f16` K/V caches and automatic
+split selection (`none` for one device, `layer` for two). CLI inference context remains 2048;
 `llama-bench` has no context-size option and explicitly records that limitation.
 This is warm compute throughput, not a cold model-load or end-to-end serving
 latency result. Keep raw JSON averages, spread and per-repetition samples. Repeat

@@ -48,7 +48,16 @@ if [[ \${1:-} == --list-devices ]]; then
   printf '%s:\\n' ${devices//\// }
   exit 0
 fi
-printf '[{"avg_ts":42.5,"stddev_ts":1.25}]\\n'
+if [[ \${BROKEN_METRICS:-} == "$backend" ]]; then printf '[]\\n'; exit 0; fi
+while ((\$#)); do
+  if [[ \$1 == --device ]]; then
+    IFS=/ read -r -a selected <<< "\$2"
+    for device in "\${selected[@]}"; do printf '%s model buffer size = 1 MiB\\n' "\$device" >&2; done
+    break
+  fi
+  shift
+done
+printf '[{"n_prompt":512,"n_gen":0,"avg_ts":42.5,"stddev_ts":1.25,"samples_ts":[42,43,42.5],"samples_ns":[1,2,3]},{"n_prompt":0,"n_gen":128,"avg_ts":20,"stddev_ts":0,"samples_ts":[20,20,20],"samples_ns":[1,2,3]}]\\n'
 STUB
   chmod +x "$output/build/bin/llama-bench"
   jq -n --arg backend "$backend" --arg hash "$(common::sha256_file "$output/build/bin/llama-bench")" \
@@ -86,6 +95,12 @@ ws_build_config_validate() { :; }
 ws_hardware_collect() { make_report "$1"; }
 ws_read_lock() { printf '427291b5b34cd914a31b3fd3b61a68f6184f4b9f\n'; }
 timeout() { shift; "$@"; }
+ws_measure_command() {
+  local output=$1
+  shift 2
+  mkdir "$output"
+  "$@" > "$output/stdout.txt" 2> "$output/stderr.txt"
+}
 export INFERENCE_LOG="$work/inference.log"
 
 ws_rocm_inference "$work/inference-build/llama-cli" "$work/model.gguf" "$work/inference-output" >/dev/null
@@ -109,6 +124,23 @@ if grep -Fq -- '--no-warmup' "$work/output/hip-command.txt"; then
   printf 'paired benchmark disabled native llama-bench warmup\n' >&2
   exit 1
 fi
+[[ $(tr '\n' ',' < "$work/output/order.txt") == '1 hip,1 vulkan,2 vulkan,2 hip,' ]]
+ws_rocm_benchmark_llama "$work/recorded/hardware.json" \
+  "$work/hip/build/bin/llama-bench" "$work/vulkan/build/bin/llama-bench" "$work/model.gguf" "$work/one-card" \
+  ROCm0 Vulkan1 >/dev/null
+grep -Fq -- '--split-mode none' "$work/one-card/hip-command.txt"
+grep -Fq -- '--threads 12' "$work/one-card/hip-command.txt"
+
+for broken in hip vulkan; do
+  export BROKEN_METRICS=$broken
+  if ws_rocm_benchmark_llama "$work/recorded/hardware.json" \
+    "$work/hip/build/bin/llama-bench" "$work/vulkan/build/bin/llama-bench" "$work/model.gguf" "$work/broken-$broken" \
+    ROCm0 Vulkan0 >/dev/null 2>&1; then
+    printf 'unusable backend metrics produced benchmark success\n' >&2; exit 1
+  fi
+  [[ ! -e $work/broken-$broken/benchmark-result.json ]]
+done
+unset BROKEN_METRICS
 
 if ws_rocm_benchmark_llama "$work/recorded/hardware.json" \
   "$work/hip/build/bin/llama-bench" "$work/vulkan/build/bin/llama-bench" "$work/model.gguf" "$work/bad-mapping" \
@@ -138,6 +170,34 @@ if ws_rocm_benchmark_llama "$work/recorded/hardware.json" \
   ROCm0/ROCm1 Vulkan0/Vulkan1 >/dev/null 2>&1; then
   printf 'mismatched source provenance was accepted\n' >&2
   exit 1
+fi
+
+# Each invalid document must fail independently of ordering. Include truncated
+# output, multiple JSON documents, missing/duplicate/wrong workload cases.
+cp "$work/output/1-hip/stdout.txt" "$work/good.json"
+for invalid in '' '[]' '{}' '[' 'null' '[] []' \
+  '[{"n_prompt":512,"n_gen":0,"avg_ts":42,"stddev_ts":1}]' \
+  '[{"n_prompt":512,"n_gen":0,"avg_ts":0,"stddev_ts":1},{"n_prompt":0,"n_gen":128,"avg_ts":20,"stddev_ts":0}]' \
+  '[{"n_prompt":512,"n_gen":0,"avg_ts":42,"stddev_ts":-1},{"n_prompt":0,"n_gen":128,"avg_ts":20,"stddev_ts":0}]' \
+  '[{"n_prompt":512,"n_gen":0,"avg_ts":42,"stddev_ts":1},{"n_prompt":512,"n_gen":0,"avg_ts":20,"stddev_ts":0}]'; do
+  printf '%s\n' "$invalid" > "$work/invalid.json"
+  if (ws_llama_metrics_validate "$work/invalid.json" "$work/good.json") >/dev/null 2>&1 \
+    || (ws_llama_metrics_validate "$work/good.json" "$work/invalid.json") >/dev/null 2>&1; then
+    printf 'invalid paired measurement was accepted\n' >&2
+    exit 1
+  fi
+done
+ws_llama_metrics_validate "$work/good.json" "$work/good.json"
+for mutation in '.[0].avg_ts=0' '.[0].stddev_ts=-1' '.[0].samples_ts=[]' \
+  '.[0].samples_ns=[1,2]' '.[1]=.[0]' 'del(.[1])' '.[1].n_gen=64'; do
+  jq "$mutation" "$work/good.json" > "$work/invalid.json"
+  if (ws_llama_metrics_validate "$work/invalid.json" "$work/good.json") >/dev/null 2>&1 \
+    || (ws_llama_metrics_validate "$work/good.json" "$work/invalid.json") >/dev/null 2>&1; then
+    printf 'invalid measurement mutation was accepted: %s\n' "$mutation" >&2; exit 1
+  fi
+done
+if (ws_llama_metrics_validate "$work/missing.json" "$work/good.json") >/dev/null 2>&1; then
+  printf 'missing metrics file was accepted\n' >&2; exit 1
 fi
 
 LLAMA_FLASH_ATTN=invalid

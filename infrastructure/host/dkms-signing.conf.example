@@ -1,5 +1,13 @@
-# Optional /etc/dkms/framework.conf.d/ai-home-lab.conf, only after proving that
-# the selected kernel trusts this certificate for module verification.
-# These are protected local files, not values to put in Ansible or Kubernetes.
+# Optional DKMS module-signing configuration; see docs/HOME-LAB.md.
+# Destination: /etc/dkms/framework.conf.d/ai-home-lab.conf on the installed host.
+# Use the quoted, lower-case DKMS syntax below, not workstationctl KEY=VALUE syntax.
+# Set up signing only after proving the selected kernel trusts this certificate
+# for module verification. Copying this file does not establish kernel trust.
+# This is for DKMS modules, not UKI signing or automatic Secure Boot enrollment.
+# Configure paths only: never paste key contents into config, Ansible or Kubernetes.
+
+# Absolute path to the existing protected private module-signing key. Keep it
+# root-owned and inaccessible to ordinary users; do not commit or print the key.
 mok_signing_key="/etc/kernel/keys/module-signing.key"
+# Absolute path to the corresponding DER certificate whose kernel trust was tested.
 mok_certificate="/etc/kernel/keys/module-signing.der"

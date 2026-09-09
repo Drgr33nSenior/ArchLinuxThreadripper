@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2329 # Function overrides are invoked through sourced hooks and reject subshells.
 set -euo pipefail
 repo_root=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 # Functions only. Never starts a compositor, changes HOME or touches a GPU.
@@ -26,6 +27,23 @@ renderer_fixture='CPU: AMD\nCompositing Type: OpenGL\nOpenGL renderer string: Un
 reject gaming_renderer
 timeout() { return 124; }
 reject gaming_renderer
+
+# Requested refresh must match an observed mode; client FPS is not evidence.
+XDG_RUNTIME_DIR="$work"
+GAMING_REFRESH_HZ=60
+GAMING_WIDTH=1920
+GAMING_HEIGHT=1080
+timeout() { printf '\t\twidth: 1920 px, height: 1080 px, refresh: 60.000 Hz,\n'; }
+gaming_display
+jq -e '.requested_hz == 60 and .actual_millihz == 60000 and .distinct_captured_frames == "NOT RUN"' "$work/workstation-display.json" >/dev/null
+GAMING_REFRESH_HZ=120 reject gaming_display
+GAMING_WIDTH=2560 reject gaming_display
+timeout() { printf 'width: 1920 px, height: 1080 px, refresh: 30.000 Hz,\n'; }
+reject gaming_display
+timeout() { printf 'width: 1920 px, height: 1080 px, refresh: 60.000 Hz,\n%.0s' 1 2; }
+reject gaming_display
+timeout() { return 124; }
+reject gaming_display
 
 # Existing paired config and app definitions survive initialization verbatim.
 XDG_CONFIG_HOME="$work/config"

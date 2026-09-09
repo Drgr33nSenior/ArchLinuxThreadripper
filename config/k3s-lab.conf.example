@@ -1,37 +1,90 @@
 # Non-secret KVM/K3s lab configuration.
+#
+# Copy this file to config/k3s-lab.conf. The parser accepts only uncommented
+# KEY=VALUE lines: do not quote values, add whitespace, repeat keys, or store
+# passwords, tokens, private-key contents, kubeconfigs, or AWS credentials here.
+
+# VM identity. LAB_NAME must be a lowercase DNS label and also determines the
+# required VM_POOL_DIR path below. ADMIN_USER is created by cloud-init.
 LAB_NAME=k3s-dev-01
 ADMIN_USER=developer
+
+# SSH trust files on the Arch host. Use absolute paths without "..". The public
+# key must be one supported key on one line. Verify the guest host key out of
+# band before adding it to the dedicated known-hosts file. The private key path
+# is only a handle; do not put key material in this configuration file.
 SSH_PUBLIC_KEY_FILE=/home/developer/.ssh/id_ed25519_sk.pub
 SSH_PRIVATE_KEY_FILE=/home/developer/.ssh/id_ed25519_sk
 SSH_KNOWN_HOSTS_FILE=/home/developer/.ssh/known_hosts.k3s
+
+# Initial VM resources. Units are virtual CPUs, MiB RAM and GiB disks. These are
+# intentionally fixed at 8 vCPU, 16384 MiB, and 80/120 GiB by the current lab
+# safety checks; changing the values does not create a supported larger VM.
 VM_VCPUS=8
 VM_MEMORY_MIB=16384
 VM_SYSTEM_DISK_GIB=80
 VM_DATA_DISK_GIB=120
+
+# Libvirt storage. This exact path is required and contains the VM disks,
+# generated non-secret inputs, and provenance used by cold backup validation.
 VM_POOL_DIR=/var/lib/libvirt/images/k3s-dev-01
+
+# Isolated libvirt NAT management network. MGMT_CIDR must be an IPv4 /24.
+# MGMT_IP and MGMT_GATEWAY must be distinct usable hosts in that CIDR; keep the
+# VM address outside libvirt's managed DHCP range (.100 through .200). The
+# network name must be a valid libvirt name; the bridge is a Linux interface
+# name and must not exceed 15 characters.
 MGMT_NETWORK_NAME=k3s-mgmt
 MGMT_BRIDGE=virbr124
 MGMT_CIDR=192.168.124.0/24
 MGMT_GATEWAY=192.168.124.1
 MGMT_IP=192.168.124.10
+# Use a DNS name for the management endpoint; the example .test name is not a
+# real target. It is included in the generated K3s TLS SANs.
 MGMT_FQDN=k3s-dev-01.mgmt.example.test
+# This management NIC MAC must differ from DMZ_MAC.
 MGMT_MAC=52:54:00:00:01:10
+
+# Tagged DMZ network on the KVM host. Replace every REPLACE_* value with the
+# reviewed site network. DMZ_PARENT is the existing host uplink; the VLAN must
+# be permitted on it. VLAN IDs are decimal 1 through 4094. The generated VLAN
+# interface and bridge names must be valid Linux interface names (<=15 chars).
+# Do not use an example address as a real route or expose the management network.
 DMZ_PARENT=REPLACE_DMZ_PARENT
 DMZ_VLAN_ID=REPLACE_VLAN_ID
 DMZ_VLAN_INTERFACE=k3sdmzvlan
 DMZ_BRIDGE=br-k3s-dmz
+# The IPv4 address includes its prefix. Its address and gateway must be distinct
+# usable hosts in the same subnet. The IPv6 address must use a /64 prefix and
+# its gateway must be a distinct valid IPv6 address; ensure it is reachable on
+# the selected network. This DMZ IPv4 CIDR must not overlap the management,
+# Pod, or Service CIDRs.
 DMZ_IPV4=REPLACE_DMZ_IPV4_CIDR
 DMZ_IPV4_GATEWAY=REPLACE_DMZ_IPV4_GATEWAY
 DMZ_IPV6=REPLACE_DMZ_IPV6_CIDR
 DMZ_IPV6_GATEWAY=REPLACE_DMZ_IPV6_GATEWAY
+# This DMZ NIC MAC must differ from MGMT_MAC.
 DMZ_MAC=52:54:00:00:02:10
+# Guest NIC names created by cloud-init. They must be distinct valid Linux
+# interface names; they are not host device selectors.
 MGMT_INTERFACE=enp1s0
 DMZ_INTERFACE=enp2s0
+
+# Kubernetes address ranges. Use private, non-overlapping IPv4 CIDRs that also
+# do not conflict with routed site networks. The implementation derives cluster
+# DNS as the Service CIDR network address plus ten; do not assign that address.
 CLUSTER_CIDR=10.42.0.0/16
 SERVICE_CIDR=10.43.0.0/16
-# Cluster DNS is derived as SERVICE_CIDR's network address plus ten.
+# Public DNS and certificate issuance metadata. DOMAIN is a DNS name used by
+# generated configuration. Replace the example values with the delegated domain,
+# notification mailbox and Route53 hosted-zone ID. The zone ID is not a secret;
+# Route53 credentials are created separately through the approved secret flow.
 DOMAIN=REPLACE_DOMAIN
 ACME_EMAIL=REPLACE_EMAIL
 ROUTE53_ZONE_ID=REPLACE_DELEGATED_ZONE_ID
+# AWS region and Restic bucket. Set the region that serves the selected bucket.
+# RESTIC_BUCKET is a DNS-compatible S3 bucket name, not a URL or repository
+# path. Backup commands use s3.<region>.amazonaws.com/<bucket>/k3s/<LAB_NAME>
+# and request an interactive confirmation before initializing that prefix.
 AWS_REGION=eu-west-2
 RESTIC_BUCKET=REPLACE_BUCKET

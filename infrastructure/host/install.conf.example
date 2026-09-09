@@ -1,30 +1,52 @@
-# Consumed by the existing bin/bootstrap-arch. Never store credentials here.
+# Home-lab physical-host installer configuration. Copy to an ignored config file;
+# it is consumed by bin/bootstrap-arch, not by K3s or a running installed host.
+# The parser accepts one literal KEY=VALUE per active line. Use no quotes, shell
+# expansion, spaces, inline comments, duplicate keys, or /dev/nvmeNnM paths.
+
+# Identity and persistent TuneD policy. HOST_PROFILE is headless or desktop.
+# TUNED_PROFILE may be auto, balanced, desktop, throughput-performance,
+# accelerator-performance, or virtual-host. This performance policy can increase
+# idle power and heat; select balanced for a baseline comparison or rollback.
 HOSTNAME=ai-home-lab
 HOST_PROFILE=headless
-# Persistent AI policy: performance governor/boost and reduced idle latency.
-# Higher idle power/heat; use balanced for the baseline comparison or rollback.
 TUNED_PROFILE=accelerator-performance
 USERNAME=developer
 LOCALE=en_GB.UTF-8
 KEYMAP=uk
 TIMEZONE=Europe/London
+
+# Storage identity. Replace both paths with complete, distinct /dev/disk/by-id
+# links and replace both exact serials from preflight. The real install erases both
+# approved disks only with --execute; inspect the dry-run plan first.
 PRIMARY_DISK=/dev/disk/by-id/nvme-REPLACE_PRIMARY_9100_PRO
 SECONDARY_DISK=/dev/disk/by-id/nvme-REPLACE_SECONDARY_9100_PRO
 PRIMARY_DISK_SERIAL=REPLACE_PRIMARY_SERIAL
 SECONDARY_DISK_SERIAL=REPLACE_SECONDARY_SERIAL
+
+# Approved storage layout: two ESPs, then RAID0 -> LUKS2 -> XFS. RAID_NAME and
+# LUKS_NAME must differ. RAID_DEVICE must be /dev/md0 or /dev/md/RAID_NAME.
 RAID_NAME=home-lab
 RAID_DEVICE=/dev/md0
 LUKS_NAME=crypt_root
+# Fixed, approved geometry: ESP_SIZE_MIB must be 2048 and RAID_CHUNK_KIB must be 512.
 ESP_SIZE_MIB=2048
 RAID_CHUNK_KIB=512
-# --pbkdf-memory is a maximum, not a guarantee. Inspect actual calibration.
+# Argon2id password-unlock calibration: time in milliseconds, memory in KiB, and
+# parallel lanes. Allowed ranges are 1000-10000 ms, 262144-4194304 KiB, and 1-4.
+# Memory is a maximum, not a guarantee. Measure and inspect actual calibration first.
 LUKS_ITER_TIME_MS=5000
 LUKS_MEMORY_KIB=4194304
 LUKS_PARALLEL=4
+# Boot unlock is fido2 or tpm2-pin. Enrol and test the selected recovery path after install.
 BOOT_UNLOCK=tpm2-pin
+# The approved design requires true. This enables SSD discard through the encrypted stack.
 ALLOW_DISCARDS=true
+
+# Fixed ESP mount points for the two independently bootable copies.
 PRIMARY_ESP_MOUNT=/efi
 SECONDARY_ESP_MOUNT=/efi2
+
+# Optional host services. Values must be true or false; SSH is an explicit opt-in.
 ENABLE_SSH=false
 ENABLE_BLUETOOTH=false
 ENABLE_PRINTING=false

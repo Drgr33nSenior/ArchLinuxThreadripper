@@ -1,29 +1,49 @@
-# Non-secret live-ISO installer configuration. Values are literal; quoting and
-# shell expansion are not supported.
+# Live-ISO installer configuration for a new physical workstation installation.
+# Copy to the ignored config/install.conf; never put credentials or recovery keys here.
+# The parser accepts one literal KEY=VALUE per active line. Use no quotes, shell
+# expansion, spaces, inline comments, duplicate keys, or /dev/nvmeNnM paths.
+
+# Identity and package profile. HOST_PROFILE is headless or desktop. TUNED_PROFILE
+# is auto, balanced, desktop, throughput-performance, accelerator-performance, or virtual-host.
+# auto follows the host-profile default; it does not change the desktop selection.
 HOSTNAME=threadripper-ai
-# New installations default to headless; desktop opts into GNOME and host Steam.
 HOST_PROFILE=headless
-# auto preserves the host-profile default; the separate home-lab example opts into
-# accelerator-performance independently of desktop package selection.
 TUNED_PROFILE=auto
 USERNAME=developer
 LOCALE=en_GB.UTF-8
 KEYMAP=uk
 TIMEZONE=Europe/London
+
+# Storage identity. Replace both paths with complete, distinct /dev/disk/by-id
+# links and replace both exact serials from preflight. The real install erases both
+# approved disks only with --execute; inspect the dry-run plan first.
 PRIMARY_DISK=/dev/disk/by-id/nvme-REPLACE_PRIMARY
 SECONDARY_DISK=/dev/disk/by-id/nvme-REPLACE_SECONDARY
 PRIMARY_DISK_SERIAL=REPLACE_PRIMARY_SERIAL
 SECONDARY_DISK_SERIAL=REPLACE_SECONDARY_SERIAL
+
+# Approved storage layout: two ESPs, then RAID0 -> LUKS2 -> XFS. RAID_NAME and
+# LUKS_NAME must differ. RAID_DEVICE is omitted here and defaults to /dev/md/RAID_NAME.
 RAID_NAME=archroot
 LUKS_NAME=cryptroot
+# Fixed, approved geometry: ESP_SIZE_MIB must be 2048 and RAID_CHUNK_KIB must be 512.
 ESP_SIZE_MIB=2048
 RAID_CHUNK_KIB=512
+
+# Argon2id password-unlock calibration: time in milliseconds, memory in KiB, and
+# parallel lanes. Allowed ranges are 1000-10000 ms, 262144-4194304 KiB, and 1-4.
+# Measure on the target before installation; higher memory can delay or prevent unlock.
 LUKS_ITER_TIME_MS=2000
 LUKS_MEMORY_KIB=1048576
 LUKS_PARALLEL=4
+# The approved design requires true. This enables SSD discard through the encrypted stack.
 ALLOW_DISCARDS=true
+
+# Fixed ESP mount points for the two independently bootable copies.
 PRIMARY_ESP_MOUNT=/efi
 SECONDARY_ESP_MOUNT=/efi2
+
+# Optional host services. Values must be true or false; SSH is an explicit opt-in.
 ENABLE_SSH=false
 ENABLE_BLUETOOTH=false
 ENABLE_PRINTING=false

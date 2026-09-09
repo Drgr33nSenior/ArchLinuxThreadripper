@@ -63,6 +63,8 @@ if [[ ${BAD_HOST_COMPILER_CACHE:-0} == 1 ]]; then host_c=/tmp/foreign-cc; fi
 printf '%s\n' \
   'CMAKE_HIP_ARCHITECTURES:STRING=gfx1201' \
   'GGML_HIP:BOOL=ON' \
+  'GGML_HIP_GRAPHS:BOOL=ON' \
+  'GGML_HIP_RCCL:BOOL=OFF' \
   'GGML_NATIVE:BOOL=ON' \
   "hip_DIR:PATH=$hip_dir" \
   'hipblas_DIR:PATH=/opt/rocm/lib/cmake/hipblas' \
@@ -71,6 +73,11 @@ printf '%s\n' \
   "CMAKE_CXX_COMPILER:FILEPATH=$host_cxx" > "$build/CMakeCache.txt"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$build/bin/llama-cli"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$build/bin/llama-bench"
+printf '%s\n' 'LLAMA_BUILD_TESTS:BOOL=ON' >> "$build/CMakeCache.txt"
+printf '%s\n' 'DEFINES = -DGGML_HIP_GRAPHS' > "$build/build.ninja"
+cp "$build/bin/llama-bench" "$build/bin/llama-perplexity"
+cp "$build/bin/llama-bench" "$build/bin/test-backend-ops"
+chmod +x "$build/bin/llama-perplexity" "$build/bin/test-backend-ops"
 chmod +x "$build/bin/llama-cli" "$build/bin/llama-bench"
 if [[ ${MUTATE_SOURCE_AFTER_CONFIGURE:-0} == 1 ]]; then
   printf 'unexpected source change\n' > "$source_dir/untracked-after-configure"

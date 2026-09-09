@@ -51,6 +51,10 @@ printf '%s\n' 'GGML_VULKAN:BOOL=ON' 'GGML_NATIVE:BOOL=ON' \
   'CMAKE_C_COMPILER:FILEPATH=/usr/bin/cc' 'CMAKE_CXX_COMPILER:FILEPATH=/usr/bin/c++' > "$build/CMakeCache.txt"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$build/bin/llama-cli"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$build/bin/llama-bench"
+printf '%s\n' 'LLAMA_BUILD_TESTS:BOOL=ON' >> "$build/CMakeCache.txt"
+cp "$build/bin/llama-bench" "$build/bin/llama-perplexity"
+cp "$build/bin/llama-bench" "$build/bin/test-backend-ops"
+chmod +x "$build/bin/llama-perplexity" "$build/bin/test-backend-ops"
 chmod +x "$build/bin/llama-cli" "$build/bin/llama-bench"
 STUB
 cat > "$fake_bin/ninja" <<'STUB'

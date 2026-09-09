@@ -11,7 +11,16 @@ ws_session_config_validate() {
   case "${SESSION_ENVIRONMENT:-}" in dev|tst|int) ;; *) ws_die 'SESSION_ENVIRONMENT must explicitly classify a non-production target: dev, tst or int' ;; esac
   [[ "$SESSION_AI_DEPLOYMENT" != "$SESSION_GAME_DEPLOYMENT" ]] || ws_die 'AI and gaming deployments must differ'
   [[ "${SESSION_TIMEOUT_SECONDS:-300}" =~ ^[1-9][0-9]*$ ]] || ws_die 'SESSION_TIMEOUT_SECONDS must be positive'
+  [[ "${SESSION_AI_STARTUP_TIMEOUT_SECONDS:-2100}" =~ ^[1-9][0-9]{0,4}$ ]] || ws_die 'SESSION_AI_STARTUP_TIMEOUT_SECONDS must be a bounded positive integer'
   case "${SESSION_STREAMING_PATH:-sunshine}" in sunshine|steam) ;; *) ws_die 'SESSION_STREAMING_PATH must be sunshine or steam' ;; esac
+}
+
+ws_session_rollout_timeout() {
+  if [[ $1 == "$SESSION_AI_DEPLOYMENT" ]]; then
+    printf '%ss\n' "${SESSION_AI_STARTUP_TIMEOUT_SECONDS:-2100}"
+  else
+    printf '%ss\n' "${SESSION_TIMEOUT_SECONDS:-300}"
+  fi
 }
 
 ws_session_kubectl() {
@@ -378,7 +387,7 @@ ws_session_switch() (
       [[ "$desired" == "$SESSION_AI_DEPLOYMENT" ]] || ws_session_stop "$SESSION_AI_DEPLOYMENT"
       [[ "$desired" == "$SESSION_GAME_DEPLOYMENT" ]] || ws_session_stop "$SESSION_GAME_DEPLOYMENT"
       [[ -n "$desired" ]] || ws_session_gpu_free "$hardware"
-      [[ -z "$desired" ]] || ws_session_kubectl -n "$SESSION_NAMESPACE" rollout status "deployment/$desired" --timeout="${SESSION_TIMEOUT_SECONDS:-300}s" >/dev/null
+      [[ -z "$desired" ]] || ws_session_kubectl -n "$SESSION_NAMESPACE" rollout status "deployment/$desired" --timeout="$(ws_session_rollout_timeout "$desired")" >/dev/null
       if [[ "$desired" == "$SESSION_GAME_DEPLOYMENT" ]]; then ws_session_build_gate inhibit; else ws_session_build_gate release; fi
       ws_note "session already $mode; no replica changes"; exit 0
     fi
@@ -401,7 +410,7 @@ ws_session_switch() (
     ws_session_gpu_free "$hardware"
     ws_session_kubectl -n "$SESSION_NAMESPACE" scale "deployment/$desired" --resource-version="$(jq -r .metadata.resourceVersion <<< "$candidate")" --current-replicas=0 --replicas=1 >/dev/null \
       || ws_die 'selected deployment changed concurrently or failed to start'
-    ws_session_kubectl -n "$SESSION_NAMESPACE" rollout status "deployment/$desired" --timeout="${SESSION_TIMEOUT_SECONDS:-300}s" >/dev/null \
+    ws_session_kubectl -n "$SESSION_NAMESPACE" rollout status "deployment/$desired" --timeout="$(ws_session_rollout_timeout "$desired")" >/dev/null \
       || ws_die 'selected deployment did not become ready; session remains failed until explicit restore or retry'
   fi
   state="$(jq '.phase="ready"' <<< "$state")"

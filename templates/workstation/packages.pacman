@@ -5,6 +5,8 @@ zsh zsh-completions bash-completion zsh-autosuggestions zsh-syntax-highlighting 
 tuned irqbalance
 linux-firmware-amdgpu mesa vulkan-radeon ocl-icd
 vulkan-tools mesa-utils clinfo libva-utils hwloc numactl perf
+# Explicit scratch-file benchmarks only; never invoked by installation.
+fio
 rocm-hip-sdk rocm-smi-lib rocminfo rccl python-pytorch-opt-rocm
 podman crun passt slirp4netns fuse-overlayfs
 openai-codex aws-cli-v2 kubectl helm kustomize k9s kubectx stern eksctl
