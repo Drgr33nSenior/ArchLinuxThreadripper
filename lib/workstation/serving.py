@@ -98,6 +98,7 @@ def stream(base, case):
     start = time.monotonic()
     first = last = None
     count = 0
+    first_chunk_tokens = 0
     gaps = []
     coalesced = False
     cached = None
@@ -120,6 +121,10 @@ def stream(base, case):
                 if "error" in data:
                     raise ValueError("server generation failure")
                 meta = data["meta_info"]
+                finish = meta.get("finish_reason")
+                finish_type = finish.get("type") if isinstance(finish, dict) else finish
+                if finish_type in ("abort", "error"):
+                    raise ValueError("server aborted or failed generation")
                 current = meta["completion_tokens"]
                 if type(current) is not int or current < count:
                     raise ValueError("non-monotonic token accounting")
@@ -127,6 +132,7 @@ def stream(base, case):
                 if current > count:
                     if first is None:
                         first = now
+                        first_chunk_tokens = current
                         coalesced |= current > 1
                     else:
                         gaps.append((now - last) / (current - count))
@@ -138,7 +144,9 @@ def stream(base, case):
         elapsed = time.monotonic() - start
         return {"ok": True, "ttft_seconds": first - start, "latency_seconds": elapsed,
                 "itl_seconds": gaps, "itl_coalesced": coalesced,
-                "tpot_seconds": (last - first) / (count - 1) if count > 1 else None,
+                "first_chunk_tokens": first_chunk_tokens,
+                "tpot_seconds": (last - first) / (count - first_chunk_tokens) if count > first_chunk_tokens else None,
+                "tpot_scope": "observed-chunk estimate after first arrival" if count > first_chunk_tokens else "unavailable: no later token arrival",
                 "output_tokens": count, "output_tokens_per_second": count / elapsed,
                 "cached_tokens": cached}
     except (OSError, ValueError, KeyError, TypeError, urllib.error.URLError) as error:

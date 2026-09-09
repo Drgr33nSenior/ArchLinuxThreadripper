@@ -911,15 +911,20 @@ ws_rocm_qualify_llama() (
   IFS=/ read -r -a selected <<< "$devices"
   for device in "${selected[@]}"; do
     ws_measure_command "$output/ops-$device" 1800 "$candidate/build/bin/test-backend-ops" test \
-      -b "$device" -o MUL_MAT,RMS_NORM,SOFT_MAX --output csv
-    "$(ws_measure_python)" "$(ws_repo_root)/lib/workstation/quality_metrics.py" ops "$output/ops-$device/stdout.txt" --backend "$device" > "$output/ops-$device/result.json"
+      -b "$device" -o MUL_MAT,RMS_NORM,SOFT_MAX --output csv \
+      || ws_die 'numerical executable or telemetry failed; quality qualification refused'
+    "$(ws_measure_python)" "$(ws_repo_root)/lib/workstation/quality_metrics.py" ops "$output/ops-$device/stdout.txt" \
+      --backend "$device" --run-record "$output/ops-$device/run.json" > "$output/ops-$device/result.json" \
+      || ws_die 'numerical CSV validation failed; quality qualification refused'
   done
   ws_measure_command "$output/perplexity" 3600 "$candidate/build/bin/llama-perplexity" \
     --model "$model" --file "$corpus" --device "${devices//\//,}" --n-gpu-layers 999 \
     --ctx-size "$LLAMA_CONTEXT_SIZE" --threads "$LLAMA_THREADS" --batch-size "$LLAMA_BATCH_SIZE" --ubatch-size "$LLAMA_UBATCH_SIZE" \
-    --flash-attn "$LLAMA_FLASH_ATTN" --cache-type-k "$LLAMA_KV_K" --cache-type-v "$LLAMA_KV_V"
+    --flash-attn "$LLAMA_FLASH_ATTN" --cache-type-k "$LLAMA_KV_K" --cache-type-v "$LLAMA_KV_V" \
+    || ws_die 'perplexity executable or telemetry failed; quality qualification refused'
   ws_llama_allocations_validate "$devices" "$output/perplexity/stderr.txt"
-  "$(ws_measure_python)" "$(ws_repo_root)/lib/workstation/quality_metrics.py" perplexity "$output/perplexity/stderr.txt" > "$output/perplexity/result.json"
+  "$(ws_measure_python)" "$(ws_repo_root)/lib/workstation/quality_metrics.py" perplexity "$output/perplexity/stderr.txt" > "$output/perplexity/result.json" \
+    || ws_die 'perplexity output validation failed; quality qualification refused'
   [[ $(common::sha256_file "$model") == "$model_hash" && $(common::sha256_file "$corpus") == "$corpus_hash" ]] || ws_die 'quality inputs changed'
   for binary in llama-perplexity test-backend-ops; do
     key=llama_perplexity_sha256

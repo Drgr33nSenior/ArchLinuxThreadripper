@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Synthetic executables with the pinned CLI/CSV contracts. No model execution.
+set -euo pipefail
+printf '%s %s\n' "${0##*/}" "$*" >> "$QUALITY_ARG_LOG"
+case ${0##*/} in
+  llama-bench)
+    [[ $* == --list-devices ]] || exit 2
+    printf '%s0:\n%s1:\n' "$QUALITY_BACKEND" "$QUALITY_BACKEND"
+    ;;
+  test-backend-ops)
+    [[ $# == 7 && $1 == test && $2 == -b && $4 == -o && $5 == MUL_MAT,RMS_NORM,SOFT_MAX && $6 == --output && $7 == csv ]] || exit 2
+    case ${QUALITY_CASE:-valid} in
+      malformed) printf 'invalid CSV\n' ;;
+      missing) sed -e '/SOFT_MAX/d' -e "s/Vulkan0/$3/g" "$QUALITY_CSV" ;;
+      unsupported) sed -e 's/"1"/"0"/g' -e "s/Vulkan0/$3/g" "$QUALITY_CSV" ;;
+      error) sed -e 's/"1",""/"1","comparison failed"/g' -e "s/Vulkan0/$3/g" "$QUALITY_CSV" ;;
+      *) sed "s/Vulkan0/$3/g" "$QUALITY_CSV" ;;
+    esac
+    [[ ${QUALITY_CASE:-valid} != exit-failure ]] || exit 9
+    ;;
+  llama-perplexity)
+    while (($#)); do
+      if [[ $1 == --device ]]; then
+        IFS=, read -r -a devices <<< "$2"
+        for device in "${devices[@]}"; do printf '%s model buffer size = 1 MiB\n' "$device" >&2; done
+        break
+      fi
+      shift
+    done
+    [[ ${QUALITY_CASE:-valid} == ppl-malformed ]] || printf 'Final estimate: PPL = 3.0000 +/- 0.10000\n' >&2
+    [[ ${QUALITY_CASE:-valid} != ppl-failure ]] || exit 8
+    ;;
+  *) exit 2 ;;
+esac

@@ -7,12 +7,25 @@ from pathlib import Path
 import re
 
 
-def ops(path, backend):
-    with open(path) as source:
-        rows = list(csv.DictReader(source))
-    rows = [r for r in rows if r.get("backend_name") == backend and r.get("test_mode") == "test"]
-    supported = [r for r in rows if r.get("supported") in ("1", "true")]
-    if not supported or any(r.get("passed") not in ("1", "true") for r in supported):
+def ops(path, backend, run_record):
+    # The pinned CSV printer omits `passed`. A clean executable exit AND
+    # error-free supported rows are required; CSV alone cannot prove success.
+    run = json.loads(Path(run_record).read_text())
+    if (run.get("status") != "measured-not-qualified" or type(run.get("returncode")) is not int
+            or run["returncode"] != 0 or run.get("error_category")):
+        raise ValueError("numerical executable or its telemetry did not complete successfully")
+    fields = ["backend_name", "op_name", "op_params", "test_mode", "supported", "error_message", "backend_reg_name"]
+    with open(path, newline="") as source:
+        reader = csv.DictReader(source, strict=True)
+        if reader.fieldnames != fields:
+            raise ValueError("numerical CSV does not match the pinned output contract")
+        rows = list(reader)
+    if any(set(r) != set(fields) or any(value is None for value in r.values()) for r in rows):
+        raise ValueError("malformed numerical CSV row")
+    if any(r["backend_name"] != backend or r["test_mode"] != "test" or r["supported"] not in ("0", "1") for r in rows):
+        raise ValueError("unexpected backend, mode or support flag in numerical CSV")
+    supported = [r for r in rows if r["supported"] == "1"]
+    if not supported or any(r["error_message"].strip() for r in supported):
         raise ValueError("no numerical tests ran or a supported test failed")
     for operation in ("MUL_MAT", "RMS_NORM", "SOFT_MAX"):
         if not any(r.get("op_name") == operation for r in supported):
@@ -36,8 +49,11 @@ def main():
     parser.add_argument("mode", choices=("ops", "perplexity"))
     parser.add_argument("file")
     parser.add_argument("--backend")
+    parser.add_argument("--run-record")
     args = parser.parse_args()
-    print(json.dumps(ops(args.file, args.backend) if args.mode == "ops" else perplexity(args.file)))
+    if args.mode == "ops" and (not args.backend or not args.run_record):
+        parser.error("ops requires --backend and the executable's --run-record")
+    print(json.dumps(ops(args.file, args.backend, args.run_record) if args.mode == "ops" else perplexity(args.file)))
 
 
 if __name__ == "__main__":

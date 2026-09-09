@@ -1,11 +1,15 @@
 """Offline fixtures: no ROCm, cluster, disk workload or target qualification."""
 import json
+import io
+import os
+import signal
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import patch
 
@@ -110,16 +114,121 @@ class Tests(unittest.TestCase):
     def test_quality_rejects_skipped_and_missing_results(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "ops.csv"
-            path.write_text('backend_name,op_name,test_mode,supported,passed\nVulkan0,MUL_MAT,test,0,1\n')
-            with self.assertRaises(ValueError):
-                quality_metrics.ops(path, "Vulkan0")
-            path.write_text('backend_name,op_name,test_mode,supported,passed\n' + ''.join(
-                f'Vulkan0,{op},test,1,1\n' for op in ("MUL_MAT", "RMS_NORM", "SOFT_MAX")))
-            self.assertEqual(quality_metrics.ops(path, "Vulkan0")["supported_passes"], 3)
+            fixture = (Path(__file__).resolve().parents[1] / "fixtures/llama-quality/ops.csv").read_text()
+            record = Path(tmp) / "run.json"
+            good_record = {"status": "measured-not-qualified", "returncode": 0}
+            record.write_text(json.dumps(good_record))
+            path.write_text(fixture)
+            self.assertEqual(quality_metrics.ops(path, "Vulkan0", record)["supported_passes"], 3)
+            path.write_text(fixture + fixture.splitlines()[1].replace('"1",""', '"0","not supported"') + "\n")
+            self.assertEqual(quality_metrics.ops(path, "Vulkan0", record)["unsupported"], 1)
+            for bad in ("", '"broken\n', fixture.splitlines()[0] + "\n",
+                        fixture.replace('"1"', '"0"'),
+                        "\n".join(line for line in fixture.splitlines() if "SOFT_MAX" not in line),
+                        fixture.replace('"1",""', '"1","comparison failed"', 1),
+                        fixture.replace('"test"', '"support"'), fixture.replace("Vulkan0", "Vulkan1"),
+                        fixture + '"Vulkan0","MUL_MAT"\n'):
+                path.write_text(bad)
+                with self.subTest(csv=bad[:40]), self.assertRaises((ValueError, quality_metrics.csv.Error)):
+                    quality_metrics.ops(path, "Vulkan0", record)
+            path.write_text(fixture)
+            for bad in ({"status": "failed", "returncode": 0}, {"status": "measured-not-qualified", "returncode": 9}, {},
+                        dict(good_record, error_category="telemetry")):
+                record.write_text(json.dumps(bad))
+                with self.assertRaises(ValueError):
+                    quality_metrics.ops(path, "Vulkan0", record)
             with self.assertRaises(ValueError):
                 quality_metrics.perplexity(path)
             path.write_text('Final estimate: PPL = 3.0 +/- 0.1\n')
             self.assertEqual(quality_metrics.perplexity(path)["perplexity"], 3)
+
+    def test_stream_chunk_timing_and_abort_metadata(self):
+        def check(counts, ticks, finish=None):
+            rows = [{"meta_info": {"completion_tokens": count}} for count in counts]
+            rows[-1]["meta_info"]["finish_reason"] = finish
+            body = b"".join(b"data: " + json.dumps(row).encode() + b"\n\n" for row in rows) + b"data: [DONE]\n\n"
+            with patch("serving.request", return_value=io.BytesIO(body)), patch("serving.time.monotonic", side_effect=ticks):
+                return serving.stream("http://127.0.0.1", {"input_ids": [1], "output_tokens": counts[-1]})
+        single = check([4], [0, 2, 3])
+        self.assertTrue(single["ok"])
+        self.assertIsNone(single["tpot_seconds"])
+        self.assertEqual(single["first_chunk_tokens"], 4)
+        self.assertEqual(single["ttft_seconds"], 2)
+        self.assertEqual(single["latency_seconds"], 3)
+        self.assertAlmostEqual(single["output_tokens_per_second"], 4 / 3)
+        multi = check([3, 5], [0, 2, 6, 7])
+        self.assertEqual(multi["tpot_seconds"], 2)  # (6 - 2) / (5 - 3), not /4.
+        self.assertEqual(multi["itl_seconds"], [2])
+        self.assertEqual(multi["ttft_seconds"], 2)
+        normal = check([1, 2, 3], [0, 1, 3, 5, 6], {"type": "length", "length": 3})
+        self.assertEqual(normal["tpot_seconds"], 2)
+        for finish in ({"type": "abort", "message": "private-error", "status_code": 500, "err_type": "InternalError"},
+                       {"type": "error"}, "abort", "error"):
+            result = check([3], [0, 1], finish)
+            self.assertFalse(result["ok"])
+            self.assertNotIn("private-error", json.dumps(result))
+
+    def test_sampler_failure_cannot_mark_success(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "result"
+            previous = signal.getsignal(signal.SIGTERM)
+            with patch.object(measurement.Sampler, "__exit__", side_effect=RuntimeError("fixture sampler failure")), \
+                    patch.object(measurement.Sampler, "__enter__"), self.assertRaises(RuntimeError):
+                measurement.run_command([sys.executable, "-c", "pass"], out, 5)
+            result = json.loads((out / "run.json").read_text())
+            self.assertEqual(result["status"], "failed")
+            self.assertEqual(result["returncode"], 0)
+            self.assertEqual(result["error_category"], "telemetry")
+            self.assertEqual(result["error_class"], "RuntimeError")
+            self.assertEqual(signal.getsignal(signal.SIGTERM), previous)
+
+    def test_storage_sigterm_reaps_owned_workload_and_preserves_exit(self):
+        fixture = Path(__file__).resolve().parents[1] / "fixtures/performance/storage-cancel.py"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            unrelated = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True)
+            runner = subprocess.Popen([sys.executable, str(fixture), "runner", str(root)],
+                                      stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            pids = []
+            try:
+                deadline = time.monotonic() + 10
+                while not (root / "workload-ready").exists():
+                    if runner.poll() is not None or time.monotonic() > deadline:
+                        self.fail("harmless workload did not start")
+                    time.sleep(.02)
+                pids = json.loads((root / "workload-ready").read_text())
+                runner.send_signal(signal.SIGTERM)
+                runner.communicate(timeout=15)
+                self.assertEqual(runner.returncode, 143)
+                run = json.loads((root / "result/0-prepare/run.json").read_text())
+                report = json.loads((root / "result/result.json").read_text())
+                self.assertEqual(run["status"], "failed")
+                self.assertEqual(run["error_category"], "interrupted")
+                self.assertEqual(run["interrupted_signal"], signal.SIGTERM)
+                self.assertEqual(run["returncode"], -signal.SIGKILL)
+                self.assertEqual(report["status"], "failed")
+                self.assertEqual(report["error_category"], "interrupted")
+                for pid in pids:
+                    # An orphan zombie awaiting init's reaper has exited; it
+                    # is not a surviving workload. Inspect only fixture PIDs.
+                    status = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+                    self.assertTrue(not status or status.startswith("Z"), (pid, status))
+                self.assertIsNone(unrelated.poll())
+            finally:
+                if runner.poll() is None:
+                    runner.kill()
+                runner.communicate(timeout=5)
+                if pids:
+                    try:
+                        os.killpg(pids[0], signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                unrelated.terminate()
+                unrelated.wait(timeout=5)
+        with tempfile.TemporaryDirectory() as tmp:
+            result = subprocess.run([sys.executable, str(fixture), "exit7", tmp], capture_output=True, timeout=10)
+            self.assertEqual(result.returncode, 7)
+            self.assertEqual(json.loads((Path(tmp) / "result/result.json").read_text())["returncode"], 7)
 
     def test_serving_complete_and_failure_records(self):
         server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)

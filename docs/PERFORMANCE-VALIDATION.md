@@ -5,6 +5,9 @@ the same revision reviewed externally on 8 September. Existing uncommitted
 template annotations were preserved. No installer, GPU workload, live cluster,
 firmware change or storage benchmark was run on the development Mac.
 
+The [measurement-contract corrections](#measurement-contract-corrections) below
+address the subsequent review of `46641c1f0d684654548547816ebdab4c02119289`.
+
 **No performance default was promoted and no workstation speedup is claimed.**
 Use the commands below on the installed target after its existing qualification
 and access gates pass. Reports contain hardware identifiers and model/corpus
@@ -365,3 +368,105 @@ verification; real ccache and CMake/Ninja repeat-build fixtures; the pinned loca
 GPU Operator chart render; prebuilt gaming/Wayland image smoke tests; the USB
 Bash-4 signal fixture. No dependencies were installed to hide these gaps.
 Physical tests, GPU compiler execution and complete ROCm packaging remain pending.
+
+## Measurement-contract corrections
+
+The follow-up checkout was clean and exactly at
+`46641c1f0d684654548547816ebdab4c02119289`. Software pins, model settings,
+resource budgets and pending hardware qualification are unchanged.
+
+- Numerical qualification now requires the pinned CSV header, supported required
+  operations, empty error fields on supported rows, and a successful executable
+  **and telemetry** record. The pinned CSV printer omits `passed`; executable
+  status is necessary because CSV alone cannot certify success. Unsupported
+  cases are counted, not treated as tests passed. Missing required operations,
+  malformed rows and nonzero exits prevent `quality.json` success.
+  [Pinned upstream output and exit contract](https://github.com/ggml-org/llama.cpp/blob/427291b5b34cd914a31b3fd3b61a68f6184f4b9f/tests/test-backend-ops.cpp).
+- `run.json` becomes successful only after the sampler completes. Failures
+  retain the workload return code, error category/class and, for cancellation,
+  signal number. A workload exit of zero does not override failed telemetry.
+- The shared runner handles SIGTERM/SIGINT even when imported by storage. It
+  terminates only its owned workload group, escalates to KILL after five seconds,
+  and preserves the original failure/cancellation. Storage retains a failed
+  aggregate record and its scratch file. The CLI uses `exec` so its PID reaches
+  this handler. SIGKILL or power loss cannot perform cleanup or guarantee records.
+- TPOT excludes tokens already present in the first chunk. A single arrival
+  reports `tpot_seconds: null`; multiple arrivals report a labelled observed-chunk
+  estimate. `first_chunk_tokens` and `tpot_scope` describe its limits. TTFT,
+  complete-request latency and aggregate token throughput retain their meanings.
+  Native abort/error finish metadata is rejected, even after the expected token
+  count and a `[DONE]` marker. Private error messages are not retained.
+  [Pinned SGLang abort metadata](https://github.com/sgl-project/sglang/blob/v0.5.15/python/sglang/srt/managers/schedule_batch.py).
+
+Historical records must not be silently relabelled: repeat numerical
+qualification and affected streaming measurements with this corrected runner.
+No model rebuild or software upgrade is needed solely for these parser fixes
+if the existing locked candidates retain their quality executables and hashes.
+
+### Remaining real-integration commands
+
+**NOT RUN — target hardware unavailable.** Run on the installed Arch host as
+the target user. First release conflicting GPU workloads through the existing
+maintenance process. Keep one GGUF and corpus for both backends. Replace the
+model/corpus paths and candidate directories below with reviewed local inputs;
+use the device names printed by each retained binary.
+
+```sh
+./bin/workstationctl --config config/workstation.conf hardware collect artifacts/review-hardware
+artifacts/hip/build/bin/llama-bench --list-devices
+artifacts/vulkan/build/bin/llama-bench --list-devices
+./bin/workstationctl --config config/workstation.conf rocm qualify-llama artifacts/review-hardware/hardware.json artifacts/hip /path/to/model.gguf /path/to/quality-corpus.txt artifacts/review-quality-hip ROCm0/ROCm1
+./bin/workstationctl --config config/workstation.conf rocm qualify-llama artifacts/review-hardware/hardware.json artifacts/vulkan /path/to/model.gguf /path/to/quality-corpus.txt artifacts/review-quality-vulkan Vulkan0/Vulkan1
+```
+
+Both runs must produce supported-operation counts and retained perplexity;
+compare model/corpus hashes and numerical quality. Neither result promotes the
+stack automatically. After restoring the qualified AI workload, use its exact
+Ready Pod and the existing fixed coding workload:
+
+```sh
+./bin/workstationctl --config config/workstation.conf rocm serving-evidence sglang-EXACT-POD artifacts/review-serving-before
+./bin/workstationctl --config config/workstation.conf rocm benchmark-serving artifacts/interactive.json artifacts/review-serving-before artifacts/review-serving-run
+```
+
+Inspect per-request `first_chunk_tokens`, `tpot_seconds` and `tpot_scope` in
+`result.json`. Single-chunk responses must have null TPOT, not zero. Failures
+must not produce a successful aggregate record. Do not inject failures into a
+shared server; abort/error rejection is covered by local protocol fixtures.
+
+For a target cancellation check, prepare a **new caller-owned scratch directory
+on encrypted XFS**, then use Bash to retain the exact benchmark PID:
+
+```sh
+./bin/workstationctl performance storage /absolute/owned/nvme/review-scratch artifacts/review-storage-cancel 1 &
+benchmark_pid=$!
+```
+
+After confirming that the scratch workload is active, execute in the same shell:
+
+```sh
+kill -TERM "$benchmark_pid"
+wait "$benchmark_pid"
+```
+
+Expect shell status 143, a failed aggregate `result.json`, an interrupted child
+`run.json`, and no live fio members of that owned process group. The scratch
+file remains for explicit owner cleanup. Do not target another process or raw
+device. Local regression tests use sleeping subprocesses, a 16-byte temporary
+fixture file and mocked storage metadata; they do not execute fio.
+
+### Follow-up local verification
+
+`HOME_LAB_PYTHON=/usr/local/bin/python3.11 PYTHONDONTWRITEBYTECODE=1 make -j2 check`
+completed with exit 0: **44 test files**, including 14 Python fixtures and the
+new complete HIP/Vulkan qualification invocation-to-parser regression. Shell,
+YAML, manifest and available static checks passed. The SIGTERM fixture verifies
+TERM-resistant parent/descendant termination, retained failed records, an
+unaffected unrelated process and preservation of exit status 7 on a normal
+workload failure. A focused ShellCheck pass also covered the synthetic executable.
+
+Unavailable checks remain: shfmt, Bats, working Ansible, Linux systemd
+verification, real ccache/CMake/Ninja build fixtures, the local GPU Operator
+chart, gaming/Wayland image smoke tests and the Bash-4 USB signal fixture.
+Documentation advisory audits and the final whitespace diff check passed.
+No dependencies were installed and no hardware qualification was promoted.

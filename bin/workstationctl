@@ -136,7 +136,7 @@ main() {
     rocm:qualify-llama) (($# == 8)) || return 2; shift 2; ws_rocm_qualify_llama "$@" ;;
     rocm:validate-pod) (($# == 4)) || return 2; ws_rocm_validate_pod "$3" "$4" ;;
     performance:tuned) (($# >= 6)) || return 2; shift 2; ws_performance_tuned "$@" ;;
-    performance:storage) (($# == 5)) || return 2; ws_require_arch; ws_require_user; "$(ws_measure_python)" "$repo_root/lib/workstation/storage_benchmark.py" "$3" "$4" "$5" ;;
+    performance:storage) (($# == 5)) || return 2; ws_require_arch; ws_require_user; exec "$(ws_measure_python)" "$repo_root/lib/workstation/storage_benchmark.py" "$3" "$4" "$5" ;;
     performance:memory) (($# == 5)) || return 2; ws_performance_memory "$3" "$4" "$5" ;;
     performance:stack) (($# == 2)) || return 2; ws_require_arch; "$(ws_measure_python)" "$repo_root/lib/workstation/stack_inventory.py" ;;
     performance:run) (($# >= 6)) && [[ $5 == -- ]] || return 2; ws_require_arch; shift 2; output=$1; seconds=$2; shift 3; ws_measure_command "$output" "$seconds" "$@" ;;

@@ -11,7 +11,7 @@ import shutil
 import stat
 import subprocess
 
-from measurement import run_command, snapshot
+from measurement import MeasurementInterrupted, interruptions, run_command, snapshot
 
 
 def validate_directory(directory, size_gib):
@@ -70,6 +70,7 @@ def validate_result(result):
         raise ValueError("fio performed no measurable I/O")
 
 
+@interruptions()
 def run(directory, output, size_gib):
     directory, size = validate_directory(directory, size_gib)
     output = Path(output)
@@ -105,15 +106,32 @@ def run(directory, output, size_gib):
             for mode in modes:
                 child = output / f"{repetition}-{mode}"
                 args = fio_args(file, size, mode)
-                if run_command(args, child, 300) != 0:
-                    raise ValueError("fio failed; retained private command evidence")
+                returncode = run_command(args, child, 300)
+                if returncode != 0:
+                    report["returncode"] = returncode
+                    raise SystemExit(returncode if returncode > 0 else 128 - returncode)
                 value = json.loads((child / "stdout.txt").read_text())
                 validate_result(value)
                 report["runs"].append({"repetition": repetition, "mode": mode, "arguments": args, "fio": value})
         report["status"] = "measured-not-qualified"
+    except BaseException as error:
+        report["status"] = "failed"
+        report["error_category"] = "interrupted" if isinstance(error, (MeasurementInterrupted, KeyboardInterrupt)) else "workload"
+        report["error_class"] = type(error).__name__
+        if isinstance(error, MeasurementInterrupted):
+            report["interrupted_signal"] = error.signum
+        raise
     finally:
-        report["after"] = snapshot()
-        (output / "result.json").write_text(json.dumps(report, indent=2) + "\n")
+        try:
+            report["after"] = snapshot()
+        except Exception as error:
+            report["status"] = "failed"
+            report["after_error_class"] = type(error).__name__
+            if not report.get("error_category"):
+                report["error_category"] = "telemetry"
+                raise
+        finally:
+            (output / "result.json").write_text(json.dumps(report, indent=2) + "\n")
 
 
 def main():

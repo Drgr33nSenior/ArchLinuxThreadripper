@@ -5,6 +5,7 @@ frequencies are observations, not APERF/MPERF sustained-clock measurements.
 """
 
 import argparse
+from contextlib import contextmanager
 import hashlib
 import json
 import os
@@ -108,13 +109,42 @@ class Sampler:
         self.thread.start()
         return self
 
-    def __exit__(self, *_):
+    def __exit__(self, exc_type, _exc, _traceback):
         self.stop.set()
         self.thread.join(timeout=20)
-        if self.thread.is_alive() or self.error:
+        if exc_type is None and (self.thread.is_alive() or self.error):
             raise RuntimeError("telemetry sampling failed or did not stop")
 
 
+class MeasurementInterrupted(SystemExit):
+    def __init__(self, signum):
+        self.signum = signum
+        super().__init__(128 + signum)
+
+
+@contextmanager
+def interruptions():
+    """Scope signal handling to an explicit benchmark, including imported use."""
+    if threading.current_thread() is not threading.main_thread():
+        raise RuntimeError("cancellable workloads must run in the main thread")
+    previous = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGINT)}
+
+    def interrupted(signum, _frame):
+        # A repeated cancellation must not interrupt process-group cleanup.
+        for sig in previous:
+            signal.signal(sig, signal.SIG_IGN)
+        raise MeasurementInterrupted(signum)
+
+    try:
+        for sig in previous:
+            signal.signal(sig, interrupted)
+        yield
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+
+
+@interruptions()
 def run_command(command, output, timeout):
     """Retain failed evidence too. Never run a shell or detach surviving children."""
     output = Path(output)
@@ -123,32 +153,65 @@ def run_command(command, output, timeout):
     status = "failed"
     returncode = None
     process = None
+    error_category = error_class = cleanup_error = None
+    interrupted_signal = None
+    failure = None
+    phase = "workload"
     try:
         with Sampler(output / "telemetry.jsonl"), open(output / "stdout.txt", "x") as stdout, open(output / "stderr.txt", "x") as stderr:
             process = subprocess.Popen(command, stdout=stdout, stderr=stderr, start_new_session=True)
             returncode = process.wait(timeout=timeout)
-            status = "measured-not-qualified" if returncode == 0 else "failed"
+            phase = "telemetry"
+        # Sampler.__exit__ is part of measurement success, not housekeeping.
+        status = "measured-not-qualified" if returncode == 0 else "failed"
+        if returncode != 0:
+            error_category = "workload-exit"
+    except BaseException as error:
+        status = "failed"
+        failure = error
+        error_class = type(error).__name__
+        if isinstance(error, MeasurementInterrupted):
+            error_category, interrupted_signal = "interrupted", error.signum
+        elif isinstance(error, KeyboardInterrupt):
+            error_category = "interrupted"
+        elif isinstance(error, subprocess.TimeoutExpired):
+            error_category = "timeout"
+        else:
+            error_category = phase
+        raise
     finally:
-        if process is not None:
-            try:
-                os.killpg(process.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-            try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGKILL)
-                process.wait()
-            # The foreground process may have exited while a descendant ignored
-            # TERM. Kill the remaining owned group, not unrelated host processes.
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-        (output / "run.json").write_text(json.dumps({"schema": 1, "status": status,
-            "returncode": returncode, "elapsed_seconds": (time.monotonic_ns() - started) / 1e9,
-            "started_monotonic_ns": started, "command_executable": command[0],
-            "arguments": "not retained; record non-secret workload inputs separately"}, indent=2) + "\n")
+        try:
+            if process is not None:
+                try:
+                    os.killpg(process.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    os.killpg(process.pid, signal.SIGKILL)
+                    process.wait()
+                # Also stop descendants whose foreground parent already exited.
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+        except BaseException as error:
+            status = "failed"
+            cleanup_error = type(error).__name__
+            # Do not replace an original workload failure or cancellation.
+            if failure is None and returncode in (None, 0):
+                error_category = "cleanup"
+                raise
+        finally:
+            if returncode is None and process is not None:
+                returncode = process.poll()
+            (output / "run.json").write_text(json.dumps({"schema": 1, "status": status,
+                "returncode": returncode, "error_category": error_category, "error_class": error_class,
+                "interrupted_signal": interrupted_signal, "cleanup_error": cleanup_error,
+                "elapsed_seconds": (time.monotonic_ns() - started) / 1e9,
+                "started_monotonic_ns": started, "command_executable": command[0],
+                "arguments": "not retained; record non-secret workload inputs separately"}, indent=2) + "\n")
     return returncode
 
 
@@ -168,9 +231,6 @@ def main():
         command = args.command[1:] if args.command[:1] == ["--"] else args.command
         if not command or not args.output or not 1 <= args.timeout <= 86400:
             parser.error("run requires a new output directory, bounded timeout and command after --")
-        def interrupted(*_):
-            raise KeyboardInterrupt
-        signal.signal(signal.SIGTERM, interrupted)
         raise SystemExit(run_command(command, args.output, args.timeout))
 
 
