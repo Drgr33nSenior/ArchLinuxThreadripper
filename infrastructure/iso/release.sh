@@ -9,7 +9,7 @@ usage() {
     'Usage: release.sh [--context NAME] [--execute] [--allow-iso-mounts] ACTION ...' \
     '  packages [BRIDGE_COMMIT BRIDGE_VERSION]' \
     '                                 Build installer; optionally fetch/build/bundle Bridge.' \
-    '  bridge-build BRIDGE_COMMIT BRIDGE_VERSION NEW_OUTPUT_DIRECTORY' \
+    '  bridge-build ISO_RUN_DIRECTORY BRIDGE_COMMIT BRIDGE_VERSION NEW_OUTPUT_DIRECTORY' \
     '                                 Build/test an unsigned Bridge package in amd64 Arch.' \
     '  bridge RUN_DIRECTORY REVIEWED_BRIDGE_DIRECTORY' \
     '                                 Add target payload/dependencies before owner signing.' \
@@ -90,8 +90,8 @@ main() {
       step '4/4: Build unsigned packages without network or root' bash "$wrapper" "${docker_options[@]}" --execute packages \
         "$job" "$run/source" "$run/packages" || return
       if (($#)); then
-        step 'Build the selected Bridge commit in amd64 Arch' bash "$wrapper" "${docker_options[@]}" --execute bridge-build \
-          "$job" "$1" "$2" "$run/bridge-artifacts" || return
+        step 'Verify the selected installer/Bridge memory contract and build Bridge in amd64 Arch' bash "$wrapper" "${docker_options[@]}" --execute bridge-build \
+          "$job" "$1" "$2" "$run/source" "$run/bridge-artifacts" || return
         step 'Seal Bridge and snapshot dependencies with this installer run' bash "$wrapper" "${docker_options[@]}" --execute bridge \
           "$job" "$run/packages" "$run/bridge-artifacts" "$run/bundled" || return
       fi
@@ -104,15 +104,19 @@ main() {
       fi
       ;;
     bridge-build)
-      (($# == 3)) || common::die 'bridge-build requires exact commit, version and new output directory'
+      (($# == 4)) || common::die 'bridge-build requires installer run, exact commit, version and new output directory'
       [[ $allow_mounts == false ]] || common::die '--allow-iso-mounts is only valid for ISO assembly'
+      run=$(cd -- "$1" && pwd -P) || common::die 'supply an existing installer run directory'
+      [[ -f $run/source/bootstrap-source.tar.gz && ! -L $run/source/bootstrap-source.tar.gz &&
+        -f $run/source/source.lock && ! -L $run/source/source.lock ]] ||
+        common::die 'installer run lacks the selected source bundle; do not use a checkout or another run'
       # Validate paths through the wrapper before creating an image or a job.
-      bash "$wrapper" "${docker_options[@]}" bridge-build "$job" "$1" "$2" "$3" || return
+      bash "$wrapper" "${docker_options[@]}" bridge-build "$job" "$2" "$3" "$run/source" "$4" || return
       step '1/3: Build or reuse the pinned tools image' bash "$wrapper" "${docker_options[@]}" --execute image || return
       step '2/3: Check unprivileged amd64 userspace' bash "$wrapper" "${docker_options[@]}" --execute check || return
-      step '3/3: Fetch, build and test the reviewed Bridge commit' bash "$wrapper" "${docker_options[@]}" --execute bridge-build "$job" "$1" "$2" "$3" || return
+      step '3/3: Verify selected installer memory contract, then fetch/build/test Bridge' bash "$wrapper" "${docker_options[@]}" --execute bridge-build "$job" "$2" "$3" "$run/source" "$4" || return
       if [[ $execute == true ]]; then
-        printf 'BRIDGE_ARTIFACTS=%q\n' "$(cd -- "$3" && pwd -P)"
+        printf 'BRIDGE_ARTIFACTS=%q\n' "$(cd -- "$4" && pwd -P)"
       fi
       ;;
     bridge)

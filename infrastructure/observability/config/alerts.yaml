@@ -26,7 +26,7 @@ groups:
           summary: 'XFS free space below 15%'
           description: 'Review model/build/log retention. PVC requested sizes are not filesystem quotas.'
       - alert: WorkstationExporterDown
-        expr: 'up{job=~"node|kube-state-metrics|alloy|prometheus|loki|tempo|grafana"} == 0'
+        expr: 'up{job=~"node|kube-state-metrics|alloy|workstation-host-alloy|prometheus|loki|tempo|grafana"} == 0'
         for: 5m
         labels: {severity: warning}
         annotations: {summary: 'An expected local telemetry target is unavailable'}
@@ -46,15 +46,24 @@ groups:
         labels: {severity: warning}
         annotations: {summary: 'Repeated container restarts; inspect rollout and readiness evidence'}
       - alert: WorkstationTelemetryExportFailed
-        expr: 'sum(increase(otelcol_exporter_send_failed_spans_total[5m])) > 0 or sum(increase(otelcol_exporter_send_failed_log_records_total[5m])) > 0 or sum(increase(prometheus_remote_storage_samples_failed_total[5m])) > 0'
+        expr: 'sum(increase(otelcol_exporter_send_failed_spans_total[5m])) > 0 or sum(increase(otelcol_exporter_send_failed_log_records_total[5m])) > 0 or sum(increase(otelcol_exporter_send_failed_metric_points_total[5m])) > 0 or sum(increase(prometheus_remote_storage_samples_failed_total[5m])) > 0'
         for: 2m
         labels: {severity: warning}
         annotations: {summary: 'Telemetry export failures; inspect backend readiness, limits and bounded queues'}
       - alert: WorkstationTelemetryRefused
-        expr: 'sum(increase(otelcol_processor_refused_spans_total[5m])) > 0 or sum(increase(otelcol_processor_refused_log_records_total[5m])) > 0'
+        # Host Alloy 1.13.2 embeds collector 0.142 (old family); cluster Alloy
+        # 1.19.2 embeds 0.158 (memory_limiter family). Both report all signals.
+        expr: 'sum(increase({__name__=~"otelcol_processor(_memory_limiter)?_refused_(spans|log_records|metric_points)_total"}[5m])) > 0'
         for: 2m
         labels: {severity: warning}
         annotations: {summary: 'Collector memory limiter refused telemetry; results may be incomplete'}
+      - alert: WorkstationHostAlloyHeartbeatMissing
+        # This series is self-scraped by host Alloy and remote-written directly
+        # to Prometheus. Absence includes loss of that forwarding path.
+        expr: 'absent_over_time(up{job="workstation-host-alloy"}[5m])'
+        for: 2m
+        labels: {severity: warning}
+        annotations: {summary: 'Host Alloy heartbeat is absent or stale; host telemetry may be incomplete'}
       - alert: WorkstationPrometheusRuleFailure
         expr: 'increase(prometheus_rule_evaluation_failures_total[5m]) > 0'
         for: 2m

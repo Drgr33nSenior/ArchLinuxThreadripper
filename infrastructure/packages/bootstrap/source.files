@@ -149,6 +149,8 @@ templates/workstation/packages.pacman
 templates/workstation/workstation-linux-git.preset
 templates/workstation/zshrc
 tests/fixtures/ccache-smoke.c
+tests/fixtures/telemetry/alerts_test.yaml
+tests/fixtures/telemetry/otlp_sanitization.json
 tests/hardware/hip-ipc.cpp
 tests/hardware/hip-peer-copy.cpp
 tests/hardware/hip-smoke.cpp
@@ -157,6 +159,8 @@ tests/hardware/serving-workload.py
 tests/hardware/sglang-evidence.py
 tests/hardware/sglang-kernel-evidence.py
 tests/hardware/sglang-profile-evidence.py
+tests/hardware/test_model_kernels.py
+tests/hardware/test_serving_memory.py
 tests/hardware/torch-rocm.py
 infrastructure/packages/bootstrap/bridge-runtime.files
 infrastructure/packages/bootstrap/bridge-reference.files

@@ -122,7 +122,7 @@ only in tmpfs, not in image layers or exported artifacts.
 
 ## Bridge package build on Apple Silicon
 
-The `release.sh bridge-build COMMIT VERSION NEW_OUTPUT` stage uses the existing Docker
+The `release.sh bridge-build ISO_RUN COMMIT VERSION NEW_OUTPUT` stage uses the existing Docker
 wrapper and a fresh Linux-backed job volume. It does not rebuild or sign the
 installer package run. See [ISO.md](ISO.md#1a-bundle-bridge-unless-explicitly-opting-out)
 for the owner sequence. Existing reviewed CI artifacts can skip compilation and

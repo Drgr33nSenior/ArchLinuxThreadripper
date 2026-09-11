@@ -11,7 +11,7 @@ usage() {
     '  image' \
     '  check' \
     '  packages JOB SOURCE_BUNDLE_DIRECTORY NEW_OUTPUT_DIRECTORY' \
-    '  bridge-build JOB BRIDGE_COMMIT BRIDGE_VERSION NEW_OUTPUT_DIRECTORY' \
+    '  bridge-build JOB BRIDGE_COMMIT BRIDGE_VERSION SOURCE_BUNDLE_DIRECTORY NEW_OUTPUT_DIRECTORY' \
     '  bridge JOB RUN_PACKAGE_DIRECTORY REVIEWED_BRIDGE_DIRECTORY NEW_OUTPUT_DIRECTORY' \
     '  iso JOB SIGNED_PACKAGE_DIRECTORY PUBLIC_KEY.asc FINGERPRINT NEW_OUTPUT_DIRECTORY' \
     'Default: dry-run, local desktop-linux context; all job state is retained.'
@@ -98,11 +98,16 @@ main() {
       done
       ;;
     bridge-build)
-      (($# == 4)) || common::die 'bridge-build requires JOB, exact commit, version and new output'
+      (($# == 5)) || common::die 'bridge-build requires JOB, exact commit, version, selected source bundle and new output'
       job=$1
       bridge_commit=$2 bridge_version=$3
       [[ $bridge_commit =~ ^[a-f0-9]{40}$ && $bridge_version =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || common::die 'select a full lowercase commit and vMAJOR.MINOR.PATCH version, not a branch or tag reference'
-      output=$(new_output_path "$4")
+      source=$(directory_path "$4")
+      for file in bootstrap-source.tar.gz source.lock; do
+        regular_file "$source/$file"
+        mounts+=(--mount "type=bind,source=$source/$file,target=/installer/$file,readonly")
+      done
+      output=$(new_output_path "$5")
       ;;
     bridge)
       (($# == 4)) || common::die 'bridge requires JOB, run packages, reviewed Bridge inputs, new output'
@@ -121,7 +126,7 @@ main() {
         regular_file "$file"
         mounts+=(--mount "type=bind,source=$file,target=/input/${file##*/},readonly")
       done
-      for file in "${bridge_candidates[0]}" "${bridge_sources[0]}" "$candidate/PKGBUILD"; do
+      for file in "${bridge_candidates[0]}" "${bridge_sources[0]}" "$candidate/PKGBUILD" "$candidate/builder.lock"; do
         regular_file "$file"
         mounts+=(--mount "type=bind,source=$file,target=/candidate/${file##*/},readonly")
       done
@@ -215,7 +220,7 @@ main() {
       fi
     fi
     # macOS ships Bash 3.2: expanding an empty array with nounset fails there.
-    if [[ $action != check && $action != bridge-build ]]; then run+=("${mounts[@]}"); fi
+    if [[ $action != check ]]; then run+=("${mounts[@]}"); fi
     run+=("${image_id:-$image}" "$action")
     [[ $action != bridge-build ]] || run+=("$bridge_commit" "$bridge_version")
     [[ $action != iso ]] || run+=("$fingerprint")

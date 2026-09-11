@@ -102,6 +102,20 @@ spec:
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
+metadata: {name: prometheus-from-workstation-9090, namespace: workstation-observability}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: prometheus}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        # Replaced from TELEMETRY_WORKSTATION_ADDRESS. The host's bounded
+        # self-scrape uses this direct remote-write path only.
+        - ipBlock: {cidr: 192.0.2.2/32}
+      ports: [{protocol: TCP, port: 9090}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
 metadata: {name: alloy-to-loki-3100, namespace: workstation-observability}
 spec:
   podSelector:

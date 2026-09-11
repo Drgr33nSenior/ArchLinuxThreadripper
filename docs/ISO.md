@@ -92,17 +92,20 @@ directory or build the exact GitHub commit in a separate job:
 
 ```sh
 BRIDGE_ARTIFACTS="$ISO_RUN/bridge-artifacts-retry1"
-bash infrastructure/iso/release.sh bridge-build "$BRIDGE_COMMIT" "$BRIDGE_VERSION" "$BRIDGE_ARTIFACTS"
-bash infrastructure/iso/release.sh --execute bridge-build "$BRIDGE_COMMIT" "$BRIDGE_VERSION" "$BRIDGE_ARTIFACTS"
+bash infrastructure/iso/release.sh bridge-build "$ISO_RUN" "$BRIDGE_COMMIT" "$BRIDGE_VERSION" "$BRIDGE_ARTIFACTS"
+bash infrastructure/iso/release.sh --execute bridge-build "$ISO_RUN" "$BRIDGE_COMMIT" "$BRIDGE_VERSION" "$BRIDGE_ARTIFACTS"
 ```
 
 These calls preview, then fetch/build/test in the AMD64 Arch container. They never
 run `makepkg` on macOS. The container has four CPU equivalents, 6 GiB RAM and no
-swap. No host source directory, credentials or Docker socket is mounted. The
-reviewed commit's generator produces its PKGBUILD and checksummed source archive.
-The exact compiler must match its `.go-version`; mismatches stop the build.
-Review `builder.lock`, `BUILDINFO`, `go-environment.json` and `SHA256SUMS` in
-the output. See [compiler provenance](ISO-REFERENCE.md#bridge-package-build-on-apple-silicon).
+swap. Only the selected run's sealed installer source archive and lock are mounted;
+the release gate verifies that archive's exact-tree manifest and runs Bridge's
+selected-pair memory contract before it emits a package. It records the installer
+source SHA-256 in `builder.lock`. That source identity is release evidence, not
+authority for an installed runtime or host policy. The reviewed commit's generator
+produces its PKGBUILD and checksummed source archive. The exact compiler must match
+its `.go-version`; mismatches stop the build. Review `builder.lock`, `BUILDINFO`,
+`go-environment.json` and `SHA256SUMS` in the output. See [compiler provenance](ISO-REFERENCE.md#bridge-package-build-on-apple-silicon).
 
 Keep the original `ISO_RUN`. For CI, set `BRIDGE_ARTIFACTS` to the downloaded
 directory containing one package, its exact PKGBUILD and source archive. Then:
@@ -117,7 +120,12 @@ The stage creates `ISO_RUN/bundled` with five local packages, a rebuilt reposito
 Official signatures remain intact; Go stays build-only. Bundling checks the actual
 Bridge binary against this installer's runtime/reference catalog.
 
-Missing, ambiguous, incompatible or changed inputs stop the stage. Failed jobs
+Missing, ambiguous, incompatible or changed inputs stop the stage. The bundle also
+refuses Bridge artifacts whose memory-contract identity differs from `ISO_RUN`.
+Existing artifacts without this evidence must be rebuilt through the selected-pair
+gate. Do not add a fabricated `builder.lock` to mark an older build as tested.
+Changing these source examples does not update any installed runtime approval.
+Failed jobs
 and volumes are retained; inspect the printed container with `docker logs` and
 retry Bridge compilation into a fresh output directory. Do not rebuild successful
 installer packages or mix unrelated runs. An existing bundle is never overwritten.

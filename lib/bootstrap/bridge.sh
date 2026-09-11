@@ -31,6 +31,20 @@ bridge_official_signature() (
   awk -v p="$fingerprint" -v s="$signer" '$0==p || $0==s {revoked=1} END {exit revoked}' /usr/share/pacman/keyrings/archlinux-revoked
 )
 
+# The Bridge build gate is bound to the immutable installer source selected for
+# this release run. It is release evidence only; installed runtime policy keeps
+# its separate manifest and qualification checks.
+bridge_memory_contract_identity() {
+  (($# == 4)) || return 1
+  local lock=$1 installer=$2 bridge_source=$3 recipe=$4 source kind built_source built_recipe
+  [[ -f $lock && ! -L $lock && $installer =~ ^[a-f0-9]{64}$ && $bridge_source =~ ^[a-f0-9]{64}$ && $recipe =~ ^[a-f0-9]{64}$ ]] || return 1
+  source=$(awk -F= '$1=="INSTALLER_SOURCE_SHA256" {n++; v=$2} END {if(n!=1 || v !~ /^[a-f0-9]{64}$/) exit 1; print v}' "$lock") || return 1
+  built_source=$(awk -F= '$1=="SOURCE_SHA256" {n++; v=$2} END {if(n!=1 || v !~ /^[a-f0-9]{64}$/) exit 1; print v}' "$lock") || return 1
+  built_recipe=$(awk -F= '$1=="PKGBUILD_SHA256" {n++; v=$2} END {if(n!=1 || v !~ /^[a-f0-9]{64}$/) exit 1; print v}' "$lock") || return 1
+  kind=$(awk -F= '$1=="MEMORY_CONTRACT" {n++; v=$2} END {if(n!=1) exit 1; print v}' "$lock") || return 1
+  [[ $kind == selected-installer-memory-v1 && $source == "$installer" && $built_source == "$bridge_source" && $built_recipe == "$recipe" ]]
+}
+
 bridge_verify_bundle() (
   local dir=$1 keyring=${2:-} fingerprint=${3:-} record path name version arch digest listing desc file count=0
   [[ -f $dir/bridge-bundle.json && ! -L $dir/bridge-bundle.json ]] || return 1

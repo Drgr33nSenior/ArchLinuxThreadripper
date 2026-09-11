@@ -16,6 +16,8 @@ pkg=${selected[0]}
 [[ $(bridge_field "$pkg" pkgname) == spry-ai-workstation-bridge && $(bridge_field "$pkg" arch) == x86_64 ]] || common::die 'wrong Bridge package name/architecture'
 bridge_source=$(bsdtar -xOf "$pkg" usr/share/doc/spry-ai-workstation-bridge/source.sha256)
 [[ $bridge_source =~ ^[a-f0-9]{64}$ ]] || common::die 'Bridge package lacks source-archive identity; rebuild with the reviewed recipe'
+[[ -f $candidate/builder.lock && ! -L $candidate/builder.lock ]] || common::die 'Bridge build evidence lacks the selected installer memory-contract identity'
+installer_source=$(common::lock_get "$packages/source.lock" SOURCE_SHA256)
 sources=("$candidate"/spry-bridge-*-src.tar.gz)
 ((${#sources[@]} == 1)) || common::die 'retain the exact Bridge source archive'
 [[ $(common::sha256_file "${sources[0]}") == "$bridge_source" ]] || common::die 'Bridge source archive differs from package provenance'
@@ -23,12 +25,14 @@ sources=("$candidate"/spry-bridge-*-src.tar.gz)
 recipe_hash=$(bsdtar -xOf "$pkg" .BUILDINFO | awk -F ' = ' '$1=="pkgbuild_sha256sum" {n++; v=$2} END {if(n!=1) exit 1; print v}')
 [[ $(common::sha256_file "$candidate/PKGBUILD") == "$recipe_hash" ]] || common::die 'Bridge .BUILDINFO does not identify this recipe'
 grep -Fq "sha256sums=('$bridge_source')" "$candidate/PKGBUILD" || common::die 'recipe/source digest mismatch'
-installer_source=$(common::lock_get "$packages/source.lock" SOURCE_SHA256)
+bridge_memory_contract_identity "$candidate/builder.lock" "$installer_source" "$bridge_source" "$recipe_hash" ||
+  common::die 'Bridge build evidence does not identify this installer, source archive and recipe; do not bundle it'
 snapshot=$(common::lock_get "$root/infrastructure/iso/versions.lock" ARCH_SNAPSHOT)
 cp "$packages"/*.pkg.tar.zst "$output/"
 cp "$pkg" "$output/"
 cp "$packages/source.lock" "$output/"
 cp "$candidate/PKGBUILD" "$output/evidence/Bridge.PKGBUILD"
+cp "$candidate/builder.lock" "$output/evidence/Bridge.builder.lock"
 cp "${sources[0]}" "$output/evidence/"
 all=("$output"/*.pkg.tar.zst)
 ((${#all[@]} == 5)) || common::die 'expected four matching installer packages plus Bridge'
@@ -82,5 +86,5 @@ jq -n --arg installer_source "$installer_source" --arg bridge_source "$bridge_so
   '{schema:1,installer_source:$installer_source,bridge_source:$bridge_source,snapshot:$snapshot,database_sha256:$database_sha256,packages:$packages[0],dependencies:$dependencies[0]}' >"$output/bridge-bundle.json"
 bridge_verify_bundle "$output" || common::die 'bundle identity/repository verification failed'
 printf 'PENDING owner signatures: signed offline transaction validation runs in installer preflight. Snapshot dependency resolution completed; no package installation performed.\n' >"$output/evidence/offline-transaction.txt"
-(cd "$output" && sha256sum ./*.pkg.tar.zst arch-workstation.db.tar.gz bridge-bundle.json dependencies/*.pkg.tar.zst >SHA256SUMS)
+(cd "$output" && sha256sum ./*.pkg.tar.zst arch-workstation.db.tar.gz bridge-bundle.json dependencies/*.pkg.tar.zst evidence/Bridge.PKGBUILD evidence/Bridge.builder.lock >SHA256SUMS)
 printf 'Unsigned candidate bundle ready; owner review/signing required. Services and hardware NOT qualified.\n'

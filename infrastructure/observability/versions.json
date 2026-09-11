@@ -83,6 +83,11 @@
     "https://grafana.com/docs/alloy/latest/reference/components/otelcol/otelcol.processor.transform/",
     "https://grafana.com/docs/alloy/latest/reference/components/otelcol/otelcol.processor.filter/",
     "https://grafana.com/docs/alloy/latest/reference/components/prometheus/prometheus.remote_write/",
+    "https://github.com/grafana/alloy/blob/v1.13.2/go.mod",
+    "https://github.com/grafana/alloy/blob/v1.19.2/go.mod",
+    "https://github.com/open-telemetry/opentelemetry-collector/blob/v0.142.0/processor/memorylimiterprocessor/metadata.yaml",
+    "https://github.com/open-telemetry/opentelemetry-collector/blob/v0.158.0/processor/memorylimiterprocessor/metadata.yaml",
+    "https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/v0.158.0/processor/transformprocessor/README.md",
     "https://grafana.com/docs/loki/latest/operations/storage/retention/",
     "https://github.com/grafana/tempo/blob/v3.0.3/modules/overrides/config.go"
   ]

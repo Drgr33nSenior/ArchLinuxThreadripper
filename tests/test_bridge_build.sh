@@ -23,6 +23,10 @@ bsdtar -czf "$work/go.tar.gz" -C "$work/compiler" go
 printf 'BRIDGE_GO_VERSION=1.27.1\nBRIDGE_GO_LINUX_AMD64_SHA256=%s\nSOURCE_DATE_EPOCH=1788480000\n' \
   "$(common::sha256_file "$work/go.tar.gz")" >"$work/builder/versions.lock"
 printf 'go 2:1.27.0-1\n' >"$work/builder/packages.txt"
+bash "$root/infrastructure/packages/bootstrap/prepare-source.sh" "$work/installer" >/dev/null
+for file in tests/hardware/test_serving_memory.py tests/hardware/test_model_kernels.py tests/hardware/sglang-profile-evidence.py tests/fixtures/telemetry/alerts_test.yaml tests/fixtures/telemetry/otlp_sanitization.json; do
+  grep -Fxq "$file" "$work/installer/project/source.files"
+done
 BUILDER_IMAGE_ID="sha256:$(printf '%064d' 0)"
 export BRIDGE_BUILD_FIXTURE="$work" BUILDER_IMAGE_ID
 revision=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
@@ -57,6 +61,16 @@ curl() {
 # shellcheck disable=SC2329
 go() {
   [[ $GOTOOLCHAIN == local && $GOOS == linux && $GOARCH == amd64 && $GOMAXPROCS == 4 && $GOFLAGS == -p=4 ]] || return 1
+  if [[ $* == 'test -mod=readonly -list ^TestCandidateInstallerMemoryContract$ ./internal/memory' ]]; then
+    [[ ${BRIDGE_TEST_FAILURE:-} != missing_contract ]] || return 0
+    printf '%s\n' TestCandidateInstallerMemoryContract
+    return 0
+  fi
+  if [[ $* == 'test -mod=readonly -count=1 -v -run ^TestCandidateInstallerMemoryContract$ ./internal/memory' ]]; then
+    [[ $BRIDGE_INSTALLER_MEMORY_CANDIDATE == */installer/project && -f $BRIDGE_INSTALLER_MEMORY_CANDIDATE/SOURCE-MANIFEST.sha256 ]] || return 1
+    [[ ${BRIDGE_TEST_FAILURE:-} != contract ]] || return 29
+    return 0
+  fi
   if [[ $* == 'run ./cmd/bridge-arch-package --version v0.0.0' ]]; then
     mkdir -p dist/arch
     cp "$BRIDGE_BUILD_FIXTURE/input/"* dist/arch/
@@ -89,7 +103,7 @@ makepkg() {
 export -f uname id git curl go makepkg
 script="$root/infrastructure/iso/docker/bridge-build.sh"
 mkdir "$work/success"
-bash "$script" "$revision" v0.0.0 "$work/success" "$work/builder" >"$work/success.log" 2>&1 || {
+bash "$script" "$revision" v0.0.0 "$work/success" "$work/builder" "$work/installer" >"$work/success.log" 2>&1 || {
   cat "$work/success.log"
   exit 1
 }
@@ -98,11 +112,13 @@ bash "$script" "$revision" v0.0.0 "$work/success" "$work/builder" >"$work/succes
 cmp "$work/input/PKGBUILD" "$work/success/output/PKGBUILD"
 grep -Fxq 'GO_VERSION=1.27.1' "$work/success/output/builder.lock"
 grep -Fxq "SOURCE_COMMIT=$revision" "$work/success/output/builder.lock"
-if bash "$script" "$revision" v0.0.0 "$work/success" "$work/builder" >"$work/repeat.log" 2>&1; then exit 1; fi
-for failure in fetch legacy download status verify build provenance tamper; do
+grep -Fxq "INSTALLER_SOURCE_SHA256=$(common::sha256_file "$work/installer/bootstrap-source.tar.gz")" "$work/success/output/builder.lock"
+grep -Fxq 'MEMORY_CONTRACT=selected-installer-memory-v1' "$work/success/output/builder.lock"
+if bash "$script" "$revision" v0.0.0 "$work/success" "$work/builder" "$work/installer" >"$work/repeat.log" 2>&1; then exit 1; fi
+for failure in fetch legacy download status verify build provenance tamper contract missing_contract; do
   mkdir "$work/$failure"
   status=0
-  BRIDGE_TEST_FAILURE=$failure bash "$script" "$revision" v0.0.0 "$work/$failure" "$work/builder" >"$work/$failure.log" 2>&1 || status=$?
+  BRIDGE_TEST_FAILURE=$failure bash "$script" "$revision" v0.0.0 "$work/$failure" "$work/builder" "$work/installer" >"$work/$failure.log" 2>&1 || status=$?
   [[ $status != 0 && ! -e $work/$failure/output && -d $work/$failure/checkout ]]
   case $failure in download) [[ $status == 13 ]] ;; verify) [[ $status == 17 ]] ;; build) [[ $status == 19 ]] ;; esac
 done
@@ -115,12 +131,27 @@ for failure in arch uid go package_arch revision; do
     package_arch) export BRIDGE_TEST_PACKAGE_ARCH=aarch64 ;;
     revision) export BRIDGE_TEST_REVISION=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb ;;
   esac
-  if bash "$script" "$revision" v0.0.0 "$work/$failure" "$work/builder" >"$work/$failure.log" 2>&1; then exit 1; fi
+  if bash "$script" "$revision" v0.0.0 "$work/$failure" "$work/builder" "$work/installer" >"$work/$failure.log" 2>&1; then exit 1; fi
   [[ ! -e $work/$failure/output ]]
   unset BRIDGE_TEST_ARCH BRIDGE_TEST_UID BRIDGE_TEST_GO BRIDGE_TEST_PACKAGE_ARCH BRIDGE_TEST_REVISION
 done
 mkdir "$work/bad-manifest"
 printf 'unlisted\n' >>"$work/input/SHA256SUMS"
-if bash "$script" "$revision" v0.0.0 "$work/bad-manifest" "$work/builder" >"$work/manifest.log" 2>&1; then exit 1; fi
+if bash "$script" "$revision" v0.0.0 "$work/bad-manifest" "$work/builder" "$work/installer" >"$work/manifest.log" 2>&1; then exit 1; fi
 [[ ! -e $work/bad-manifest/output ]]
+cp "$work/installer/source.lock" "$work/source.lock.original"
+printf 'SOURCE_SHA256=%064d\n' 0 >"$work/installer/source.lock"
+mkdir "$work/bad-installer-source"
+if bash "$script" "$revision" v0.0.0 "$work/bad-installer-source" "$work/builder" "$work/installer" >"$work/source-lock.log" 2>&1; then exit 1; fi
+[[ ! -e $work/bad-installer-source/output ]]
+mv "$work/source.lock.original" "$work/installer/source.lock"
+mkdir "$work/extra-installer" "$work/extra-tree"
+bsdtar -xzf "$work/installer/bootstrap-source.tar.gz" -C "$work/extra-tree"
+printf 'unexpected source entry\n' >"$work/extra-tree/project/unexpected"
+(cd "$work/extra-tree" && find project -type f -print | sort >"$work/extra-files")
+bsdtar -czf "$work/extra-installer/bootstrap-source.tar.gz" -C "$work/extra-tree" -T "$work/extra-files"
+printf 'SOURCE_SHA256=%s\n' "$(common::sha256_file "$work/extra-installer/bootstrap-source.tar.gz")" >"$work/extra-installer/source.lock"
+mkdir "$work/extra-installer-source"
+if bash "$script" "$revision" v0.0.0 "$work/extra-installer-source" "$work/builder" "$work/extra-installer" >"$work/extra-installer.log" 2>&1; then exit 1; fi
+[[ ! -e $work/extra-installer-source/output ]]
 printf 'Bridge build orchestration, input/toolchain/package identity and failure fixtures passed; no real compilation performed\n'

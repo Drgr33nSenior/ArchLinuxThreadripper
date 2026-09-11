@@ -89,7 +89,12 @@ otelcol.processor.filter "approved" {
     log_record = [`not IsMatch(resource.attributes["service.name"], "^(spry-workstation-bridge|workstation-installer)$")`]
   }
   traces {
-    span = [`not IsMatch(resource.attributes["service.name"], "^(spry-workstation-bridge|workstation-installer|sglang)$")`]
+    span = [
+      `not IsMatch(resource.attributes["service.name"], "^(spry-workstation-bridge|workstation-installer|sglang)$")`,
+      // Transform cannot address individual span-link attributes in this pinned
+      // collector. Drop linked spans rather than export unreviewed link data.
+      `Len(span.links) > 0`,
+    ]
   }
   output {
     metrics = [otelcol.processor.transform.minimal.input]
@@ -122,6 +127,12 @@ otelcol.processor.transform "minimal" {
   trace_statements {
     context = "resource"
     statements = [`keep_keys(attributes, ["service.name", "service.version"])`]
+  }
+  trace_statements {
+    // Scope attributes can contain library configuration; the scope name and
+    // version remain available, but no scope attributes leave this collector.
+    context = "scope"
+    statements = [`keep_keys(attributes, [])`]
   }
   trace_statements {
     context = "span"

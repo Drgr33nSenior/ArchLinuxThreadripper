@@ -1,6 +1,7 @@
 // Owner-configured host Alloy instance; not part of the Kubernetes render.
-// Replace 192.0.2.3 with the discovered Loki ClusterIP and 192.0.2.4 with Alloy's
-// ClusterIP. The documentation-range addresses are deliberately unusable.
+// Replace 192.0.2.3 with the discovered Loki ClusterIP, 192.0.2.4 with Alloy's
+// ClusterIP and 192.0.2.5 with Prometheus's ClusterIP. The documentation-range
+// addresses are deliberately unusable.
 // Needs read access via systemd-journal group, NOT root or host command access.
 // Keep state/cursor directory private; journal permission enables reading more
 // than these filters, so do not grant the agent arbitrary execution as this user.
@@ -92,6 +93,50 @@ loki.write "local" {
     max_backoff_period = "10s"
     max_backoff_retries = 3
     follow_redirects = false
+  }
+}
+
+// This loopback scrape is deliberately forwarded directly to central
+// Prometheus. It carries the host collector's own listener, memory-limiter and
+// remote-write health. Sending it through this collector's OTLP pipeline would
+// hide an outage of that path. The target has a fixed identity and no user input.
+prometheus.scrape "self" {
+  targets = [{"__address__" = "127.0.0.1:12345", "job" = "workstation-host-alloy"}]
+  scrape_interval = "30s"
+  scrape_timeout = "10s"
+  sample_limit = 12000
+  label_limit = 32
+  label_value_length_limit = 256
+  body_size_limit = "8MiB"
+  forward_to = [prometheus.relabel.self.receiver]
+}
+
+prometheus.relabel "self" {
+  // Keep only the bounded collector health families. Do not remote-write
+  // arbitrary component labels or payload-derived application metrics.
+  rule {
+    action = "keep"
+    source_labels = ["__name__"]
+    regex = "(alloy_build_info|up|otelcol_.*|prometheus_remote_storage_.*|loki_(source_journal_.*|process_dropped_lines_total|write_.*))"
+  }
+  forward_to = [prometheus.remote_write.self.receiver]
+}
+
+prometheus.remote_write "self" {
+  endpoint {
+    url = "http://192.0.2.5:9090/api/v1/write"
+    queue_config {
+      capacity = 64
+      min_shards = 1
+      max_shards = 1
+      max_samples_per_send = 128
+      batch_send_deadline = "5s"
+    }
+  }
+  wal {
+    truncate_frequency = "15m"
+    min_keepalive_time = "5m"
+    max_keepalive_time = "30m"
   }
 }
 

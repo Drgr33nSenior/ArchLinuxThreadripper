@@ -12,6 +12,17 @@ trap 'rm -rf -- "$work"' EXIT
 mkdir -p "$work/bundle/dependencies" "$work/db" "$work/target/etc/bridge"
 dir="$work/bundle"
 source_hash=$(printf source | common::sha256_file -)
+bridge_source=$(printf bridge-source | common::sha256_file -)
+recipe_hash=$(printf bridge-recipe | common::sha256_file -)
+printf 'INSTALLER_SOURCE_SHA256=%s\nSOURCE_SHA256=%s\nPKGBUILD_SHA256=%s\nMEMORY_CONTRACT=selected-installer-memory-v1\n' "$source_hash" "$bridge_source" "$recipe_hash" >"$work/builder.lock"
+bridge_memory_contract_identity "$work/builder.lock" "$source_hash" "$bridge_source" "$recipe_hash"
+if bridge_memory_contract_identity "$work/builder.lock" "$(printf different | common::sha256_file -)" "$bridge_source" "$recipe_hash"; then exit 1; fi
+if bridge_memory_contract_identity "$work/builder.lock" "$source_hash" "$(printf another-source | common::sha256_file -)" "$recipe_hash"; then exit 1; fi
+if bridge_memory_contract_identity "$work/builder.lock" "$source_hash" "$bridge_source" "$(printf another-recipe | common::sha256_file -)"; then exit 1; fi
+printf 'INSTALLER_SOURCE_SHA256=%s\nSOURCE_SHA256=%s\nPKGBUILD_SHA256=%s\nMEMORY_CONTRACT=wrong\n' "$source_hash" "$bridge_source" "$recipe_hash" >"$work/wrong-builder.lock"
+if bridge_memory_contract_identity "$work/wrong-builder.lock" "$source_hash" "$bridge_source" "$recipe_hash"; then exit 1; fi
+printf 'INSTALLER_SOURCE_SHA256=%s\nINSTALLER_SOURCE_SHA256=%s\nSOURCE_SHA256=%s\nPKGBUILD_SHA256=%s\nMEMORY_CONTRACT=selected-installer-memory-v1\n' "$source_hash" "$source_hash" "$bridge_source" "$recipe_hash" >"$work/duplicate-builder.lock"
+if bridge_memory_contract_identity "$work/duplicate-builder.lock" "$source_hash" "$bridge_source" "$recipe_hash"; then exit 1; fi
 for name in arch-workstation-bootstrap arch-workstation-boot arch-workstation-backup arch-workstation-bridge-runtime spry-ai-workstation-bridge bash; do
   pkgdir="$work/$name"
   mkdir "$pkgdir"

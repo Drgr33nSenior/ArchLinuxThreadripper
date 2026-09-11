@@ -51,22 +51,24 @@ if bash "$wrapper" --privileged image >/dev/null 2>&1; then exit 1; fi
 if bash "$wrapper" --allow-iso-mounts packages candidate-01 "$work/source" "$work/packages" >/dev/null 2>&1; then exit 1; fi
 
 revision=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-plan=$(bash "$wrapper" bridge-build candidate-01 "$revision" v0.0.0 "$work/bridge-package")
+plan=$(bash "$wrapper" bridge-build candidate-01 "$revision" v0.0.0 "$work/source" "$work/bridge-package")
 [[ $plan == *'--platform linux/amd64'* && $plan == *'--user 1000:1000'* && $plan == *'--cap-drop ALL'* ]]
 [[ $plan == *'--memory-swap 6g'* && $plan == *"bridge-build $revision v0.0.0"* && $plan != *'--network none'* ]]
-[[ $plan != *'type=bind'* && $plan != *SYS_ADMIN* && ! -e $work/bridge-package && ! -e $ISO_DOCKER_TEST_LOG ]]
-if bash "$wrapper" --allow-iso-mounts bridge-build candidate-01 "$revision" v0.0.0 "$work/bridge-package" >/dev/null 2>&1; then exit 1; fi
+[[ $plan == *'/installer/bootstrap-source.tar.gz'* && $plan == *'/installer/source.lock'* ]]
+[[ $plan == *'type=bind'* && $plan != *SYS_ADMIN* && ! -e $work/bridge-package && ! -e $ISO_DOCKER_TEST_LOG ]]
+if bash "$wrapper" --allow-iso-mounts bridge-build candidate-01 "$revision" v0.0.0 "$work/source" "$work/bridge-package" >/dev/null 2>&1; then exit 1; fi
 for bad_revision in main v0.0.0 abc '../bad'; do
-  if bash "$wrapper" bridge-build candidate-01 "$bad_revision" v0.0.0 "$work/bridge-package" >/dev/null 2>&1; then exit 1; fi
+  if bash "$wrapper" bridge-build candidate-01 "$bad_revision" v0.0.0 "$work/source" "$work/bridge-package" >/dev/null 2>&1; then exit 1; fi
 done
-if bash "$wrapper" bridge-build candidate-01 "$revision" latest "$work/bridge-package" >/dev/null 2>&1; then exit 1; fi
+if bash "$wrapper" bridge-build candidate-01 "$revision" latest "$work/source" "$work/bridge-package" >/dev/null 2>&1; then exit 1; fi
+if bash "$wrapper" bridge-build candidate-01 "$revision" v0.0.0 "$work/missing" "$work/bridge-package" >/dev/null 2>&1; then exit 1; fi
 
 mkdir "$work/bundle-input" "$work/candidate"
 for name in bootstrap boot backup bridge-runtime; do
   printf 'fixture\n' >"$work/bundle-input/arch-workstation-$name-0.1.0-1-any.pkg.tar.zst"
 done
 printf 'fixture\n' >"$work/bundle-input/source.lock"
-for file in spry-ai-workstation-bridge-0.0.0-1-x86_64.pkg.tar.zst spry-bridge-0.0.0-src.tar.gz PKGBUILD; do
+for file in spry-ai-workstation-bridge-0.0.0-1-x86_64.pkg.tar.zst spry-bridge-0.0.0-src.tar.gz PKGBUILD builder.lock; do
   printf 'fixture\n' >"$work/candidate/$file"
 done
 printf 'must not mount\n' >"$work/candidate/unrelated-private-file"

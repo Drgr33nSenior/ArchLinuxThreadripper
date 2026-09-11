@@ -27,8 +27,8 @@ printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' \
   'case $action in' \
   '  image|check) [[ $execute == true ]] || exit 1 ;;' \
   '  bridge-build)' \
-  '    [[ $mounts == false && ! -e $4 && $2 =~ ^[a-f0-9]{40}$ && $3 == v0.0.0 ]] || exit 1' \
-  '    if [[ $execute == true ]]; then mkdir "$4"; fi ;;' \
+  '    [[ $mounts == false && ! -e $5 && $2 =~ ^[a-f0-9]{40}$ && $3 == v0.0.0 && $4 == */source && -f $4/bootstrap-source.tar.gz && -f $4/source.lock ]] || exit 1' \
+  '    if [[ $execute == true ]]; then mkdir "$5"; fi ;;' \
   '  packages)' \
   '    [[ $execute == true && $mounts == false && $1 =~ ^[a-z][a-z0-9-]{0,31}$ ]] || exit 1' \
   '    [[ $2 == */source && $3 == "${2%/source}/packages" && $1 == "$(basename -- "${2%/source}")" ]] || exit 1' \
@@ -49,7 +49,7 @@ printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' \
 printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' \
   'printf "prepare\n" >> "$ISO_RELEASE_TEST_LOG"' \
   '[[ ${ISO_RELEASE_TEST_FAIL:-} != prepare ]] || exit 7' \
-  'mkdir "$1"' 'cp "$ISO_RELEASE_TEST_SOURCE" "$1/source.lock"' \
+  'mkdir "$1"' 'cp "$ISO_RELEASE_TEST_SOURCE" "$1/source.lock"' 'printf "synthetic sealed source\n" > "$1/bootstrap-source.tar.gz"' \
   >"$repo/infrastructure/packages/bootstrap/prepare-source.sh"
 release="$repo/infrastructure/iso/release.sh"
 
@@ -126,18 +126,20 @@ if bash "$release" iso "$second_run" public.asc SYNTHETIC >/dev/null 2>&1; then 
 
 : >"$ISO_RELEASE_TEST_LOG"
 revision=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-bash "$release" bridge-build "$revision" v0.0.0 "$work/bridge-built" >"$work/result" 2>&1
+bash "$release" bridge-build "$second_run" "$revision" v0.0.0 "$work/bridge-built" >"$work/result" 2>&1
 [[ ! -e $work/bridge-built && $(tr '\n' ' ' <"$ISO_RELEASE_TEST_LOG") == 'bridge-build ' ]]
 : >"$ISO_RELEASE_TEST_LOG"
-bash "$release" --execute bridge-build "$revision" v0.0.0 "$work/bridge-built" >"$work/result" 2>&1
+bash "$release" --execute bridge-build "$second_run" "$revision" v0.0.0 "$work/bridge-built" >"$work/result" 2>&1
 [[ -d $work/bridge-built && $(tr '\n' ' ' <"$ISO_RELEASE_TEST_LOG") == 'bridge-build image check bridge-build ' ]]
 grep -q '^BRIDGE_ARTIFACTS=' "$work/result"
 for failed_stage in image check bridge-build; do
   status=0
-  ISO_RELEASE_TEST_FAIL=$failed_stage bash "$release" --execute bridge-build "$revision" v0.0.0 "$work/bridge-failed" >"$work/result" 2>&1 || status=$?
+  ISO_RELEASE_TEST_FAIL=$failed_stage bash "$release" --execute bridge-build "$second_run" "$revision" v0.0.0 "$work/bridge-failed" >"$work/result" 2>&1 || status=$?
   [[ $status == 7 && ! -e $work/bridge-failed ]]
   if grep -q '^BRIDGE_ARTIFACTS=' "$work/result"; then exit 1; fi
 done
+mkdir "$work/incomplete-run"
+if bash "$release" bridge-build "$work/incomplete-run" "$revision" v0.0.0 "$work/bridge-missing-run" >/dev/null 2>&1; then exit 1; fi
 
 # One reviewed command builds installer, fetches/builds Bridge, then bundles it.
 : >"$ISO_RELEASE_TEST_LOG"

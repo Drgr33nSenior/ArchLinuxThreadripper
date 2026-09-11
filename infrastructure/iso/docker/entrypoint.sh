@@ -53,7 +53,10 @@ case ${1:-check} in
     ;;
   bridge-build)
     (($# == 3)) || fail 'bridge-build requires commit and version'
-    bash "$builder/bridge-build.sh" "$2" "$3" /work "$builder"
+    [[ -f /installer/bootstrap-source.tar.gz && ! -L /installer/bootstrap-source.tar.gz &&
+      -f /installer/source.lock && ! -L /installer/source.lock ]] ||
+      fail 'bridge-build requires the selected installer source bundle'
+    bash "$builder/bridge-build.sh" "$2" "$3" /work "$builder" /installer
     ;;
   bridge)
     (($# == 1)) || fail 'bridge accepts no arguments'

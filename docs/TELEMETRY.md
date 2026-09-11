@@ -65,6 +65,24 @@ needs signature/installation and service qualification. Revalidate after rolling
 updates. See [Arch metadata](https://archlinux.org/packages/extra/x86_64/grafana-alloy/)
 and [Alloy Linux configuration](https://grafana.com/docs/alloy/latest/configure/linux/).
 
+The two pinned collector versions expose different memory-limiter metric names.
+Host Alloy 1.13.2 embeds collector 0.142 and emits the deprecated
+`otelcol_processor_refused_*_total` family. Cluster Alloy 1.19.2 embeds collector
+0.158 and emits `otelcol_processor_memory_limiter_refused_*_total`. The alert
+matches both families and includes spans, log records and metric points. The
+rule fixture is evaluated with the pinned Prometheus image; it is not evidence
+that a live collector was placed under memory pressure.
+
+The version linkage is from [Alloy 1.13.2's module file](https://github.com/grafana/alloy/blob/v1.13.2/go.mod)
+and [Alloy 1.19.2's module file](https://github.com/grafana/alloy/blob/v1.19.2/go.mod).
+The collector [0.142 metadata](https://github.com/open-telemetry/opentelemetry-collector/blob/v0.142.0/processor/memorylimiterprocessor/metadata.yaml)
+and [0.158 metadata](https://github.com/open-telemetry/opentelemetry-collector/blob/v0.158.0/processor/memorylimiterprocessor/metadata.yaml)
+define the two families. The pinned transform can remove scope attributes but
+does not provide an individual span-link transform context. The collector
+[0.158 transform documentation](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/v0.158.0/processor/transformprocessor/README.md)
+therefore supports the fail-closed rule that drops spans with links. The local
+fixture proves the selected pinned image behavior with synthetic data only.
+
 Do not infer exporter support from similar R9700/R9700S names. Released AMD
 exporter 1.5.1 selects older AMD-SMI/profiler inputs and its chart needs broad
 device privileges. The researched 1.5.2 artifact could not be resolved.
@@ -278,13 +296,20 @@ requires reinspection. No GPU allocation or combined VRAM is inferred.
 For host Alloy, obtain actual ClusterIPs:
 
 ```sh
-kubectl -n workstation-observability get svc alloy loki -o wide
+kubectl -n workstation-observability get svc alloy loki prometheus -o wide
 ```
 
 The owner copies `infrastructure/observability/host/config.alloy` to
 `/etc/workstation-telemetry/host.alloy`, root-owned and readable by
-`workstation-alloy`. Replace both example addresses with the actual Loki/Alloy
-ClusterIPs; IPv6 URLs need brackets. Validate before starting:
+`workstation-alloy`. Replace all three example addresses with the actual
+Loki/Alloy/Prometheus ClusterIPs; IPv6 URLs need brackets. The host's Alloy
+listener self-scrapes only its bounded health metric families, including
+memory-limiter, remote-write, journal-drop and journal-write counters, under
+the distinct `workstation-host-alloy` job, then remote-writes them directly to Prometheus.
+This path is intentionally separate from host OTLP forwarding. The heartbeat
+alert uses a five-minute absence window plus a two-minute pending period; it
+also detects loss of the self-monitoring forwarding path. A separate exporter
+alert detects `up == 0` sustained for five minutes. Validate before starting:
 
 ```sh
 sudo -u workstation-alloy /usr/bin/grafana-alloy validate /etc/workstation-telemetry/host.alloy
@@ -339,11 +364,11 @@ returns bounded RAM, pressure, SGLang queue and TTFT observations with source
 age, not a general database proxy or GPU qualification. Existing authorization,
 approval and capability checks remain unchanged.
 
-Cloud Agents API execution is **not** implemented here. A future agent can use
-the authenticated summary through an owner-approved Bridge tool. Keep telemetry
-local and send only the selected summary to the model. Do not upload raw
-sessions, journal dumps, model inputs or kubeconfigs. Telemetry is evidence, not
-authorization or a replacement installer.
+Bridge can use the optional, owner-authorized OpenAI Agents API adviser. It sends
+only the fixed tool outputs defined by Bridge; it cannot approve or apply a
+change. Keep telemetry local and send only the selected summary to the model.
+Do not upload raw sessions, journal dumps, model inputs or kubeconfigs. The
+adviser is not a replacement installer.
 
 ## Installation and interruptions
 
@@ -434,8 +459,10 @@ Record passed, failed, blocked or not run for each gate:
 | Persistence | Owner-controlled backend restart; old data remains queryable | PVC/WAL recovery, not backup |
 | Overhead | Matched repeated serving/build/gaming runs | Measured cost and uncertainty |
 
-The image validator only permits a named local Docker context, no network, no
-real journal/device/host-root access and no published ports. Missing images or
+The image validator only permits a named local Docker context, no external
+network, no real journal/device/host-root access and no published ports. Parser
+and host-log tests use `--network none`; the synthetic OTLP test uses an owned
+internal Docker network between its two restricted test containers. Missing images or
 tools block it; it does not pull implicitly. Private logs remain in `test-results`.
 It is not a disposable VM boot or service acceptance test.
 The retained Mac image checks used the Linux ARM64 variants of the pinned

@@ -1,0 +1,121 @@
+rule_files:
+  - alerts.yaml
+evaluation_interval: 1m
+tests:
+  - name: healthy collectors do not refuse telemetry
+    interval: 1m
+    input_series:
+      - series: 'otelcol_processor_refused_spans_total{service_instance_id="host"}'
+        values: '0 0 0 0'
+      - series: 'otelcol_processor_memory_limiter_refused_metric_points_total{service_instance_id="cluster"}'
+        values: '0 0 0 0'
+      - series: 'up{job="workstation-host-alloy"}'
+        values: '1 1 1 1'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: WorkstationTelemetryRefused
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: WorkstationHostAlloyHeartbeatMissing
+        exp_alerts: []
+  - name: host old metric family is refused
+    interval: 1m
+    input_series:
+      - series: 'otelcol_processor_refused_log_records_total{service_instance_id="host"}'
+        values: '0 0 1 2 3'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: WorkstationTelemetryRefused
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations: {summary: 'Collector memory limiter refused telemetry; results may be incomplete'}
+  - name: host metrics-only OTLP export failure is alerted
+    interval: 1m
+    input_series:
+      - series: 'up{job="workstation-host-alloy"}'
+        values: '1 1 1 1 1'
+      - series: 'otelcol_exporter_send_failed_metric_points_total{service_instance_id="host"}'
+        values: '0 0 1 2 3'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: WorkstationTelemetryExportFailed
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations: {summary: 'Telemetry export failures; inspect backend readiness, limits and bounded queues'}
+  - name: host spans OTLP export failure is alerted
+    interval: 1m
+    input_series:
+      - series: 'up{job="workstation-host-alloy"}'
+        values: '1 1 1 1 1'
+      - series: 'otelcol_exporter_send_failed_spans_total{service_instance_id="host"}'
+        values: '0 0 1 2 3'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: WorkstationTelemetryExportFailed
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations: {summary: 'Telemetry export failures; inspect backend readiness, limits and bounded queues'}
+  - name: host log OTLP export failure is alerted
+    interval: 1m
+    input_series:
+      - series: 'up{job="workstation-host-alloy"}'
+        values: '1 1 1 1 1'
+      - series: 'otelcol_exporter_send_failed_log_records_total{service_instance_id="host"}'
+        values: '0 0 1 2 3'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: WorkstationTelemetryExportFailed
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations: {summary: 'Telemetry export failures; inspect backend readiness, limits and bounded queues'}
+  - name: cluster new metric family is refused
+    interval: 1m
+    input_series:
+      - series: 'otelcol_processor_memory_limiter_refused_metric_points_total{service_instance_id="cluster"}'
+        values: '0 0 1 2 3'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: WorkstationTelemetryRefused
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations: {summary: 'Collector memory limiter refused telemetry; results may be incomplete'}
+  - name: missing host self-forwarding heartbeat alerts centrally
+    interval: 1m
+    input_series: []
+    alert_rule_test:
+      - eval_time: 7m
+        alertname: WorkstationHostAlloyHeartbeatMissing
+        exp_alerts:
+          - exp_labels: {job: workstation-host-alloy, severity: warning}
+            exp_annotations: {summary: 'Host Alloy heartbeat is absent or stale; host telemetry may be incomplete'}
+  - name: host heartbeat has no early false alert before the stale window
+    interval: 1m
+    input_series:
+      - series: 'up{job="workstation-host-alloy"}'
+        values: '1 1 _ _ _ _ _ _ _ _'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: WorkstationHostAlloyHeartbeatMissing
+        exp_alerts: []
+  - name: host heartbeat becomes missing after prior healthy delivery
+    interval: 1m
+    input_series:
+      - series: 'up{job="workstation-host-alloy"}'
+        values: '1 1 _ _ _ _ _ _ _ _'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: WorkstationHostAlloyHeartbeatMissing
+        exp_alerts:
+          - exp_labels: {job: workstation-host-alloy, severity: warning}
+            exp_annotations: {summary: 'Host Alloy heartbeat is absent or stale; host telemetry may be incomplete'}
+  - name: host self-scrape down alerts without waiting for absence
+    interval: 1m
+    input_series:
+      - series: 'up{job="workstation-host-alloy"}'
+        values: '0 0 0 0 0 0'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: WorkstationExporterDown
+        exp_alerts:
+          - exp_labels: {job: workstation-host-alloy, severity: warning}
+            exp_annotations: {summary: 'An expected local telemetry target is unavailable'}

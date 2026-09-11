@@ -1,0 +1,50 @@
+{
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          {"key": "service.name", "value": {"stringValue": "spry-workstation-bridge"}},
+          {"key": "resource_secret", "value": {"stringValue": "DUMMY_TELEMETRY_SECRET_SENTINEL"}}
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": {
+            "name": "fixture",
+            "version": "1",
+            "attributes": [
+              {"key": "scope_secret", "value": {"stringValue": "DUMMY_TELEMETRY_SECRET_SENTINEL"}}
+            ]
+          },
+          "spans": [
+            {
+              "traceId": "00112233445566778899aabbccddeeff",
+              "spanId": "0011223344556677",
+              "name": "fixture-scope-sanitized",
+              "kind": 1,
+              "startTimeUnixNano": "1000000000",
+              "endTimeUnixNano": "1000000100"
+            },
+            {
+              "traceId": "00112233445566778899aabbccddeeff",
+              "spanId": "0011223344556678",
+              "name": "fixture-linked-span",
+              "kind": 1,
+              "startTimeUnixNano": "1000000000",
+              "endTimeUnixNano": "1000000100",
+              "links": [
+                {
+                  "traceId": "ffeeddccbbaa99887766554433221100",
+                  "spanId": "7766554433221100",
+                  "attributes": [
+                    {"key": "link_secret", "value": {"stringValue": "DUMMY_TELEMETRY_SECRET_SENTINEL"}}
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

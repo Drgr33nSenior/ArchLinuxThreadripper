@@ -20,12 +20,28 @@ mkdir -p "$root/test-results"
 output=$(mktemp -d "$root/test-results/telemetry-images.XXXXXX")
 name="arch-workstation-telemetry-check-${output##*.}"
 running=0
+otlp_name="${name}-otlp"
+otlp_running=0
+otlp_network="${name}-otlp"
+otlp_network_created=0
 cleanup() {
   local result=$?
   trap - EXIT
   if ((running)); then
     docker --context "$context" stop --timeout 15 "$name" >"$output/stop.log" 2>&1 || {
       printf 'WARNING: owned fixture container cleanup failed: %s\n' "$name" >&2
+      ((result != 0)) || result=1
+    }
+  fi
+  if ((otlp_running)); then
+    docker --context "$context" stop --timeout 15 "$otlp_name" >"$output/otlp-stop.log" 2>&1 || {
+      printf 'WARNING: owned OTLP fixture container cleanup failed: %s\n' "$otlp_name" >&2
+      ((result != 0)) || result=1
+    }
+  fi
+  if ((otlp_network_created)); then
+    docker --context "$context" network rm "$otlp_network" >"$output/otlp-network-remove.log" 2>&1 || {
+      printf 'WARNING: owned OTLP fixture network cleanup failed: %s\n' "$otlp_network" >&2
       ((result != 0)) || result=1
     }
   fi
@@ -48,6 +64,10 @@ for component in prometheus alloy host-alloy loki tempo; do
 done
 docker --context "$context" run "${common[@]}" --user 65534:65534 "${config[@]}" --entrypoint /bin/promtool "$(image prometheus)" check config --syntax-only /config/prometheus.yaml >"$output/prometheus.log" 2>&1
 docker --context "$context" run "${common[@]}" --user 65534:65534 "${config[@]}" --entrypoint /bin/promtool "$(image prometheus)" check rules /config/alerts.yaml >>"$output/prometheus.log" 2>&1
+mkdir -m 755 "$output/rules"
+cp "$root/infrastructure/observability/config/alerts.yaml" "$output/rules/alerts.yaml"
+cp "$root/tests/fixtures/telemetry/alerts_test.yaml" "$output/rules/alerts_test.yaml"
+docker --context "$context" run "${common[@]}" --tmpfs /tmp:rw,noexec,nosuid,nodev,size=32m --user 65534:65534 --mount "type=bind,source=$output/rules,target=/rules,readonly" --entrypoint /bin/promtool "$(image prometheus)" test rules /rules/alerts_test.yaml >>"$output/prometheus.log" 2>&1
 docker --context "$context" run "${common[@]}" --user 10001:10001 "${config[@]}" "$(image loki)" -config.file=/config/loki.yaml -verify-config=true >"$output/loki.log" 2>&1
 docker --context "$context" run "${common[@]}" --user 10001:10001 "${config[@]}" "$(image tempo)" -config.file=/config/tempo.yaml -config.verify=true >"$output/tempo.log" 2>&1
 docker --context "$context" run "${common[@]}" --user 473:473 "${config[@]}" "$(image alloy)" validate /config >"$output/alloy.log" 2>&1
@@ -97,4 +117,62 @@ raise 'valid installation event missing or duplicated' unless text.scan('configu
 raise 'kernel summaries missing' unless text.include?('amdgpu warning/error; inspect the local journal') && text.include?('XFS warning/error; inspect the local journal')
 raise 'raw kernel message escaped' if text.include?('private_parameter') || text.include?('private_path')
 puts 'Pinned image parsers and actual Alloy processor secret-sentinel fixture passed.'
+RUBY
+
+# Execute the canonical cluster trace filter/transform with a synthetic OTLP
+# request. Scope attributes must be removed and any span link causes the span to
+# be dropped because this pinned transform cannot edit individual link attrs. The
+# test uses an owned internal Docker network with no external route. It has no
+# credentials or non-fixture mount. The pinned Prometheus image supplies the
+# fixture-only client; no host listener is published.
+mkdir -m 755 "$output/otlp"
+ruby - "$root/infrastructure/observability/config/config.alloy" "$output/otlp/check.alloy" <<'RUBY'
+source = File.read(ARGV[0])
+filter = source[/^otelcol\.processor\.filter "approved" \{.*?^\}/m] || raise("missing canonical filter")
+transform = source[/^otelcol\.processor\.transform "minimal" \{.*?^\}/m] || raise("missing canonical transform")
+fixture = <<~ALLOY
+  logging { level = "info" }
+  otelcol.receiver.otlp "fixture" {
+    http { endpoint = "0.0.0.0:4318" }
+    output { traces = [otelcol.processor.filter.approved.input] }
+  }
+  #{filter}
+  #{transform}
+  otelcol.processor.batch "local" {
+    timeout = "1s"
+    send_batch_size = 1
+    output {
+      metrics = [otelcol.exporter.debug.fixture.input]
+      logs = [otelcol.exporter.debug.fixture.input]
+      traces = [otelcol.exporter.debug.fixture.input]
+    }
+  }
+  otelcol.exporter.debug "fixture" {
+    verbosity = "detailed"
+  }
+ALLOY
+File.write(ARGV[1], fixture)
+RUBY
+cp "$root/tests/fixtures/telemetry/otlp_sanitization.json" "$output/otlp/traces.json"
+docker --context "$context" network create --internal --label io.arch-workstation.scope=dev --label io.arch-workstation.purpose=telemetry-otlp-sanitization "$otlp_network" >"$output/otlp-network-id"
+otlp_network_created=1
+docker --context "$context" run -d --rm --pull never --name "$otlp_name" --label io.arch-workstation.scope=dev --label io.arch-workstation.purpose=telemetry-otlp-sanitization --network "$otlp_network" --read-only --cap-drop ALL --security-opt no-new-privileges --memory 512m --cpus 1 --pids-limit 128 --user 473:473 --tmpfs /tmp:rw,noexec,nosuid,nodev,size=32m --mount "type=bind,source=$output/otlp,target=/fixture,readonly" "$(image alloy)" run --disable-reporting --stability.level=experimental --storage.path=/tmp/state --server.http.enable-pprof=false /fixture/check.alloy >"$output/otlp-container-id"
+otlp_running=1
+otlp_delivered=0
+for _ in {1..20}; do
+  if docker --context "$context" run --rm --pull never --network "$otlp_network" --read-only --cap-drop ALL --security-opt no-new-privileges --memory 512m --cpus 1 --pids-limit 128 --user 65534:65534 --tmpfs /tmp:rw,noexec,nosuid,nodev,size=32m --mount "type=bind,source=$output/otlp,target=/fixture,readonly" --entrypoint /bin/wget "$(image prometheus)" --no-verbose -Y off -T 5 -O - --header='Content-Type: application/json' --post-file=/fixture/traces.json "http://$otlp_name:4318/v1/traces" >"$output/otlp-client.log" 2>&1; then
+    otlp_delivered=1
+    break
+  fi
+  sleep 1
+done
+((otlp_delivered)) || { printf 'OTLP fixture did not accept its synthetic trace request\n' >&2; exit 1; }
+sleep 2
+docker --context "$context" logs "$otlp_name" >"$output/otlp.log" 2>&1
+ruby - "$output/otlp.log" <<'RUBY'
+text = File.read(ARGV[0])
+raise 'canonical OTLP fixture did not export the unlinked trace' unless text.include?('fixture-scope-sanitized')
+raise 'scope or link sentinel escaped the canonical transform' if text.include?('DUMMY_TELEMETRY_SECRET_SENTINEL')
+raise 'linked span escaped the fail-closed filter' if text.include?('fixture-linked-span')
+puts 'Pinned cluster Alloy scope and span-link sanitization fixture passed.'
 RUBY
