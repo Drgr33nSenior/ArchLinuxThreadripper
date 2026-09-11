@@ -7,6 +7,35 @@ bootstrap_die() {
   bootstrap_log "ERROR: $*"
   return 1
 }
+
+# Only fixed stage identifiers and scalar status are sent to syslog. Never wrap
+# terminal output or log command arguments, configuration values or exceptions.
+bootstrap_event() {
+  [[ ${BOOTSTRAP_EVENTS:-0} == 1 ]] || return 0
+  local stage=$1 outcome=$2 status=$3 mode=dry-run
+  case $stage in
+    event-sink | preflight | install | verify | safe-target | owner-confirmation | partitions | storage | target-mount | header-backup | base-packages | target-config | system-config | boot-package | bridge-package | firmware-entries) ;;
+    *) return 1 ;;
+  esac
+  [[ $outcome =~ ^(started|succeeded|failed)$ && $status =~ ^[0-9]{1,3}$ ]] || return 1
+  [[ ${BOOTSTRAP_EVENT_RUN:-} =~ ^[0-9TZ-]+$ && ${BOOTSTRAP_EVENT_CONFIG:-} =~ ^[a-f0-9]{64}$ ]] || return 1
+  ((BOOTSTRAP_DRY_RUN)) || mode=execute
+  logger --socket-errors=on --tag workstation-install --priority user.notice -- \
+    "{\"schema\":1,\"run_id\":\"$BOOTSTRAP_EVENT_RUN\",\"configuration_sha256\":\"$BOOTSTRAP_EVENT_CONFIG\",\"stage\":\"$stage\",\"mode\":\"$mode\",\"outcome\":\"$outcome\",\"exit_code\":$status,\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" || return 1
+}
+
+bootstrap_stage() {
+  local stage=$1 result=0
+  shift
+  bootstrap_event "$stage" started 0 || bootstrap_log 'WARNING: structured stage telemetry incomplete'
+  "$@" || result=$?
+  if ((result == 0)); then
+    bootstrap_event "$stage" succeeded 0 || bootstrap_log 'WARNING: structured stage telemetry incomplete'
+  else
+    bootstrap_event "$stage" failed "$result" || bootstrap_log 'WARNING: structured stage telemetry incomplete'
+  fi
+  return "$result"
+}
 bootstrap_run() {
   if ((BOOTSTRAP_DRY_RUN)); then
     printf '+ ' >&2

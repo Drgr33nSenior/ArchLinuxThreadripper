@@ -12,6 +12,18 @@ bootstrap_install() { printf '%s\n' "$BOOTSTRAP_DRY_RUN"; }
 if main --config unused --dry-run --execute install >/dev/null 2>&1; then exit 1; fi
 if main --config unused --execute verify >/dev/null 2>&1; then exit 1; fi
 
+# Event sink failures block dispatch, without touching real syslog or disks.
+event_config=$(mktemp)
+trap 'rm -f -- "$event_config"' EXIT
+printf 'nonsecret fixture\n' >"$event_config"
+# Invoked by the child bootstrap process through the exported fixture function.
+# shellcheck disable=SC2329
+logger() { return 1; }
+if main --config "$event_config" --events install >/dev/null 2>&1; then exit 1; fi
+logger() { :; }
+[[ $(main --config "$event_config" --events install) == 1 ]]
+[[ $(main --config "$event_config" --events --execute install) == 0 ]]
+
 # Called by the sourced package-selection function.
 # shellcheck disable=SC2329
 lspci() { printf '0000:01:00.0 0300: 1002:ffff\n0000:02:00.0 0300: 1002:ffff\n'; }

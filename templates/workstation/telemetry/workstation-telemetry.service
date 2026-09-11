@@ -1,0 +1,29 @@
+[Unit]
+Description=Read-only workstation sysfs metrics for node-exporter
+ConditionPathExists=/etc/arch-release
+ConditionPathExists=/usr/lib/bridge/workstation-runtime/lib/workstation/telemetry_sample.py
+
+[Service]
+Type=oneshot
+User=workstation-telemetry
+Group=workstation-telemetry
+StateDirectory=workstation-telemetry
+StateDirectoryMode=0755
+ExecStart=/usr/bin/python3 /usr/lib/bridge/workstation-runtime/lib/workstation/telemetry_sample.py /var/lib/workstation-telemetry
+Environment=PYTHONDONTWRITEBYTECODE=1
+TimeoutStartSec=15
+MemoryMax=128M
+CPUQuota=10%
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX
+LockPersonality=yes
+CapabilityBoundingSet=
+UMask=0022

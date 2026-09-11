@@ -50,6 +50,17 @@ if bash "$wrapper" packages candidate-01 "$work/source" "$work/missing-parent/ou
 if bash "$wrapper" --privileged image >/dev/null 2>&1; then exit 1; fi
 if bash "$wrapper" --allow-iso-mounts packages candidate-01 "$work/source" "$work/packages" >/dev/null 2>&1; then exit 1; fi
 
+revision=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+plan=$(bash "$wrapper" bridge-build candidate-01 "$revision" v0.0.0 "$work/bridge-package")
+[[ $plan == *'--platform linux/amd64'* && $plan == *'--user 1000:1000'* && $plan == *'--cap-drop ALL'* ]]
+[[ $plan == *'--memory-swap 6g'* && $plan == *"bridge-build $revision v0.0.0"* && $plan != *'--network none'* ]]
+[[ $plan != *'type=bind'* && $plan != *SYS_ADMIN* && ! -e $work/bridge-package && ! -e $ISO_DOCKER_TEST_LOG ]]
+if bash "$wrapper" --allow-iso-mounts bridge-build candidate-01 "$revision" v0.0.0 "$work/bridge-package" >/dev/null 2>&1; then exit 1; fi
+for bad_revision in main v0.0.0 abc '../bad'; do
+  if bash "$wrapper" bridge-build candidate-01 "$bad_revision" v0.0.0 "$work/bridge-package" >/dev/null 2>&1; then exit 1; fi
+done
+if bash "$wrapper" bridge-build candidate-01 "$revision" latest "$work/bridge-package" >/dev/null 2>&1; then exit 1; fi
+
 mkdir "$work/bundle-input" "$work/candidate"
 for name in bootstrap boot backup bridge-runtime; do
   printf 'fixture\n' >"$work/bundle-input/arch-workstation-$name-0.1.0-1-any.pkg.tar.zst"
@@ -74,6 +85,7 @@ fingerprint=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 plan=$(bash "$wrapper" iso candidate-01 "$work/signed" "$work/public.asc" "$fingerprint" "$work/iso" 2>/dev/null)
 [[ $plan == *'--cap-add SYS_ADMIN'* && $plan == *'--user 0:0'* && $plan == *'--security-opt no-new-privileges'* ]]
 [[ $plan == *'--pids-limit 512'* ]]
+[[ $plan == *'/project/infrastructure/iso/mkarchiso.sh\,readonly'* ]]
 [[ $plan != *'--privileged'* && $plan != *unconfined* && $plan != *docker.sock* && $plan != *'--device'* ]]
 [[ ! -e $work/iso && ! -e $ISO_DOCKER_TEST_LOG ]]
 if bash "$wrapper" --execute iso candidate-01 "$work/signed" "$work/public.asc" "$fingerprint" "$work/iso" >/dev/null 2>&1; then exit 1; fi
@@ -94,7 +106,8 @@ if ISO_DOCKER_TEST_STATE_FAIL=true bash "$wrapper" --execute packages candidate-
 grep -Eq '^FROM docker.io/library/archlinux@sha256:[a-f0-9]{64}$' "$root/infrastructure/iso/docker/Dockerfile"
 grep -Fq -- '--mount=type=tmpfs,target=/etc/pacman.d/gnupg' "$root/infrastructure/iso/docker/Dockerfile"
 grep -Fxq '**' "$root/infrastructure/iso/.dockerignore"
-[[ $(sed -n '/^!/p' "$root/infrastructure/iso/.dockerignore" | wc -l | tr -d ' ') == 6 ]]
+[[ $(sed -n '/^!/p' "$root/infrastructure/iso/.dockerignore" | wc -l | tr -d ' ') == 7 ]]
+grep -Fxq '!docker/bridge-build.sh' "$root/infrastructure/iso/.dockerignore"
 grep -Fxq '!docker/pacstrap.sh' "$root/infrastructure/iso/.dockerignore"
 grep -Fq 'COPY --chmod=0755 docker/pacstrap.sh /opt/arch-workstation-builder/bin/pacstrap' "$root/infrastructure/iso/docker/Dockerfile"
 

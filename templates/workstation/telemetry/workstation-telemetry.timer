@@ -1,0 +1,11 @@
+[Unit]
+Description=Sample workstation hardware every 30 seconds
+
+[Timer]
+OnBootSec=60s
+OnUnitInactiveSec=30s
+AccuracySec=2s
+Unit=workstation-telemetry.service
+
+[Install]
+WantedBy=timers.target

@@ -7,6 +7,25 @@
 # it does not merge with an installed config or automatically change services.
 # Keep credentials out of this file. See docs/WORKSTATION.md and docs/AI-PERFORMANCE.md.
 
+# --- Local observability: offline generation, never automatic deployment ---
+# Prometheus, Grafana, Loki, Tempo and Alloy. See docs/TELEMETRY.md.
+TELEMETRY_ENABLED=true
+# Set the observed private numeric K3s API endpoint and workstation node address.
+# Blank values deliberately block render; do not substitute this Mac's identity.
+TELEMETRY_API_ADDRESS=
+TELEMETRY_WORKSTATION_ADDRESS=
+# Authenticated kubelet cgroup metrics; verify the serving certificate on target.
+TELEMETRY_KUBELET=true
+TELEMETRY_NODE_NAME=
+# Includes collector/exporter headroom; the planner counts selected workload limits.
+TELEMETRY_RESERVE_MIB=6144
+TELEMETRY_WORKLOADS=sglang,open-webui
+# The sysfs GPU sampler is included. No coherent ROCm10 vendor-exporter artifact
+# was verified; true fails closed until one is reviewed. Trace dependencies need
+# an exact-image import check before this optional SGLang profile is enabled.
+TELEMETRY_GPU_EXPORTER=false
+TELEMETRY_SGLANG_TRACE=false
+
 # --- Legacy Intel/B70 standalone LLM container ---
 # These keys apply to `llm up`, not the AMD/SGLang K3s manifests.
 # Existing host model directory, mounted read-only as /models in that container.

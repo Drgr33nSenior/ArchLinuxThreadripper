@@ -26,6 +26,9 @@ printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' \
   '[[ ${ISO_RELEASE_TEST_FAIL:-} != "$action" ]] || exit 7' \
   'case $action in' \
   '  image|check) [[ $execute == true ]] || exit 1 ;;' \
+  '  bridge-build)' \
+  '    [[ $mounts == false && ! -e $4 && $2 =~ ^[a-f0-9]{40}$ && $3 == v0.0.0 ]] || exit 1' \
+  '    if [[ $execute == true ]]; then mkdir "$4"; fi ;;' \
   '  packages)' \
   '    [[ $execute == true && $mounts == false && $1 =~ ^[a-z][a-z0-9-]{0,31}$ ]] || exit 1' \
   '    [[ $2 == */source && $3 == "${2%/source}/packages" && $1 == "$(basename -- "${2%/source}")" ]] || exit 1' \
@@ -120,6 +123,37 @@ if bash "$release" --execute bridge "$second_run" "$work/candidate" >/dev/null 2
 bash "$release" iso "$second_run" public.asc SYNTHETIC >"$work/result" 2>&1
 mv "$second_run/bundled/bridge-bundle.json" "$second_run/bundled/retained-manifest.json"
 if bash "$release" iso "$second_run" public.asc SYNTHETIC >/dev/null 2>&1; then exit 1; fi
+
+: >"$ISO_RELEASE_TEST_LOG"
+revision=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+bash "$release" bridge-build "$revision" v0.0.0 "$work/bridge-built" >"$work/result" 2>&1
+[[ ! -e $work/bridge-built && $(tr '\n' ' ' <"$ISO_RELEASE_TEST_LOG") == 'bridge-build ' ]]
+: >"$ISO_RELEASE_TEST_LOG"
+bash "$release" --execute bridge-build "$revision" v0.0.0 "$work/bridge-built" >"$work/result" 2>&1
+[[ -d $work/bridge-built && $(tr '\n' ' ' <"$ISO_RELEASE_TEST_LOG") == 'bridge-build image check bridge-build ' ]]
+grep -q '^BRIDGE_ARTIFACTS=' "$work/result"
+for failed_stage in image check bridge-build; do
+  status=0
+  ISO_RELEASE_TEST_FAIL=$failed_stage bash "$release" --execute bridge-build "$revision" v0.0.0 "$work/bridge-failed" >"$work/result" 2>&1 || status=$?
+  [[ $status == 7 && ! -e $work/bridge-failed ]]
+  if grep -q '^BRIDGE_ARTIFACTS=' "$work/result"; then exit 1; fi
+done
+
+# One reviewed command builds installer, fetches/builds Bridge, then bundles it.
+: >"$ISO_RELEASE_TEST_LOG"
+bash "$release" packages "$revision" v0.0.0 >"$work/result" 2>&1
+[[ ! -s $ISO_RELEASE_TEST_LOG ]]
+bash "$release" --execute packages "$revision" v0.0.0 >"$work/result" 2>&1
+[[ $(tr '\n' ' ' <"$ISO_RELEASE_TEST_LOG") == 'image check prepare packages bridge-build bridge ' ]]
+integrated_run=$(<"$ISO_RELEASE_TEST_RUN")
+[[ -d $integrated_run/bundled && -d $integrated_run/bridge-artifacts ]]
+for failed_stage in bridge-build bridge; do
+  status=0
+  ISO_RELEASE_TEST_FAIL=$failed_stage bash "$release" --execute packages "$revision" v0.0.0 >"$work/result" 2>&1 || status=$?
+  [[ $status == 7 ]]
+  if grep -q '^ISO_RUN=' "$work/result"; then exit 1; fi
+done
+if bash "$release" --execute packages main v0.0.0 >/dev/null 2>&1; then exit 1; fi
 
 # Check the shell examples without executing their signing or privileged steps.
 awk -v output="$work" '

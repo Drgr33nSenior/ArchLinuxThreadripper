@@ -5,6 +5,10 @@ the target sequence: boot, network, optional Codex, configuration, installation,
 manual key enrolment, recovery and Bridge handoff. Disk writes, passwords,
 firmware trust and reboots are owner-run, not agent tool calls.
 
+Optional `--events` records nonsecret stage transitions to the live local journal.
+See [Telemetry: installation and interruptions](TELEMETRY.md#installation-and-interruptions)
+for retention and limits. This needs neither K3s nor Bridge and adds no resume command.
+
 With the reviewed checkout open on a controller, the
 [installation skill](../.agents/skills/workstation-install/SKILL.md) also supports:
 

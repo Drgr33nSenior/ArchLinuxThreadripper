@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "reviewed_at": "2026-09-11",
+  "status": "source-and-config-validated-not-target-qualified",
+  "platform": "linux/amd64",
+  "resolution": "Official GitHub release metadata and registry manifest inspection; digests are immutable multi-platform index identities except the deferred AMD manifest.",
+  "images": [
+    {
+      "component": "prometheus",
+      "version": "3.14.0",
+      "image": "docker.io/prom/prometheus:v3.14.0@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0",
+      "source": "https://github.com/prometheus/prometheus/releases/tag/v3.14.0"
+    },
+    {
+      "component": "grafana",
+      "version": "13.2.1",
+      "image": "docker.io/grafana/grafana:13.2.1@sha256:f772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283",
+      "source": "https://github.com/grafana/grafana/releases/tag/v13.2.1"
+    },
+    {
+      "component": "loki",
+      "version": "3.7.7",
+      "image": "docker.io/grafana/loki:3.7.7@sha256:d70e4659623f3e109af669cae76fe2a5dd5be54e2298fe8aed380d982fbc2500",
+      "source": "https://github.com/grafana/loki/blob/v3.7.7/cmd/loki/loki-local-config.yaml"
+    },
+    {
+      "component": "tempo",
+      "version": "3.0.3",
+      "image": "docker.io/grafana/tempo:3.0.3@sha256:0296560ac66f8a3600d7fb3014a52c189d4d9c3549ad6ff441bf2409855d68d5",
+      "source": "https://github.com/grafana/tempo/blob/v3.0.3/example/docker-compose/single-binary/tempo.yaml"
+    },
+    {
+      "component": "alloy",
+      "version": "1.19.2",
+      "image": "docker.io/grafana/alloy:v1.19.2@sha256:b8ec653c44235fbe910879145dac3597d66b0aaecf60bcbbe82580767771a839",
+      "source": "https://github.com/grafana/alloy/releases/tag/v1.19.2"
+    },
+    {
+      "component": "node-exporter",
+      "version": "1.12.1",
+      "image": "docker.io/prom/node-exporter:v1.12.1@sha256:1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0",
+      "source": "https://github.com/prometheus/node_exporter/releases/tag/v1.12.1"
+    },
+    {
+      "component": "kube-state-metrics",
+      "version": "2.20.0",
+      "image": "registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.20.0@sha256:42cfe3723a5f058171c627537fb57a3ea0f26e4380fa18555a95cb1a1b4cfc5b",
+      "source": "https://github.com/kubernetes/kube-state-metrics/tree/v2.20.0"
+    }
+  ],
+  "host_provider": {
+    "package": "grafana-alloy",
+    "version": "1.13.2-1",
+    "binary": "/usr/bin/grafana-alloy",
+    "snapshot": "2026/09/04",
+    "package_sha256_from_snapshot_database": "8033e92c044dca37641ed3de0696a2b592524556a525604aefa6391f37f4c70c",
+    "source": "https://archive.archlinux.org/repos/2026/09/04/extra/os/x86_64/extra.db",
+    "validation_image": "docker.io/grafana/alloy:v1.13.2@sha256:8abcd0d97a97099cabb34be8dcfc448fca6c35931ae9291aaf74056105dedcca",
+    "memory_max_mib": 512,
+    "status": "package-metadata-resolved-host-package-installation-and-journal-permissions-not-tested"
+  },
+  "runtime_limits_mib": 4736,
+  "runtime_limits_with_host_alloy_mib": 5248,
+  "pvc_requests_gib": 64,
+  "limitations": [
+    "Requests on local-path PVCs are not hard filesystem quotas.",
+    "Retention is time-based for Loki/Tempo; monitor actual XFS free space.",
+    "AMD GPU exporter compatibility and device permissions have not been qualified.",
+    "Optional kubelet component exposes actual memory/throttling only after TLS/auth/node identity qualification; kube-state-metrics resource requests are not utilisation.",
+    "No raw SGLang/stdout, Kubernetes secrets, host journal or arbitrary pod logs are collected.",
+    "Single workstation loses telemetry availability when the machine or K3s is down.",
+    "Prometheus rules are available in its UI; external notification routing remains owner-configured."
+  ],
+  "deferred_amd_exporter": {
+    "version": "1.5.1",
+    "image": "docker.io/rocm/device-metrics-exporter:v1.5.1@sha256:cbef5772c435d648ebd6de705517c4978efdb4b5650952c6797cc2bf15af747a",
+    "source": "https://github.com/ROCm/device-metrics-exporter/blob/v1.5.1/assets/version.yaml",
+    "schema_source": "https://github.com/ROCm/device-metrics-exporter/blob/v1.5.1/example/config-gpu.json",
+    "status": "deferred-not-deployed",
+    "reason": "Source asset manifest selects AMD-SMI7.13.0 and profiler7.13; R9700/ROCm10 qualification missing. Official chart requires privileged full /dev access. Claimed1.5.2 release was not found in GitHub or Docker registry on review date. Do not infer support from R9700S name or fabricate unavailable counters."
+  },
+  "primary_configuration_sources": [
+    "https://grafana.com/docs/alloy/latest/reference/components/otelcol/otelcol.processor.transform/",
+    "https://grafana.com/docs/alloy/latest/reference/components/otelcol/otelcol.processor.filter/",
+    "https://grafana.com/docs/alloy/latest/reference/components/prometheus/prometheus.remote_write/",
+    "https://grafana.com/docs/loki/latest/operations/storage/retention/",
+    "https://github.com/grafana/tempo/blob/v3.0.3/modules/overrides/config.go"
+  ]
+}

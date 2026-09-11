@@ -21,6 +21,9 @@ Commands:
   ccache configure|stats|cleanup|test
   hardware collect <new-output-directory>
   resources plan <hardware.json> <new-output-directory> [versions.lock]
+  telemetry render <new-output-directory> [apps/overlays/profile]
+  telemetry verify <rendered-directory>
+  telemetry plan <resource-plan.json> <rendered-directory> <new-output-directory>
   session plan <ai|gaming|maintenance>
   session switch <ai|gaming|maintenance> <hardware.json> <state-directory> --execute
   session restore <hardware.json> <state-directory> --execute
@@ -46,16 +49,17 @@ Commands:
   rocm build-llama-vulkan <checkout> <hardware.json> <new-output-directory> [versions.lock]
   rocm benchmark-llama <hardware.json> <hip-bench> <vulkan-bench> <model.gguf> <new-output-directory> <hip-devices> <vulkan-devices>
   rocm serving-evidence <pod-name> <new-output-directory>
-  rocm serving-startup <pod-name> <cold|warm> <new-output-directory>
+  rocm serving-startup <pod-name> <cold|warm> <new-output-directory> [--memory]
   rocm benchmark-serving <workload.json> <evidence-directory> <new-output-directory>
   rocm serving-sweep <rendered-sglang-deployment.json> <new-output-directory>
+  rocm serving-memory-plan <deployment.json> <workload.json> <resource-plan.json> <new-output-directory> --observation <startup-dir> <serving-dir> [--observation ...] --other-mib N [--memory-mib N]
   rocm kernel-evidence <pod-name> <new-output-directory>
   rocm kernel-plan <deployment.json> <workload.json> <evidence-directory> <new-output-directory> --profile <cache|capture|legacy-compile> --reserve-mib N --worker-mib N [--workers 1,2] [--experimental]
   rocm kernel-warmup <workload.json> <evidence-directory> <new-output-directory>
   rocm kernel-profile <workload.json> <evidence-directory> <new-output-directory>
   rocm kernel-compare <cold-run> <warm-run> <cold-startup.json> <warm-startup.json> <new-result.json> --rank-log FILE [--rank-log FILE] --atol N --rtol N
   rocm kernel-dispatch <trace.json[.gz]> <profile-run/result.json> <new-result.json>
-  rocm kernel-quality <baseline/result.json> <candidate/result.json> <new-result.json> --atol N --rtol N
+  rocm kernel-quality <baseline/result.json> <candidate/result.json> <new-result.json> --atol N --rtol N [--memory-only]
   rocm kernel-seal-tuning <profile-result.json> <dispatch.json> <review.json> <tuning-file> <new-directory> --kind <triton|hipblaslt>
   rocm qualify-llama <hardware.json> <candidate-directory> <model.gguf> <corpus.txt> <new-output-directory> <devices> [paired-benchmark-directory]
   rocm validate-pod <pod-name> <new-output-directory>
@@ -142,6 +146,21 @@ main() {
       (($# == 4 || $# == 5)) || return 2
       shift 2
       ws_resources_plan "$@"
+      ;;
+    telemetry:render)
+      (($# == 3 || $# == 4)) || return 2
+      shift
+      ws_telemetry "$@"
+      ;;
+    telemetry:verify)
+      (($# == 3)) || return 2
+      shift
+      ws_telemetry "$@"
+      ;;
+    telemetry:plan)
+      (($# == 5)) || return 2
+      shift
+      ws_telemetry "$@"
       ;;
     session:plan)
       (($# == 3)) || return 2
@@ -252,8 +271,9 @@ main() {
       ws_serving_evidence "$3" "$4"
       ;;
     rocm:serving-startup)
-      (($# == 5)) || return 2
-      ws_serving_startup "$3" "$4" "$5"
+      (($# == 5 || $# == 6)) || return 2
+      shift 2
+      ws_serving_startup "$@"
       ;;
     rocm:benchmark-serving)
       (($# == 5)) || return 2
@@ -262,6 +282,10 @@ main() {
     rocm:serving-sweep)
       (($# == 4)) || return 2
       "$(ws_measure_python)" "$repo_root/lib/workstation/serving_sweep.py" "$3" "$4"
+      ;;
+    rocm:serving-memory-plan)
+      shift 2
+      "$(ws_measure_python)" "$repo_root/lib/workstation/serving_memory.py" "$@"
       ;;
     rocm:kernel-evidence)
       (($# == 4)) || return 2

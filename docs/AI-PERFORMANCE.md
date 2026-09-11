@@ -9,6 +9,7 @@ workstation speedup has been established by source tests.
 | Native SDK, CPU builds, ccache and source packaging | [ROCm](ROCM.md) and [workstation setup](WORKSTATION.md) |
 | Serving, paired HIP/Vulkan, CPU/storage measurement and numerical qualification | [Performance validation](PERFORMANCE-VALIDATION.md) |
 | Optional model compilation, cache reuse and kernel dispatch | [Model kernels](MODEL-KERNELS.md) |
+| Continuous local telemetry and combined AI/observability capacity | [Telemetry](TELEMETRY.md) |
 | Models, retrieval and IDE clients | [Models](MODELS.md), [RAG](RAG.md), [agent harnesses](AGENT-HARNESSES.md) |
 | Snapshot-to-rolling transition and maintenance | [Operations](OPERATIONS.md#move-from-the-installation-snapshot-to-rolling-arch) |
 

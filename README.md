@@ -55,6 +55,7 @@ and versions in the locks; do not infer target identity from a diagram or exampl
 | CPU/RAM budgets and AI/gaming session policy | [AI performance](docs/AI-PERFORMANCE.md) |
 | Serving, numerical quality and comparative measurement | [Performance validation](docs/PERFORMANCE-VALIDATION.md) |
 | Opt-in compilation, cache reuse and kernel dispatch | [Model kernels](docs/MODEL-KERNELS.md) |
+| Local metrics/logs/traces, Bridge telemetry and installation events | [Telemetry](docs/TELEMETRY.md) |
 | Model selection/staging, retrieval and client agents | [Models](docs/MODELS.md), [RAG](docs/RAG.md), [agent harnesses](docs/AGENT-HARNESSES.md) |
 | Gaming image, capture, encoding and input acceptance | [Sunshine](docs/SUNSHINE.md) |
 | Design, dated diagram, secret boundaries and source register | [Architecture](docs/ARCHITECTURE.md), [stack view](docs/STACK.md), [security](docs/SECURITY.md), [sources](docs/SOURCES.md) |

@@ -1,0 +1,9 @@
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+  external_labels: {cluster: workstation}
+rule_files: [/etc/prometheus/alerts.yml]
+# Alloy performs all scrapes and receives allowlisted OTLP metrics. The remote
+# write receiver is reachable only from Alloy by NetworkPolicy.
+scrape_configs: []
+

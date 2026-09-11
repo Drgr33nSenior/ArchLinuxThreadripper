@@ -51,6 +51,10 @@ case ${1:-check} in
     sha256sum ./*.pkg.tar.zst arch-workstation.db.tar.gz >SHA256SUMS
     printf 'Unsigned packages and repository database are ready for review and signing.\n'
     ;;
+  bridge-build)
+    (($# == 3)) || fail 'bridge-build requires commit and version'
+    bash "$builder/bridge-build.sh" "$2" "$3" /work "$builder"
+    ;;
   bridge)
     (($# == 1)) || fail 'bridge accepts no arguments'
     [[ $(id -u) != 0 ]] || fail 'bundle as the unprivileged builder'
@@ -84,5 +88,5 @@ case ${1:-check} in
     cp /work/prepared/release.lock /work/prepared/artifacts.lock /work/prepared/builder-packages.txt /work/output/
     printf 'BUILDER_IMAGE_ID=%s\n' "${BUILDER_IMAGE_ID:?}" >/work/output/builder.lock
     ;;
-  *) fail 'supported actions: check, packages, iso' ;;
+  *) fail 'supported actions: check, packages, bridge-build, bridge, iso' ;;
 esac

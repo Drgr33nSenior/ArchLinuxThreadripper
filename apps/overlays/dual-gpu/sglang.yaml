@@ -8,7 +8,8 @@ spec:
       containers:
         - name: sglang
           resources:
-            # 64Gi host - 18Gi host/K3s/eviction reserve = 46Gi allocatable.
-            # Leave 6Gi for CPU RAG and 2Gi for other pods. Loading is unqualified.
+            # Unmeasured host-RAM cap, not VRAM or an up-front allocation.
+            # Right-size using serving-startup --memory + serving-memory-plan;
+            # retain equal requests/limits and count RAG/telemetry separately.
             requests: {cpu: '24', memory: 38Gi, amd.com/gpu: '2'}
             limits: {cpu: '24', memory: 38Gi, amd.com/gpu: '2'}

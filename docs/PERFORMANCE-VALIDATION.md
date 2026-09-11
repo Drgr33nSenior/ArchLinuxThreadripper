@@ -33,7 +33,7 @@ RUN — target hardware unavailable**.
 | --- | --- | --- | --- |
 | Paired metrics | `lib/workstation/rocm.sh`: validate each document, both exact workload cases, finite positive rates and complete repetition samples before final success | `tests/test_rocm_benchmark.sh`: invalid first/second, empty/malformed/missing/duplicate cases, one/two selections | Actual HIP/Vulkan outputs and stable repeated results |
 | SGLang serving | `performance.sh`, `serving.py`, `serving_sweep.py`, `tests/hardware/{sglang-evidence,serving-workload}.py`: private exact-Pod tunnel, native streaming, independent patches, model rehash | Local HTTP success/truncation/malformed fixtures, bounds, immutable inputs and patch resource preservation | Real TTFT/ITL/throughput/queueing; 4K/8K/32K only where the unchanged model/context fits |
-| Startup | Separate `SESSION_AI_STARTUP_TIMEOUT_SECONDS=2100`; Deployment deadline 2100, existing startup probe window 1800, release timeout unchanged | Timeout selection fixtures | `serving-startup` observes container start to readiness; it does **not** split pure load from JIT without engine instrumentation |
+| Startup/host RAM | `serving-startup --memory`, `serving_memory.py`: pod cgroup sampling, repeated cold/warm evidence, offline memory-only patch and rollback | `test_performance.sh`, `test_serving_memory.sh`: identity, pressure, interruption, phase coverage, provenance and patch fixtures | Cold load/JIT and steady-state peaks; smaller-limit stability, latency and quality remain unqualified |
 | llama comparison/quality | Same locked revision; one/two selected devices with full two-card inventory; explicit threads, split, K/V, batch/ubatch/FA; alternating order; telemetry; retained numerical/perplexity binaries | Build/benchmark mocks and numerical-output parser fixtures | Actual gfx1201 kernels, per-backend numerical results, same-corpus PPL and coding correctness; backend ordinals still require physical identity review |
 | Multi-GPU | `tests/hardware/hip-ipc.cpp` and expanded `torch-rocm.py`; existing smoke/peer copy retained; explicit host and Pod commands | Fork/exec/handle-lifetime/error/corruption simulation; this is **not HIP emulation or GPU qualification** | Actual IPC, RCCL readback and 4-byte–64-MiB scaling; debug logs establish chosen transport only after inspection/profiling |
 | CPU/builds | `hardware.sh`, `measurement.py`, reversible TuneD command, `memory-bandwidth.cpp`; existing RAM-aware jobs, ccache and link pools retained | Unknown/sysfs fixtures, subprocess timeout, profile restoration and failure tests | Sustained effective clocks, bandwidth/worker scaling, build cache benefit, static/cache-aligned cpusets and throttling |
@@ -53,7 +53,7 @@ allocated devices, model hashes and actual allowlisted launch arguments with
 The `.80` static fraction covers weights/KV, not every activation or graph
 allocation. Two running requests is a baseline, not an optimum. Do not raise
 memory fractions or context to hide an out-of-memory result. The dual Pod is
-24 CPU/38 GiB; its 16 GiB `/dev/shm` allocation counts inside that limit. The
+24 CPU/38 GiB; its 16 GiB `/dev/shm` ceiling counts inside that limit when used. The
 single Pod is 20 CPU/32 GiB. Preserve host/K3s reserves and all other Pod requests.
 [SGLang tuning semantics](https://docs.sglang.io/docs/advanced_features/hyperparameter_tuning).
 
@@ -165,6 +165,132 @@ Already-ready or restarted containers are rejected. Cache labels are
 operator-declared. Elapsed time includes model load, JIT and warm-up together,
 excludes image pull, and has polling/wall-clock uncertainty. Pure load/JIT phase
 breakdown still requires reviewed engine instrumentation; no numbers are invented.
+
+### Right-size SGLang host RAM
+
+The 38 GiB request/limit is an initial budget, not a measured RAM requirement.
+The `.80` setting controls GPU memory. It does not allocate 80% of host RAM.
+Weights and active KV state normally reside on the GPUs in the existing
+non-offloaded configuration. Host RAM still covers loading, page cache, process
+state, shared/pinned buffers and compiler workers. Do not assume a full permanent
+host copy of all GPU allocations, or size from steady RSS alone.
+
+Run this workflow as the existing non-root workstation user, on the selected
+two-GPU node. It requires readable cgroup v2 counters and the existing restricted
+Kubernetes identity. It never starts/restarts a Pod, clears caches, resets memory
+peaks or applies resources. A controller-only or missing-counter run cannot
+produce sizing evidence. Plain `serving-startup` remains available without memory
+collection.
+
+1. Retain the rendered baseline `sglang` Deployment JSON, a tokenizer-produced
+   workload and the current `resource-plan.json` from the commands above. Include
+   the contexts/concurrency you intend to support. If serving takes less than
+   60 seconds, increase repetitions/requests within the existing workload bounds;
+   do not pad telemetry with idle time. Use the same workload for each restart.
+2. In an owner-controlled maintenance window, prepare two cold and two warm
+   starts, each with a **fresh Pod UID**. Cache labels remain owner declarations:
+   keep cache preparation evidence. Do not delete shared caches to manufacture
+   coldness. Within each cold/warm pair retain the same dedicated persistent
+   cache paths and launch settings. Observe before Ready, then collect serving
+   evidence and run the unchanged workload. For the first cold start:
+
+   ```sh
+   ./bin/workstationctl --config config/workstation.conf rocm serving-startup sglang-EXACT-POD cold artifacts/ram-cold1-start --memory
+   ./bin/workstationctl --config config/workstation.conf rocm serving-evidence sglang-EXACT-POD artifacts/ram-cold1-evidence
+   ./bin/workstationctl --config config/workstation.conf rocm benchmark-serving artifacts/interactive.json artifacts/ram-cold1-evidence artifacts/ram-cold1-run
+   ```
+
+   Repeat for `warm1`, `cold2` and `warm2`, changing the Pod and output paths, and
+   using `warm` for warm starts. Hashing after readiness warms the file cache;
+   it does not turn the subsequent inference run into cold-loading evidence.
+3. Generate a candidate. `--other-mib 8192` below is only an example for a reviewed
+   non-SGLang budget; count WebUI/RAG, telemetry, other Pods, builds and VMs. Do
+   not count the same host collector twice inside host and telemetry allowances.
+
+   ```sh
+   ./bin/workstationctl rocm serving-memory-plan artifacts/sglang-deployment.json artifacts/interactive.json artifacts/perf-resources/resource-plan.json artifacts/ram-plan \
+     --observation artifacts/ram-cold1-start artifacts/ram-cold1-run \
+     --observation artifacts/ram-warm1-start artifacts/ram-warm1-run \
+     --observation artifacts/ram-cold2-start artifacts/ram-cold2-run \
+     --observation artifacts/ram-warm2-start artifacts/ram-warm2-run \
+     --other-mib 8192
+   ```
+
+The planner reports sampled current/anon/file/shmem maxima separately from the
+pod's lifetime peak. `shmem` is included in `file` and total memory; these values
+must not be summed. `shmem` also includes SysV/shared anonymous mappings and is
+not a measurement of `/dev/shm` alone. No file/shared memory is subtracted. The
+candidate envelope adds the full configured shm ceiling as a growth reserve
+to the lifetime peak. This deliberately conservative reserve can overlap prior
+shm usage; it is **not** a claim of additional measured consumption.
+Default additional headroom is the greater of 2 GiB and 25%, rounded up to
+256 MiB. These are conservative **candidate-generation rules**, not a measured
+optimum. Explicit controls are `--margin-mib` (at least 512), `--margin-percent`
+(10–100), `--minimum-seconds` (30–21600) and `--memory-mib` (at least the computed
+candidate, below the old limit). Insufficient room means refusal, not clipping.
+
+Missing/failed phases, incomplete workload cases, changed Pod/container/launch
+or model identity, unknown memory, swap use, nonzero limit/OOM/high events,
+increased/reset memory PSI and gaps above 30 seconds reject a reduction plan.
+No swap must be available on the host; a parent cgroup's `memory.swap.max=max`
+alone does not imply that a child can swap. Hardware memory totals must still
+match the resource plan; regenerate it after a DIMM change.
+Older records without these identity and measurement-window fields are not
+sizing evidence. Recollect them; do not add synthetic fields to retained runs.
+
+Outputs are private `plan.json`, `patch.json` and `rollback.json`. Both patches
+first test the entire expected Pod spec. They change only equal memory
+requests/limits; CPU/GPU resources, shm, model, context, image and caches remain
+unchanged. Evidence/tool/artifact hashes detect drift, but are not signatures,
+target qualification or permission to apply. Keep these files outside Git;
+patches contain the supplied Pod spec and can include sensitive configuration.
+
+Apply a reviewed candidate only through the existing owner maintenance process.
+Recheck live capacity and preserve a copy of the baseline. Repeat cold/warm and
+sustained memory tests **at the smaller limit**, then compare numerical outputs:
+
+```sh
+./bin/workstationctl rocm kernel-quality artifacts/baseline-quality/result.json artifacts/candidate-quality/result.json artifacts/ram-quality.json --atol 0.001 --rtol 0.001 --memory-only
+```
+
+Create those quality runs with `kernel-evidence` and `kernel-warmup` from
+[MODEL-KERNELS.md](MODEL-KERNELS.md). Keep image/model/GPU/compiler/launch identity
+unchanged; `--memory-only` permits only a smaller equal request/limit. It does
+not relax token/log-probability checks or qualify coding quality. Compare TTFT,
+request latency, throughput, reclaim/pressure and startup time across repeated
+matched runs. Treat changes within noise as inconclusive. Regenerate compilation
+worker plans for the new cap. If stability, memory or latency regresses, restore
+the baseline through the retained rollback patch; its spec test must still pass.
+Do not bypass a failed rollback test after unrelated configuration changes.
+
+The default remains 38 GiB until target evidence supports promotion. This work
+does not change session handover, create a second boot path or implement automatic
+resizing. Agent/Bridge integration is a separate client of the same deterministic
+planner; see [the Go-agent handoff](BRIDGE-MEMORY-AGENT-PROMPT.md).
+
+Mechanism references: [Linux cgroup v2](https://docs.kernel.org/admin-guide/cgroup-v2.html),
+[Kubernetes Guaranteed QoS](https://kubernetes.io/docs/tasks/configure-pod-container/quality-service-pod/),
+[SGLang loading](https://docs.sglang.io/docs/advanced_features/model_loading).
+No MI300 constants, loader change or experimental ROCm flag is introduced.
+
+Local validation on 11 September 2026 used installer HEAD `843a52b` plus the
+uncommitted memory increment, preserving prior telemetry/ISO changes. With the
+prepared validation tools, configured Python 3.11 (`HOME_LAB_PYTHON`) and pinned
+operator chart (`HOME_LAB_GPU_CHART`), `make check-strict` passed. It ran 55 shell
+test scripts, including 14 memory tests, six Bats cases and three Ansible syntax
+checks. ShellCheck, shfmt, shell syntax, YAML and local manifest checks passed.
+Ansible reported the expected empty/example-inventory warnings; no playbook ran
+against a host. Local Markdown references and `git diff --check` also passed.
+
+Private evidence is in `test-results/strict-check.FDAWLU/`. The preceding attempt
+in `test-results/strict-check.NXy30i/` correctly failed because the pinned chart
+was not selected; the chart was then supplied without changing skip policy.
+Three permitted checks remain **SKIPPED**: built gaming-image smoke tests
+(`HOME_LAB_GAME_IMAGE` unset), Linux Wayland process-group tests
+(`HOME_LAB_WAYLAND_RUNTIME_IMAGE` unset), and `systemd-analyze` verification
+(development host is macOS). All startup/serving memory evidence in these tests
+is synthetic. Actual target collection, smaller-limit measurements, numerical
+qualification and any RAM saving remain **NOT RUN**.
 
 ### Telemetry interpretation
 

@@ -16,6 +16,12 @@ import threading
 import time
 
 
+CGROUP_FIELDS = ("memory.current", "memory.peak", "memory.max", "memory.events",
+                 "memory.stat", "memory.pressure", "memory.swap.current", "memory.swap.max",
+                 "memory.swap.events", "cpu.stat", "cpu.max", "cpuset.cpus.effective",
+                 "cpuset.mems.effective")
+
+
 def read(path):
     try:
         return Path(path).read_text().strip()
@@ -61,9 +67,7 @@ def snapshot(sys=Path("/sys"), proc=Path("/proc"), cgroup=Path("/sys/fs/cgroup")
     return {"unix_ns": time.time_ns(), "monotonic_ns": time.monotonic_ns(),
             "cpu_power": cpu_power(sys), "gpus_by_bdf": gpus, "hwmon": sensors,
             "host_memory": read(proc / "meminfo"),
-            "cgroup": {key: read(cgroup / key) for key in
-                       ("memory.current", "memory.peak", "memory.max", "memory.events",
-                        "cpu.stat", "cpu.max", "cpuset.cpus.effective", "cpuset.mems.effective")},
+            "cgroup": {key: read(cgroup / key) for key in CGROUP_FIELDS},
             "units": "hwmon ABI: temp millidegrees C, power microwatts, energy microjoules; VRAM bytes",
             "limitations": "Sampled peaks can miss spikes; host root cgroup is not a pod measurement."}
 
@@ -82,9 +86,33 @@ def pod_cgroup(uid, root=Path("/sys/fs/cgroup")):
 def cgroup_values(path):
     if path is None:
         return {"status": "unavailable"}
-    return {"path": str(path), "scope": "pod cgroup; memory.peak is lifetime, memory.current is run-sampled",
-            "values": {key: read(path / key) for key in ("memory.current", "memory.peak", "memory.max",
-                "memory.events", "cpu.stat", "cpu.max", "cpuset.cpus.effective", "cpuset.mems.effective")}}
+    path = Path(path)
+    try:
+        before = path.stat()
+        identity = f"{before.st_dev}:{before.st_ino}"
+    except OSError:
+        identity = None
+    values = {key: read(path / key) for key in CGROUP_FIELDS}
+    try:
+        after = path.stat()
+        if identity != f"{after.st_dev}:{after.st_ino}":
+            identity = None
+    except OSError:
+        identity = None
+    return {"path": str(path), "id": identity,
+            "scope": "pod cgroup; memory.peak is lifetime, memory.current is run-sampled",
+            "values": values}
+
+
+def pod_memory(uid, sys=Path("/sys"), proc=Path("/proc"), cgroup=Path("/sys/fs/cgroup")):
+    """Observe one exact Pod locally; never reset lifetime peaks or counters."""
+    values = cgroup_values(pod_cgroup(uid, cgroup))
+    current = values.get("values", {}).get("memory.current")
+    if not values.get("id") or not isinstance(current, str) or not current.isascii() or not current.isdecimal():
+        raise ValueError("pod cgroup identity or current memory is unavailable")
+    result = snapshot(sys, proc, cgroup)
+    result["pod_cgroup"] = values
+    return result
 
 
 class Sampler:
@@ -218,7 +246,7 @@ def run_command(command, output, timeout):
 def main():
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("snapshot", "cpu-power", "run"))
+    parser.add_argument("action", choices=("snapshot", "cpu-power", "pod-memory", "run"))
     parser.add_argument("--output")
     parser.add_argument("--timeout", type=int, default=1800)
     parser.add_argument("command", nargs=argparse.REMAINDER)
@@ -227,6 +255,13 @@ def main():
         print(json.dumps(snapshot(), indent=2))
     elif args.action == "cpu-power":
         print(json.dumps(cpu_power(), indent=2))
+    elif args.action == "pod-memory":
+        if len(args.command) != 1:
+            parser.error("pod-memory requires exactly one Pod UID")
+        try:
+            print(json.dumps(pod_memory(args.command[0]), allow_nan=False))
+        except (OSError, ValueError):
+            parser.exit(1, "pod memory probe failed: cgroup identity or memory unavailable\n")
     else:
         command = args.command[1:] if args.command[:1] == ["--"] else args.command
         if not command or not args.output or not 1 <= args.timeout <= 86400:

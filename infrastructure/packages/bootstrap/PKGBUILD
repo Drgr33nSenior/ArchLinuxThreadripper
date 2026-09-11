@@ -105,9 +105,10 @@ package_arch-workstation-backup() {
 package_arch-workstation-bridge-runtime() {
   pkgdesc='Reviewed installer runtime and catalog references for Spry.ai Bridge; no active policy'
   depends=('bash' 'coreutils' 'findutils' 'gawk' 'grep' 'sed' 'jq' 'util-linux'
-    'python' 'python-yaml' 'iproute2' 'pciutils' 'curl' 'ripgrep')
-  optdepends=('kubectl: qualified session operations' 'rocm-smi-lib: optional legacy GPU telemetry'
-    'ccache: compiler cache operations' 'bubblewrap: contained builds')
+    'python' 'python-yaml' 'iproute2' 'pciutils' 'curl' 'ripgrep' 'systemd')
+  optdepends=('kubectl: qualified session operations and offline telemetry rendering' 'rocm-smi-lib: optional legacy GPU telemetry'
+    'ccache: compiler cache operations' 'bubblewrap: contained builds'
+    'grafana-alloy: optional filtered host journal and loopback OTLP forwarding')
   local kind path destination
   for kind in runtime reference; do
     destination="$pkgdir/usr/lib/bridge/workstation-$kind"
@@ -123,5 +124,10 @@ package_arch-workstation-bridge-runtime() {
       sha256sum BUILD-IDENTITY INSTALLER-SOURCE.sha256
     ) >"$destination/SOURCE-MANIFEST.sha256"
   done
-  # No active configuration, target executable approvals, credentials or units.
+  for path in workstation-telemetry.service workstation-telemetry.timer workstation-alloy.service; do
+    install -Dm644 "$srcdir/project/templates/workstation/telemetry/$path" "$pkgdir/usr/lib/systemd/system/$path"
+  done
+  install -Dm644 "$srcdir/project/templates/workstation/telemetry/workstation-telemetry.sysusers" \
+    "$pkgdir/usr/lib/sysusers.d/workstation-telemetry.conf"
+  # No active configuration, executable approvals, credentials or unit activation.
 }

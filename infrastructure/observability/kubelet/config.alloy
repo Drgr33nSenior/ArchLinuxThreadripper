@@ -1,0 +1,39 @@
+// Exact node address and projected SA token. Never use insecure_skip_verify
+// or nodes/proxy to work around a failed certificate or authorization check.
+prometheus.scrape "kubelet_cadvisor" {
+  targets = [{"__address__" = "192.0.2.2:10250", "job" = "kubelet-cadvisor"}]
+  scheme = "https"
+  metrics_path = "/metrics/cadvisor"
+  authorization {
+    type = "Bearer"
+    credentials_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+  }
+  tls_config {
+    ca_file = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+  }
+  scrape_interval = "30s"
+  scrape_timeout = "10s"
+  sample_limit = 30000
+  body_size_limit = "16MiB"
+  label_limit = 32
+  label_value_length_limit = 256
+  forward_to = [prometheus.relabel.cgroup.receiver]
+}
+
+prometheus.relabel "cgroup" {
+  rule {
+    source_labels = ["__name__"]
+    action = "keep"
+    regex = "(up|scrape_.*|container_memory_working_set_bytes|container_memory_rss|container_memory_cache|container_spec_memory_limit_bytes|container_cpu_usage_seconds_total|container_cpu_cfs_periods_total|container_cpu_cfs_throttled_periods_total|container_cpu_cfs_throttled_seconds_total)"
+  }
+  rule {
+    source_labels = ["namespace"]
+    action = "keep"
+    regex = "(|ai-home-lab|workstation-observability|workstation-observability-host|kube-system|kube-amd-gpu)"
+  }
+  rule {
+    action = "labelkeep"
+    regex = "(__name__|instance|job|namespace|pod|container|cpu)"
+  }
+  forward_to = [prometheus.remote_write.local.receiver]
+}

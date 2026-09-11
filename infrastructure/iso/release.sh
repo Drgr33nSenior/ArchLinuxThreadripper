@@ -7,7 +7,10 @@ source "$root/lib/common.sh"
 usage() {
   printf '%s\n' \
     'Usage: release.sh [--context NAME] [--execute] [--allow-iso-mounts] ACTION ...' \
-    '  packages                       Build tools, snapshot this checkout, build packages.' \
+    '  packages [BRIDGE_COMMIT BRIDGE_VERSION]' \
+    '                                 Build installer; optionally fetch/build/bundle Bridge.' \
+    '  bridge-build BRIDGE_COMMIT BRIDGE_VERSION NEW_OUTPUT_DIRECTORY' \
+    '                                 Build/test an unsigned Bridge package in amd64 Arch.' \
     '  bridge RUN_DIRECTORY REVIEWED_BRIDGE_DIRECTORY' \
     '                                 Add target payload/dependencies before owner signing.' \
     '  iso RUN_DIRECTORY PUBLIC_KEY.asc FINGERPRINT' \
@@ -68,7 +71,10 @@ main() {
   local wrapper="$root/infrastructure/iso/docker.sh" docker_options=(--context "$context")
   case $action in
     packages)
-      (($# == 0)) || common::die 'packages takes no paths; it always snapshots the current checkout'
+      (($# == 0 || $# == 2)) || common::die 'packages accepts no arguments or an exact Bridge commit and version'
+      if (($#)); then
+        [[ $1 =~ ^[a-f0-9]{40}$ && $2 =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || common::die 'select an exact Bridge commit and vMAJOR.MINOR.PATCH version'
+      fi
       [[ $allow_mounts == false ]] || common::die '--allow-iso-mounts is only valid for ISO assembly'
       [[ ! -L $root/build && ! -L $root/build/iso ]] || common::die 'build/ and build/iso/ must not be symlinks'
       run="$root/build/iso/$job"
@@ -83,12 +89,30 @@ main() {
       step 'Prepare source from this checkout' bash "$root/infrastructure/packages/bootstrap/prepare-source.sh" "$run/source" || return
       step '4/4: Build unsigned packages without network or root' bash "$wrapper" "${docker_options[@]}" --execute packages \
         "$job" "$run/source" "$run/packages" || return
+      if (($#)); then
+        step 'Build the selected Bridge commit in amd64 Arch' bash "$wrapper" "${docker_options[@]}" --execute bridge-build \
+          "$job" "$1" "$2" "$run/bridge-artifacts" || return
+        step 'Seal Bridge and snapshot dependencies with this installer run' bash "$wrapper" "${docker_options[@]}" --execute bridge \
+          "$job" "$run/packages" "$run/bridge-artifacts" "$run/bundled" || return
+      fi
       if [[ $execute == true ]]; then
         common::info "Packages ready: $run/packages"
-        common::info 'Next: copy this assignment, then follow stage 2 in docs/ISO.md. Nothing was signed or published.'
+        common::info 'Next: copy this assignment, then follow Bridge selection/signing in docs/ISO.md. Nothing was signed or published.'
         printf 'ISO_RUN=%q\n' "$run"
       else
         common::info 'Preview only: no files, Docker queries or jobs were created. --execute will choose its own fresh run.'
+      fi
+      ;;
+    bridge-build)
+      (($# == 3)) || common::die 'bridge-build requires exact commit, version and new output directory'
+      [[ $allow_mounts == false ]] || common::die '--allow-iso-mounts is only valid for ISO assembly'
+      # Validate paths through the wrapper before creating an image or a job.
+      bash "$wrapper" "${docker_options[@]}" bridge-build "$job" "$1" "$2" "$3" || return
+      step '1/3: Build or reuse the pinned tools image' bash "$wrapper" "${docker_options[@]}" --execute image || return
+      step '2/3: Check unprivileged amd64 userspace' bash "$wrapper" "${docker_options[@]}" --execute check || return
+      step '3/3: Fetch, build and test the reviewed Bridge commit' bash "$wrapper" "${docker_options[@]}" --execute bridge-build "$job" "$1" "$2" "$3" || return
+      if [[ $execute == true ]]; then
+        printf 'BRIDGE_ARTIFACTS=%q\n' "$(cd -- "$3" && pwd -P)"
       fi
       ;;
     bridge)
@@ -123,7 +147,7 @@ main() {
       fi
       bash "$wrapper" "${docker_options[@]}" iso "$job" "$selected" "$2" "$3" "$run/$job" || return
       ;;
-    *) common::die 'unknown action; use packages or iso' ;;
+    *) common::die 'unknown action; use packages, bridge-build, bridge or iso' ;;
   esac
 }
 

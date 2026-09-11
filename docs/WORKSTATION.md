@@ -6,6 +6,10 @@ For the AI-specific audit and measurement sequence, see
 [AI-PERFORMANCE.md](AI-PERFORMANCE.md). If installed from the custom ISO, review
 its dated mirrorlist and the explicit transition to rolling Arch first.
 
+Use [Telemetry](TELEMETRY.md) for local Prometheus/Grafana/Loki/Tempo/Alloy,
+host sensors, Bridge instrumentation and capacity planning. The server profile
+includes the host Alloy binary but does not activate collectors.
+
 ## Packages and services
 
 New installations use `HOST_PROFILE=headless`: no GNOME/GDM, host Steam,

@@ -19,7 +19,7 @@ install -d -m0755 /usr/share/doc /usr/share/man
 # A coherent upgrade against the snapshot, never a partial rolling upgrade.
 # Include both split packages' dependencies so makepkg needs no network or sudo.
 pacman -Syu --needed --noconfirm --disable-sandbox-syscalls base-devel archiso gnupg cryptsetup mdadm \
-  xfsprogs gptfdisk pciutils jq sbctl sbsigntools efibootmgr curl iproute2 ripgrep python python-yaml \
+  xfsprogs gptfdisk pciutils jq sbctl sbsigntools efibootmgr curl iproute2 ripgrep python python-yaml go git \
   "openai-codex=$(awk -F= '$1=="CODEX_PACKAGE_VERSION" {print $2}' "$lock")"
 codex_version=$(awk -F= '$1=="CODEX_PACKAGE_VERSION" {print $2}' "$lock")
 codex_hash=$(awk -F= '$1=="CODEX_PACKAGE_SHA256" {print $2}' "$lock")

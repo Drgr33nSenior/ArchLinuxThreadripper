@@ -66,7 +66,7 @@ usb_identity() {
   info=$(usb_info "$device") || common::die 'cannot inspect selected disk'
   jq -e --arg device "$device" --argjson bytes "$bytes" '
     .DeviceNode == $device and .DeviceIdentifier == ($device|ltrimstr("/dev/")) and
-    .Whole == true and .Internal == false and .VirtualOrPhysical == "Physical" and
+    .WholeDisk == true and .Internal == false and .VirtualOrPhysical == "Physical" and
     .BusProtocol == "USB" and .Writable == true and
     (.MediaName|type == "string" and length > 0) and
     (.DeviceTreePath|type == "string" and length > 0) and

@@ -139,12 +139,15 @@ then test the default 32,768-token profile with one and two concurrent requests.
 Record per-card VRAM, host/pod peak memory, startup time, generation correctness,
 time to first token, prompt/decode throughput and GDN/FP8 backend selections.
 Keep the existing host/K3s/eviction reservations and 0.80 static-memory fraction.
-The smaller FP8 chat checkpoint has a 38 GiB pod request/limit instead of the old
-42 GiB. On a 64 GiB host, the planner reserves 18 GiB, leaving 46 GiB allocatable:
-38 GiB for chat plus RAG's 6 GiB limit leaves about 2 GiB for other pods. These
-are caps, not observed consumption or proof that loading fits. Count other pods
-and actual discovered RAM before admission. No swap or CPU offload is enabled
-to hide an OOM. Stop compilation during qualification.
+The FP8 chat checkpoint has an initial 38 GiB host-memory request/limit. This is
+budget arithmetic, not observed consumption or proof that loading fits. The
+original 64 GiB plan left 46 GiB after host reserves, then allowed 6 GiB for RAG
+and 2 GiB for other Pods. Full telemetry is additional demand; that original
+combination no longer fits unchanged. Use the
+[host-memory qualification workflow](PERFORMANCE-VALIDATION.md#right-size-sglang-host-ram)
+to generate measured-input candidates. Count other Pods and actual discovered
+RAM before admission. No swap or CPU offload is enabled to hide an OOM. Stop
+unrelated compilation during qualification.
 
 Check `/v1/models` from an authorized internal client: the default must report
 `Qwen3.8-27B-FP8`. Test thinking/non-thinking responses, streamed reasoning and

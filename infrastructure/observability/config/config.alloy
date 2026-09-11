@@ -1,0 +1,193 @@
+// Static targets avoid unrestricted service discovery and scrape annotations.
+// SGLang remains stopped until its separate workload gates pass. All stored
+// metrics have bounded labels and samples. Unavailable SGLang is not healthy.
+logging {
+  level = "warn"
+  format = "json"
+}
+
+prometheus.scrape "workstation" {
+  targets = [
+    {"__address__" = "node-exporter.workstation-observability-host.svc:9100", "job" = "node"},
+    {"__address__" = "kube-state-metrics:8080", "job" = "kube-state-metrics"},
+    {"__address__" = "prometheus:9090", "job" = "prometheus"},
+    {"__address__" = "loki:3100", "job" = "loki"},
+    {"__address__" = "tempo:3200", "job" = "tempo"},
+    {"__address__" = "grafana:3000", "job" = "grafana"},
+    {"__address__" = "127.0.0.1:12345", "job" = "alloy"},
+    {"__address__" = "sglang.ai-home-lab.svc:30000", "job" = "sglang"},
+  ]
+  scrape_interval = "30s"
+  scrape_timeout = "10s"
+  sample_limit = 12000
+  label_limit = 32
+  label_value_length_limit = 256
+  body_size_limit = "8MiB"
+  forward_to = [prometheus.relabel.bounded.receiver]
+}
+
+prometheus.relabel "bounded" {
+  // Do not turn request/session/user identities or prompt content into labels.
+  rule {
+    action = "labeldrop"
+    regex = "(request_id|session_id|turn_id|user_id|prompt|completion|token|authorization|cookie)"
+  }
+  forward_to = [prometheus.remote_write.local.receiver]
+}
+
+prometheus.remote_write "local" {
+  endpoint {
+    url = "http://prometheus:9090/api/v1/write"
+    queue_config {
+      capacity = 2500
+      min_shards = 1
+      max_shards = 2
+      max_samples_per_send = 500
+      batch_send_deadline = "5s"
+    }
+  }
+  wal {
+    truncate_frequency = "15m"
+    min_keepalive_time = "5m"
+    max_keepalive_time = "2h"
+  }
+}
+
+otelcol.receiver.otlp "local" {
+  grpc {
+    endpoint = "0.0.0.0:4317"
+    max_recv_msg_size = "4MiB"
+  }
+  http {
+    endpoint = "0.0.0.0:4318"
+    max_request_body_size = "4MiB"
+  }
+  output {
+    metrics = [otelcol.processor.memory_limiter.local.input]
+    logs = [otelcol.processor.memory_limiter.local.input]
+    traces = [otelcol.processor.memory_limiter.local.input]
+  }
+}
+
+otelcol.processor.memory_limiter "local" {
+  check_interval = "1s"
+  limit = "384MiB"
+  spike_limit = "64MiB"
+  output {
+    metrics = [otelcol.processor.filter.approved.input]
+    logs = [otelcol.processor.filter.approved.input]
+    traces = [otelcol.processor.filter.approved.input]
+  }
+}
+
+otelcol.processor.filter "approved" {
+  error_mode = "propagate"
+  metrics {
+    metric = [`not IsMatch(resource.attributes["service.name"], "^(spry-workstation-bridge|workstation-installer|sglang)$")`]
+  }
+  logs {
+    log_record = [`not IsMatch(resource.attributes["service.name"], "^(spry-workstation-bridge|workstation-installer)$")`]
+  }
+  traces {
+    span = [`not IsMatch(resource.attributes["service.name"], "^(spry-workstation-bridge|workstation-installer|sglang)$")`]
+  }
+  output {
+    metrics = [otelcol.processor.transform.minimal.input]
+    logs = [otelcol.processor.transform.minimal.input]
+    traces = [otelcol.processor.transform.minimal.input]
+  }
+}
+
+otelcol.processor.transform "minimal" {
+  error_mode = "propagate"
+  metric_statements {
+    context = "resource"
+    statements = [`keep_keys(attributes, ["service.name", "service.version"])`]
+  }
+  metric_statements {
+    context = "datapoint"
+    statements = [`keep_keys(attributes, ["http.request.method", "http.route", "http.response.status_code", "operation", "bridge.operation.action", "outcome", "error.type"])`]
+  }
+  log_statements {
+    context = "resource"
+    statements = [`keep_keys(attributes, ["service.name", "service.version"])`]
+  }
+  log_statements {
+    context = "log"
+    statements = [
+      `set(body, "operational event")`,
+      `keep_keys(attributes, ["event.name", "operation", "phase", "outcome", "error.type", "operation.id"])`,
+    ]
+  }
+  trace_statements {
+    context = "resource"
+    statements = [`keep_keys(attributes, ["service.name", "service.version"])`]
+  }
+  trace_statements {
+    context = "span"
+    statements = [
+      `set(name, "sglang.request") where resource.attributes["service.name"] == "sglang"`,
+      `set(status.message, "")`,
+      `keep_keys(attributes, ["http.request.method", "http.route", "http.response.status_code", "operation", "bridge.operation.action", "outcome", "error.type", "operation.id", "openai.session.id", "openai.turn.id"])`,
+    ]
+  }
+  trace_statements {
+    context = "spanevent"
+    statements = [
+      `set(name, "event")`,
+      `keep_keys(attributes, ["exception.type"])`,
+    ]
+  }
+  output {
+    metrics = [otelcol.processor.batch.local.input]
+    logs = [otelcol.processor.batch.local.input]
+    traces = [otelcol.processor.batch.local.input]
+  }
+}
+
+otelcol.processor.batch "local" {
+  timeout = "5s"
+  send_batch_size = 256
+  send_batch_max_size = 512
+  output {
+    metrics = [otelcol.exporter.prometheus.local.input]
+    logs = [otelcol.exporter.otlphttp.loki.input]
+    traces = [otelcol.exporter.otlp.tempo.input]
+  }
+}
+
+otelcol.exporter.prometheus "local" {
+  forward_to = [prometheus.relabel.bounded.receiver]
+}
+
+otelcol.exporter.otlphttp "loki" {
+  client {
+    endpoint = "http://loki:3100/otlp"
+    timeout = "10s"
+  }
+  sending_queue {
+    queue_size = 128
+    num_consumers = 2
+  }
+  retry_on_failure {
+    max_elapsed_time = "60s"
+  }
+}
+
+otelcol.exporter.otlp "tempo" {
+  timeout = "10s"
+  client {
+    endpoint = "tempo:4317"
+    tls {
+      // Private in-cluster transport only; no public receiver/Ingress.
+      insecure = true
+    }
+  }
+  sending_queue {
+    queue_size = 128
+    num_consumers = 2
+  }
+  retry_on_failure {
+    max_elapsed_time = "60s"
+  }
+}

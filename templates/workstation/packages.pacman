@@ -3,6 +3,9 @@
 base-devel devtools namcap ccache clang cmake ninja jq git git-lfs git-delta git-zsh-completion openssh gnupg libsecret libfido2 yubikey-manager sbsigntools
 zsh zsh-completions bash-completion zsh-autosuggestions zsh-syntax-highlighting fzf pkgfile
 tuned irqbalance
+# Optional host telemetry collector binary. No service is enabled by package selection.
+# Validate the installed version/config as described in docs/TELEMETRY.md.
+grafana-alloy
 linux-firmware-amdgpu mesa vulkan-radeon ocl-icd
 vulkan-tools mesa-utils clinfo libva-utils hwloc numactl perf
 # Explicit scratch-file benchmarks only; never invoked by installation.

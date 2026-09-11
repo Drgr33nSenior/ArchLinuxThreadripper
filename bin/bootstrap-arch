@@ -33,7 +33,7 @@ source "$BOOTSTRAP_ROOT/lib/bootstrap/bridge.sh"
 
 usage() {
   cat <<'USAGE'
-Usage: bootstrap-arch [--config FILE] [--boot-package FILE] [--dry-run|--execute] <preflight|install|verify>
+Usage: bootstrap-arch [--config FILE] [--boot-package FILE] [--events] [--dry-run|--execute] <preflight|install|verify>
 
 The installer only accepts two immutable /dev/disk/by-id paths.  `install`
 defaults to a dry run. `--execute install` destroys both approved disks after
@@ -41,12 +41,15 @@ all checks and confirmation of both fully resolved paths and serials.
 `--dry-run` never formats, mounts, or writes disks.
 
 Configuration is a strict KEY=VALUE file. See config/install.conf.example.
+--events sends sanitized stage records to the local workstation-install journal.
+It does not capture terminal output or create resumability; live logs are volatile.
 USAGE
 }
 
 main() {
   local config_file='' action='' mode=''
   BOOTSTRAP_DRY_RUN=1
+  BOOTSTRAP_EVENTS=0
   BOOTSTRAP_BOOT_PACKAGE=/var/cache/arch-workstation/boot.pkg.tar.zst
   while (($#)); do
     case "$1" in
@@ -65,6 +68,10 @@ main() {
         }
         BOOTSTRAP_BOOT_PACKAGE=$2
         shift 2
+        ;;
+      --events)
+        BOOTSTRAP_EVENTS=1
+        shift
         ;;
       --dry-run | --execute)
         [[ -z $mode || $mode == "$1" ]] || {
@@ -107,11 +114,26 @@ main() {
     return 2
   }
   bootstrap_load_config "$config_file" || return 1
+  if ((BOOTSTRAP_EVENTS)); then
+    if ! command -v logger >/dev/null || ! command -v date >/dev/null; then
+      bootstrap_die 'structured events require local logger and date'
+      return 1
+    fi
+    # Read by bootstrap_event in the sourced bootstrap library.
+    # shellcheck disable=SC2034
+    BOOTSTRAP_EVENT_RUN="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+    # shellcheck disable=SC2034
+    BOOTSTRAP_EVENT_CONFIG=$(common::sha256_file "$config_file") || return 1
+    bootstrap_event event-sink started 0 || {
+      bootstrap_die 'local event sink is unavailable; no installation action started'
+      return 1
+    }
+  fi
 
   case "$action" in
-    preflight) bootstrap_preflight ;;
-    install) bootstrap_install ;;
-    verify) bootstrap_verify ;;
+    preflight) bootstrap_stage preflight bootstrap_preflight ;;
+    install) bootstrap_stage install bootstrap_install ;;
+    verify) bootstrap_stage verify bootstrap_verify ;;
   esac
 }
 

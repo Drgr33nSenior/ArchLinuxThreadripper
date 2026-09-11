@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Exact _make_pkglist from installed Archiso 90-1 /usr/bin/mkarchiso.
+# Source pin: 0270567a2914330ff236ccd7d4f40eaee7b8e708.
+_make_pkglist() {
+    _msg_info "Creating a list of installed packages on live-enviroment..."
+    case "${buildmode}" in
+        "bootstrap")
+            pacman -Q --sysroot "${pacstrap_dir}" \
+                | _unshare install -m 0644 /dev/stdin "${bootstrap_parent}/pkglist.${arch}.txt"
+            ;;
+        "iso"|"netboot")
+            install -d -m 0755 -- "${isofs_dir}/${install_dir}"
+            pacman -Q --sysroot "${pacstrap_dir}" >"${isofs_dir}/${install_dir}/pkglist.${arch}.txt"
+            ;;
+    esac
+    _msg_info "Done!"
+}

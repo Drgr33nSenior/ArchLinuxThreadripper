@@ -23,9 +23,11 @@ usb_source_device() { if [[ "$phase" == source-on-target ]]; then printf '/dev/d
 usb_info() {
   case "$1" in
     /dev/disk8)
-      jq -cn --argjson policy "$policy" '{DeviceNode:"/dev/disk8",DeviceIdentifier:"disk8",ParentWholeDisk:"disk8",
-        Whole:true,Internal:false,VirtualOrPhysical:"Physical",BusProtocol:"USB",Writable:true,
-        MediaName:"Fixture Flash Drive",DeviceTreePath:"IODeviceTree:/fixture/usb",TotalSize:8192,DeviceBlockSize:512} + $policy'
+      # diskutil uses WholeDisk; IOKit below uses Whole. Do not conflate them.
+      jq -cn --argjson policy "$policy" --arg phase "$phase" '{DeviceNode:"/dev/disk8",DeviceIdentifier:"disk8",ParentWholeDisk:"disk8",
+        WholeDisk:true,Internal:false,VirtualOrPhysical:"Physical",BusProtocol:"USB",Writable:true,
+        MediaName:"Fixture Flash Drive",DeviceTreePath:"IODeviceTree:/fixture/usb",TotalSize:8192,DeviceBlockSize:512} + $policy |
+        if $phase == "missing-disk-whole" then del(.WholeDisk) else . end'
       ;;
     / | /dev/disk3s1) printf '{"DeviceIdentifier":"disk3s1","ParentWholeDisk":"disk3"}\n' ;;
     /dev/disk8s1) printf '{"DeviceIdentifier":"disk8s1","ParentWholeDisk":"disk8"}\n' ;;
@@ -48,6 +50,10 @@ usb_media() {
   fi
   if [[ "$phase" == duplicate-media ]]; then
     printf '[{"BSD Name":"disk8","Whole":true},{"BSD Name":"disk8","Whole":true}]\n'
+    return
+  fi
+  if [[ "$phase" == wrong-media-whole ]]; then
+    printf '[{"BSD Name":"disk8","WholeDisk":true,"Size":8192,"Writable":true,"IORegistryEntryID":1234}]\n'
     return
   fi
   [[ ! -f "$work/replaced" ]] || id=5678
@@ -131,7 +137,8 @@ reset_case
 main write "$iso" "$device" >"$work/preview" 2>&1
 [[ ! -e "$work/actions" && ! -e "$work/usb-file" && ! -e "$work/lock" ]]
 grep -q 'Preview only' "$work/preview"
-for policy in '{"Internal":true}' '{"Whole":false}' '{"VirtualOrPhysical":"Virtual"}' \
+for policy in '{"Internal":true}' '{"WholeDisk":false}' '{"VirtualOrPhysical":"Virtual"}' \
+  '{"WholeDisk":null}' '{"WholeDisk":"true"}' '{"WholeDisk":null,"Whole":true}' \
   '{"Writable":false}' '{"BusProtocol":"Thunderbolt"}' '{"TotalSize":2048}' \
   '{"Internal":null}' '{"DeviceTreePath":""}' '{"DeviceNode":"/dev/disk9"}' '{"DeviceBlockSize":8192}'; do
   reject
@@ -146,7 +153,7 @@ for layout_policy in \
   '{"AllDisksAndPartitions":[{"DeviceIdentifier":"disk8", "MountPoint":"/"}]}' \
   '{"AllDisksAndPartitions":[]}'; do reject; done
 reset_case
-for phase in source-on-target failed-inventory missing-media duplicate-media nonroot cancel replug-confirm replug-unmount replug-open failed-unmount remounted; do
+for phase in source-on-target missing-disk-whole failed-inventory missing-media duplicate-media wrong-media-whole nonroot cancel replug-confirm replug-unmount replug-open failed-unmount remounted; do
   reject
   if grep -q '^write$' "$work/actions" 2>/dev/null; then exit 1; fi
   rm -f "$work/actions" "$work/replaced" "$work/usb-file" "$work/unmounted"

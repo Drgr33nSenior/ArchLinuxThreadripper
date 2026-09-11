@@ -177,7 +177,7 @@ def quality_compare(first, second, atol, rtol):
             "absolute_logprob_difference": summary(differences), "scope": "not full model or coding-task qualification"}
 
 
-def compare_quality(baseline, candidate, atol, rtol):
+def compare_quality(baseline, candidate, atol, rtol, memory_only=False):
     for result in (baseline, candidate):
         if (result["status"] != "measured-not-qualified" or result.get("kind") != "kernel-warmup"
                 or result.get("memory", {}).get("status") != "checked"):
@@ -196,13 +196,31 @@ def compare_quality(baseline, candidate, atol, rtol):
     if baseline["warmup_contract"] != candidate["warmup_contract"]:
         raise ValueError("warmup shapes differ")
     a, b = baseline["identity"], candidate["identity"]
+    if memory_only:
+        # Explicitly compare a smaller host-memory envelope, not another model,
+        # compiler, GPU, launch configuration or CPU allocation. Keep the
+        # existing strict comparison unchanged for all other callers.
+        normalized = []
+        for item in (a, b):
+            item = copy.deepcopy(item)
+            resources = item["resources"]
+            if resources["requests"] != resources["limits"]:
+                raise ValueError("memory-only quality requires equal requests/limits")
+            for scope in ("requests", "limits"):
+                resources[scope].pop("memory")
+            normalized.append(item)
+        if normalized[0] != normalized[1] or mib(b["resources"]["limits"]["memory"]) >= mib(a["resources"]["limits"]["memory"]):
+            raise ValueError("memory-only comparison permits only a smaller host-memory request/limit")
     for key in ("image", "image_id", "resources"):
+        if memory_only and key == "resources":
+            continue
         if a[key] != b[key]:
             raise ValueError("quality comparison changed image/resources")
     for key in ("model_files", "packages", "devices", "hip"):
         if a["runtime"][key] != b["runtime"][key]:
             raise ValueError("quality comparison changed model/software/GPU identity")
     return {"schema": 1, "status": "sampled-quality-passed-not-qualified",
+            "comparison": "host-memory-only" if memory_only else "kernel",
             "baseline_sha256": identity(baseline), "candidate_sha256": identity(candidate),
             "quality": quality_compare(baseline["quality"], candidate["quality"], atol, rtol)}
 
@@ -343,6 +361,7 @@ def main():
         p.add_argument(name)
     p.add_argument("--atol", type=float, required=True)
     p.add_argument("--rtol", type=float, required=True)
+    p.add_argument("--memory-only", action="store_true")
     p = sub.add_parser("seal-tuning")
     for name in ("run", "dispatch", "review", "artifact", "output"):
         p.add_argument(name)
@@ -361,7 +380,7 @@ def main():
     elif args.mode == "dispatch":
         write(args.output, dispatch(args.trace, load(args.run)))
     elif args.mode == "quality":
-        write(args.output, compare_quality(load(args.baseline), load(args.candidate), args.atol, args.rtol))
+        write(args.output, compare_quality(load(args.baseline), load(args.candidate), args.atol, args.rtol, args.memory_only))
     else:
         seal_tuning(load(args.run), load(args.dispatch), args.review, args.artifact, args.kind, args.output)
 

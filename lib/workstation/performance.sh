@@ -10,17 +10,26 @@ ws_measure_command() (
 )
 
 ws_serving_pod() {
-  local pod=$1
+  local pod=$1 document launch_spec launch_spec_sha256
   ws_session_config_validate
   [[ $pod =~ ^[a-z0-9][a-z0-9.-]*$ ]] || ws_die 'provide the exact SGLang pod name'
-  ws_session_kubectl -n "$SESSION_NAMESPACE" get pod "$pod" -o json | jq -e '
+  document=$(ws_session_kubectl -n "$SESSION_NAMESPACE" get pod "$pod" -o json) || return 1
+  # Bind rendered launch settings without retaining environment values or
+  # arguments: only the canonical JSON hash leaves this local function.
+  launch_spec=$(jq -ceS '[.spec.containers[] | select(.name == "sglang")] | select(length == 1) | .[0] |
+    {command:(.command//[]),args:(.args//[]),env:(.env//[]),envFrom:(.envFrom//[])}' <<<"$document") || return 1
+  launch_spec_sha256=$(common::sha256_file <(printf '%s\n' "$launch_spec")) || return 1
+  jq -e --arg launch_spec_sha256 "$launch_spec_sha256" '
     select(.metadata.deletionTimestamp == null and .status.phase == "Running") |
     . as $p | [.spec.containers[] | select(.name == "sglang")] | select(length == 1) | .[0] as $c |
     {name:$p.metadata.name,uid:$p.metadata.uid,node:$p.spec.nodeName,
      image:$c.image,image_id:([$p.status.containerStatuses[] | select(.name == "sglang") | .imageID][0]),
+     container_id:([$p.status.containerStatuses[] | select(.name == "sglang") | .containerID][0]),
+     restart_count:([$p.status.containerStatuses[] | select(.name == "sglang") | .restartCount][0]),
+     launch_spec_sha256:$launch_spec_sha256,
      started_at:([$p.status.containerStatuses[] | select(.name == "sglang") | .state.running.startedAt][0]),
      resources:$c.resources,shm:[$p.spec.volumes[]? | select(.name == "shm") | .emptyDir],
-     ready:([$p.status.containerStatuses[] | select(.name == "sglang") | .ready][0])}'
+     ready:([$p.status.containerStatuses[] | select(.name == "sglang") | .ready][0])}' <<<"$document"
 }
 
 ws_serving_evidence() (
@@ -160,9 +169,14 @@ ws_kernel_evidence() (
 
 ws_serving_startup() (
   set -euo pipefail
-  local pod=$1 cache=$2 output=$3 before current deadline
+  local pod=$1 cache=$2 output=$3 mode=${4:-} before current deadline
   case $cache in cold | warm) ;; *) ws_die 'label the owner-prepared model/JIT cache state cold or warm' ;; esac
+  case $mode in '' | --memory) ;; *) ws_die 'the optional startup mode is --memory' ;; esac
   [[ ! -e $output && ! -L $output ]] || ws_die 'use a new startup evidence directory'
+  if [[ $mode == --memory ]]; then
+    ws_serving_startup_memory "$pod" "$cache" "$output"
+    exit "$?"
+  fi
   before=$(ws_serving_pod "$pod")
   jq -e '.ready == false and .started_at != null' <<<"$before" >/dev/null ||
     ws_die 'observe after container start but before readiness; already-ready is not a startup measurement'
@@ -172,7 +186,7 @@ ws_serving_startup() (
   deadline=$((SECONDS + ${SESSION_AI_STARTUP_TIMEOUT_SECONDS:-2100}))
   while :; do
     current=$(ws_serving_pod "$pod")
-    [[ $(jq -r '[.uid,.started_at,.image_id]|join("/")' <<<"$current") == "$(jq -r '[.uid,.started_at,.image_id]|join("/")' <<<"$before")" ]] ||
+    [[ $(jq -cS '[.uid,.started_at,.image_id,.restart_count,.container_id]' <<<"$current") == "$(jq -cS '[.uid,.started_at,.image_id,.restart_count,.container_id]' <<<"$before")" ]] ||
       ws_die 'pod restarted during startup observation'
     [[ $(jq -r .ready <<<"$current") != true ]] || break
     ((SECONDS < deadline)) || ws_die 'startup timed out; no successful startup record'
@@ -185,6 +199,114 @@ ws_serving_startup() (
       elapsed_seconds:(($at|fromdateiso8601)-($pod.started_at|sub("\\.[0-9]+Z$";"Z")|fromdateiso8601)),
       scope:"container start through readiness (load/JIT/warmup combined); not image pull or pure model-load time",
       uncertainty:"API polling and node/client wall-clock skew; compare only synchronized clocks"}' >"$output/startup.json"
+)
+
+ws_serving_startup_memory() (
+  set -euo pipefail
+  local pod=$1 cache=$2 output=$3 before=null current=null category=probe complete=0
+  local boot uid sample cgroup_id='' sample_id previous_tick=0 deadline observed_at ready_at='' interrupted_signal=null
+  ws_require_arch
+  ws_require_user
+  umask 077
+  mkdir -- "$output" || ws_die 'cannot create startup memory evidence directory'
+  # Keep a failed record even when a probe or signal ends observation. Only
+  # categories are retained; kubectl/Python error text may contain private data.
+  # shellcheck disable=SC2329 # Invoked by the EXIT trap below.
+  ws_serving_startup_memory_finish() {
+    local exit_status=$? status=failed
+    trap - EXIT INT TERM
+    set +e
+    if ((complete == 1 && exit_status == 0)); then
+      status=observed-not-qualified
+      category=""
+    elif ((exit_status == 0)); then exit_status=1; fi
+    jq -n --arg status "$status" --arg category "$category" --arg cache "$cache" \
+      --argjson before "${before:-null}" --argjson pod "${current:-null}" \
+      --arg at "$ready_at" --argjson signal "$interrupted_signal" \
+      '{schema:1,status:$status,error_category:(if $category == "" then null else $category end),
+        interrupted_signal:$signal,pod:$pod,pod_before:$before,cache_state:$cache,
+        cache_state_evidence:"operator-declared; use an empty dedicated JIT cache for cold, retain it for warm",
+        memory_telemetry:"memory.jsonl",started_at:$before.started_at,
+        ready_observed_at:(if $at == "" then null else $at end),
+        elapsed_seconds:(if $at == "" then null else
+          (($at|fromdateiso8601)-($before.started_at|sub("\\.[0-9]+Z$";"Z")|fromdateiso8601)) end),
+        scope:"container start through readiness (load/JIT/warmup combined); not image pull or pure model-load time",
+        memory_scope:"samples from observer attachment before Ready through Ready; memory.peak is lifetime and is never reset",
+        uncertainty:"API polling, sampled peaks and node/client wall-clock skew; compare only synchronized clocks"}' \
+      >"$output/startup.json" || exit_status=1
+    exit "$exit_status"
+  }
+  trap ws_serving_startup_memory_finish EXIT
+  trap 'category=interrupted; interrupted_signal=2; exit 130' INT
+  trap 'category=interrupted; interrupted_signal=15; exit 143' TERM
+  before=$(ws_serving_pod "$pod" 2>/dev/null) || ws_die 'cannot probe startup pod'
+  current=$before
+  jq -e --arg node "$SESSION_NODE" '
+    .ready == false and (.started_at|type == "string") and .node == $node
+    and (.uid|type == "string") and (.image|test("@sha256:[a-f0-9]{64}$"))
+    and (.container_id|type == "string" and length > 0)
+    and (.image_id|type == "string" and length > 0)
+    and (.restart_count|type == "number" and . >= 0 and . == floor)
+    and (.started_at|sub("\\.[0-9]+Z$";"Z")|fromdateiso8601|type == "number")' <<<"$before" >/dev/null ||
+    ws_die 'observe a running immutable SGLang container on the selected node before Ready'
+  printf '%s\n' "$before" >"$output/pod-before.json" || ws_die 'cannot retain startup pod identity'
+  uid=$(jq -er .uid <<<"$before") || ws_die 'cannot identify startup pod UID'
+  category=host-identity
+  boot=$(ws_rocm_boot_id_read /proc/sys/kernel/random/boot_id) || ws_die 'cannot identify local boot'
+  ws_session_kubectl get node "$SESSION_NODE" -o json 2>/dev/null | jq -e --arg boot "$boot" \
+    '.status.nodeInfo.bootID == $boot and (.status.allocatable["amd.com/gpu"] == "2")' >/dev/null ||
+    ws_die 'run startup memory observation on the selected two-GPU node'
+  deadline=$((SECONDS + ${SESSION_AI_STARTUP_TIMEOUT_SECONDS:-2100}))
+  while :; do
+    category=telemetry
+    sample=$("$(ws_measure_python)" "$(ws_repo_root)/lib/workstation/measurement.py" pod-memory "$uid" 2>/dev/null) ||
+      ws_die 'startup memory probe failed'
+    jq -e --argjson previous "$previous_tick" '(.pod_cgroup.id|type == "string" and test("^[0-9]+:[0-9]+$"))
+        and (.pod_cgroup.path|type == "string" and length > 0)
+        and (.pod_cgroup.values["memory.current"]|type == "string" and test("^[0-9]+$"))
+        and (.host_memory|type == "string" and length > 0)
+        and (.monotonic_ns|type == "number" and . > $previous)
+        and (.unix_ns|type == "number" and . > 0)' <<<"$sample" >/dev/null ||
+      ws_die 'startup memory sample is incomplete'
+    sample_id=$(jq -er .pod_cgroup.id <<<"$sample") || ws_die 'startup cgroup identity is missing'
+    [[ -z $cgroup_id || $sample_id == "$cgroup_id" ]] || ws_die 'startup cgroup identity changed'
+    cgroup_id=$sample_id
+    previous_tick=$(jq -er .monotonic_ns <<<"$sample") || ws_die 'startup sample timestamp is missing'
+    jq -c . <<<"$sample" >>"$output/memory.jsonl" || ws_die 'cannot retain startup memory sample'
+    ((SECONDS < deadline)) || {
+      category=timeout
+      ws_die 'startup timed out'
+    }
+    [[ $(jq -r .ready <<<"$current") != true ]] || break
+    category=probe
+    current=$(ws_serving_pod "$pod" 2>/dev/null) || ws_die 'cannot probe startup pod'
+    category='pod-identity'
+    [[ $(jq -cS 'del(.ready)' <<<"$current") == "$(jq -cS 'del(.ready)' <<<"$before")" ]] ||
+      ws_die 'pod restarted or changed during startup observation'
+    if [[ $(jq -r .ready <<<"$current") != true ]]; then sleep 1; fi
+  done
+  category=host-identity
+  [[ $boot == "$(ws_rocm_boot_id_read /proc/sys/kernel/random/boot_id)" ]] || ws_die 'local boot changed during startup'
+  ws_session_kubectl get node "$SESSION_NODE" -o json 2>/dev/null | jq -e --arg boot "$boot" \
+    '.status.nodeInfo.bootID == $boot' >/dev/null || ws_die 'selected node boot changed during startup'
+  category=probe
+  current=$(ws_serving_pod "$pod" 2>/dev/null) || ws_die 'cannot verify final startup pod'
+  [[ $(jq -cS 'del(.ready)' <<<"$current") == "$(jq -cS 'del(.ready)' <<<"$before")" && $(jq -r .ready <<<"$current") == true ]] ||
+    {
+      category='pod-identity'
+      ws_die 'pod changed after final startup memory sample'
+    }
+  category=clock
+  observed_at=$(date -u +%FT%TZ) || ws_die 'cannot timestamp startup readiness'
+  jq -en --arg at "$observed_at" --argjson before "$before" \
+    '($at|fromdateiso8601) >= ($before.started_at|sub("\\.[0-9]+Z$";"Z")|fromdateiso8601)' >/dev/null ||
+    ws_die 'startup timestamps are invalid or clocks are not synchronized'
+  ((SECONDS < deadline)) || {
+    category=timeout
+    ws_die 'startup timed out during final verification'
+  }
+  ready_at=$observed_at
+  complete=1
 )
 
 ws_rocm_validate_pod() (

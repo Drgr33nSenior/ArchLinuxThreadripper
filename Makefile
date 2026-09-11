@@ -64,6 +64,9 @@ systemd:
 		systemd-analyze verify templates/workstation/restic/workstation-restic@.service \
 			templates/workstation/restic/workstation-restic-backup.timer \
 			templates/workstation/restic/workstation-restic-retention.timer \
+			templates/workstation/telemetry/workstation-telemetry.service \
+			templates/workstation/telemetry/workstation-telemetry.timer \
+			templates/workstation/telemetry/workstation-alloy.service \
 			ansible/roles/k3s/files/k3s-lab-firewall.service; \
 	else \
 		echo 'SKIP: systemd-analyze verification requires Linux'; \

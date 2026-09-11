@@ -1,0 +1,22 @@
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+# Optional. Select only after node identity and kubelet TLS/auth qualification.
+resources:
+  - access.yaml
+configMapGenerator:
+  - name: alloy-config
+    namespace: workstation-observability
+    behavior: merge
+    files: [kubelet.alloy=config.alloy]
+patches:
+  - target:
+      kind: Deployment
+      name: alloy
+      namespace: workstation-observability
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/automountServiceAccountToken
+        value: true
+      - op: add
+        path: /spec/template/spec/serviceAccountName
+        value: workstation-alloy-kubelet

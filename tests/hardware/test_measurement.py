@@ -65,6 +65,61 @@ class Tests(unittest.TestCase):
             self.assertEqual(measurement.cgroup_values(directory)["values"]["memory.current"], "123")
             self.assertEqual(measurement.cgroup_values(None)["status"], "unavailable")
 
+    def test_memory_fields_identity_and_read_only_pod_snapshot(self):
+        uid = "11111111-2222-3333-4444-555555555555"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            directory = root / ("pod" + uid)
+            directory.mkdir()
+            fields = {"memory.current": "123", "memory.peak": "999", "memory.max": "4096",
+                      "memory.events": "oom 0\noom_kill 0", "memory.stat": "anon 100\nfile 23\nshmem 7",
+                      "memory.pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=17",
+                      "memory.swap.current": "0", "memory.swap.max": "max", "memory.swap.events": "fail 0"}
+            for key, value in fields.items():
+                (directory / key).write_text(value)
+            result = measurement.pod_memory(uid, sys=root, proc=root, cgroup=root)
+            pod = result["pod_cgroup"]
+            self.assertEqual(pod["id"], f"{directory.stat().st_dev}:{directory.stat().st_ino}")
+            self.assertEqual({key: pod["values"][key] for key in fields}, fields)
+            self.assertEqual({path.name: path.read_text() for path in directory.iterdir()}, fields)
+            self.assertIsNone(pod["values"]["cpu.stat"])
+            self.assertIsNone(result["cgroup"]["memory.swap.events"])
+            self.assertIsNone(result["cgroup"]["memory.stat"])
+            self.assertIn("lifetime", pod["scope"])
+            with patch.object(measurement, "pod_memory", return_value=result), \
+                    patch.object(sys, "argv", ["measurement.py", "pod-memory", uid]), \
+                    patch("sys.stdout", new_callable=io.StringIO) as output:
+                measurement.main()
+            self.assertEqual(json.loads(output.getvalue())["pod_cgroup"], pod)
+
+    def test_pod_memory_rejects_missing_ambiguous_and_invalid_samples(self):
+        uid = "11111111-2222-3333-4444-555555555555"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with self.assertRaises(ValueError):
+                measurement.pod_memory(uid, sys=root, proc=root, cgroup=root)
+            directory = root / ("pod" + uid)
+            directory.mkdir()
+            for value in ("", "-1", "nan", "inf", "1.5", "１２３"):
+                (directory / "memory.current").write_text(value)
+                with self.subTest(value=value), self.assertRaises(ValueError):
+                    measurement.pod_memory(uid, sys=root, proc=root, cgroup=root)
+            (directory / "memory.current").write_text("1")
+            (root / ("kubepods-pod" + uid.replace("-", "_") + ".slice")).mkdir()
+            self.assertIsNone(measurement.pod_cgroup(uid, root))
+            with self.assertRaises(ValueError):
+                measurement.pod_memory(uid, sys=root, proc=root, cgroup=root)
+
+    def test_cgroup_replacement_invalidates_sample_identity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp)
+            before = os.stat_result((0, 10, 20, 0, 0, 0, 0, 0, 0, 0))
+            after = os.stat_result((0, 11, 20, 0, 0, 0, 0, 0, 0, 0))
+            with patch.object(Path, "stat", side_effect=[before, after]):
+                self.assertIsNone(measurement.cgroup_values(path)["id"])
+            with patch.object(Path, "stat", side_effect=FileNotFoundError):
+                self.assertIsNone(measurement.cgroup_values(path)["id"])
+
     def test_arch_mirror_classification_and_redaction(self):
         result = stack_inventory.classify(["https://archive.archlinux.org/repos/2026/09/04/extra/os/x86_64",
                                            "https://user:secret@mirror.example/arch?token=secret"])

@@ -1,0 +1,144 @@
+// Owner-configured host Alloy instance; not part of the Kubernetes render.
+// Replace 192.0.2.3 with the discovered Loki ClusterIP and 192.0.2.4 with Alloy's
+// ClusterIP. The documentation-range addresses are deliberately unusable.
+// Needs read access via systemd-journal group, NOT root or host command access.
+// Keep state/cursor directory private; journal permission enables reading more
+// than these filters, so do not grant the agent arbitrary execution as this user.
+logging {
+  level = "warn"
+  format = "json"
+}
+
+loki.source.journal "installation" {
+  matches = "SYSLOG_IDENTIFIER=workstation-install"
+  max_age = "1h"
+  labels = {"job" = "workstation-install"}
+  forward_to = [loki.process.installation.receiver]
+}
+
+loki.process "installation" {
+  // Pinned journal source replaces job with its component ID; set our bounded
+  // stream label here before evaluating the fail-closed schema selector.
+  stage.static_labels {
+    values = {"job" = "workstation-install"}
+  }
+  stage.drop {
+    longer_than = "1KB"
+    drop_counter_reason = "oversize_install_event"
+  }
+  // Exact schema emitted by bootstrap_event, not arbitrary console output.
+  // Extra keys, malformed values and secret-bearing additions fail closed.
+  stage.regex {
+    expression = `^\{"schema":(?P<schema>1),"run_id":"[0-9TZ-]{1,64}","configuration_sha256":"[a-f0-9]{64}","stage":"(?P<stage>event-sink|preflight|install|verify|safe-target|owner-confirmation|partitions|storage|target-mount|header-backup|base-packages|target-config|system-config|boot-package|bridge-package|firmware-entries)","mode":"(?P<mode>dry-run|execute)","outcome":"(?P<outcome>started|succeeded|failed)","exit_code":[0-9]{1,3},"timestamp":"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z"\}$`
+  }
+  stage.labels {
+    values = {"schema" = "", "stage" = "", "mode" = "", "outcome" = ""}
+  }
+  stage.match {
+    selector = "{job=\"workstation-install\",schema!=\"1\"}"
+    action = "drop"
+    drop_counter_reason = "unreviewed_install_schema"
+  }
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.source.journal "kernel_errors" {
+  matches = "_TRANSPORT=kernel PRIORITY=3"
+  max_age = "1h"
+  labels = {"job" = "workstation-kernel"}
+  forward_to = [loki.process.kernel.receiver]
+}
+
+loki.source.journal "kernel_warnings" {
+  matches = "_TRANSPORT=kernel PRIORITY=4"
+  max_age = "1h"
+  labels = {"job" = "workstation-kernel"}
+  forward_to = [loki.process.kernel.receiver]
+}
+
+loki.process "kernel" {
+  stage.static_labels {
+    values = {"job" = "workstation-kernel"}
+  }
+  stage.regex {
+    expression = `(?i)\b(?P<subsystem>amdgpu|nvme|md|xfs|aer|edac)\b`
+  }
+  stage.labels {
+    values = {"subsystem" = ""}
+  }
+  stage.match {
+    selector = "{job=\"workstation-kernel\",subsystem=\"\"}"
+    action = "drop"
+    drop_counter_reason = "unreviewed_kernel_class"
+  }
+  stage.template {
+    source = "safe_message"
+    template = "kernel {{ .subsystem }} warning/error; inspect the local journal"
+  }
+  stage.output {
+    source = "safe_message"
+  }
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.write "local" {
+  max_streams = 128
+  endpoint {
+    url = "http://192.0.2.3:3100/loki/api/v1/push"
+    batch_size = "64KiB"
+    batch_wait = "5s"
+    remote_timeout = "5s"
+    min_backoff_period = "1s"
+    max_backoff_period = "10s"
+    max_backoff_retries = 3
+    follow_redirects = false
+  }
+}
+
+// Bridge uses only localhost. This instance forwards to the cluster collector,
+// which enforces its service/attribute allowlists before backend persistence.
+// No native journal entries are sent through this raw OTLP forwarding path.
+otelcol.receiver.otlp "bridge" {
+  http {
+    endpoint = "127.0.0.1:4318"
+    max_request_body_size = "4MiB"
+  }
+  output {
+    metrics = [otelcol.processor.memory_limiter.host.input]
+    traces = [otelcol.processor.memory_limiter.host.input]
+  }
+}
+
+otelcol.processor.memory_limiter "host" {
+  check_interval = "1s"
+  limit = "256MiB"
+  spike_limit = "32MiB"
+  output {
+    metrics = [otelcol.processor.batch.host.input]
+    traces = [otelcol.processor.batch.host.input]
+  }
+}
+
+otelcol.processor.batch "host" {
+  timeout = "5s"
+  send_batch_size = 128
+  send_batch_max_size = 256
+  output {
+    metrics = [otelcol.exporter.otlphttp.cluster.input]
+    traces = [otelcol.exporter.otlphttp.cluster.input]
+  }
+}
+
+otelcol.exporter.otlphttp "cluster" {
+  client {
+    endpoint = "http://192.0.2.4:4318"
+    timeout = "5s"
+  }
+  sending_queue {
+    queue_size = 64
+    num_consumers = 1
+  }
+  retry_on_failure {
+    max_elapsed_time = "30s"
+  }
+}

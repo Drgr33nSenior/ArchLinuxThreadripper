@@ -62,6 +62,7 @@ if command -v bsdtar >/dev/null; then
     [[ -f $packaged_root/.agents/skills/workstation-install/SKILL.md && ! -e $packaged_root/.git ]]
     [[ -f $packaged_root/BUILD-IDENTITY && -f $packaged_root/docs/INSTALLATION.md ]]
     [[ -f $packaged_root/docs/ISO.md && -f $packaged_root/docs/ISO-REFERENCE.md ]]
+    [[ -f $packaged_root/infrastructure/iso/mkarchiso.sh ]]
     [[ -f $packaged_root/docs/validation/VALIDATION-BRIDGE-ISO.md ]]
     [[ ! -e $packaged_root/docs/BRIDGE-ISO.md && ! -e $packaged_root/docs/CODEX-INSTALL.md ]]
     cmp "$packaged_root/AGENTS.md" "$packaged_root/.aiassistant/rules/workstation-guardrails.md"
@@ -91,6 +92,17 @@ if command -v bsdtar >/dev/null; then
     done
     [[ -x $pkgdir/usr/lib/bridge/workstation-runtime/bin/workstationctl && ! -e $pkgdir/etc && ! -e $pkgdir/var ]]
     [[ -f $pkgdir/usr/lib/bridge/workstation-runtime/lib/workstation/session.sh && -f $pkgdir/usr/lib/bridge/workstation-reference/apps/overlays/rag/SHA256SUMS ]]
+    payload="$pkgdir/usr/lib/bridge/workstation-runtime"
+    [[ -f $payload/lib/workstation/telemetry.py && -f $payload/lib/workstation/telemetry_sample.py ]]
+    [[ -f $payload/docs/TELEMETRY.md && -f $payload/infrastructure/observability/host/config.alloy ]]
+    [[ -f $pkgdir/usr/lib/systemd/system/workstation-telemetry.timer && -f $pkgdir/usr/lib/systemd/system/workstation-alloy.service ]]
+    [[ -f $pkgdir/usr/lib/sysusers.d/workstation-telemetry.conf && " ${depends[*]} " == *' systemd '* ]]
+    # Use the packaged tree without Git; no cluster call or target discovery.
+    TELEMETRY_ENABLED=true TELEMETRY_API_ADDRESS=192.168.50.10 TELEMETRY_WORKSTATION_ADDRESS=192.168.50.10 \
+      bash "$payload/bin/workstationctl" telemetry render "$work/packaged-telemetry" >/dev/null
+    bash "$payload/bin/workstationctl" telemetry verify "$work/packaged-telemetry" >/dev/null
+    jq -e '.source_identity.git_revision == null and .source_identity.build_identity_sha256 != null and .hardware_qualification == "NOT RUN"' \
+      "$work/packaged-telemetry/evidence.json" >/dev/null
 
     # Incidental edits to the consumed recipe or exported lock must be rejected.
     mkdir "$work/drift"

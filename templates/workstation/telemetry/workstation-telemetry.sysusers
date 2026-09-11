@@ -1,0 +1,2 @@
+u workstation-telemetry - "Read-only workstation metrics" / /usr/bin/nologin
+u workstation-alloy - "Filtered workstation telemetry forwarding" / /usr/bin/nologin

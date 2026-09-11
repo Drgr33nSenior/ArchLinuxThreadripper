@@ -212,6 +212,7 @@ def run(base, workload_path, evidence_dir, output):
             sample["server_load"] = server_load(base)
             sample["pod_cgroup"] = cgroup_values(pod_scope)
             return sample
+        report["measurement_started_monotonic_ns"] = time.monotonic_ns()
         with Sampler(output / "host-telemetry.jsonl", collect=collect):
             for case in workload["cases"]:
                 # Warmup is explicit and excluded. A new-prefix test must supply
@@ -252,6 +253,12 @@ def run(base, workload_path, evidence_dir, output):
                             "aggregate_output_tokens_per_second": sum(r["output_tokens"] for r in good) / elapsed,
                             "wall_seconds": elapsed, "queue_before": before, "queue_after": server_metrics(base)})
                         (output / "result.json").write_text(json.dumps(report, indent=2, allow_nan=False) + "\n")
+        report["workload_finished_monotonic_ns"] = time.monotonic_ns()
+        # Sample after the last response as well: the lifetime pod high-water
+        # must cover the entire workload, not just the last periodic tick.
+        with (output / "host-telemetry.jsonl").open("a") as telemetry:
+            telemetry.write(json.dumps(collect(), allow_nan=False) + "\n")
+        report["measurement_finished_monotonic_ns"] = time.monotonic_ns()
         if sha256(evidence_path) != report["runtime_sha256"] or sha256(workload_path) != report["workload_sha256"]:
             raise ValueError("input provenance changed during benchmark")
         report["repeat_summary"] = []

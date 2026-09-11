@@ -368,9 +368,10 @@ is a vendor candidate, not a local model-capacity or correctness qualification.
 
 The 16 GiB `/dev/shm` is a tmpfs limit, not an up-front allocation, and its pages
 count against container memory. Single-GPU SGLang requests and limits 32 GiB;
-the two-GPU profile requests and limits 38 GiB, leaving room for the Qwen
-embedding pilot and other pods after host reservations. These are initial
-test budgets, not proof that a particular model will load without OOM. Account
+the two-GPU profile requests and limits 38 GiB. These are initial test budgets,
+not proof of model loading or room for RAG plus full telemetry. Use the
+[host-memory workflow](PERFORMANCE-VALIDATION.md#right-size-sglang-host-ram) before
+reducing them. Account
 for host/K3s reserves, CPU staging, KV cache and other applications. With no swap,
 stop source builds before large inference tests.
 

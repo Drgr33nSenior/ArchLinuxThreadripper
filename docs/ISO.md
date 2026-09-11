@@ -34,18 +34,28 @@ installation separately, after building and validating the media.
 Preview the workflow without contacting Docker or creating files:
 
 ```sh
-bash infrastructure/iso/release.sh packages
+BRIDGE_COMMIT=REPLACE_WITH_REVIEWED_40_CHARACTER_COMMIT
+BRIDGE_VERSION=v0.0.0
+bash infrastructure/iso/release.sh packages "$BRIDGE_COMMIT" "$BRIDGE_VERSION"
 ```
 
 Then execute it:
 
 ```sh
-bash infrastructure/iso/release.sh --execute packages
+bash infrastructure/iso/release.sh --execute packages "$BRIDGE_COMMIT" "$BRIDGE_VERSION"
 ```
 
-This builds or reuses the pinned tools image, checks it, snapshots the current
-checkout and builds all four unsigned installer packages. Each stage stops on failure.
-Package building runs as UID 1000 without network or Linux capabilities.
+Replace the commit placeholder with the exact reviewed GitHub commit, not `main`
+or a tag. The version is a package label, not source identity; `v0.0.0` denotes a
+local candidate. No Go installation or Bridge checkout is needed on the Mac.
+
+This builds/checks the pinned tools image, snapshots this installer checkout,
+builds four unsigned installer packages, fetches the selected Bridge commit,
+builds/tests its package, and bundles its runtime dependencies. Each stage stops
+on failure. Installer compilation is offline; Bridge fetch/compiler/module and
+dependency downloads need network. Both builds run as UID 1000 without capabilities.
+Signing remains manual. For reviewed CI artifacts or `INSTALL_BRIDGE=false`, use
+`packages` without arguments and follow the alternative stage below.
 
 ### Select your build directory
 
@@ -56,6 +66,7 @@ terminal. It selects one completed run, not the newest timestamp:
 build/iso/run-<timestamp>-<pid>/
 ├── source/       # Frozen source archive, recipe and manifest
 ├── packages/     # Four unsigned installer packages
+├── bridge-artifacts/ # Bridge package, exact source and compiler/build evidence
 └── bundled/      # After Bridge selection: five packages + official dependencies
 ```
 
@@ -72,49 +83,55 @@ available for inspection.
 
 ## 1a. Bundle Bridge, unless explicitly opting out
 
-The default `INSTALL_BRIDGE=true` requires this stage before signing. For media
-without Bridge, skip this stage and set `INSTALL_BRIDGE=false` in the install
-configuration; omission means true, including in older configurations.
+If the command above completed with `ISO_RUN/bundled`, continue to signing.
+Do not rebuild or bundle that run again. `INSTALL_BRIDGE=true` is the default,
+including when older configurations omit the key.
 
-Select one reviewed local or successful CI build of
-`spry-ai-workstation-bridge`, with its exact `PKGBUILD` and
-`spry-bridge-*-src.tar.gz`. A version label alone does not identify the source.
-For a local build, follow Bridge's `docs/ARCH-PACKAGING.md`:
+For a run built without Bridge arguments, select either a reviewed CI artifact
+directory or build the exact GitHub commit in a separate job:
 
 ```sh
-BRIDGE_REPO=/absolute/reviewed/Spry.ai-workstation-bridge
-cd "$BRIDGE_REPO"
-make check
-go run ./cmd/bridge-arch-package --version v0.0.0 --output /absolute/new/bridge-source
-# In a prepared unprivileged Arch environment, in that generated directory:
-makepkg --verifysource
-makepkg --cleanbuild
+BRIDGE_ARTIFACTS="$ISO_RUN/bridge-artifacts-retry1"
+bash infrastructure/iso/release.sh bridge-build "$BRIDGE_COMMIT" "$BRIDGE_VERSION" "$BRIDGE_ARTIFACTS"
+bash infrastructure/iso/release.sh --execute bridge-build "$BRIDGE_COMMIT" "$BRIDGE_VERSION" "$BRIDGE_ARTIFACTS"
 ```
 
-Choose a reviewed version label; `v0.0.0` is only a local candidate example.
-Return to the installer checkout, retain the printed `ISO_RUN`, and select
-the directory containing that single package, source archive and recipe:
+These calls preview, then fetch/build/test in the AMD64 Arch container. They never
+run `makepkg` on macOS. The container has four CPU equivalents, 6 GiB RAM and no
+swap. No host source directory, credentials or Docker socket is mounted. The
+reviewed commit's generator produces its PKGBUILD and checksummed source archive.
+The exact compiler must match its `.go-version`; mismatches stop the build.
+Review `builder.lock`, `BUILDINFO`, `go-environment.json` and `SHA256SUMS` in
+the output. See [compiler provenance](ISO-REFERENCE.md#bridge-package-build-on-apple-silicon).
+
+Keep the original `ISO_RUN`. For CI, set `BRIDGE_ARTIFACTS` to the downloaded
+directory containing one package, its exact PKGBUILD and source archive. Then:
 
 ```sh
-BRIDGE_ARTIFACTS=/absolute/reviewed/bridge-artifacts
 bash infrastructure/iso/release.sh bridge "$ISO_RUN" "$BRIDGE_ARTIFACTS"
 bash infrastructure/iso/release.sh --execute bridge "$ISO_RUN" "$BRIDGE_ARTIFACTS"
 ```
 
-The stage creates `ISO_RUN/bundled`: five local packages, a rebuilt repository,
-`bridge-bundle.json` and the official runtime dependency closure for the ISO's
-Arch snapshot. Go remains build-only. Official packages retain their Arch
-signatures. The selected Bridge binary checks the matching runtime/reference
-catalog; no service starts and no target approvals are generated.
+The stage creates `ISO_RUN/bundled` with five local packages, a rebuilt repository,
+`bridge-bundle.json` and official runtime dependencies from the ISO snapshot.
+Official signatures remain intact; Go stays build-only. Bundling checks the actual
+Bridge binary against this installer's runtime/reference catalog.
 
-Review the recorded source hashes, package metadata and dependency evidence.
-Missing, ambiguous or changed inputs stop the stage. Existing output is refused;
-retain failed jobs and use a fresh reviewed run for changed inputs. Do not fall
-back to another run's packages. Signed offline transaction validation remains
-pending until owner signing and installation preflight.
+Missing, ambiguous, incompatible or changed inputs stop the stage. Failed jobs
+and volumes are retained; inspect the printed container with `docker logs` and
+retry Bridge compilation into a fresh output directory. Do not rebuild successful
+installer packages or mix unrelated runs. An existing bundle is never overwritten.
 
+As checked on 2026-09-09, GitHub commit `0d775872b18676147b10128781ad21ad432386cb`
+lacks the required package source-identity field. Select a reviewed published
+commit containing the Bridge ISO integration changes; local uncommitted fixes are
+not fetched. The workflow refuses old recipes rather than patching fetched source.
+
+For media without Bridge, omit its build/bundle stages and explicitly configure
+`INSTALL_BRIDGE=false`. No stage signs packages, starts services, or qualifies
+hardware. Offline transaction verification still requires owner signatures;
+bundling dependencies does not make the whole OS installation offline.
 See [payload and contract details](ISO-REFERENCE.md#bridge-payload-and-candidate-contract).
-Transporting these archives does not make the whole OS installation offline.
 
 ## 2. Review and sign this run's packages
 
@@ -196,6 +213,22 @@ The command prints a fresh output directory inside `ISO_RUN`. Expect an `.iso`,
 `SHA256SUMS` and build manifests. ISO attempts use new job/output names, so you can
 retry this stage with the same signed packages without rebuilding or resigning.
 Never treat partial output from a failed attempt as a completed release.
+
+The build verifies signed packages using a temporary builder keyring. Its
+package-list query uses that same configuration, not the live keyring, which
+is initialized at ISO boot. If the query fails, emits diagnostics (even with
+exit status zero), or returns an empty list, assembly stops. An upstream query
+change also stops the guarded adapter for review.
+For the earlier `key is unknown` error during package-list generation, retry
+assembly with the corrected scripts and the same signed package run; do not
+regenerate your key or resign packages. The adapter is mounted from the checkout;
+this correction does not require rebuilding the Docker image or packages.
+
+`GPG key: None` in mkarchiso output refers to its separate image-signing option,
+not package verification. `Secureboot key directory doesn't exist, not signing!`
+means the build has no Secure Boot private keys. Neither message is a reason
+to copy private keys into Docker. Final ISO signing and Secure Boot qualification
+remain separate owner steps.
 
 Stop here before writing USB media. Review the image and manifests, sign the final
 ISO using your reviewed release-signing process, and perform the

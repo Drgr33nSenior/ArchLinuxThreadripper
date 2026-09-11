@@ -388,8 +388,8 @@ bootstrap_install() {
   if ((! BOOTSTRAP_DRY_RUN)); then
     bootstrap_require_tty || return 1
   fi
-  bootstrap_preflight || return 1
-  bootstrap_assert_safe_target || return 1
+  bootstrap_stage preflight bootstrap_preflight || return 1
+  bootstrap_stage safe-target bootstrap_assert_safe_target || return 1
   if ((! BOOTSTRAP_DRY_RUN)); then
     command -v efibootmgr >/dev/null 2>&1 || {
       bootstrap_die 'efibootmgr is required before destructive installation'
@@ -402,17 +402,17 @@ bootstrap_install() {
     bootstrap_install_plan
     return 0
   fi
-  bootstrap_confirm_destruction || return 1
-  bootstrap_create_partitions || return 1
-  bootstrap_create_storage_stack || return 1
-  bootstrap_mount_target || return 1
-  bootstrap_create_luks_header_backup || return 1
-  bootstrap_run pacstrap -K "$BOOTSTRAP_TARGET" "${BOOTSTRAP_BASE_PACKAGES[@]}" \
+  bootstrap_stage owner-confirmation bootstrap_confirm_destruction || return 1
+  bootstrap_stage partitions bootstrap_create_partitions || return 1
+  bootstrap_stage storage bootstrap_create_storage_stack || return 1
+  bootstrap_stage target-mount bootstrap_mount_target || return 1
+  bootstrap_stage header-backup bootstrap_create_luks_header_backup || return 1
+  bootstrap_stage base-packages bootstrap_run pacstrap -K "$BOOTSTRAP_TARGET" "${BOOTSTRAP_BASE_PACKAGES[@]}" \
     ${BOOTSTRAP_PROFILE_PACKAGES[@]+"${BOOTSTRAP_PROFILE_PACKAGES[@]}"} ${BOOTSTRAP_GPU_PACKAGES[@]+"${BOOTSTRAP_GPU_PACKAGES[@]}"} || return 1
-  bootstrap_write_target_config || return 1
-  bootstrap_configure_system || return 1
-  bootstrap_install_boot_package || return 1
-  bootstrap_install_bridge || return 1
-  bootstrap_create_firmware_entries || return 1
+  bootstrap_stage target-config bootstrap_write_target_config || return 1
+  bootstrap_stage system-config bootstrap_configure_system || return 1
+  bootstrap_stage boot-package bootstrap_install_boot_package || return 1
+  bootstrap_stage bridge-package bootstrap_install_bridge || return 1
+  bootstrap_stage firmware-entries bootstrap_create_firmware_entries || return 1
   bootstrap_log 'install complete. Do not enable Secure Boot until you have exported firmware keys and manually enrolled the new owner keys.'
 }

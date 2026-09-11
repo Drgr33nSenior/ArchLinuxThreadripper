@@ -1,5 +1,9 @@
 # Optional Spry.ai Bridge session adapter v1
 
+Optional Bridge OTLP instrumentation and bounded diagnostic summaries are
+described in [Telemetry](TELEMETRY.md#host-sampling-journal-forwarding-and-bridge).
+They do not extend this session authorization contract or approve new operations.
+
 The standalone `workstationctl session` interface remains supported. If an
 owner installs `/etc/workstation/session-policy.conf` as root:root 0600, it
 becomes the canonical session state and cluster identity policy for every

@@ -1,0 +1,406 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: prometheus, namespace: workstation-observability}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app.kubernetes.io/name: prometheus}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: prometheus}
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector: {kubernetes.io/os: linux, kubernetes.io/arch: amd64}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: prometheus
+          image: docker.io/prom/prometheus:v3.14.0@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0
+          args:
+            - '--config.file=/etc/prometheus/prometheus.yml'
+            - '--storage.tsdb.path=/prometheus'
+            - '--storage.tsdb.retention.time=14d'
+            - '--storage.tsdb.retention.size=24GB'
+            - '--web.enable-remote-write-receiver'
+            - '--query.max-concurrency=4'
+            - '--query.timeout=30s'
+          ports:
+            - {name: http, containerPort: 9090}
+          resources:
+            requests: {cpu: '500m', memory: '1536Mi'}
+            limits: {cpu: '2', memory: '1536Mi'}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          env:
+            - {name: GOMEMLIMIT, value: '1228MiB'}
+          readinessProbe:
+            httpGet: {path: '/-/ready', port: http}
+            initialDelaySeconds: 10
+            timeoutSeconds: 3
+          startupProbe:
+            httpGet: {path: '/-/ready', port: http}
+            failureThreshold: 60
+            periodSeconds: 5
+          volumeMounts:
+            - {name: data, mountPath: /prometheus}
+            - {name: tmp, mountPath: /tmp}
+            - {name: prometheus-config, mountPath: /etc/prometheus, readOnly: true}
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: prometheus-data}
+        - name: tmp
+          emptyDir: {sizeLimit: 128Mi}
+        - name: prometheus-config
+          configMap: {name: prometheus-config}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: prometheus, namespace: workstation-observability}
+spec:
+  type: ClusterIP
+  selector: {app.kubernetes.io/name: prometheus}
+  ports:
+    - {name: http, port: 9090, targetPort: http}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: prometheus-data, namespace: workstation-observability}
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests: {storage: 30Gi}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: loki, namespace: workstation-observability}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app.kubernetes.io/name: loki}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: loki}
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector: {kubernetes.io/os: linux, kubernetes.io/arch: amd64}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: loki
+          image: docker.io/grafana/loki:3.7.7@sha256:d70e4659623f3e109af669cae76fe2a5dd5be54e2298fe8aed380d982fbc2500
+          args:
+            - '-config.file=/etc/loki/config.yaml'
+          ports:
+            - {name: http, containerPort: 3100}
+          resources:
+            requests: {cpu: '500m', memory: '1024Mi'}
+            limits: {cpu: '2', memory: '1024Mi'}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          env:
+            - {name: GOMEMLIMIT, value: '819MiB'}
+          readinessProbe:
+            httpGet: {path: '/ready', port: http}
+            initialDelaySeconds: 10
+            timeoutSeconds: 3
+          startupProbe:
+            httpGet: {path: '/ready', port: http}
+            failureThreshold: 60
+            periodSeconds: 5
+          volumeMounts:
+            - {name: data, mountPath: /loki}
+            - {name: tmp, mountPath: /tmp}
+            - {name: loki-config, mountPath: /etc/loki, readOnly: true}
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: loki-data}
+        - name: tmp
+          emptyDir: {sizeLimit: 128Mi}
+        - name: loki-config
+          configMap: {name: loki-config}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: loki, namespace: workstation-observability}
+spec:
+  type: ClusterIP
+  selector: {app.kubernetes.io/name: loki}
+  ports:
+    - {name: http, port: 3100, targetPort: http}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: loki-data, namespace: workstation-observability}
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests: {storage: 20Gi}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: tempo, namespace: workstation-observability}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app.kubernetes.io/name: tempo}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: tempo}
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector: {kubernetes.io/os: linux, kubernetes.io/arch: amd64}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: tempo
+          image: docker.io/grafana/tempo:3.0.3@sha256:0296560ac66f8a3600d7fb3014a52c189d4d9c3549ad6ff441bf2409855d68d5
+          args:
+            - '-config.file=/etc/tempo/config.yaml'
+          ports:
+            - {name: http, containerPort: 3200}
+            - {name: otlp-grpc, containerPort: 4317}
+          resources:
+            requests: {cpu: '500m', memory: '768Mi'}
+            limits: {cpu: '2', memory: '768Mi'}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          env:
+            - {name: GOMEMLIMIT, value: '614MiB'}
+          readinessProbe:
+            httpGet: {path: '/ready', port: http}
+            initialDelaySeconds: 10
+            timeoutSeconds: 3
+          startupProbe:
+            httpGet: {path: '/ready', port: http}
+            failureThreshold: 60
+            periodSeconds: 5
+          volumeMounts:
+            - {name: data, mountPath: /var/tempo}
+            - {name: tmp, mountPath: /tmp}
+            - {name: tempo-config, mountPath: /etc/tempo, readOnly: true}
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: tempo-data}
+        - name: tmp
+          emptyDir: {sizeLimit: 128Mi}
+        - name: tempo-config
+          configMap: {name: tempo-config}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: tempo, namespace: workstation-observability}
+spec:
+  type: ClusterIP
+  selector: {app.kubernetes.io/name: tempo}
+  ports:
+    - {name: http, port: 3200, targetPort: http}
+    - {name: otlp-grpc, port: 4317, targetPort: otlp-grpc}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: tempo-data, namespace: workstation-observability}
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests: {storage: 10Gi}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: grafana, namespace: workstation-observability}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app.kubernetes.io/name: grafana}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: grafana}
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector: {kubernetes.io/os: linux, kubernetes.io/arch: amd64}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 472
+        runAsGroup: 472
+        fsGroup: 472
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: grafana
+          image: docker.io/grafana/grafana:13.2.1@sha256:f772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283
+          ports:
+            - {name: http, containerPort: 3000}
+          resources:
+            requests: {cpu: '250m', memory: '512Mi'}
+            limits: {cpu: '2', memory: '512Mi'}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          env:
+            - {name: GOMEMLIMIT, value: '409MiB'}
+            - {name: GF_SECURITY_ADMIN_USER, valueFrom: {secretKeyRef: {name: grafana-admin, key: admin-user}}}
+            - {name: GF_SECURITY_ADMIN_PASSWORD, valueFrom: {secretKeyRef: {name: grafana-admin, key: admin-password}}}
+            - {name: GF_AUTH_ANONYMOUS_ENABLED, value: 'false'}
+            - {name: GF_USERS_ALLOW_SIGN_UP, value: 'false'}
+            - {name: GF_ANALYTICS_REPORTING_ENABLED, value: 'false'}
+            - {name: GF_ANALYTICS_CHECK_FOR_UPDATES, value: 'false'}
+            - {name: GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES, value: 'false'}
+            - {name: GF_LOG_LEVEL, value: warn}
+            - {name: GF_PLUGINS_PREINSTALL_DISABLED, value: 'true'}
+          readinessProbe:
+            httpGet: {path: '/api/health', port: http}
+            initialDelaySeconds: 10
+            timeoutSeconds: 3
+          startupProbe:
+            httpGet: {path: '/api/health', port: http}
+            failureThreshold: 60
+            periodSeconds: 5
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/grafana}
+            - {name: tmp, mountPath: /tmp}
+            - {name: grafana-datasources, mountPath: /etc/grafana/provisioning/datasources, readOnly: true}
+            - {name: grafana-dashboards, mountPath: /etc/grafana/provisioning/dashboards, readOnly: true}
+            - {name: workstation-dashboard, mountPath: /var/lib/grafana/dashboards, readOnly: true}
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: grafana-data}
+        - name: tmp
+          emptyDir: {sizeLimit: 128Mi}
+        - name: grafana-datasources
+          configMap: {name: grafana-datasources}
+        - name: grafana-dashboards
+          configMap: {name: grafana-dashboards}
+        - name: workstation-dashboard
+          configMap: {name: workstation-dashboard}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: grafana, namespace: workstation-observability}
+spec:
+  type: ClusterIP
+  selector: {app.kubernetes.io/name: grafana}
+  ports:
+    - {name: http, port: 3000, targetPort: http}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: grafana-data, namespace: workstation-observability}
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests: {storage: 2Gi}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: alloy, namespace: workstation-observability}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app.kubernetes.io/name: alloy}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: alloy}
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector: {kubernetes.io/os: linux, kubernetes.io/arch: amd64}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 473
+        runAsGroup: 473
+        fsGroup: 473
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: alloy
+          image: docker.io/grafana/alloy:v1.19.2@sha256:b8ec653c44235fbe910879145dac3597d66b0aaecf60bcbbe82580767771a839
+          args:
+            - 'run'
+            - '--server.http.listen-addr=0.0.0.0:12345'
+            - '--server.http.enable-pprof=false'
+            - '--server.http.disable-support-bundle=true'
+            - '--storage.path=/var/lib/alloy'
+            - '--disable-reporting'
+            - '/etc/alloy'
+          ports:
+            - {name: http, containerPort: 12345}
+            - {name: otlp-grpc, containerPort: 4317}
+            - {name: otlp-http, containerPort: 4318}
+          resources:
+            requests: {cpu: '500m', memory: '512Mi'}
+            limits: {cpu: '2', memory: '512Mi'}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          env:
+            - {name: GOMEMLIMIT, value: '409MiB'}
+          readinessProbe:
+            httpGet: {path: '/-/ready', port: http}
+            initialDelaySeconds: 10
+            timeoutSeconds: 3
+          startupProbe:
+            httpGet: {path: '/-/ready', port: http}
+            failureThreshold: 60
+            periodSeconds: 5
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/alloy}
+            - {name: tmp, mountPath: /tmp}
+            - {name: alloy-config, mountPath: /etc/alloy, readOnly: true}
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: alloy-data}
+        - name: tmp
+          emptyDir: {sizeLimit: 128Mi}
+        - name: alloy-config
+          configMap: {name: alloy-config}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: alloy, namespace: workstation-observability}
+spec:
+  type: ClusterIP
+  selector: {app.kubernetes.io/name: alloy}
+  ports:
+    - {name: http, port: 12345, targetPort: http}
+    - {name: otlp-grpc, port: 4317, targetPort: otlp-grpc}
+    - {name: otlp-http, port: 4318, targetPort: otlp-http}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: alloy-data, namespace: workstation-observability}
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests: {storage: 2Gi}

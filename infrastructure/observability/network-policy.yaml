@@ -1,0 +1,403 @@
+# Documentation-range addresses deliberately block deployment until the renderer
+# replaces them with reviewed apiserver and workstation identities.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: loki-from-workstation, namespace: workstation-observability}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: loki}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - ipBlock: {cidr: 192.0.2.2/32}
+      ports: [{protocol: TCP, port: 3100}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: alloy-to-sglang, namespace: workstation-observability}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: alloy}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: ai-home-lab}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: sglang}
+      ports: [{protocol: TCP, port: 30000}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: default-deny, namespace: workstation-observability}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: allow-dns, namespace: workstation-observability}
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kube-system}
+          podSelector:
+            matchLabels: {k8s-app: kube-dns}
+      ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: default-deny, namespace: workstation-observability-host}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: allow-dns, namespace: workstation-observability-host}
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kube-system}
+          podSelector:
+            matchLabels: {k8s-app: kube-dns}
+      ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: alloy-to-prometheus-9090, namespace: workstation-observability}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: alloy}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: workstation-observability}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: prometheus}
+      ports: [{protocol: TCP, port: 9090}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: prometheus-from-alloy-9090, namespace: workstation-observability}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: prometheus}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: workstation-observability}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: alloy}
+      ports: [{protocol: TCP, port: 9090}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: alloy-to-loki-3100, namespace: workstation-observability}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: alloy}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: workstation-observability}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: loki}
+      ports: [{protocol: TCP, port: 3100}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: loki-from-alloy-3100, namespace: workstation-observability}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: loki}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: workstation-observability}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: alloy}
+      ports: [{protocol: TCP, port: 3100}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: alloy-to-tempo-4317, namespace: workstation-observability}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: alloy}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: workstation-observability}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: tempo}
+      ports: [{protocol: TCP, port: 4317}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: tempo-from-alloy-4317, namespace: workstation-observability}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: tempo}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: workstation-observability}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: alloy}
+      ports: [{protocol: TCP, port: 4317}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: alloy-to-tempo-3200, namespace: workstation-observability}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: alloy}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: workstation-observability}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: tempo}
+      ports: [{protocol: TCP, port: 3200}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: tempo-from-alloy-3200, namespace: workstation-observability}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: tempo}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: workstation-observability}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: alloy}
+      ports: [{protocol: TCP, port: 3200}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: alloy-to-grafana-3000, namespace: workstation-observability}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: alloy}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: workstation-observability}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: grafana}
+      ports: [{protocol: TCP, port: 3000}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: grafana-from-alloy-3000, namespace: workstation-observability}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: grafana}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: workstation-observability}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: alloy}
+      ports: [{protocol: TCP, port: 3000}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: alloy-to-node-exporter-9100, namespace: workstation-observability}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: alloy}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: workstation-observability-host}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: node-exporter}
+      ports: [{protocol: TCP, port: 9100}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: node-exporter-from-alloy-9100, namespace: workstation-observability-host}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: node-exporter}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: workstation-observability}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: alloy}
+      ports: [{protocol: TCP, port: 9100}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: alloy-to-kube-state-metrics-8080, namespace: workstation-observability}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: alloy}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: workstation-observability}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: kube-state-metrics}
+      ports: [{protocol: TCP, port: 8080}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: kube-state-metrics-from-alloy-8080, namespace: workstation-observability}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: kube-state-metrics}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: workstation-observability}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: alloy}
+      ports: [{protocol: TCP, port: 8080}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: grafana-to-prometheus-9090, namespace: workstation-observability}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: grafana}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: workstation-observability}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: prometheus}
+      ports: [{protocol: TCP, port: 9090}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: prometheus-from-grafana-9090, namespace: workstation-observability}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: prometheus}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: workstation-observability}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: grafana}
+      ports: [{protocol: TCP, port: 9090}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: grafana-to-loki-3100, namespace: workstation-observability}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: grafana}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: workstation-observability}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: loki}
+      ports: [{protocol: TCP, port: 3100}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: loki-from-grafana-3100, namespace: workstation-observability}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: loki}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: workstation-observability}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: grafana}
+      ports: [{protocol: TCP, port: 3100}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: grafana-to-tempo-3200, namespace: workstation-observability}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: grafana}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: workstation-observability}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: tempo}
+      ports: [{protocol: TCP, port: 3200}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: tempo-from-grafana-3200, namespace: workstation-observability}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: tempo}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: workstation-observability}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: grafana}
+      ports: [{protocol: TCP, port: 3200}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: kube-state-metrics-to-api, namespace: workstation-observability}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: kube-state-metrics}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        # Replaced from TELEMETRY_API_ADDRESS; verify post-DNAT CNI behaviour.
+        - ipBlock: {cidr: 192.0.2.1/32}
+      ports: [{protocol: TCP, port: 443}, {protocol: TCP, port: 6443}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: alloy-from-workstation, namespace: workstation-observability}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: alloy}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        # Replaced from TELEMETRY_WORKSTATION_ADDRESS. Service stays ClusterIP.
+        - ipBlock: {cidr: 192.0.2.2/32}
+      ports: [{protocol: TCP, port: 4317}, {protocol: TCP, port: 4318}]
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: ai-home-lab}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: sglang}
+      ports: [{protocol: TCP, port: 4317}]

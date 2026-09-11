@@ -80,7 +80,10 @@ version. Image tags include a hash of all builder inputs. Changing the recipe or
 lock requires rebuilding the builder image; package manifests record its image ID.
 The Docker build context is allowlisted and does not include the repository root.
 
-Package builds run as UID 1000, with no network or Linux capabilities. ISO assembly
+Installer package builds run as UID 1000, with no network or Linux capabilities.
+Bridge package builds also run as UID 1000 with no capabilities, but need network
+access for verified compiler/module downloads. Bridge bundling downloads official
+runtime dependencies. ISO assembly
 runs as container root with `CAP_SYS_ADMIN` for package-installation/chroot mounts.
 It requires both `--execute` and `--allow-iso-mounts`. This is a significant privilege
 boundary, not a general-purpose sandbox. The default Docker security profiles stay
@@ -116,6 +119,41 @@ volumes are retained after success or failure. No command prunes or deletes them
 Their names are printed; inspect each exact resource before any manual removal.
 Signing keys are never supplied to containers. Temporary pacman trust keys exist
 only in tmpfs, not in image layers or exported artifacts.
+
+## Bridge package build on Apple Silicon
+
+The `release.sh bridge-build COMMIT VERSION NEW_OUTPUT` stage uses the existing Docker
+wrapper and a fresh Linux-backed job volume. It does not rebuild or sign the
+installer package run. See [ISO.md](ISO.md#1a-bundle-bridge-unless-explicitly-opting-out)
+for the owner sequence. Existing reviewed CI artifacts can skip compilation and
+go directly to bundling.
+
+It fetches only the supplied full commit from the fixed Bridge GitHub repository
+and checks the resolved commit before executing its source generator. Branches,
+floating tags and credential prompts are refused. The generated `SHA256SUMS`
+must describe exactly its source archive and PKGBUILD; both are checked before
+and after building. The Bridge recipe remains authoritative. The
+output package must have the selected version, x86_64 architecture, matching
+`.BUILDINFO` recipe hash and embedded source hash. The build records the builder
+image ID, fetched repository/commit, snapshot package list, actual Go version/target/options and official
+compiler archive digest. Package tests are not service or hardware qualification.
+
+The frozen 2026/09/04 Arch snapshot provides Go 1.27.0; the reviewed Bridge source
+requires 1.27.1. Keep the snapshot intact. Its Go package satisfies makepkg's
+build dependency; the build job uses the separately pinned official Linux AMD64
+compiler archive, with `GOTOOLCHAIN=local`. The version and SHA256 were checked
+against [Go's download metadata](https://go.dev/dl/?mode=json) on 2026-09-09.
+Neither compiler is included as a Bridge runtime dependency. No toolchain, recipe,
+source digest, module integrity or test check is bypassed. A changed Bridge
+compiler requirement needs an explicit review of the build-only lock.
+
+Each attempt retains its fetched checkout, source, compiler, Go caches and failed build state in
+the named volume. Only successful outputs are exported to the new host directory;
+no service starts or repository signing occurs. Source generation, compilation
+and package tests run inside AMD64 Linux. Only Docker and the existing controller
+tools are needed on the Mac. No owner credentials or local Bridge modifications
+are passed through. If GitHub access requires authentication, use the separately
+reviewed CI artifact path rather than placing a token in the build command.
 
 ## 1. Prepare the source package
 

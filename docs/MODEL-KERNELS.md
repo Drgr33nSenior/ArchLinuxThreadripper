@@ -5,6 +5,12 @@ change the SGLang baseline. All hardware candidates remain **unqualified**.
 Run requests, profiling and restarts only in an owner-approved workstation test
 window. No live workload or GPU was exercised during source implementation.
 
+Host-RAM right-sizing is a separate
+[measurement workflow](PERFORMANCE-VALIDATION.md#right-size-sglang-host-ram).
+After changing the pod cap, regenerate worker budgets. `kernel-quality
+--memory-only` allows a smaller equal memory request/limit while requiring all
+other runtime/compiler identity to match; ordinary quality checks remain strict.
+
 ## Exact image and compatibility
 
 Reviewed 9 September 2026: the existing image manifest `51f63a2d…` and config

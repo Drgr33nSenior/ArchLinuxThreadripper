@@ -4,6 +4,7 @@ FROM docker.io/library/archlinux@sha256:818793c894d94534c22f2149154a39ebaee57e4e
 
 COPY versions.lock docker/setup.sh docker/entrypoint.sh /opt/arch-workstation-builder/
 COPY --chmod=0755 docker/pacstrap.sh /opt/arch-workstation-builder/bin/pacstrap
+COPY docker/bridge-build.sh /opt/arch-workstation-builder/bridge-build.sh
 # Pacman's temporary local trust key must never enter an image layer.
 RUN --mount=type=tmpfs,target=/etc/pacman.d/gnupg \
     bash /opt/arch-workstation-builder/setup.sh

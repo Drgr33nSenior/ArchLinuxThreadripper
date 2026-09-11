@@ -1,0 +1,37 @@
+[Unit]
+Description=Private workstation telemetry forwarding and filtered journal collection
+Documentation=https://grafana.com/docs/alloy/
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/workstation-telemetry/host.alloy
+
+[Service]
+User=workstation-alloy
+Group=workstation-alloy
+SupplementaryGroups=systemd-journal
+StateDirectory=workstation-alloy
+StateDirectoryMode=0750
+UMask=0077
+ExecStartPre=/usr/bin/grafana-alloy validate /etc/workstation-telemetry/host.alloy
+ExecStart=/usr/bin/grafana-alloy run --disable-reporting --storage.path=/var/lib/workstation-alloy --server.http.listen-addr=127.0.0.1:12345 --server.http.enable-pprof=false --server.http.disable-support-bundle /etc/workstation-telemetry/host.alloy
+Restart=on-failure
+RestartSec=10s
+TimeoutStopSec=30s
+MemoryMax=512M
+CPUQuota=50%
+TasksMax=128
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target
