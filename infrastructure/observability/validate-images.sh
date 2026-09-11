@@ -67,6 +67,9 @@ docker --context "$context" run "${common[@]}" --user 65534:65534 "${config[@]}"
 mkdir -m 755 "$output/rules"
 cp "$root/infrastructure/observability/config/alerts.yaml" "$output/rules/alerts.yaml"
 cp "$root/tests/fixtures/telemetry/alerts_test.yaml" "$output/rules/alerts_test.yaml"
+# Nonsecret bind-mounted inputs need explicit reader modes under umask 077.
+# Keep the evidence parent and result logs private.
+chmod 644 "$output/rules/alerts.yaml" "$output/rules/alerts_test.yaml"
 docker --context "$context" run "${common[@]}" --tmpfs /tmp:rw,noexec,nosuid,nodev,size=32m --user 65534:65534 --mount "type=bind,source=$output/rules,target=/rules,readonly" --entrypoint /bin/promtool "$(image prometheus)" test rules /rules/alerts_test.yaml >>"$output/prometheus.log" 2>&1
 docker --context "$context" run "${common[@]}" --user 10001:10001 "${config[@]}" "$(image loki)" -config.file=/config/loki.yaml -verify-config=true >"$output/loki.log" 2>&1
 docker --context "$context" run "${common[@]}" --user 10001:10001 "${config[@]}" "$(image tempo)" -config.file=/config/tempo.yaml -config.verify=true >"$output/tempo.log" 2>&1
@@ -154,6 +157,7 @@ ALLOY
 File.write(ARGV[1], fixture)
 RUBY
 cp "$root/tests/fixtures/telemetry/otlp_sanitization.json" "$output/otlp/traces.json"
+chmod 644 "$output/otlp/check.alloy" "$output/otlp/traces.json"
 docker --context "$context" network create --internal --label io.arch-workstation.scope=dev --label io.arch-workstation.purpose=telemetry-otlp-sanitization "$otlp_network" >"$output/otlp-network-id"
 otlp_network_created=1
 docker --context "$context" run -d --rm --pull never --name "$otlp_name" --label io.arch-workstation.scope=dev --label io.arch-workstation.purpose=telemetry-otlp-sanitization --network "$otlp_network" --read-only --cap-drop ALL --security-opt no-new-privileges --memory 512m --cpus 1 --pids-limit 128 --user 473:473 --tmpfs /tmp:rw,noexec,nosuid,nodev,size=32m --mount "type=bind,source=$output/otlp,target=/fixture,readonly" "$(image alloy)" run --disable-reporting --stability.level=experimental --storage.path=/tmp/state --server.http.enable-pprof=false /fixture/check.alloy >"$output/otlp-container-id"

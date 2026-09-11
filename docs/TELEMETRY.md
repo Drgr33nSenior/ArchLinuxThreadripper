@@ -447,6 +447,7 @@ Record passed, failed, blocked or not run for each gate:
 | --- | --- | --- |
 | Offline regression | `HOME_LAB_PYTHON=/path/to/prepared/python bash tests/test_telemetry.sh` | Config, capacity, sensor and stage-event fixtures |
 | Manifest contract | `bash tests/test_telemetry_stack.sh` | Pins, permissions, resources and local rendering |
+| Image fixture permissions | `bash tests/test_telemetry_image_permissions.sh` | Actual generators under umask 077; intercepted launch-time mode/containment checks, not Docker execution |
 | Actual image parsers | `bash infrastructure/observability/validate-images.sh desktop-linux` | Parsers and isolated dummy-secret pipelines; images must already exist |
 | Full source suite | `HOME_LAB_PYTHON=/path/to/prepared/python make check-strict` | Explicit skips retained |
 | Host package | `pacman -Qkk arch-workstation-bridge-runtime grafana-alloy` | Package files, not service/hardware health |
@@ -468,6 +469,60 @@ It is not a disposable VM boot or service acceptance test.
 The retained Mac image checks used the Linux ARM64 variants of the pinned
 multi-platform images. They validate those parsers and pipelines, not execution
 of the target AMD64 binaries or the Arch host package.
+
+### Fixture permission correction — 2026-09-11
+
+Starting from clean source `3727dc172b3cced4f851ed676944d339ca3102b2`, the
+validator now explicitly sets only its four new nonsecret rule/OTLP input files
+to `0644`, before their consumers start. Existing host dummy inputs retain the
+same treatment. Mounted input directories remain `0755`; the enclosing evidence
+directory remains `0700`, and retained result logs/IDs remain `0600`. Bind mounts
+expose only the input subdirectory, not the private evidence parent. Read-only
+mounts do not grant read permission; explicit modes are required for native Linux
+readers whose UID differs from the writer's UID.
+
+The new launch-time regression first failed on `rules/alerts.yaml` at `0600`.
+It now checks promtool UID 65534, Alloy UID 473 and the OTLP wget client UID 65534,
+including file modes before each launch and evidence privacy after cleanup.
+It also checks the unchanged read-only mounts, nonroot users, resource bounds and
+network restrictions. Initial test-harness fixes retained Ruby 2.6 compatibility
+and resolved macOS temporary paths before comparison. No production control was
+weakened.
+Four isolated test copies then omitted each new file-mode assignment separately;
+each failed on that exact `0600` input at its consumer launch, including wget.
+Those synthetic sensitivity results remain in
+`test-results/telemetry-permission-probes.8mAb4b`; they are not container execution.
+
+The focused permission and telemetry-stack scripts, all nine telemetry Python
+tests, and ShellCheck passed. The actual command
+`bash infrastructure/observability/validate-images.sh desktop-linux` also passed
+using already-cached pinned Linux ARM64 images in the local Docker VM. It executed
+promtool rules, both Alloy parsers and the host/OTLP sanitization pipelines.
+Private results remain in `test-results/telemetry-images.q8gegf`; its owned
+containers and internal network were removed by normal validator cleanup.
+No image was pulled, port published or live collector contacted.
+
+`make check` passed all 56 test scripts with the existing prepared Python
+environment selected through child-only `PATH`, `HOME_LAB_PYTHON` and
+`PYTHONNOUSERSITE=1`. Shell syntax/ShellCheck, YAML, local Kubernetes rendering
+and Ansible syntax checks passed. Ansible reported empty-inventory/host-pattern
+warnings; it contacted no hosts. Explicit skips were shfmt, bats, real ccache
+repeat-build, generated CMake/Ninja pools, the selected GPU-operator chart,
+streaming-image and Linux Wayland process fixtures. Real HIP IPC and Linux
+systemd verification did not run. `make check-strict` was NOT RUN because those
+missing tools/inputs prevent a strict qualification claim.
+
+Native Linux host bind-mount/cross-UID execution is **NOT RUN** in this Mac
+environment. Earlier Mac parser tests and this Docker VM run do not establish
+native Linux file-sharing semantics. On an authorized disposable Linux host with
+the reviewed images already cached, run the two fixture/image commands above,
+replacing `desktop-linux` with its reviewed local Unix-socket Docker context.
+Expect readable inputs, passing rule/sanitization checks, and private retained
+logs. Keep failed evidence; do not recursively chmod it or run the consumers as
+root. Rerunning creates a fresh fixture directory; it does not repair or delete
+earlier evidence. This source correction updates no installed policy and requires no journal
+or runtime-state migration. Live host delivery, actual memory-pressure loss,
+Arch AMD64 service behavior and workstation overhead remain unqualified.
 
 For SGLang tracing use the existing owner-approved pod exec path to run
 `python -c 'import opentelemetry.exporter.otlp.proto.grpc.trace_exporter'` and
