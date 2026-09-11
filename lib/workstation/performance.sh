@@ -10,9 +10,11 @@ ws_measure_command() (
 )
 
 ws_serving_pod() {
-  local pod=$1 document launch_spec launch_spec_sha256
+  local pod=$1 mode=${2:-} document launch_spec launch_spec_sha256
   ws_session_config_validate
+  (($# <= 2)) || ws_die 'serving Pod inspection accepts one optional status mode'
   [[ $pod =~ ^[a-z0-9][a-z0-9.-]*$ ]] || ws_die 'provide the exact SGLang pod name'
+  case "$mode" in '' | --status) ;; *) ws_die 'serving Pod inspection mode is unsupported' ;; esac
   document=$(ws_session_kubectl -n "$SESSION_NAMESPACE" get pod "$pod" -o json) || return 1
   # Bind rendered launch settings without retaining environment values or
   # arguments: only the canonical JSON hash leaves this local function.
@@ -20,16 +22,27 @@ ws_serving_pod() {
     {command:(.command//[]),args:(.args//[]),env:(.env//[]),envFrom:(.envFrom//[])}' <<<"$document") || return 1
   launch_spec_sha256=$(common::sha256_file <(printf '%s\n' "$launch_spec")) || return 1
   jq -e --arg launch_spec_sha256 "$launch_spec_sha256" '
-    select(.metadata.deletionTimestamp == null and .status.phase == "Running") |
+    select(.metadata.deletionTimestamp == null and ($status or .status.phase == "Running")) |
     . as $p | [.spec.containers[] | select(.name == "sglang")] | select(length == 1) | .[0] as $c |
+    ([$p.status.containerStatuses[]? | select(.name == "sglang")] |
+      if length == 1 then .[0] else {} end) as $s |
     {name:$p.metadata.name,uid:$p.metadata.uid,node:$p.spec.nodeName,
-     image:$c.image,image_id:([$p.status.containerStatuses[] | select(.name == "sglang") | .imageID][0]),
-     container_id:([$p.status.containerStatuses[] | select(.name == "sglang") | .containerID][0]),
-     restart_count:([$p.status.containerStatuses[] | select(.name == "sglang") | .restartCount][0]),
+     image:$c.image,image_id:$s.imageID,container_id:$s.containerID,restart_count:$s.restartCount,
      launch_spec_sha256:$launch_spec_sha256,
-     started_at:([$p.status.containerStatuses[] | select(.name == "sglang") | .state.running.startedAt][0]),
+     started_at:$s.state.running.startedAt,
      resources:$c.resources,shm:[$p.spec.volumes[]? | select(.name == "shm") | .emptyDir],
-     ready:([$p.status.containerStatuses[] | select(.name == "sglang") | .ready][0])}' <<<"$document"
+     ready:$s.ready,
+     container_state:(
+       if $s.state.waiting.reason? == "CrashLoopBackOff" then
+         if $s.lastState.terminated.reason? == "OOMKilled" then "crash-loop-oom-killed" else "crash-loop" end
+       elif $s.state.terminated.reason? == "OOMKilled" then "terminated-oom-killed"
+       elif $s.state.terminated? != null then "terminated"
+       elif (["ErrImagePull","ImagePullBackOff","InvalidImageName","CreateContainerConfigError"] |
+             index($s.state.waiting.reason?)) != null then "image-failure"
+       elif $s.state.waiting.reason? == "ContainerCreating" or $s.state.waiting.reason? == "PodInitializing" then "loading"
+       elif $s.state.running? != null then "running"
+       else "unknown"
+       end)}' --argjson status "$([[ $mode == --status ]] && printf true || printf false)" <<<"$document"
 }
 
 ws_serving_evidence() (
@@ -62,11 +75,11 @@ ws_serving_warm_status() (
   set -euo pipefail
   local pod=$1 warmup=$2 output=$3 current temporary evidence_dir warm_probe_status=0
   [[ ! -e $output && ! -L $output ]] || ws_die 'use a new warm-status output path'
-  current="$(ws_serving_pod "$pod")" || ws_die 'cannot inspect the exact SGLang Pod'
-  jq -e --arg node "$SESSION_NODE" '.node == $node and (.uid|type == "string") and
-    (.image|test("@sha256:[a-f0-9]{64}$")) and (.image_id|type == "string" and length > 0) and
-    (.container_id|type == "string" and length > 0) and (.restart_count|type == "number" and . >= 0)' \
-    <<<"$current" >/dev/null || ws_die 'current SGLang Pod is outside the reviewed node scope or lacks process identity'
+  current="$(ws_serving_pod "$pod" --status)" || ws_die 'cannot inspect the exact SGLang Pod'
+  jq -e --arg node "$SESSION_NODE" '.node == $node and
+    (.restart_count == null or (.restart_count|type == "number" and . >= 0)) and
+    (.container_state == null or (.container_state|type == "string"))' \
+    <<<"$current" >/dev/null || ws_die 'current SGLang Pod is outside the reviewed node scope or malformed'
   temporary="$(mktemp -d)" || ws_die 'cannot create private warm-status workspace'
   trap 'warm_probe_status=$?; trap - EXIT; set +e
     rm -f -- "$temporary/current-pod.json" "$temporary/warm-status.error" "$temporary/evidence/pod.json" "$temporary/evidence/runtime.json" "$temporary/evidence/compiler.json"
@@ -74,7 +87,10 @@ ws_serving_warm_status() (
     rmdir -- "$temporary" 2>/dev/null || true
     exit "$warm_probe_status"' EXIT
   printf '%s\n' "$current" >"$temporary/current-pod.json"
-  if [[ $(jq -r .ready <<<"$current") != true ]]; then
+  if ! jq -e '.ready == true and (.container_state // "running") == "running" and
+      (.uid|type == "string" and length > 0) and (.image|type == "string" and test("@sha256:[a-f0-9]{64}$")) and
+      (.image_id|type == "string" and length > 0) and (.container_id|type == "string" and length > 0) and
+      (.started_at|type == "string" and length > 0)' <<<"$current" >/dev/null; then
     "$(ws_measure_python)" "$(ws_repo_root)/lib/workstation/serving_runtime.py" pod-status \
       "$temporary/current-pod.json" "$output"
     exit 0

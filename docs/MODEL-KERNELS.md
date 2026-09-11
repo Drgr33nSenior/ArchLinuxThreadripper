@@ -103,11 +103,15 @@ and evidence identities. `workstationctl` exports only plans and status:
 ./bin/workstationctl --config config/workstation.conf rocm serving-warm-status sglang-EXACT-POD kernel-warmup-result.json OUT/status.json
 ```
 
-`serving-warm-status` first observes the named scoped Pod. A Running but
-not-Ready Pod reports `model-loading` without reading old ready-only evidence.
-A Ready Pod still reports `unknown` if fresh model, runtime or device evidence
-cannot be collected. It does not run a representative warmup. Use `-` instead
-of a result file when no optional warmup was run.
+`serving-warm-status` first observes the named scoped Pod. A current
+`ContainerCreating` or `PodInitializing` container reports `model-loading`
+without reading old ready-only evidence. A current crash loop, termination or
+image-start failure reports `unavailable` with a fixed reason. Kubernetes
+messages and prior termination text are not exported. A current running,
+healthy container ignores historical failures, but still reports `unknown` if
+its fresh model, runtime, device or process identity cannot be collected. It
+does not run a representative warmup. Use `-` instead of a result file when no
+optional warmup was run.
 
 The existing `kernel-warmup` command is an owner-run non-root measurement. The
 installed session state and canonical lock are root-owned, so this release does

@@ -106,11 +106,17 @@ to the observed Pod launch-spec hash. It also verifies that the original runtime
 file hash equals `serving.runtime_sha256`. Quantization comes from the observed
 model contract. The source record must identify an immutable image and image ID,
 Guaranteed Pod resources, distinct observed `gfx1201` GPU UUIDs, package and HIP
-identity, model-file hashes and tokenizer files. The reader retains the raw
-runtime hash as provenance and separately compares normalized model-file,
-model-setting, launch-setting and resource conditions. This prevents a changed
-weight file or resource budget from being concealed by an unchanged model
-revision.
+identity, model-file hashes and tokenizer files.
+
+The reader also records source-condition schema 2. It retains the raw runtime
+hash as provenance and compares normalized model files, model settings (including
+`MODEL_DTYPE`), the observed engine launch, environment-derived launch settings,
+and Pod resources. The observed launch is a validated, allowlisted
+`runtime.launch` command map. It is separate from the Pod launch-spec hash: the
+former records effective engine arguments such as queue or attention settings;
+the latter identifies the Deployment template. This prevents a changed weight
+file, engine argument, dtype, or resource budget from being concealed by an
+unchanged model revision.
 
 Optional sources are the existing memory plan, coding evaluation and device-power
 evidence. If a numerical-quality result is present, include exactly two retained
@@ -118,20 +124,27 @@ finalized `kernel_runs`, listed in baseline then candidate order. Both must pass
 the existing `model_kernels.compare_quality` contract, including schema 1,
 `memory.status: checked`, complete warmup cases and sampled output checks. The
 canonical comparison must contain the baseline hash of the first run and the
-candidate hash of the second run. At least one run must also match the serving
-runtime, Pod resources and derived profile identity. A matching digest does not
-make a run qualified.
+candidate hash of the second run. The candidate run must exactly match this
+profile's retained serving runtime, Pod identity and resources, workload, model
+files, settings, and observed launch. A matching digest does not make a run
+qualified.
 
 The comparison reader rejects symlinks, path escapes, oversized files and
 unknown manifest fields. It records source hashes. Keep this bundle private:
 the source artifacts can contain resource settings, model identities and other
-operational metadata. Do not put prompts, environment values, credentials, raw
-model output or full logs in the bundle.
+operational metadata. Retain the prescribed sampled token IDs and log probabilities
+for numerical revalidation, and only the collector's allowlisted runtime settings.
+Do not include prompts, generated prose, full environment dumps, credentials or
+full logs. These private checked-run records are not cloud-adviser inputs.
 
 The Bridge owner-only export action resolves a policy-approved bundle ID to a
 sealed private directory and invokes the same reader. It does not accept a path
 or command from an API client. The returned public summary contains hashes and
 bounded status fields. `comparison.json` and `report.txt` remain private.
+Bridge keeps its analysis-output size limits. A comparison whose retained
+quality evidence exceeds those limits remains an offline private result until
+the owner supplies a smaller, complete evidence set; the export refuses it
+rather than dropping evidence or claiming a result.
 
 ## Compare evidence
 
@@ -187,7 +200,11 @@ counters remain unknown; the comparison does not infer them from an envelope.
 Numerical quality and coding evaluation are independent gates for both baseline
 and candidate. Equivalent-quality comparison additionally requires matching
 coding corpus, template hashes and complete generation settings. The comparison
-does not replace numerical checks with a coding score or promote a candidate.
+re-runs the canonical numerical comparison on the two retained candidate runs
+that represent the profiles; each run retains its ordered baseline/candidate
+provenance. Missing, malformed, swapped, or incompatible retained runs make the
+quality gate inconclusive. The comparison does not replace numerical checks with
+a coding score or promote a candidate.
 
 ## Select and check a profile
 
@@ -213,11 +230,12 @@ comparison from its retained inspected evidence, declared variables and
 thresholds; a free-form recommendation or altered quality/case report is
 refused. `status` marks the selection stale when model, tokenizer, workload,
 hardware, software, launch or quantization identity changes. It also compares
-the retained normalized source conditions: runtime provenance, model files,
-model settings, launch settings and resources. The conditions file contains
-exactly those five SHA-256 fields and no credentials or full runtime record. A
-new selection stores the candidate conditions. A legacy selection or a current
-observation without them reports `unknown`; it never reports a profile as
+source-condition schema 2: raw runtime provenance, model files, model settings,
+observed engine launch, environment-derived launch settings, and resources. The
+conditions file contains the schema marker and these SHA-256 values only; it has
+no credentials or full runtime record. A new selection stores the candidate
+conditions. A legacy selection, old condition schema, or current observation
+without valid conditions reports `unknown`; it never reports a profile as
 current. A known seven-field identity change remains `stale` even when
 conditions are missing. Recollect evidence before treating a stale selection as
 relevant.
@@ -228,8 +246,8 @@ client-supplied identity or an automatic all-identity probe. The helper verifies
 the current boot, source and hardware conditions before export. It has schema 1, kind
 `workstation-performance-profile-identity-observation`, status
 `observed-not-qualified`, an RFC3339 UTC `observed_at`, the current Linux
-`boot_id`, all seven runtime identity fields, and the five normalized
-source-condition hashes. The dispatcher accepts an
+`boot_id`, all seven runtime identity fields, and the schema 2 normalized
+source conditions. The dispatcher accepts an
 observation only when it is no more than 15 minutes old. A missing, future,
 stale or malformed observation reports `unknown`; it never reports a selected
 profile as current. A matching observation maps the exported summary to

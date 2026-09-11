@@ -203,6 +203,9 @@ class ServingRuntimeTests(unittest.TestCase):
         self.assertEqual((failed["status"], failed["warmup_status"]), ("healthy", "failed"))
         result["status"] = "failed-interrupted"
         self.assertEqual(serving_runtime.warm_status(self.observed, result)["warmup_status"], "failed")
+        resumed = copy.deepcopy(self.observed)
+        resumed[0]["restart_count"] = 1
+        self.assertEqual(serving_runtime.warm_status(resumed, None)["status"], "healthy")
         self.observed[0]["ready"] = False
         self.assertEqual(serving_runtime.warm_status(self.observed, None)["status"], "model-loading")
         result["status"] = "measured-not-qualified"; result["pod"] = copy.deepcopy(self.observed[0])
@@ -219,6 +222,37 @@ class ServingRuntimeTests(unittest.TestCase):
         current = serving_runtime.pod_status(pod)
         self.assertEqual((current["status"], current["kubernetes_readiness"]), ("unknown", "healthy"))
         self.assertIsNone(current["identity"])
+
+    def test_current_container_failures_are_bounded_and_do_not_reuse_history(self):
+        pod = copy.deepcopy(self.observed[0])
+        pod.update(ready=False, container_state="crash-loop-oom-killed",
+                   last_state={"terminated": {"reason": "OOMKilled", "message": "private diagnostic"}})
+        result = serving_runtime.pod_status(pod)
+        self.assertEqual((result["status"], result["kubernetes_readiness"]), ("unavailable", "unavailable"))
+        self.assertEqual(result["reason"], "current container is restarting after an out-of-memory termination")
+        self.assertNotIn("private diagnostic", json.dumps(result))
+        self.assertEqual(serving_runtime.warm_status((pod, self.observed[1], self.observed[2]), None)["status"], "unavailable")
+        pod["ready"] = True
+        self.assertEqual(serving_runtime.pod_status(pod)["reason"], "current Pod state is inconsistent with readiness")
+        self.assertEqual(serving_runtime.warm_status((pod, self.observed[1], self.observed[2]), None)["status"], "unknown")
+        pod["ready"] = False
+        for state, reason in (("crash-loop", "current container is restarting repeatedly; inspect the reviewed workload logs"),
+                              ("terminated-oom-killed", "current container terminated after an out-of-memory termination"),
+                              ("terminated", "current container terminated; inspect the reviewed workload logs"),
+                              ("image-failure", "current container image cannot be started")):
+            with self.subTest(state=state):
+                pod["container_state"] = state
+                self.assertEqual((serving_runtime.pod_status(pod)["status"], serving_runtime.pod_status(pod)["reason"]),
+                                 ("unavailable", reason))
+        pod.update(ready=True, container_state="running")
+        healthy = serving_runtime.pod_status(pod)
+        self.assertEqual((healthy["status"], healthy["kubernetes_readiness"]), ("unknown", "healthy"))
+        pod["container_id"] = None
+        missing = serving_runtime.pod_status(pod)
+        self.assertEqual((missing["status"], missing["kubernetes_readiness"]), ("unknown", "unknown"))
+        self.assertEqual(missing["reason"], "current Pod process identity is incomplete")
+        pod["uid"] = ""
+        self.assertEqual(serving_runtime.pod_status(pod)["reason"], "current Pod identity is incomplete")
 
     def test_exact_image_capabilities_require_help_and_hashed_source(self):
         with tempfile.TemporaryDirectory() as directory:

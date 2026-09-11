@@ -104,6 +104,112 @@ ws_serving_pod() {
 FIXTURE_READY=true ws_serving_warm_status fixture - "$work/changed-pod.json"
 jq -e '.status == "stale" and .identity == null and (.reason|test("Pod changed"))' "$work/changed-pod.json" >/dev/null
 
+# Exercise the public CLI and real Pod projection. Only kubectl is replaced;
+# the test does not replace the warm-status wrapper or use an old evidence
+# directory. The fixture includes private Kubernetes messages, so the public
+# report must use only its fixed, bounded state reason.
+mkdir "$work/cli-bin"
+cat >"$work/cli-bin/kubectl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+case " $* " in
+  *' get pod sglang-fixture -o json '*) ;;
+  *' exec '*) [[ -z ${FIXTURE_EXEC_MARKER:-} ]] || : >"$FIXTURE_EXEC_MARKER"; exit 1 ;;
+  *) printf 'unexpected Kubernetes fixture call\n' >&2; exit 1 ;;
+esac
+image="fixture@sha256:$(printf 'a%.0s' {1..64})"
+state='{"waiting":{"reason":"ContainerCreating"}}'
+last='null'
+ready=false
+image_id='null'
+container_id='null'
+restart=0
+pod_uid=11111111-2222-3333-4444-555555555555
+case "${FIXTURE_POD_STATE:-loading}" in
+  loading) ;;
+  crash-loop-oom)
+    state='{"waiting":{"reason":"CrashLoopBackOff","message":"private OOM diagnostic"}}'
+    last='{"terminated":{"reason":"OOMKilled","message":"private termination diagnostic"}}'
+    restart=3
+    ;;
+  terminated)
+    state='{"terminated":{"reason":"Error","message":"private termination diagnostic"}}'
+    restart=1
+    ;;
+  image-failure)
+    state='{"waiting":{"reason":"ImagePullBackOff","message":"private registry diagnostic"}}'
+    ;;
+  missing-identity)
+    state='{"running":{"startedAt":"2026-09-11T00:00:00Z"}}'
+    ready=true
+    ;;
+  running-historical | restarted-historical)
+    state='{"running":{"startedAt":"2026-09-11T00:00:00Z"}}'
+    last='{"terminated":{"reason":"OOMKilled","message":"private termination diagnostic"}}'
+    ready=true
+    image_id='"containerd://fixture-image"'
+    container_id='"containerd://fixture-container"'
+    [[ ${FIXTURE_POD_STATE:-} != restarted-historical ]] || restart=4
+    ;;
+  resumed-loading)
+    state='{"waiting":{"reason":"ContainerCreating","message":"private resume diagnostic"}}'
+    last='{"terminated":{"reason":"OOMKilled","message":"private termination diagnostic"}}'
+    restart=4
+    ;;
+  missing-pod-identity)
+    state='{"waiting":{"reason":"CrashLoopBackOff"}}'
+    pod_uid=''
+    ;;
+  *) printf 'unknown Pod fixture state\n' >&2; exit 1 ;;
+esac
+jq -n --arg image "$image" --arg pod_uid "$pod_uid" --argjson state "$state" --argjson last "$last" --argjson ready "$ready" \
+  --argjson image_id "$image_id" --argjson container_id "$container_id" --argjson restart "$restart" \
+  '{metadata:{name:"sglang-fixture",uid:$pod_uid},
+    spec:{nodeName:"fixture-node",containers:[{name:"sglang",image:$image}]},
+    status:{phase:"Running",containerStatuses:[{name:"sglang",imageID:$image_id,containerID:$container_id,
+      restartCount:$restart,ready:$ready,state:$state,lastState:$last}]}}'
+EOF
+chmod 700 "$work/cli-bin/kubectl"
+cli_warm_status() {
+  local state=$1 output=$2
+  FIXTURE_POD_STATE=$state PATH="$work/cli-bin:$PATH" WORKSTATION_PYTHON="$HOME_LAB_PYTHON" \
+    SESSION_CONTEXT=fixture SESSION_NODE=fixture-node SESSION_NAMESPACE=fixture \
+    SESSION_AI_DEPLOYMENT=sglang SESSION_GAME_DEPLOYMENT=gaming SESSION_ENVIRONMENT=dev \
+    FIXTURE_EXEC_MARKER="$output.exec" \
+    bash "$root/bin/workstationctl" rocm serving-warm-status sglang-fixture - "$output" \
+      >"$output.stdout" 2>"$output.stderr"
+}
+cli_warm_status loading "$work/cli-loading.json"
+jq -e '.status == "model-loading" and .kubernetes_readiness == "model-loading" and .identity == null' \
+  "$work/cli-loading.json" >/dev/null
+cli_warm_status crash-loop-oom "$work/cli-crash-loop.json"
+jq -e '.status == "unavailable" and .kubernetes_readiness == "unavailable" and
+  (.reason == "current container is restarting after an out-of-memory termination")' "$work/cli-crash-loop.json" >/dev/null
+cli_warm_status terminated "$work/cli-terminated.json"
+jq -e '.status == "unavailable" and (.reason == "current container terminated; inspect the reviewed workload logs")' \
+  "$work/cli-terminated.json" >/dev/null
+cli_warm_status image-failure "$work/cli-image.json"
+jq -e '.status == "unavailable" and (.reason == "current container image cannot be started")' "$work/cli-image.json" >/dev/null
+cli_warm_status missing-identity "$work/cli-missing.json"
+jq -e '.status == "unknown" and .kubernetes_readiness == "unknown" and
+  (.reason == "current Pod process identity is incomplete")' "$work/cli-missing.json" >/dev/null
+cli_warm_status missing-pod-identity "$work/cli-missing-pod.json"
+jq -e '.status == "unknown" and .kubernetes_readiness == "unknown" and
+  (.reason == "current Pod identity is incomplete")' "$work/cli-missing-pod.json" >/dev/null
+[[ ! -e $work/cli-missing-pod.json.exec ]]
+cli_warm_status running-historical "$work/cli-historical.json"
+jq -e '.status == "unknown" and (.reason|test("fresh current"))' "$work/cli-historical.json" >/dev/null
+[[ -e $work/cli-historical.json.exec ]]
+cli_warm_status restarted-historical "$work/cli-restarted.json"
+jq -e '.status == "unknown" and (.reason|test("fresh current"))' "$work/cli-restarted.json" >/dev/null
+cli_warm_status resumed-loading "$work/cli-resumed.json"
+jq -e '.status == "model-loading" and .kubernetes_readiness == "model-loading"' "$work/cli-resumed.json" >/dev/null
+if rg -F -e 'private OOM diagnostic' -e 'private termination diagnostic' -e 'private registry diagnostic' \
+  -e 'private resume diagnostic' "$work"/*.json >/dev/null; then
+  printf 'warm status exposed a private Kubernetes diagnostic\n' >&2
+  exit 1
+fi
+
 # The bundle wrapper passes cache authority only from loaded configuration,
 # never from a bundle argument. It does not run an actual dispatcher here.
 bundle_python() { printf '%s\n' "$*" >"$work/bundle-args"; }

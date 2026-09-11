@@ -86,13 +86,16 @@ class OrchestrationTests(unittest.TestCase):
                    "image_id":"containerd://sha256:" + "2" * 64, "launch_spec_sha256":"f" * 64,
                    "resources":{"requests":{"cpu":"8","memory":"38Gi","amd.com/gpu":"1"},
                                 "limits":{"cpu":"8","memory":"38Gi","amd.com/gpu":"1"}}}
-            runtime = {"settings":{"MODEL_REVISION":"a" * 40, "MODEL_PATH":"/models/fixture", "TENSOR_PARALLEL":"1"},
+            # sglang-evidence.py always emits MODEL_DTYPE and the boolean
+            # compiler flag, including when compilation is not enabled.
+            runtime = {"settings":{"MODEL_REVISION":"a" * 40, "MODEL_PATH":"/models/fixture",
+                                   "MODEL_DTYPE":"auto", "TENSOR_PARALLEL":"1"},
                        "model_files":{"model.safetensors":{"bytes":1,"sha256":"c" * 64},
                                       "tokenizer.json":{"bytes":1,"sha256":"b" * 64}},
                        "packages":{"sglang":"fixture","torch":"fixture","triton":None,
                                    "pytorch-triton-rocm":None,"aiter":None,"transformers":None}, "hip":"fixture",
                        "devices":[{"uuid":"GPU-a","gfx":"gfx1201"}],
-                       "launch":[{"--model-path":"/models/fixture"}],
+                       "launch":[{"--model-path":"/models/fixture", "--enable-torch-compile":False}],
                        "model_contract":{"quant_method":"fp8"}}
             (root/"evidence/pod.json").write_text(json.dumps(pod))
             (root/"evidence/runtime.json").write_text(json.dumps(runtime))

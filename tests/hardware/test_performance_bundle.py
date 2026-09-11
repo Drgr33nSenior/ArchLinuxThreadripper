@@ -12,6 +12,11 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "lib/workstation"))
+# Candidate fixtures intentionally reuse the ordinary producer fixture rather
+# than reproducing its JSON by hand.  unittest discovery imports this module as
+# ``tests.hardware.test_performance_bundle``, so include the sibling test
+# directory explicitly instead of relying on the process working directory.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import coding_eval
 import performance_bundle
 
@@ -60,7 +65,7 @@ def candidate_bundle(path, kind, variant):
     import math
     import inference_cache
     import performance_profiles
-    from test_performance_profiles import bundle
+    from test_performance_profiles import bundle, load, refresh_serving_identity
     from test_serving_runtime import fixtures
 
     policy = {"schema": 1, "minimum_practical_gain_percent": 5, "maximum_regression_percent": 5, "noise_percent": 2}
@@ -74,6 +79,46 @@ def candidate_bundle(path, kind, variant):
     if kind in ("comparison", "profile-selection"):
         bundle(path / "baseline", "baseline")
         bundle(path / "candidate", "candidate", throughput=120)
+        declared = []
+        if variant == "declared-launch":
+            runtime = load(path / "candidate/runtime.json")
+            runtime["launch"][0]["--attention-backend"] = "triton"
+            save(path / "candidate/runtime.json", runtime)
+            refresh_serving_identity(path / "candidate")
+            declared = ["launch"]
+        elif variant in ("cross-quality-mismatch", "cross-logprob-mismatch"):
+            for side in ("baseline", "candidate"):
+                result_path = path / f"candidate/kernel-runs/{side}.json"
+                result = json.loads(result_path.read_text())
+                for row in result["quality"]:
+                    if variant == "cross-quality-mismatch":
+                        row["tokens"] = [2]
+                    else:
+                        row["logprobs"] = [0.02]
+                save(result_path, result)
+            import model_kernels
+            save(path / "candidate/quality.json", model_kernels.compare_quality(
+                json.loads((path / "candidate/kernel-runs/baseline.json").read_text()),
+                json.loads((path / "candidate/kernel-runs/candidate.json").read_text()), 0, 0))
+        elif variant == "unrelated-quality":
+            runtime = load(path / "candidate/runtime.json")
+            runtime["packages"]["torch"] = "different"
+            save(path / "candidate/runtime.json", runtime)
+            refresh_serving_identity(path / "candidate")
+            declared = ["software"]
+        elif variant == "missing-cross-evidence":
+            manifest = json.loads((path / "candidate/manifest.json").read_text())
+            manifest["sources"].pop("quality")
+            manifest["sources"].pop("kernel_runs")
+            save(path / "candidate/manifest.json", manifest)
+        elif variant == "checked-launch-mismatch":
+            result_path = path / "candidate/kernel-runs/candidate.json"
+            result = json.loads(result_path.read_text())
+            result["identity"]["runtime"]["launch"][0]["--attention-backend"] = "triton"
+            save(result_path, result)
+            import model_kernels
+            save(path / "candidate/quality.json", model_kernels.compare_quality(
+                json.loads((path / "candidate/kernel-runs/baseline.json").read_text()), result, 0, 0))
         if kind == "comparison":
             result_path = path / "candidate/serving/result.json"
             result = json.loads(result_path.read_text())
@@ -83,9 +128,9 @@ def candidate_bundle(path, kind, variant):
                 result["workload_sha256"] = "0" * 64
             save(result_path, result)
             save(path / "policy.json", policy)
-            spec.update(baseline_bundle="baseline", candidate_bundle="candidate", policy_json="policy.json", declared_variables=[])
+            spec.update(baseline_bundle="baseline", candidate_bundle="candidate", policy_json="policy.json", declared_variables=declared)
         else:
-            comparison = performance_profiles.compare(path / "baseline", path / "candidate", [], policy)
+            comparison = performance_profiles.compare(path / "baseline", path / "candidate", declared, policy)
             save(path / "comparison.json", comparison)
             spec.update(comparison="comparison.json", candidate_id="absent" if variant == "refused" else "candidate", previous_selection=None)
     elif kind in ("loading", "queue", "warm-status"):
@@ -129,12 +174,17 @@ def candidate_bundle(path, kind, variant):
         elif variant in ("stale-weights", "stale-resources"):
             key = "model_files_sha256" if variant == "stale-weights" else "resources_sha256"
             current["producer_conditions"][key] = "0" * 64
+        elif variant in ("stale-runtime-launch", "stale-dtype"):
+            key = "observed_launch_sha256" if variant == "stale-runtime-launch" else "model_settings_sha256"
+            current["producer_conditions"][key] = "0" * 64
         elif variant == "legacy-selection":
             selection.pop("producer_conditions")
         elif variant == "legacy-observation":
             current.pop("producer_conditions")
         elif variant == "malformed-conditions":
             current["producer_conditions"] = {"runtime_sha256": True}
+        elif variant == "legacy-condition-schema":
+            current["producer_conditions"]["schema"] = 1
         elif variant == "unknown":
             current = {}
         save(path / "current.json", current)
@@ -169,9 +219,9 @@ class BundleTests(unittest.TestCase):
 
     def profile_selection(self):
         return {"schema": 1, "kind": "workstation-measured-profile-selection", "selected_profile_id": "candidate",
-                "producer_conditions": {key: "9" * 64 for key in
+                "producer_conditions": {"schema": 2, **{key: "9" * 64 for key in
                                         ("runtime_sha256", "model_files_sha256", "model_settings_sha256",
-                                         "launch_settings_sha256", "resources_sha256")},
+                                         "observed_launch_sha256", "launch_settings_sha256", "resources_sha256")}},
                 "runtime_identity": {"model_revision": "a" * 40, "tokenizer_sha256": "b" * 64,
                                      "workload_sha256": "c" * 64, "hardware_sha256": "d" * 64,
                                      "software_sha256": "e" * 64, "launch_sha256": "f" * 64,
@@ -347,6 +397,51 @@ class BundleTests(unittest.TestCase):
             stored = json.loads((output / "profile-status/status.json").read_text())
             self.assertEqual((summary["status"], stored["status"]), ("current-unqualified", "selected-unqualified-current"))
             self.assertIn("as of observed_at", stored["scope"])
+
+    def test_candidate_bundle_exercises_cross_profile_quality_variants(self):
+        expected = {"declared-launch": "candidate-improves-throughput",
+                    "cross-quality-mismatch": "inconclusive-quality-evidence",
+                    "cross-logprob-mismatch": "inconclusive-quality-evidence",
+                    "unrelated-quality": "inconclusive-quality-evidence",
+                    "missing-cross-evidence": "inconclusive-quality-evidence"}
+        for variant, reason in expected.items():
+            with self.subTest(variant=variant), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "bundle"
+                root.mkdir(mode=0o700)
+                candidate_bundle(root, "comparison", variant)
+                manifest = performance_bundle.seal(root, "comparison", "fixture-target", REVISION)
+                output = Path(tmp) / "output"
+                summary = performance_bundle.run(root, performance_bundle.sha(root / "manifest.json")[0], output,
+                                                 manifest["target"], manifest["source_revision"], "owner-main")
+                self.assertEqual((summary["status"], summary["reason"]), ("comparison-not-qualified", reason))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "bundle"
+            root.mkdir(mode=0o700)
+            candidate_bundle(root, "comparison", "checked-launch-mismatch")
+            performance_bundle.seal(root, "comparison", "fixture-target", REVISION)
+            summary = performance_bundle.run(root, performance_bundle.sha(root / "manifest.json")[0], Path(tmp) / "output",
+                                             "fixture-target", REVISION, "owner-main")
+            self.assertEqual(summary["status"], "failed")
+
+    def test_candidate_bundle_sealed_profile_selection_rechecks_quality(self):
+        # The direct selector is covered by the profile tests. Exercise the
+        # sealed dispatcher separately so a report that is not selection-safe
+        # cannot become a selected profile after artifact exchange.
+        expected = {"declared-launch": "selected-unqualified",
+                    "cross-quality-mismatch": "failed",
+                    "cross-logprob-mismatch": "failed",
+                    "unrelated-quality": "failed",
+                    "missing-cross-evidence": "failed"}
+        for variant, status in expected.items():
+            with self.subTest(variant=variant), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "bundle"
+                root.mkdir(mode=0o700)
+                candidate_bundle(root, "profile-selection", variant)
+                manifest = performance_bundle.seal(root, "profile-selection", "fixture-target", REVISION)
+                summary = performance_bundle.run(root, performance_bundle.sha(root / "manifest.json")[0], Path(tmp) / "output",
+                                                 manifest["target"], manifest["source_revision"], "owner-main")
+                self.assertEqual(summary["status"], status)
 
 
 if __name__ == "__main__":

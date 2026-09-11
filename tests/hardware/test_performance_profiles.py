@@ -66,13 +66,14 @@ def bundle(root, profile_id, throughput=100, status="measured-not-qualified", va
     throughput_summary = summary(throughput, throughput_samples)
     if throughput_stdev is not None:
         throughput_summary["stdev"] = throughput_stdev
-    runtime = {"settings": {"MODEL_REVISION": "a" * 40, "MODEL_PATH": "/models/fixture", "TENSOR_PARALLEL": "1"},
+    runtime = {"settings": {"MODEL_REVISION": "a" * 40, "MODEL_PATH": "/models/fixture", "MODEL_DTYPE": "fp8",
+                            "TENSOR_PARALLEL": "1"},
                "model_files": {"model.safetensors": {"bytes": 1, "sha256": "c" * 64},
                                "tokenizer.json": {"bytes": 1, "sha256": "b" * 64}},
                "packages": {"sglang": "fixture", "torch": "fixture", "triton": None,
                             "pytorch-triton-rocm": None, "aiter": None, "transformers": None}, "hip": "fixture",
                "devices": [{"uuid": "GPU-a", "gfx": "gfx1201"}],
-               "launch": [{"--model-path": "/models/fixture"}],
+               "launch": [{"--model-path": "/models/fixture", "--enable-torch-compile": False}],
                "model_contract": {"quant_method": "fp8", "architectures": ["fixture"]}}
     save(root / "runtime.json", runtime)
     runtime_hash = profiles.digest_bytes((root / "runtime.json").read_bytes())
@@ -430,6 +431,109 @@ class ProfilesTests(unittest.TestCase):
                              ("inconclusive-incomparable-conditions", "retain-baseline"))
             self.assertIn("producer.model_files_sha256", [item["field"] for item in result["differences"]])
 
+    def test_observed_launch_and_model_dtype_are_profile_conditions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            policy = {"schema": 1, "minimum_practical_gain_percent": 5, "maximum_regression_percent": 5, "noise_percent": 2}
+            bundle(root / "baseline", "baseline")
+            bundle(root / "candidate", "candidate", throughput=120)
+            runtime = load(root / "candidate/runtime.json")
+            runtime["launch"][0]["--attention-backend"] = "triton"
+            save(root / "candidate/runtime.json", runtime)
+            refresh_serving_identity(root / "candidate")
+            with self.assertRaisesRegex(ValueError, "undeclared"):
+                profiles.compare(root / "baseline", root / "candidate", [], policy)
+            report = profiles.compare(root / "baseline", root / "candidate", ["launch"], policy)
+            self.assertEqual(report["recommendation"], "candidate")
+            self.assertIn("producer.observed_launch_sha256", [row["field"] for row in report["differences"]])
+            selected = profiles.select(report, "owner-1", "candidate")
+            changed = dict(selected["producer_conditions"], observed_launch_sha256="0" * 64)
+            self.assertEqual(profiles.selection_status(selected, selected["runtime_identity"], changed)["status"], "stale")
+
+            runtime["launch"][0].pop("--attention-backend")
+            runtime["settings"]["MODEL_DTYPE"] = "bf16"
+            save(root / "candidate/runtime.json", runtime)
+            refresh_serving_identity(root / "candidate")
+            with self.assertRaisesRegex(ValueError, "undeclared"):
+                profiles.compare(root / "baseline", root / "candidate", [], policy)
+            report = profiles.compare(root / "baseline", root / "candidate", ["model"], policy)
+            self.assertEqual((report["outcome"], report["recommendation"]),
+                             ("inconclusive-incomparable-conditions", "retain-baseline"))
+
+    def test_selected_kernel_run_must_match_the_profile_and_cross_profile_pair(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            policy = {"schema": 1, "minimum_practical_gain_percent": 5, "maximum_regression_percent": 5, "noise_percent": 2}
+            bundle(root / "baseline", "baseline")
+            bundle(root / "candidate", "candidate", throughput=120)
+            for side in ("baseline", "candidate"):
+                path = root / f"candidate/kernel-runs/{side}.json"
+                run = load(path)
+                for row in run["quality"]:
+                    row["tokens"] = [2]
+                save(path, run)
+            quality = profiles.model_kernels.compare_quality(load(root / "candidate/kernel-runs/baseline.json"),
+                                                              load(root / "candidate/kernel-runs/candidate.json"), 0, 0)
+            save(root / "candidate/quality.json", quality)
+            report = profiles.compare(root / "baseline", root / "candidate", [], policy)
+            self.assertEqual((report["quality_gates"]["cross_profile"]["status"], report["recommendation"]),
+                             ("incomplete", "retain-baseline"))
+            with self.assertRaises(ValueError):
+                profiles.select(report, "owner-1", "candidate")
+
+            # Reproduce the producer-side regression: a finalized serving
+            # runtime is refreshed after changing a real queue argument, but
+            # the retained quality runs still describe the former runtime.
+            # Updating the serving hash and manifest is not relationship
+            # validation for those stale runs.
+            bundle(root / "candidate", "candidate", throughput=120)
+            runtime = load(root / "candidate/runtime.json")
+            runtime["launch"][0]["--max-running-requests"] = "8"
+            save(root / "candidate/runtime.json", runtime)
+            serving = load(root / "candidate/serving/result.json")
+            serving["runtime"] = runtime
+            serving["runtime_sha256"] = profiles.digest_bytes((root / "candidate/runtime.json").read_bytes())
+            save(root / "candidate/serving/result.json", serving)
+            manifest = load(root / "candidate/manifest.json")
+            manifest["identity"] = profiles.producer_identity(serving, runtime, serving["runtime_sha256"])
+            save(root / "candidate/manifest.json", manifest)
+            with self.assertRaisesRegex(ValueError, "checked kernel runs"):
+                profiles.inspect(root / "candidate")
+
+            # MODEL_DTYPE is model identity even when the revision string and
+            # Pod template do not change.  The same stale-run refusal applies.
+            bundle(root / "candidate", "candidate", throughput=120)
+            runtime = load(root / "candidate/runtime.json")
+            runtime["settings"]["MODEL_DTYPE"] = "bf16"
+            save(root / "candidate/runtime.json", runtime)
+            serving = load(root / "candidate/serving/result.json")
+            serving["runtime"] = runtime
+            serving["runtime_sha256"] = profiles.digest_bytes((root / "candidate/runtime.json").read_bytes())
+            save(root / "candidate/serving/result.json", serving)
+            manifest = load(root / "candidate/manifest.json")
+            manifest["identity"] = profiles.producer_identity(serving, runtime, serving["runtime_sha256"])
+            save(root / "candidate/manifest.json", manifest)
+            with self.assertRaisesRegex(ValueError, "checked kernel runs"):
+                profiles.inspect(root / "candidate")
+
+            bundle(root / "candidate", "candidate", throughput=120)
+            run = load(root / "candidate/kernel-runs/candidate.json")
+            run["identity"]["runtime"]["launch"][0]["--attention-backend"] = "triton"
+            save(root / "candidate/kernel-runs/candidate.json", run)
+            quality = profiles.model_kernels.compare_quality(load(root / "candidate/kernel-runs/baseline.json"), run, 0, 0)
+            save(root / "candidate/quality.json", quality)
+            with self.assertRaisesRegex(ValueError, "checked kernel runs"):
+                profiles.inspect(root / "candidate")
+
+            bundle(root / "candidate", "candidate", throughput=120)
+            run = load(root / "candidate/kernel-runs/candidate.json")
+            run["identity"]["runtime"]["settings"]["MODEL_DTYPE"] = "bf16"
+            save(root / "candidate/kernel-runs/candidate.json", run)
+            quality = profiles.model_kernels.compare_quality(load(root / "candidate/kernel-runs/baseline.json"), run, 0, 0)
+            save(root / "candidate/quality.json", quality)
+            with self.assertRaisesRegex(ValueError, "checked kernel runs"):
+                profiles.inspect(root / "candidate")
+
     def test_quality_runs_must_bind_the_serving_model_files(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "profile"
@@ -507,6 +611,8 @@ class ProfilesTests(unittest.TestCase):
             legacy.pop("producer_conditions")
             self.assertEqual(profiles.selection_status(legacy, selection["runtime_identity"], selection["producer_conditions"])["status"],
                              "unknown")
+            old_conditions = dict(selection["producer_conditions"], schema=1)
+            self.assertEqual(profiles.selection_status(selection, selection["runtime_identity"], old_conditions)["status"], "unknown")
 
 
 if __name__ == "__main__":

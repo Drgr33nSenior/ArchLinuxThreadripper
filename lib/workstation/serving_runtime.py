@@ -256,6 +256,28 @@ def _warm_identity(observed):
         return None
 
 
+_UNAVAILABLE_CONTAINER_STATES = {
+    "crash-loop-oom-killed": "current container is restarting after an out-of-memory termination",
+    "crash-loop": "current container is restarting repeatedly; inspect the reviewed workload logs",
+    "terminated-oom-killed": "current container terminated after an out-of-memory termination",
+    "terminated": "current container terminated; inspect the reviewed workload logs",
+    "image-failure": "current container image cannot be started",
+}
+
+
+def _container_state(pod):
+    """Return the bounded current state, retaining legacy readiness-only input."""
+    if not isinstance(pod, dict):
+        return "unknown"
+    state = pod.get("container_state")
+    if isinstance(state, str):
+        return state
+    # Older sealed observations predate the bounded state field. They cannot
+    # report a current failure, but preserve their previous readiness-only
+    # interpretation for read-only compatibility.
+    return "running" if pod.get("ready") in (True, False) else "unknown"
+
+
 def pod_status(pod):
     """Report only a freshly observed Pod readiness state without runtime reuse."""
     if not isinstance(pod, dict):
@@ -265,17 +287,36 @@ def pod_status(pod):
     result = {"schema": 1, "kind": "sglang-warm-status",
               "pod": {key: pod.get(key) for key in fields}, "identity": None,
               "scope": "current Kubernetes readiness only; no model/runtime/device evidence was collected"}
-    if pod.get("ready") is False:
+    if not isinstance(pod.get("uid"), str) or not pod["uid"]:
+        result.update(status="unknown", kubernetes_readiness="unknown",
+                      representative_warmup="unknown", reason="current Pod identity is incomplete")
+        return result
+    state = _container_state(pod)
+    if state in _UNAVAILABLE_CONTAINER_STATES and pod.get("ready") is not True:
+        result.update(status="unavailable", kubernetes_readiness="unavailable",
+                      representative_warmup="not-applicable", reason=_UNAVAILABLE_CONTAINER_STATES[state])
+    elif state in _UNAVAILABLE_CONTAINER_STATES:
+        result.update(status="unknown", kubernetes_readiness="unknown",
+                      representative_warmup="unknown", reason="current Pod state is inconsistent with readiness")
+    elif pod.get("ready") is False and state in ("loading", "running"):
         result.update(status="model-loading", kubernetes_readiness="model-loading",
                       representative_warmup="not-applicable",
                       reason="current Pod is Running but not Ready")
+    elif pod.get("ready") is True and state == "running":
+        required = ("uid", "started_at", "container_id", "image", "image_id")
+        if any(not isinstance(pod.get(key), str) or not pod[key] for key in required) or type(pod.get("restart_count")) is not int:
+            result.update(status="unknown", kubernetes_readiness="unknown",
+                          representative_warmup="unknown", reason="current Pod process identity is incomplete")
+        else:
+            result.update(status="unknown", kubernetes_readiness="healthy",
+                          representative_warmup="unknown",
+                          reason="fresh model, runtime and allocated-device evidence is required before warm status")
     elif pod.get("ready") is True:
-        result.update(status="unknown", kubernetes_readiness="healthy",
-                      representative_warmup="unknown",
-                      reason="fresh model, runtime and allocated-device evidence is required before warm status")
+        result.update(status="unknown", kubernetes_readiness="unknown",
+                      representative_warmup="unknown", reason="current Pod state is inconsistent with readiness")
     else:
         result.update(status="unknown", kubernetes_readiness="unknown",
-                      representative_warmup="unknown", reason="current Pod readiness is unavailable")
+                      representative_warmup="unknown", reason="current Pod readiness or container state is unavailable")
     return result
 
 
@@ -286,8 +327,23 @@ def warm_status(observed, warmup, lifecycle=None):
     except (TypeError, ValueError):
         return {"schema": 1, "kind": "sglang-warm-status", "status": "unknown",
                 "reason": "current Pod/runtime evidence is malformed"}
+    if not isinstance(pod, dict) or not isinstance(pod.get("uid"), str) or not pod["uid"]:
+        return {"schema": 1, "kind": "sglang-warm-status", "status": "unknown",
+                "reason": "current Pod identity is incomplete"}
+    state = _container_state(pod)
+    if state in _UNAVAILABLE_CONTAINER_STATES and pod.get("ready") is not True:
+        return {"schema": 1, "kind": "sglang-warm-status", "status": "unavailable",
+                "pod": {key: pod.get(key) for key in ("uid", "started_at", "container_id", "restart_count", "image", "image_id")},
+                "identity": None, "kubernetes_readiness": "unavailable", "representative_warmup": "not-applicable",
+                "reason": _UNAVAILABLE_CONTAINER_STATES[state],
+                "scope": "representative warmup is separate from the established health/readiness probes"}
+    if state in _UNAVAILABLE_CONTAINER_STATES:
+        return {"schema": 1, "kind": "sglang-warm-status", "status": "unknown",
+                "reason": "current Pod state is inconsistent with readiness"}
     identity_now = _warm_identity(observed)
-    health = "healthy" if pod.get("ready") is True else "model-loading" if pod.get("ready") is False else "unknown"
+    health = ("healthy" if pod.get("ready") is True and state == "running"
+              else "model-loading" if pod.get("ready") is False and state in ("loading", "running")
+              else "unknown")
     report = {"schema": 1, "kind": "sglang-warm-status", "status": health,
               "pod": {key: pod.get(key) for key in ("uid", "started_at", "container_id", "restart_count", "image", "image_id")},
               "identity": identity_now, "kubernetes_readiness": health,

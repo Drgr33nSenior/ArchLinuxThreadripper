@@ -27,6 +27,16 @@ VARIABLES = frozenset(("compiler_backend", "image", "concurrency", "loading_stra
                        "resources", "quantization", "coding_corpus", "generation", "profile", "prefix_state"))
 NON_EQUIVALENT_VARIABLES = frozenset(("model", "tokenizer", "workload", "hardware", "quantization",
                                       "resources", "concurrency", "coding_corpus", "generation", "profile", "prefix_state"))
+PRODUCER_CONDITIONS_SCHEMA = 2
+PRODUCER_CONDITION_KEYS = frozenset(("schema", "runtime_sha256", "model_files_sha256", "model_settings_sha256",
+                                     "observed_launch_sha256", "launch_settings_sha256", "resources_sha256"))
+OBSERVED_LAUNCH_OPTIONS = frozenset(("--model-path", "--revision", "--served-model-name", "--dtype", "--tp", "--tp-size",
+                                    "--context-length", "--mem-fraction-static", "--max-running-requests", "--max-queued-requests",
+                                    "--model-loader-extra-config", "--schedule-policy", "--chunked-prefill-size", "--attention-backend",
+                                    "--stream-interval", "--torch-compile-max-bs", "--cuda-graph-backend-decode",
+                                    "--cuda-graph-backend-prefill", "--cuda-graph-tc-compiler", "--enable-torch-compile",
+                                    "--cuda-graph-bs-decode", "--cuda-graph-bs-prefill"))
+OBSERVED_LAUNCH_LIST_OPTIONS = frozenset(("--cuda-graph-bs-decode", "--cuda-graph-bs-prefill"))
 
 
 def digest_bytes(data):
@@ -168,6 +178,35 @@ def model_files_digest(runtime):
     return canonical_digest(files)
 
 
+def normalized_observed_launch(runtime):
+    """Validate the allowlisted observed engine command without Pod template data."""
+    launch = runtime.get("launch") if isinstance(runtime, dict) else None
+    if not isinstance(launch, list) or len(launch) != 1 or not isinstance(launch[0], dict):
+        raise ValueError("observed runtime launch is unavailable")
+    normalized = {}
+    for option, value in launch[0].items():
+        if option not in OBSERVED_LAUNCH_OPTIONS:
+            raise ValueError("observed runtime launch contains an unsupported option")
+        if option == "--enable-torch-compile":
+            if type(value) is not bool:
+                raise ValueError("observed runtime launch compiler flag is malformed")
+        elif option in OBSERVED_LAUNCH_LIST_OPTIONS:
+            if (not isinstance(value, list) or not value
+                    or any(not isinstance(item, str) or not item for item in value)):
+                raise ValueError("observed runtime launch batch option is malformed")
+        elif not isinstance(value, str) or not value:
+            raise ValueError("observed runtime launch option is malformed")
+        normalized[option] = value
+    if "--enable-torch-compile" not in normalized:
+        raise ValueError("observed runtime launch compiler state is unavailable")
+    return normalized
+
+
+def observed_launch_digest(runtime):
+    """Hash the observed engine command separately from the Pod template hash."""
+    return canonical_digest(normalized_observed_launch(runtime))
+
+
 def producer_identity(serving, retained_runtime, runtime_digest):
     """Derive every manifest identity from the finalized serving producer."""
     if not isinstance(serving, dict):
@@ -184,7 +223,6 @@ def producer_identity(serving, retained_runtime, runtime_digest):
     resources = pod.get("resources")
     node, image, image_id = pod.get("node"), pod.get("image"), pod.get("image_id")
     packages, hip = runtime.get("packages"), runtime.get("hip")
-    launch = runtime.get("launch")
     if (not isinstance(model_revision, str) or not model_revision
             or not isinstance(quantization, str) or not quantization
             or not isinstance(workload, str) or not re.fullmatch(r"[a-f0-9]{64}", workload)
@@ -200,7 +238,6 @@ def producer_identity(serving, retained_runtime, runtime_digest):
             or not {"sglang", "torch", "triton", "pytorch-triton-rocm", "aiter", "transformers"} <= set(packages)
             or not isinstance(packages.get("torch"), str) or not packages["torch"]
             or not isinstance(hip, str) or not hip
-            or not isinstance(launch, list) or len(launch) != 1 or not isinstance(launch[0], dict)
             or not isinstance(devices, list) or not devices):
         raise ValueError("serving producer identity is incomplete")
     identities = []
@@ -228,21 +265,45 @@ def producer_conditions(serving, runtime_digest):
     if not isinstance(settings, dict) or not settings:
         raise ValueError("runtime settings are unavailable")
     model_setting_names = {"MODEL_PATH", "MODEL_REVISION", "MODEL_REPOSITORY", "SERVED_MODEL_NAME", "MODEL_DTYPE"}
+    if "MODEL_DTYPE" not in settings:
+        raise ValueError("runtime model dtype is unavailable")
     model_settings = {key: value for key, value in settings.items() if key in model_setting_names}
     launch_settings = {key: value for key, value in settings.items() if key not in model_setting_names}
-    return {"runtime_sha256": runtime_digest, "model_files_sha256": model_files_digest(runtime),
+    return {"schema": PRODUCER_CONDITIONS_SCHEMA,
+            "runtime_sha256": runtime_digest, "model_files_sha256": model_files_digest(runtime),
             "model_settings_sha256": canonical_digest(model_settings),
+            "observed_launch_sha256": observed_launch_digest(runtime),
             "launch_settings_sha256": canonical_digest(launch_settings),
             "resources_sha256": canonical_digest(pod["resources"])}
 
 
+def producer_condition_details(serving):
+    """Private, bounded values that explain a changed observed launch digest."""
+    return {"observed_launch": normalized_observed_launch(serving["runtime"])}
+
+
 def valid_producer_conditions(value):
     """Accept only the normalized source conditions persisted with a selection."""
-    required = {"runtime_sha256", "model_files_sha256", "model_settings_sha256",
-                "launch_settings_sha256", "resources_sha256"}
-    return (isinstance(value, dict) and set(value) == required
-            and all(isinstance(digest, str) and re.fullmatch(r"[a-f0-9]{64}", digest)
-                    for digest in value.values()))
+    return (isinstance(value, dict) and set(value) == PRODUCER_CONDITION_KEYS
+            and value.get("schema") == PRODUCER_CONDITIONS_SCHEMA
+            and all(isinstance(value[key], str) and re.fullmatch(r"[a-f0-9]{64}", value[key])
+                    for key in PRODUCER_CONDITION_KEYS - {"schema"}))
+
+
+def checked_run_matches_profile(run, identity, conditions):
+    """Revalidate the selected quality run without trusting a stored status."""
+    if not isinstance(run, dict) or not valid_producer_conditions(conditions):
+        return False
+    try:
+        runtime, pod, run_identity = run["identity"]["runtime"], run["pod"], run["identity"]
+        derived = kernel_run_identity(run)
+        run_conditions = producer_conditions({"runtime": runtime, "pod": pod}, conditions["runtime_sha256"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    return (derived == identity
+            and run_identity.get("resources") == pod.get("resources")
+            and all(run_conditions[key] == conditions[key]
+                    for key in PRODUCER_CONDITION_KEYS - {"runtime_sha256"}))
 
 
 def startup_matches_serving(rows, serving):
@@ -460,6 +521,7 @@ def inspect(bundle_path):
     runtime_digest = artifact_hashes[f"runtime:{runtime_location}"]
     derived_identity = producer_identity(decoded["serving"][0], decoded["runtime"][0], runtime_digest)
     conditions = producer_conditions(decoded["serving"][0], runtime_digest)
+    condition_details = producer_condition_details(decoded["serving"][0])
     if identity != derived_identity:
         raise ValueError("manifest identity does not match retained serving producer evidence")
     startup_matches_serving(decoded["startup"], decoded["serving"][0])
@@ -475,20 +537,32 @@ def inspect(bundle_path):
             memory_only = quality.get("comparison") == "host-memory-only" if isinstance(quality, dict) else False
             tolerances = quality.get("quality") if isinstance(quality, dict) else None
             expected_quality = model_kernels.compare_quality(runs[0], runs[1], tolerances["atol"], tolerances["rtol"], memory_only)
-            matching_runs = [run for run in runs
-                             if tuple(sorted(derived_identity.items())) == tuple(sorted(kernel_run_identity(run).items()))
-                             and run.get("pod", {}).get("resources") == decoded["serving"][0]["pod"]["resources"]
-                             and run.get("identity", {}).get("resources") == decoded["serving"][0]["pod"]["resources"]
-                             and model_files_digest(run["identity"]["runtime"]) == conditions["model_files_sha256"]]
+            selected_run = runs[1]
+            selected_matches_serving = (
+                selected_run.get("pod") == decoded["serving"][0]["pod"]
+                and selected_run.get("workload_sha256") == decoded["serving"][0]["workload_sha256"]
+                and selected_run.get("identity", {}).get("runtime") == decoded["serving"][0]["runtime"]
+                and checked_run_matches_profile(selected_run, derived_identity, conditions))
         except (KeyError, TypeError, ValueError):
             raise ValueError("numerical quality does not bind retained checked kernel runs") from None
         if (quality != expected_quality
                 or quality["baseline_sha256"] != canonical_digest(runs[0])
                 or quality["candidate_sha256"] != canonical_digest(runs[1])
-                or not matching_runs):
+                or not selected_matches_serving):
             raise ValueError("numerical quality does not bind retained checked kernel runs")
+    else:
+        quality, selected_run = None, None
     return {"schema": 1, "kind": "workstation-performance-evidence-inspection", "status": manifest["status"],
-            "profile_id": profile_id, "identity": identity, "producer_conditions": conditions, "experiment": experiment,
+            "profile_id": profile_id, "identity": identity, "producer_conditions": conditions,
+            "producer_condition_details": condition_details, "experiment": experiment,
+            "quality_result": quality, "quality_run": selected_run,
+            "quality_run_sha256": canonical_digest(selected_run) if selected_run else None,
+            "quality_run_artifact_sha256": artifact_hashes[f"kernel_runs:{sources['kernel_runs'][1]}"] if selected_run else None,
+            "quality_run_source": sources["kernel_runs"][1] if selected_run else None,
+            "quality_baseline_run": runs[0] if selected_run else None,
+            "quality_baseline_run_sha256": canonical_digest(runs[0]) if selected_run else None,
+            "quality_baseline_run_artifact_sha256": artifact_hashes[f"kernel_runs:{sources['kernel_runs'][0]}"] if selected_run else None,
+            "quality_baseline_run_source": sources["kernel_runs"][0] if selected_run else None,
             "manifest_sha256": manifest_hash, "artifact_sha256": artifact_hashes,
             "metrics": {"serving": serving_metrics(decoded["serving"][0]),
                         "startup": startup_metrics(decoded["startup"]),
@@ -525,10 +599,13 @@ def differences(first, second, declared):
     # includes legitimate model/launch variation. These normalized conditions
     # expose the substantive retained source changes that its digest covers.
     for key, declaration in (("model_files_sha256", "model"), ("model_settings_sha256", "model"),
-                             ("launch_settings_sha256", "launch"),
+                             ("observed_launch_sha256", "launch"), ("launch_settings_sha256", "launch"),
                              ("resources_sha256", "resources")):
         left, right = first["producer_conditions"][key], second["producer_conditions"][key]
         if left != right:
+            if key == "observed_launch_sha256":
+                left = first.get("producer_condition_details", {}).get("observed_launch")
+                right = second.get("producer_condition_details", {}).get("observed_launch")
             all_differences.append({"field": f"producer.{key}", "baseline": left, "candidate": right,
                                     "declared_as": declaration, "declared": declaration in declared})
     keys = set(first["experiment"]["variables"]) | set(second["experiment"]["variables"])
@@ -561,6 +638,61 @@ def coding_differences(first, second, declared):
             result.append({"field": f"coding.{field}", "baseline": left.get(field), "candidate": right.get(field),
                            "declared_as": declaration, "declared": True})
     return result
+
+
+def retained_quality_run(record):
+    """Verify report-carried checked-run bindings before profile selection."""
+    run, baseline, quality = record.get("quality_run"), record.get("quality_baseline_run"), record.get("quality_result")
+    if not isinstance(run, dict) or not isinstance(baseline, dict) or not isinstance(quality, dict):
+        return None
+    artifact, baseline_artifact = record.get("quality_run_artifact_sha256"), record.get("quality_baseline_run_artifact_sha256")
+    source, baseline_source = record.get("quality_run_source"), record.get("quality_baseline_run_source")
+    artifacts = record.get("artifact_sha256")
+    details = record.get("producer_condition_details")
+    conditions = record.get("producer_conditions")
+    if (record.get("quality_run_sha256") != canonical_digest(run)
+            or record.get("quality_baseline_run_sha256") != canonical_digest(baseline)
+            or quality.get("candidate_sha256") != canonical_digest(run)
+            or quality.get("baseline_sha256") != canonical_digest(baseline)
+            or not isinstance(artifact, str) or not isinstance(baseline_artifact, str)
+            or not isinstance(source, str) or not isinstance(baseline_source, str)
+            or not isinstance(artifacts, dict)
+            or artifact != artifacts.get(f"kernel_runs:{source}")
+            or baseline_artifact != artifacts.get(f"kernel_runs:{baseline_source}")
+            or not isinstance(details, dict)
+            or not isinstance(conditions, dict)
+            or details.get("observed_launch") != normalized_observed_launch(run["identity"]["runtime"])
+            or conditions.get("observed_launch_sha256")
+            != canonical_digest(details["observed_launch"])
+            or not checked_run_matches_profile(run, record.get("identity"), conditions)):
+        return None
+    try:
+        tolerances = quality["quality"]
+        if model_kernels.compare_quality(baseline, run, tolerances["atol"], tolerances["rtol"],
+                                         quality.get("comparison") == "host-memory-only") != quality:
+            return None
+    except (KeyError, TypeError, ValueError):
+        return None
+    return run
+
+
+def cross_profile_quality(first, second, declared_differences):
+    """Check the runs that actually represent the two compared profiles."""
+    baseline, candidate = retained_quality_run(first), retained_quality_run(second)
+    source = (first.get("quality_result"), second.get("quality_result"))
+    if not isinstance(baseline, dict) or not isinstance(candidate, dict) or not all(isinstance(value, dict) for value in source):
+        return {"status": "incomplete", "reason": "matched cross-profile kernel runs are unavailable"}
+    if any(item["declared_as"] in NON_EQUIVALENT_VARIABLES for item in declared_differences):
+        return {"status": "declared-variant", "reason": "declared non-equivalent conditions require separate quality review"}
+    try:
+        left, right = (value["quality"] for value in source)
+        if left.get("atol") != right.get("atol") or left.get("rtol") != right.get("rtol"):
+            raise ValueError("quality tolerances differ")
+        result = model_kernels.compare_quality(baseline, candidate, left["atol"], left["rtol"])
+    except (KeyError, TypeError, ValueError):
+        return {"status": "incomplete", "reason": "matched cross-profile kernel runs or tolerances differ"}
+    return {"status": "passed", "baseline_sha256": canonical_digest(baseline),
+            "candidate_sha256": canonical_digest(candidate), "result": result}
 
 
 def align_cases(first, second):
@@ -722,6 +854,7 @@ def comparison_record(first, second, declared_variables, thresholds):
         raise ValueError("baseline and candidate profile IDs must differ")
     declared_differences = differences(first, second, declared_variables)
     declared_differences += coding_differences(first, second, declared_variables)
+    cross_quality = cross_profile_quality(first, second, declared_differences)
     limits = policy(thresholds)
     base = first["metrics"]["serving"]
     candidate = second["metrics"]["serving"]
@@ -733,9 +866,10 @@ def comparison_record(first, second, declared_variables, thresholds):
                           "coding": first["metrics"]["coding"]["status"]},
              "candidate": {"numerical": second["metrics"]["numerical_quality"]["status"],
                            "coding": second["metrics"]["coding"]["status"]},
+             "cross_profile": cross_quality,
              "provenance": "matching" if not coding_differences(first, second, declared_variables) else "declared-variant"}
     quality_passed = all(value == "passed" for side in (gates["baseline"], gates["candidate"])
-                         for value in side.values()) and gates["provenance"] == "matching"
+                         for value in side.values()) and gates["cross_profile"]["status"] == "passed" and gates["provenance"] == "matching"
     performance_gates = {"startup": startup_gate(first, second, limits["maximum_regression_percent"]),
                          "serving_latency": serving_latency_gate(paired_cases, limits["maximum_regression_percent"]),
                          "memory": memory_gate(first, second),
