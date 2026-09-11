@@ -55,7 +55,8 @@ def main():
     if not devices or any(not d["gfx"].split(":")[0] == "gfx1201" for d in devices):
         raise RuntimeError("allocated devices do not report gfx1201")
     allowed = {"--model-path", "--revision", "--served-model-name", "--dtype", "--tp", "--tp-size",
-               "--context-length", "--mem-fraction-static", "--max-running-requests",
+               "--context-length", "--mem-fraction-static", "--max-running-requests", "--max-queued-requests",
+               "--model-loader-extra-config", "--schedule-policy",
                "--chunked-prefill-size", "--attention-backend", "--stream-interval", "--torch-compile-max-bs",
                "--cuda-graph-backend-decode", "--cuda-graph-backend-prefill", "--cuda-graph-tc-compiler"}
     launch = []
@@ -65,7 +66,20 @@ def main():
         except (OSError, UnicodeError):
             continue
         if "sglang.launch_server" in args:
-            observed = {a: args[i + 1] for i, a in enumerate(args[:-1]) if a in allowed}
+            observed = {}
+            for index, argument in enumerate(args[:-1]):
+                if argument in allowed:
+                    if index + 1 >= len(args) or not args[index + 1] or args[index + 1].startswith("--"):
+                        raise RuntimeError(f"observed SGLang argument is malformed: {argument}")
+                    if argument in observed:
+                        raise RuntimeError(f"observed SGLang argument is duplicated: {argument}")
+                    observed[argument] = args[index + 1]
+                elif "=" in argument:
+                    option, value = argument.split("=", 1)
+                    if option in allowed:
+                        if not value or option in observed:
+                            raise RuntimeError(f"observed SGLang argument is malformed or duplicated: {option}")
+                        observed[option] = value
             observed["--enable-torch-compile"] = "--enable-torch-compile" in args
             for option in ("--cuda-graph-bs-decode", "--cuda-graph-bs-prefill"):
                 if option in args:

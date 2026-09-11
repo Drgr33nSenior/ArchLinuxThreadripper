@@ -25,7 +25,8 @@ class TelemetryTests(unittest.TestCase):
         values = dict(root=str(ROOT), output=str(self.work / name), enabled="true",
                       gpu_exporter="false", trace="false", kubelet="false", node_name="fixture-node",
                       api_address="192.168.50.10", host_address="192.168.50.10",
-                      reserve_mib=6144, workloads="sglang,open-webui", overlay="apps/overlays/dual-gpu")
+                      reserve_mib=6144, margin_mib=768, profile="full",
+                      workloads="sglang,open-webui", overlay="apps/overlays/dual-gpu")
         values.update(kwargs)
         return argparse.Namespace(**values)
 
@@ -34,6 +35,10 @@ class TelemetryTests(unittest.TestCase):
         telemetry.render(args)
         evidence = telemetry.verify(args.output)
         self.assertEqual(evidence["status"], "generated-not-deployed")
+        self.assertEqual(evidence["profile"], "full")
+        self.assertEqual(evidence["component_limits_mib"],
+                         {"cluster_stack_mib": 4736, "host_alloy_mib": 512, "hardware_sampler_mib": 128})
+        self.assertEqual(evidence["calculated_allowance_mib"], 6144)
         self.assertEqual(evidence["hardware_qualification"], "NOT RUN")
         objects = telemetry.load_objects((Path(args.output) / "workloads.yaml").read_text())
         actual = next(o for o in objects if o["kind"] == "Deployment" and o["metadata"]["name"] == "sglang")
@@ -72,6 +77,42 @@ class TelemetryTests(unittest.TestCase):
         self.assertFalse(any("nodes/proxy" in r.get("resources", []) for o in objects
                              if o["kind"] == "ClusterRole" for r in o.get("rules", [])))
         self.assertNotIn("review-required-node", stack)
+
+    def test_metrics_profile_removes_log_trace_components_and_preserves_health(self):
+        args = self.args(profile="metrics", reserve_mib=4352)
+        telemetry.render(args)
+        evidence = telemetry.verify(args.output)
+        self.assertEqual(evidence["profile"], "metrics")
+        self.assertEqual(evidence["component_limits_mib"]["cluster_stack_mib"], 2944)
+        self.assertEqual(evidence["calculated_allowance_mib"], 4352)
+        stack = (Path(args.output) / "stack.yaml").read_text()
+        workloads = telemetry.load_objects(stack)
+        names = {o["metadata"]["name"] for o in workloads if "metadata" in o}
+        self.assertFalse({"loki", "tempo"} & names)
+        alloy = next(o for o in workloads if o["kind"] == "ConfigMap" and
+                     o["metadata"]["name"].startswith("alloy-config-"))
+        config = alloy["data"]["config.alloy"]
+        self.assertNotIn("otelcol.exporter.otlphttp", config)
+        self.assertNotIn("otelcol.exporter.otlp \"tempo\"", config)
+        self.assertNotIn("logs =", config)
+        self.assertNotIn("traces =", config)
+        self.assertIn('"job" = "workstation-host-alloy"',
+                      (ROOT / "infrastructure/observability/host/config.metrics.alloy").read_text())
+        self.assertIn("workstation_hardware_sample_timestamp_seconds",
+                      (ROOT / "infrastructure/observability/config/alerts.yaml").read_text())
+        prometheus = next(o for o in workloads if o["kind"] == "ConfigMap" and
+                          o["metadata"]["name"].startswith("prometheus-config-"))
+        alert_text = prometheus["data"]["alerts.yml"]
+        self.assertNotIn("|loki|tempo", alert_text)
+        self.assertNotIn("failed_spans", alert_text)
+        self.assertNotIn("failed_log_records", alert_text)
+
+    def test_metrics_profile_rejects_trace_and_insufficient_complete_allowance(self):
+        for kwargs in ({"profile": "metrics", "trace": "true"},
+                       {"profile": "metrics", "reserve_mib": 4351},
+                       {"margin_mib": 0}):
+            with self.subTest(kwargs=kwargs), self.assertRaises(telemetry.InvalidTelemetry):
+                telemetry.render(self.args(**kwargs))
 
     def test_changed_target_refreshes_configmap_identity(self):
         first = self.args("first", kubelet="true")

@@ -1,0 +1,696 @@
+"""Compare sealed workstation experiment evidence and select a profile offline.
+
+This module only reads owner-prepared evidence bundles.  It does not start a
+Pod, run a benchmark, mutate a Deployment, or make a selected profile active.
+The JSON report is deliberately a source artifact: Bridge may validate the
+same sealed bundle and invoke this module, but must not reimplement its rules.
+"""
+import argparse
+import hashlib
+import json
+import math
+import os
+from pathlib import Path
+import re
+import statistics
+
+import coding_eval
+
+
+MAX_FILE = 16 * 1024 * 1024
+IDENTITY = ("model_revision", "tokenizer_sha256", "workload_sha256", "hardware_sha256",
+            "software_sha256", "launch_sha256", "quantization")
+VARIABLES = frozenset(("compiler_backend", "image", "concurrency", "loading_strategy",
+                       "loading_threads", "engine_queue", "interactive_priority",
+                       "model", "tokenizer", "workload", "hardware", "software", "launch",
+                       "quantization", "coding_corpus", "generation"))
+NON_EQUIVALENT_VARIABLES = frozenset(("model", "tokenizer", "workload", "hardware", "quantization",
+                                      "concurrency", "coding_corpus", "generation"))
+
+
+def digest_bytes(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def read_json(path):
+    path = Path(path)
+    if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_FILE:
+        raise ValueError("evidence must be a regular bounded JSON file")
+    data = path.read_bytes()
+    try:
+        return json.loads(data), digest_bytes(data)
+    except (UnicodeError, json.JSONDecodeError) as error:
+        raise ValueError("evidence is not valid JSON") from error
+
+
+def finite(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def safe_id(value, name="identifier"):
+    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,95}", value):
+        raise ValueError(f"invalid {name}")
+    return value
+
+
+def relative_file(bundle, name):
+    if not isinstance(name, str) or name.startswith("/"):
+        raise ValueError("bundle artifact must be a relative path")
+    supplied = bundle / name
+    if supplied.is_symlink():
+        raise ValueError("bundle artifact must not be a symlink")
+    result = supplied.resolve()
+    try:
+        result.relative_to(bundle.resolve())
+    except ValueError as error:
+        raise ValueError("bundle artifact escapes the evidence directory") from error
+    return result
+
+
+def median_summary(value):
+    """Normalise a serving summary without inventing a missing tail value."""
+    if value is None:
+        return {"status": "unknown"}
+    if not isinstance(value, dict) or type(value.get("n")) is not int or value["n"] < 1:
+        raise ValueError("invalid measurement summary")
+    result = {"status": "observed", "samples": value["n"]}
+    for key in ("min", "median", "max", "stdev"):
+        if not finite(value.get(key)) or value[key] < 0:
+            raise ValueError("invalid measurement value")
+        result[key] = value[key]
+    # A p95 based on fewer than 20 samples is an order statistic, not a useful
+    # tail estimate for a profile decision.
+    if value["n"] >= 20:
+        if not finite(value.get("p95")) or value["p95"] < 0:
+            raise ValueError("invalid tail measurement")
+        result["p95"] = value["p95"]
+    else:
+        result["p95"] = None
+        result["tail_status"] = "unknown-insufficient-samples"
+    return result
+
+
+def serving_metrics(result):
+    if not isinstance(result, dict) or result.get("schema") != 1:
+        raise ValueError("unsupported serving result")
+    rows = result.get("repeat_summary")
+    if not isinstance(rows, list) or not rows:
+        return {"status": "unknown", "reason": "repeat summary unavailable"}
+    cases = []
+    seen = set()
+    for row in rows:
+        if (not isinstance(row, dict) or type(row.get("failures")) is not int or row["failures"] < 0
+                or type(row.get("context_tokens")) is not int or row["context_tokens"] < 1
+                or type(row.get("concurrency")) is not int or row["concurrency"] < 1):
+            raise ValueError("invalid serving repeat summary")
+        key = (row["context_tokens"], row["concurrency"])
+        if key in seen:
+            raise ValueError("duplicate serving workload case")
+        seen.add(key)
+        case = {"context_tokens": key[0], "concurrency": key[1], "failures": row["failures"]}
+        for source, target in (("throughput_across_repetitions", "throughput"),
+                               ("request_latency_seconds", "latency"), ("ttft_seconds", "ttft")):
+            case[target] = median_summary(row.get(source))
+        cases.append(case)
+    # Multiple workload cases remain distinct.  A single aggregate could hide
+    # a regression at the long context or interactive concurrency.
+    return {"status": "observed", "source_status": result.get("status", "unknown"), "cases": cases}
+
+
+def startup_metrics(rows):
+    result = {"cold": {"values": [], "attempts": 0, "failed": 0, "unknown": 0},
+              "warm": {"values": [], "attempts": 0, "failed": 0, "unknown": 0}}
+    for row in rows:
+        if (not isinstance(row, dict) or row.get("schema") != 1
+                or row.get("cache_state") not in result):
+            raise ValueError("unsupported startup record")
+        phase = result[row["cache_state"]]
+        phase["attempts"] += 1
+        elapsed = row.get("elapsed_seconds")
+        if row.get("status") == "observed-not-qualified" and finite(elapsed) and elapsed >= 0:
+            phase["values"].append(elapsed)
+        elif isinstance(row.get("status"), str) and (row["status"] == "failed"
+                                                       or row["status"].startswith("failed-")
+                                                       or row["status"] in ("cancelled", "timeout", "timed-out",
+                                                                            "recovery-required")):
+            phase["failed"] += 1
+        else:
+            phase["unknown"] += 1
+    answer = {}
+    for phase, values in result.items():
+        known = values["values"]
+        state = "observed" if known and not values["failed"] and not values["unknown"] else "incomplete"
+        answer[phase] = {"status": state, "attempts": values["attempts"], "samples": len(known),
+                         "failed": values["failed"], "unknown": values["unknown"],
+                         "median_seconds": statistics.median(known) if known else None}
+    return answer
+
+
+def memory_metrics(plan):
+    if plan is None:
+        return {"status": "unknown"}
+    if not isinstance(plan, dict) or plan.get("schema") != 1 or plan.get("kind") != "sglang-host-memory-plan":
+        raise ValueError("unsupported memory plan")
+    budget = plan.get("budget")
+    if not isinstance(budget, dict):
+        raise ValueError("memory budget unavailable")
+    values = {key: budget.get(key) for key in ("observed_envelope_bytes", "headroom_bytes", "shm_limit_mib")}
+    if any(not isinstance(value, int) or value < 0 for value in values.values()):
+        raise ValueError("invalid memory budget")
+    source_status = plan.get("status", "unknown")
+    if not isinstance(source_status, str) or not re.fullmatch(r"[a-z][a-z0-9-]{0,63}", source_status):
+        raise ValueError("invalid memory plan status")
+    result = {"status": "observed" if source_status == "plan-only-unqualified" else "failed-or-unknown",
+              "source_status": source_status, **values,
+              "candidate_mib": plan.get("candidate_mib"), "baseline_mib": plan.get("baseline_mib"),
+              "scope": "candidate envelope and reserve; not an average RSS measurement"}
+    # These fields are optional.  The current planner does not manufacture a
+    # pressure counter, but a future sealed plan may report one explicitly.
+    # Preserve it so an observed failure cannot be hidden by its envelope.
+    for key in ("failure_status", "pressure_status"):
+        if key in plan:
+            value = plan[key]
+            if not isinstance(value, str) or not re.fullmatch(r"[a-z][a-z0-9-]{0,63}", value):
+                raise ValueError(f"invalid memory {key}")
+            result[key] = value
+    return result
+
+
+def quality_metrics(value):
+    if value is None:
+        return {"status": "unknown"}
+    if value.get("schema") != 1:
+        raise ValueError("unsupported numerical quality result")
+    return {"status": "passed" if value.get("status") == "sampled-quality-passed-not-qualified" else "failed-or-unknown",
+            "source_status": value.get("status")}
+
+
+def coding_metrics(value):
+    if value is None:
+        return {"status": "unknown"}
+    if value.get("schema") != 1 or value.get("kind") != "workstation-coding-evaluation":
+        raise ValueError("unsupported coding evaluation")
+    templates = value.get("template_sha256")
+    if (not isinstance(value.get("corpus_sha256"), str) or not re.fullmatch(r"[a-f0-9]{64}", value["corpus_sha256"])
+            or not isinstance(templates, dict) or not 8 <= len(templates) <= 12
+            or any(not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,95}", name)
+                   or not isinstance(digest, str) or not re.fullmatch(r"[a-f0-9]{64}", digest)
+                   for name, digest in templates.items())):
+        raise ValueError("coding evaluation provenance is incomplete")
+    coding_eval.generation_settings(value.get("generation"))
+    return {"status": value.get("status", "unknown"), "successes": value.get("successes"),
+            "failures": value.get("failures"), "unavailable": value.get("unavailable"),
+            "corpus_sha256": value["corpus_sha256"], "template_sha256": value["template_sha256"],
+            "generation": value["generation"]}
+
+
+def power_metrics(value):
+    """Summarise available hwmon power sensors without claiming wall power."""
+    if value is None:
+        return {"status": "unknown", "scope": "device-power evidence unavailable"}
+    snapshots = value if isinstance(value, list) else [value]
+    readings = {}
+    for snapshot in snapshots:
+        if not isinstance(snapshot, dict) or not isinstance(snapshot.get("hwmon"), dict):
+            raise ValueError("unsupported device-power evidence")
+        for device, item in snapshot["hwmon"].items():
+            if not isinstance(device, str) or not isinstance(item, dict) or not isinstance(item.get("values"), dict):
+                raise ValueError("invalid hwmon device-power evidence")
+            for name, raw in item["values"].items():
+                if not isinstance(name, str) or not name.startswith(("power", "energy")):
+                    continue
+                try:
+                    number = float(raw)
+                except (TypeError, ValueError):
+                    continue
+                if not math.isfinite(number) or number < 0:
+                    raise ValueError("invalid device-power reading")
+                # Snapshot ABI reports power in micro-Watts and energy in
+                # micro-Joules. Keep energy as an observation, not a power rate.
+                unit = "W" if name.startswith("power") else "uJ"
+                value = number / 1e6 if unit == "W" else number
+                readings.setdefault(f"{device}:{name}", {"unit": unit, "values": []})["values"].append(value)
+    if not readings:
+        return {"status": "unknown", "scope": "no readable device-power sensors"}
+    sensors = {}
+    for name, row in readings.items():
+        sensors[name] = {"samples": len(row["values"]), "median": statistics.median(row["values"]),
+                         "unit": row["unit"], "p95": sorted(row["values"])[math.ceil(.95 * len(row["values"])) - 1]
+                         if len(row["values"]) >= 20 else None}
+    return {"status": "observed", "sensors": sensors,
+            "scope": "hwmon device sensor readings; not wall power and not necessarily GPU-BDF attributed"}
+
+
+def inspect(bundle_path):
+    """Read a sealed bundle and return bounded normalized comparison evidence.
+
+    The manifest contains relative paths only.  It is safe for Bridge to use
+    this function while checking an administrator-approved bundle directory.
+    """
+    bundle = Path(bundle_path)
+    if bundle.is_symlink() or not bundle.is_dir():
+        raise ValueError("evidence bundle must be a real directory")
+    manifest, manifest_hash = read_json(bundle / "manifest.json")
+    if (manifest.get("schema") != 1 or manifest.get("kind") != "workstation-performance-evidence"
+            or manifest.get("status") not in ("measured-not-qualified", "failed", "incomplete")):
+        raise ValueError("unsupported performance evidence manifest")
+    profile_id = safe_id(manifest.get("profile_id"), "profile ID")
+    identity = manifest.get("identity")
+    if not isinstance(identity, dict) or set(identity) != set(IDENTITY):
+        raise ValueError("performance identity must contain exactly the supported fields")
+    for key, value in identity.items():
+        if not isinstance(value, str) or not value:
+            raise ValueError(f"missing identity {key}")
+    experiment = manifest.get("experiment", {})
+    if not isinstance(experiment, dict) or set(experiment) != {"variables"} or not isinstance(experiment["variables"], dict):
+        raise ValueError("invalid experiment variables")
+    if set(experiment["variables"]) - VARIABLES or any(not isinstance(value, str) for value in experiment["variables"].values()):
+        raise ValueError("unsupported experiment variable")
+    sources = manifest.get("sources")
+    if not isinstance(sources, dict) or set(sources) - {"serving", "startup", "memory", "quality", "coding", "power"}:
+        raise ValueError("invalid performance evidence sources")
+    if "serving" not in sources or "startup" not in sources:
+        raise ValueError("serving and startup evidence are required")
+    artifact_hashes, decoded = {}, {}
+    for kind, location in sources.items():
+        locations = location if kind == "startup" else [location]
+        if not isinstance(locations, list) or not locations:
+            raise ValueError("startup evidence must be a nonempty list")
+        decoded[kind] = []
+        for item in locations:
+            value, digest = read_json(relative_file(bundle, item))
+            decoded[kind].append(value)
+            artifact_hashes[f"{kind}:{item}"] = digest
+    # Serving is one result.  Requiring exactly one makes a failed run visible
+    # rather than letting a convenient result overwrite it in an aggregate.
+    if len(decoded["serving"]) != 1 or any(len(decoded[key]) != 1 for key in ("memory", "quality", "coding", "power") if key in decoded):
+        raise ValueError("invalid performance evidence source cardinality")
+    return {"schema": 1, "kind": "workstation-performance-evidence-inspection", "status": manifest["status"],
+            "profile_id": profile_id, "identity": identity, "experiment": experiment,
+            "manifest_sha256": manifest_hash, "artifact_sha256": artifact_hashes,
+            "metrics": {"serving": serving_metrics(decoded["serving"][0]),
+                        "startup": startup_metrics(decoded["startup"]),
+                        "memory": memory_metrics(decoded.get("memory", [None])[0]),
+                        "numerical_quality": quality_metrics(decoded.get("quality", [None])[0]),
+                        "coding": coding_metrics(decoded.get("coding", [None])[0]),
+                        "device_power": power_metrics(decoded.get("power", [None])[0])},
+            "limitations": ["Evidence remains unqualified and is not a deployment instruction.",
+                            "Failed and incomplete inputs are retained, not converted to zero measurements.",
+                            "Device power is not wall power."]}
+
+
+def policy(value):
+    if not isinstance(value, dict) or value.get("schema") != 1 or set(value) != {"schema", "minimum_practical_gain_percent", "maximum_regression_percent", "noise_percent"}:
+        raise ValueError("unsupported comparison policy")
+    result = {key: value[key] for key in value if key != "schema"}
+    if any(not finite(number) or not 0 <= number <= 100 for number in result.values()):
+        raise ValueError("comparison thresholds must be finite percentages in 0..100")
+    return result
+
+
+def differences(first, second, declared):
+    if not isinstance(declared, list) or len(set(declared)) != len(declared) or set(declared) - VARIABLES:
+        raise ValueError("declared variables are unsupported or duplicated")
+    all_differences = []
+    for key in IDENTITY:
+        if first["identity"][key] != second["identity"][key]:
+            declaration = {"model_revision": "model", "tokenizer_sha256": "tokenizer", "workload_sha256": "workload",
+                           "hardware_sha256": "hardware", "software_sha256": "software", "launch_sha256": "launch",
+                           "quantization": "quantization"}[key]
+            all_differences.append({"field": key, "baseline": first["identity"][key], "candidate": second["identity"][key],
+                                    "declared_as": declaration, "declared": declaration in declared})
+    keys = set(first["experiment"]["variables"]) | set(second["experiment"]["variables"])
+    for key in sorted(keys):
+        left, right = first["experiment"]["variables"].get(key), second["experiment"]["variables"].get(key)
+        if left != right:
+            all_differences.append({"field": key, "baseline": left, "candidate": right,
+                                    "declared_as": key, "declared": key in declared})
+    if any(not row["declared"] for row in all_differences):
+        raise ValueError("comparison has undeclared or incompatible differences")
+    if "model" in declared and "hardware" in declared:
+        raise ValueError("different-model evidence cannot be called GPU scaling")
+    return all_differences
+
+
+def coding_differences(first, second, declared):
+    """Bind task-quality results before treating serving throughput as equivalent."""
+    left, right = first["metrics"]["coding"], second["metrics"]["coding"]
+    result = []
+    for field, declaration in (("corpus_sha256", "coding_corpus"), ("template_sha256", "coding_corpus"),
+                               ("generation", "generation")):
+        if left.get(field) != right.get(field):
+            if declaration not in declared:
+                raise ValueError("coding evaluation provenance differs without a declared experiment variable")
+            result.append({"field": f"coding.{field}", "baseline": left.get(field), "candidate": right.get(field),
+                           "declared_as": declaration, "declared": True})
+    return result
+
+
+def align_cases(first, second):
+    """Pair only identical workload labels; never rely on list ordering alone."""
+    left, right = first["metrics"]["serving"]["cases"], second["metrics"]["serving"]["cases"]
+    by_left = {(row["context_tokens"], row["concurrency"]): row for row in left}
+    by_right = {(row["context_tokens"], row["concurrency"]): row for row in right}
+    keys = sorted(set(by_left) | set(by_right))
+    report = {"baseline_cases": [{"context_tokens": row["context_tokens"], "concurrency": row["concurrency"]}
+                                 for row in left],
+              "candidate_cases": [{"context_tokens": row["context_tokens"], "concurrency": row["concurrency"]}
+                                  for row in right]}
+    if set(by_left) != set(by_right):
+        report.update(status="incompatible", reason="serving context/concurrency cases differ")
+        return report, []
+    report["status"] = "matching"
+    return report, [(key, by_left[key], by_right[key]) for key in keys]
+
+
+def percent_regression(baseline, candidate):
+    """Return an honest percentage change, or unknown for a zero baseline."""
+    if not finite(baseline) or not finite(candidate) or baseline <= 0:
+        return None
+    return (candidate - baseline) * 100 / baseline
+
+
+def startup_gate(first, second, maximum_regression):
+    result = {"status": "passed", "comparisons": [], "incomplete": []}
+    for phase in ("cold", "warm"):
+        baseline = first["metrics"]["startup"][phase]
+        candidate = second["metrics"]["startup"][phase]
+        if (baseline["status"] != "observed" or candidate["status"] != "observed"
+                or baseline["failed"] or candidate["failed"]
+                or baseline["unknown"] or candidate["unknown"]):
+            result["incomplete"].append({"phase": phase, "baseline_status": baseline["status"],
+                                         "candidate_status": candidate["status"],
+                                         "baseline_failed": baseline["failed"], "candidate_failed": candidate["failed"],
+                                         "baseline_unknown": baseline["unknown"], "candidate_unknown": candidate["unknown"]})
+            continue
+        regression = percent_regression(baseline["median_seconds"], candidate["median_seconds"])
+        if regression is None:
+            result["incomplete"].append({"phase": phase, "reason": "zero-or-unknown-baseline-median"})
+            continue
+        result["comparisons"].append({"phase": phase, "baseline_median_seconds": baseline["median_seconds"],
+                                      "candidate_median_seconds": candidate["median_seconds"],
+                                      "regression_percent": regression})
+    if result["incomplete"]:
+        result["status"] = "incomplete"
+    elif any(row["regression_percent"] > maximum_regression for row in result["comparisons"]):
+        result["status"] = "regressed"
+    return result
+
+
+def serving_latency_gate(paired_cases, maximum_regression):
+    """Gate latency and TTFT independently from throughput.
+
+    A missing median is not converted to a zero.  A short tail remains
+    explicitly unavailable; where both tails exist, it receives the same
+    regression tolerance as the median.
+    """
+    result = {"status": "passed", "comparisons": [], "incomplete": []}
+    for key, baseline, candidate in paired_cases:
+        label = {"context_tokens": key[0], "concurrency": key[1]}
+        for metric in ("latency", "ttft"):
+            left, right = baseline[metric], candidate[metric]
+            if left["status"] != "observed" or right["status"] != "observed":
+                result["incomplete"].append({**label, "metric": metric,
+                                             "baseline_status": left["status"], "candidate_status": right["status"]})
+                continue
+            regression = percent_regression(left["median"], right["median"])
+            if regression is None:
+                result["incomplete"].append({**label, "metric": metric,
+                                             "reason": "zero-or-unknown-baseline-median"})
+                continue
+            result["comparisons"].append({**label, "metric": metric, "statistic": "median",
+                                          "baseline": left["median"], "candidate": right["median"],
+                                          "regression_percent": regression})
+            if left.get("p95") is not None and right.get("p95") is not None:
+                regression = percent_regression(left["p95"], right["p95"])
+                if regression is None:
+                    result["incomplete"].append({**label, "metric": metric,
+                                                 "statistic": "p95", "reason": "zero-baseline-p95"})
+                else:
+                    result["comparisons"].append({**label, "metric": metric, "statistic": "p95",
+                                                  "baseline": left["p95"], "candidate": right["p95"],
+                                                  "regression_percent": regression})
+    if result["incomplete"]:
+        result["status"] = "incomplete"
+    elif any(row["regression_percent"] > maximum_regression for row in result["comparisons"]):
+        result["status"] = "regressed"
+    return result
+
+
+def known_adverse_memory_status(value):
+    return value not in (None, "unknown", "none", "not-observed")
+
+
+def memory_gate(first, second):
+    """Reject a retained plan that explicitly records failed/pressure evidence.
+
+    Memory evidence is optional, so an absent plan remains unknown rather than
+    becoming a fabricated healthy measurement.  A plan refusal, or an explicit
+    future pressure/failure field, is known adverse evidence and cannot support
+    selecting an otherwise fast candidate.
+    """
+    adverse = []
+    for side, record in (("baseline", first), ("candidate", second)):
+        metrics = record["metrics"]["memory"]
+        if metrics["status"] == "unknown":
+            continue
+        for key in ("source_status", "failure_status", "pressure_status"):
+            value = metrics.get(key)
+            if key == "source_status":
+                unhealthy = value not in ("plan-only-unqualified", "unknown")
+            else:
+                unhealthy = known_adverse_memory_status(value)
+            if unhealthy:
+                adverse.append({"side": side, "field": key, "status": value})
+    return {"status": "failed-or-pressure-observed" if adverse else "passed", "adverse": adverse}
+
+
+def throughput_gate(paired_cases, configured_noise):
+    """Require repeated, non-zero observations and account for observed spread."""
+    result = {"status": "passed", "cases": [], "incomplete": []}
+    for key, baseline, candidate in paired_cases:
+        left, right = baseline["throughput"], candidate["throughput"]
+        label = {"context_tokens": key[0], "concurrency": key[1]}
+        if (left["status"] != "observed" or right["status"] != "observed"
+                or left["samples"] < 3 or right["samples"] < 3):
+            result["incomplete"].append({**label, "baseline_status": left["status"],
+                                         "candidate_status": right["status"],
+                                         "baseline_samples": left.get("samples"),
+                                         "candidate_samples": right.get("samples")})
+            continue
+        if left["median"] <= 0 or right["median"] <= 0:
+            result["incomplete"].append({**label, "reason": "nonpositive-throughput-median"})
+            continue
+        gain = percent_regression(left["median"], right["median"])
+        if gain is None:
+            result["incomplete"].append({**label, "reason": "zero-or-unknown-baseline-median"})
+            continue
+        variation = 100 * (left["stdev"] / left["median"] + right["stdev"] / right["median"])
+        result["cases"].append({**label, "gain_percent": gain,
+                                "observed_variation_percent": variation,
+                                "required_gain_over_noise_percent": max(configured_noise, variation)})
+    if result["incomplete"]:
+        result["status"] = "incomplete"
+    return result
+
+
+def comparison_record(first, second, declared_variables, thresholds):
+    """Compute the canonical report from already-inspected evidence records."""
+    if first["profile_id"] == second["profile_id"]:
+        raise ValueError("baseline and candidate profile IDs must differ")
+    declared_differences = differences(first, second, declared_variables)
+    declared_differences += coding_differences(first, second, declared_variables)
+    limits = policy(thresholds)
+    base = first["metrics"]["serving"]
+    candidate = second["metrics"]["serving"]
+    outcome, recommendation = "inconclusive", "retain-baseline"
+    gain = None
+    case_alignment, paired_cases = align_cases(first, second)
+    equivalent_variables = not any(row["declared_as"] in NON_EQUIVALENT_VARIABLES for row in declared_differences)
+    gates = {"baseline": {"numerical": first["metrics"]["numerical_quality"]["status"],
+                          "coding": first["metrics"]["coding"]["status"]},
+             "candidate": {"numerical": second["metrics"]["numerical_quality"]["status"],
+                           "coding": second["metrics"]["coding"]["status"]},
+             "provenance": "matching" if not coding_differences(first, second, declared_variables) else "declared-variant"}
+    quality_passed = all(value == "passed" for side in (gates["baseline"], gates["candidate"])
+                         for value in side.values()) and gates["provenance"] == "matching"
+    performance_gates = {"startup": startup_gate(first, second, limits["maximum_regression_percent"]),
+                         "serving_latency": serving_latency_gate(paired_cases, limits["maximum_regression_percent"]),
+                         "memory": memory_gate(first, second),
+                         "throughput": throughput_gate(paired_cases, limits["noise_percent"])}
+    measurements_ready = (first["status"] == second["status"] == "measured-not-qualified"
+                          and base.get("source_status") == candidate.get("source_status") == "measured-awaiting-provenance"
+                          and all(row["failures"] == 0 for _key, row, _other in paired_cases)
+                          and all(row["failures"] == 0 for _key, _other, row in paired_cases)
+                          and all(row["throughput"]["status"] == "observed" for _key, left, right in paired_cases for row in (left, right)))
+    if measurements_ready and paired_cases:
+        gains = performance_gates["throughput"]["cases"]
+        gain = min((row["gain_percent"] for row in gains), default=None)
+        if case_alignment["status"] != "matching" or not equivalent_variables:
+            outcome = "inconclusive-incomparable-conditions"
+        elif not quality_passed:
+            outcome = "inconclusive-quality-evidence"
+        elif performance_gates["startup"]["status"] == "regressed":
+            outcome = "candidate-regresses-startup"
+        elif performance_gates["startup"]["status"] != "passed":
+            outcome = "inconclusive-incomplete-startup-evidence"
+        elif performance_gates["serving_latency"]["status"] == "regressed":
+            outcome = "candidate-regresses-serving-latency-or-ttft"
+        elif performance_gates["serving_latency"]["status"] != "passed":
+            outcome = "inconclusive-incomplete-serving-latency-evidence"
+        elif performance_gates["memory"]["status"] != "passed":
+            outcome = "inconclusive-adverse-memory-evidence"
+        elif performance_gates["throughput"]["status"] != "passed":
+            outcome = "inconclusive-incomplete-serving-throughput-evidence"
+        elif gain is None:
+            outcome = "inconclusive-incomplete-serving-throughput-evidence"
+        elif any(abs(row["gain_percent"]) <= row["required_gain_over_noise_percent"] for row in gains):
+            outcome = "inconclusive-noisy"
+        elif gain >= limits["minimum_practical_gain_percent"]:
+            outcome, recommendation = "candidate-improves-throughput", "candidate"
+        elif gain <= -limits["maximum_regression_percent"]:
+            outcome = "candidate-regresses-throughput"
+    elif case_alignment["status"] != "matching":
+        outcome = "inconclusive-incompatible-cases"
+    return {"schema": 1, "kind": "workstation-performance-comparison", "status": "comparison-not-qualified",
+            "baseline": first, "candidate": second, "declared_variables": declared_variables,
+            "differences": declared_differences, "case_alignment": case_alignment, "thresholds": limits, "outcome": outcome,
+            "minimum_case_throughput_gain_percent": gain, "quality_gates": gates,
+            "performance_gates": performance_gates,
+            "recommendation": recommendation,
+            "limitations": ["Small/noisy changes are inconclusive; do not select by a single token-rate maximum.",
+                            "A candidate recommendation requires complete startup and serving latency/TTFT evidence, and no known adverse memory evidence.",
+                            "Cold/warm startup, load/JIT/warmup and steady serving remain separately reported where evidence exists.",
+                            "A selected profile is configuration only and never deploys or restarts a workload."]}
+
+
+def compare(baseline_bundle, candidate_bundle, declared_variables, thresholds):
+    return comparison_record(inspect(baseline_bundle), inspect(candidate_bundle), declared_variables, thresholds)
+
+
+def validate_comparison(comparison):
+    """Reject a free-form selection input that only imitates a recommendation.
+
+    The comparison retains inspected evidence identities and artifact hashes.
+    Recomputing its canonical report binds its threshold, declared differences,
+    case alignment and quality gates before a selection can cite those records.
+    It cannot make owner-supplied evidence a hardware qualification.
+    """
+    if not isinstance(comparison, dict):
+        raise ValueError("unsupported comparison record")
+    try:
+        thresholds = {"schema": 1, **comparison["thresholds"]} if isinstance(comparison["thresholds"], dict) else None
+        expected = comparison_record(comparison["baseline"], comparison["candidate"],
+                                     comparison["declared_variables"], thresholds)
+        actual = json.dumps(comparison, sort_keys=True, separators=(",", ":"), allow_nan=False)
+        canonical = json.dumps(expected, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError("comparison record is malformed") from error
+    if actual != canonical:
+        raise ValueError("comparison record does not match its inspected evidence and declared policy")
+    return expected
+
+
+def select(comparison, owner, candidate_id, previous=None):
+    comparison = validate_comparison(comparison)
+    owner, candidate_id = safe_id(owner, "owner"), safe_id(candidate_id, "candidate ID")
+    if candidate_id != comparison["candidate"]["profile_id"]:
+        raise ValueError("selection must name the comparison candidate exactly")
+    if comparison.get("recommendation") != "candidate":
+        raise ValueError("candidate is not eligible for selection from this comparison")
+    previous_record = None
+    if previous is not None:
+        if previous.get("schema") != 1 or previous.get("kind") != "workstation-measured-profile-selection":
+            raise ValueError("unsupported previous selection")
+        previous_record = {"profile_id": previous["selected_profile_id"], "selection_sha256": digest_bytes(json.dumps(previous, sort_keys=True, separators=(",", ":")).encode())}
+    return {"schema": 1, "kind": "workstation-measured-profile-selection", "status": "selected-unqualified",
+            "owner": owner, "selected_profile_id": candidate_id, "baseline_profile_id": comparison["baseline"]["profile_id"],
+            "previous_selection": previous_record, "comparison_sha256": digest_bytes(json.dumps(comparison, sort_keys=True, separators=(",", ":")).encode()),
+            "runtime_identity": comparison["candidate"]["identity"], "evidence": {"candidate_manifest_sha256": comparison["candidate"]["manifest_sha256"],
+                                                                            "baseline_manifest_sha256": comparison["baseline"]["manifest_sha256"]},
+            "selection_reason": comparison["recommendation"],
+            "limitations": ["Owner selection retains the prior baseline and does not apply a source patch or start a workload.",
+                            "Qualification is stale after a relevant runtime, model, launch, software, or hardware identity change."]}
+
+
+def selection_status(selection, current_identity):
+    if selection.get("schema") != 1 or selection.get("kind") != "workstation-measured-profile-selection":
+        raise ValueError("unsupported selection")
+    if not isinstance(current_identity, dict) or set(current_identity) != set(IDENTITY):
+        raise ValueError("current identity is incomplete")
+    changed = [key for key in IDENTITY if current_identity[key] != selection["runtime_identity"].get(key)]
+    return {"schema": 1, "kind": "workstation-measured-profile-status",
+            "status": "stale" if changed else "selected-unqualified-current",
+            "selected_profile_id": selection["selected_profile_id"], "changed_identity_fields": changed}
+
+
+def write(path, value):
+    path = Path(path)
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with path.open("x") as stream:
+        json.dump(value, stream, indent=2, allow_nan=False)
+        stream.write("\n")
+
+
+def readable_report(comparison):
+    lines = ["Workstation performance comparison", f"Status: {comparison['status']}",
+             f"Baseline: {comparison['baseline']['profile_id']}", f"Candidate: {comparison['candidate']['profile_id']}",
+             f"Outcome: {comparison['outcome']}", f"Recommendation: {comparison['recommendation']}"]
+    if comparison["minimum_case_throughput_gain_percent"] is None:
+        lines.append("Minimum case throughput gain: unknown")
+    else:
+        lines.append(f"Minimum case throughput gain: {comparison['minimum_case_throughput_gain_percent']:.2f}%")
+    lines.append("Declared differences: " + (", ".join(row["field"] for row in comparison["differences"]) or "none"))
+    lines.append("Case alignment: " + comparison["case_alignment"]["status"])
+    lines.append("Baseline numerical/coding quality: " + comparison["quality_gates"]["baseline"]["numerical"] + "/" + comparison["quality_gates"]["baseline"]["coding"])
+    lines.append("Candidate numerical/coding quality: " + comparison["quality_gates"]["candidate"]["numerical"] + "/" + comparison["quality_gates"]["candidate"]["coding"])
+    lines.append("Startup/latency/memory gates: " + comparison["performance_gates"]["startup"]["status"] + "/"
+                 + comparison["performance_gates"]["serving_latency"]["status"] + "/"
+                 + comparison["performance_gates"]["memory"]["status"])
+    lines.append("This report is not a deployment or hardware qualification.")
+    return "\n".join(lines) + "\n"
+
+
+def main():
+    os.umask(0o077)
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest="action", required=True)
+    check = sub.add_parser("inspect")
+    check.add_argument("bundle")
+    compare_parser = sub.add_parser("compare")
+    compare_parser.add_argument("baseline_bundle")
+    compare_parser.add_argument("candidate_bundle")
+    compare_parser.add_argument("policy_json")
+    compare_parser.add_argument("output")
+    compare_parser.add_argument("--declare", action="append", default=[])
+    choose = sub.add_parser("select")
+    choose.add_argument("comparison")
+    choose.add_argument("owner")
+    choose.add_argument("candidate_id")
+    choose.add_argument("output")
+    choose.add_argument("--previous")
+    state = sub.add_parser("status")
+    state.add_argument("selection")
+    state.add_argument("current_identity")
+    args = parser.parse_args()
+    if args.action == "inspect":
+        print(json.dumps(inspect(args.bundle), indent=2))
+    elif args.action == "compare":
+        values, _ = read_json(args.policy_json)
+        result = compare(args.baseline_bundle, args.candidate_bundle, args.declare, values)
+        output = Path(args.output)
+        output.mkdir(mode=0o700)
+        write(output / "comparison.json", result)
+        (output / "report.txt").write_text(readable_report(result), encoding="utf-8")
+    elif args.action == "select":
+        comparison, _ = read_json(args.comparison)
+        previous = read_json(args.previous)[0] if args.previous else None
+        write(args.output, select(comparison, args.owner, args.candidate_id, previous))
+    else:
+        selection, _ = read_json(args.selection)
+        current, _ = read_json(args.current_identity)
+        print(json.dumps(selection_status(selection, current), indent=2))
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,113 @@
+// Metrics-only collector profile. It retains bounded host/GPU/Bridge metrics
+// and collector health, but intentionally contains no log or trace pipeline.
+logging {
+  level = "warn"
+  format = "json"
+}
+
+prometheus.scrape "workstation" {
+  targets = [
+    {"__address__" = "node-exporter.workstation-observability-host.svc:9100", "job" = "node"},
+    {"__address__" = "kube-state-metrics:8080", "job" = "kube-state-metrics"},
+    {"__address__" = "prometheus:9090", "job" = "prometheus"},
+    {"__address__" = "grafana:3000", "job" = "grafana"},
+    {"__address__" = "127.0.0.1:12345", "job" = "alloy"},
+    {"__address__" = "sglang.ai-home-lab.svc:30000", "job" = "sglang"},
+  ]
+  scrape_interval = "30s"
+  scrape_timeout = "10s"
+  sample_limit = 12000
+  label_limit = 32
+  label_value_length_limit = 256
+  body_size_limit = "8MiB"
+  forward_to = [prometheus.relabel.bounded.receiver]
+}
+
+prometheus.relabel "bounded" {
+  rule {
+    action = "labeldrop"
+    regex = "(request_id|session_id|turn_id|user_id|prompt|completion|token|authorization|cookie)"
+  }
+  forward_to = [prometheus.remote_write.local.receiver]
+}
+
+prometheus.remote_write "local" {
+  endpoint {
+    url = "http://prometheus:9090/api/v1/write"
+    queue_config {
+      capacity = 2500
+      min_shards = 1
+      max_shards = 2
+      max_samples_per_send = 500
+      batch_send_deadline = "5s"
+    }
+  }
+  wal {
+    truncate_frequency = "15m"
+    min_keepalive_time = "5m"
+    max_keepalive_time = "2h"
+  }
+}
+
+// Bridge remains a loopback host sender. Only metric points are accepted and
+// transformed before persistence; logging/tracing cannot enter this profile.
+otelcol.receiver.otlp "local" {
+  grpc {
+    endpoint = "0.0.0.0:4317"
+    max_recv_msg_size = "4MiB"
+  }
+  http {
+    endpoint = "0.0.0.0:4318"
+    max_request_body_size = "4MiB"
+  }
+  output {
+    metrics = [otelcol.processor.memory_limiter.local.input]
+  }
+}
+
+otelcol.processor.memory_limiter "local" {
+  check_interval = "1s"
+  limit = "384MiB"
+  spike_limit = "64MiB"
+  output {
+    metrics = [otelcol.processor.filter.approved.input]
+  }
+}
+
+otelcol.processor.filter "approved" {
+  error_mode = "propagate"
+  metrics {
+    metric = [`not IsMatch(resource.attributes["service.name"], "^(spry-workstation-bridge|workstation-installer|sglang)$")`]
+  }
+  output {
+    metrics = [otelcol.processor.transform.minimal.input]
+  }
+}
+
+otelcol.processor.transform "minimal" {
+  error_mode = "propagate"
+  metric_statements {
+    context = "resource"
+    statements = [`keep_keys(attributes, ["service.name", "service.version"])`]
+  }
+  metric_statements {
+    context = "datapoint"
+    statements = [`keep_keys(attributes, ["http.request.method", "http.route", "http.response.status_code", "operation", "bridge.operation.action", "outcome", "error.type"])`]
+  }
+  output {
+    metrics = [otelcol.processor.batch.local.input]
+  }
+}
+
+otelcol.processor.batch "local" {
+  timeout = "5s"
+  send_batch_size = 256
+  send_batch_max_size = 512
+  output {
+    metrics = [otelcol.exporter.prometheus.local.input]
+  }
+}
+
+otelcol.exporter.prometheus "local" {
+  forward_to = [prometheus.relabel.bounded.receiver]
+}

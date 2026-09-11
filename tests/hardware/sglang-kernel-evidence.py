@@ -7,6 +7,7 @@ import hashlib
 import importlib.metadata
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 import platform
 import re
@@ -46,6 +47,95 @@ def cache_tree(path):
             raise ValueError("cache changed while hashing; retry during an idle window")
         files[str(path.relative_to(root))] = {"sha256": checksum, "bytes": stat.st_size}
     return {"root": str(root), "files": files, "bytes": total}
+
+
+def storage_observation(value, allowed_roots, observed_at):
+    """Read only the mounted model/cache filesystem without path fallback."""
+    if not isinstance(value, str) or not value:
+        return {"status": "unknown", "reason": "configured storage root is absent"}
+    raw = Path(value)
+    bases = tuple(Path(base) for base in allowed_roots)
+    # Reject lexical escapes before probing a caller-selected filesystem.
+    if (not raw.is_absolute() or not bases or any(not base.is_absolute() for base in bases)
+            or not any(raw == base or base in raw.parents for base in bases)):
+        return {"status": "unknown", "reason": "configured storage root is outside the reviewed mount"}
+    try:
+        # Mounted roots and the configured root must themselves have canonical,
+        # non-symlink ancestry.  Do not turn a reviewed lexical mount into an
+        # unreviewed resolved destination.
+        if any(base.is_symlink() or base.resolve(strict=True) != base for base in bases):
+            return {"status": "unknown", "reason": "reviewed storage mount is symlinked or unavailable"}
+        if raw.is_symlink() or raw.resolve(strict=True) != raw or not raw.is_dir():
+            return {"status": "unknown", "reason": "configured storage root is unsafe or unavailable"}
+        before = raw.stat(follow_symlinks=False)
+        usage = os.statvfs(raw)
+        after = raw.stat(follow_symlinks=False)
+    except (OSError, RuntimeError):
+        return {"status": "unknown", "reason": "configured storage root cannot be observed"}
+    if ((before.st_dev, before.st_ino) != (after.st_dev, after.st_ino)
+            or usage.f_frsize <= 0):
+        return {"status": "unknown", "reason": "configured storage root changed or has invalid filesystem data"}
+    total, available = usage.f_frsize * usage.f_blocks, usage.f_frsize * usage.f_bavail
+    if total <= 0 or available < 0 or available > total:
+        return {"status": "unknown", "reason": "configured storage filesystem counters are invalid"}
+    return {"status": "observed", "path": str(raw), "filesystem_device": before.st_dev,
+            "root_inode": before.st_ino, "total_bytes": total, "available_bytes": available,
+            "observed_at": observed_at,
+            "scope": "read-only statvfs snapshot; not sampled during model loading or a pure loader timer"}
+
+
+def runtime_capabilities(source, flags, sources):
+    """Record only source/help-proven candidate controls from this exact image.
+
+    A current web manual cannot prove an option or JSON key exists in the
+    immutable image.  The offline planners fail closed unless both the exact
+    help output and the relevant hashed source fragments establish it.
+    """
+    server_args = source / "srt/server_args.py"
+    try:
+        server_text = server_args.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        server_text = ""
+    found = {}
+    for path in sorted(set((source / "srt/model_loader").rglob("*.py")) |
+                       set((source / "srt/managers").rglob("*.py")) |
+                       set((source / "srt").glob("*scheduler*.py"))):
+        try:
+            if path.is_symlink() or path.stat().st_size > 2 * 1024 * 1024:
+                continue
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            continue
+        found[str(path.relative_to(source))] = {"sha256": digest(path), "text": text}
+
+    def capability(name, flag, key, server_marker, source_markers, directories, enable_key=None):
+        matches = {path: item["sha256"] for path, item in found.items()
+                   if any(path.startswith(directory) for directory in directories) and
+                   all(marker in item["text"] for marker in source_markers)}
+        if flag in flags and server_marker in server_text and matches:
+            result = {"status": "supported-source-contract", "flag": flag, "key": key, "sources": matches}
+            if enable_key:
+                result["enable_key"] = enable_key
+            return result
+        reasons = []
+        if flag not in flags:
+            reasons.append("flag absent from exact-image help")
+        if server_marker not in server_text:
+            reasons.append("server argument source does not expose the control")
+        if not matches:
+            reasons.append("runtime implementation source does not expose the control")
+        return {"status": "unsupported", "reason": "; ".join(reasons), "flag": flag, "key": key,
+                "sources": matches}
+
+    return {
+        "model_loader_threads": capability("model_loader_threads", "--model-loader-extra-config", "num_threads",
+                                             "model_loader_extra_config", ("num_threads", "enable_multithread_load"),
+                                             ("srt/model_loader/",), "enable_multithread_load"),
+        "bounded_queue": capability("bounded_queue", "--max-queued-requests", "maximum_queued_requests",
+                                     "max_queued_requests", ("max_queued_requests",), ("srt/managers/", "srt/")),
+        "interactive_priority": {"status": "unsupported-current-client-path",
+                                 "reason": "existing private clients do not convey a reviewed engine priority field"},
+    }
 
 
 def main():
@@ -98,19 +188,26 @@ def main():
         path = Path("/sys/fs/cgroup") / name
         cgroup[name] = path.read_text().strip() if path.is_file() else None
     caches = {key: cache_tree(os.environ[key]) for key in ("TRITON_CACHE_DIR", "TORCHINDUCTOR_CACHE_DIR")}
+    observed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    storage = {"schema": 1, "observed_at": observed_at, "roots": {
+        "model": storage_observation(os.environ.get("MODEL_PATH"), (Path("/models"),), observed_at),
+        "triton": storage_observation(os.environ.get("TRITON_CACHE_DIR"), (Path("/cache/triton"),), observed_at),
+        "torchinductor": storage_observation(os.environ.get("TORCHINDUCTOR_CACHE_DIR"), (Path("/cache/torchinductor"),), observed_at)}}
     settings = {key: os.environ.get(key) for key in (
         "TORCHINDUCTOR_COMPILE_THREADS", "TORCHINDUCTOR_FX_GRAPH_CACHE", "TORCH_LOGS",
-        "SGLANG_TORCH_COMPILE_MODE", "HIPBLASLT_TUNING_OVERRIDE_FILE")}
+        "SGLANG_TORCH_COMPILE_MODE", "HIPBLASLT_TUNING_OVERRIDE_FILE",
+        "MODEL_PATH", "TRITON_CACHE_DIR", "TORCHINDUCTOR_CACHE_DIR")}
     print(json.dumps({"schema": 1, "status": "observed-not-qualified", "python": platform.python_version(),
         "host_kernel": platform.release(),
         "amdgpu_srcversion": Path("/sys/module/amdgpu/srcversion").read_text().strip()
             if Path("/sys/module/amdgpu/srcversion").is_file() else None,
         "packages": packages, "hip": torch.version.hip, "compiler": compiler_record,
         "sources": sources, "help_sha256": hashlib.sha256(help_run.stdout.encode()).hexdigest(), "flags": flags,
+        "runtime_capabilities": runtime_capabilities(source, flags, sources),
         "compile_threads_supported": hasattr(config, "compile_threads"),
         "helper_compile_threads": config.compile_threads, "settings": settings,
         "loaded_libraries": libraries, "cgroup": cgroup, "affinity_cpus": len(os.sched_getaffinity(0)),
-        "caches": caches,
+        "caches": caches, "storage": storage,
         "scope": "helper configuration is not proof of server compilation; inspect effective launch and profiler/cache-hit evidence"}, indent=2))
 
 

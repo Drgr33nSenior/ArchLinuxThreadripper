@@ -19,12 +19,29 @@ TELEMETRY_KUBELET=true
 TELEMETRY_NODE_NAME=
 # Includes collector/exporter headroom; the planner counts selected workload limits.
 TELEMETRY_RESERVE_MIB=6144
+# Full keeps metrics, classified logs and selected traces. Metrics retains
+# Prometheus/Grafana, host/GPU/Bridge metrics and collector-health signals only.
+# It omits Loki/Tempo, journal collection and trace pipelines. It does not make
+# the apparent allowance saving available to model workloads automatically.
+TELEMETRY_PROFILE=full
+# This explicit planning margin is added to cluster, host Alloy and sampler
+# limits. TELEMETRY_RESERVE_MIB can remain higher after owner review.
+TELEMETRY_MARGIN_MIB=768
 TELEMETRY_WORKLOADS=sglang,open-webui
 # The sysfs GPU sampler is included. No coherent ROCm10 vendor-exporter artifact
 # was verified; true fails closed until one is reviewed. Trace dependencies need
 # an exact-image import check before this optional SGLang profile is enabled.
 TELEMETRY_GPU_EXPORTER=false
 TELEMETRY_SGLANG_TRACE=false
+
+# --- Managed inference compiler-cache inventory and prune planning ---
+# Set a discovered host path that maps the SGLang cache PVC's /cache directory.
+# Empty blocks inventory and pruning. This is not the worker ccache, model root,
+# benchmark evidence or a local-path PVC quota. A separate owner registry binds
+# namespaces to reviewed runtime provenance; plan generation never deletes data.
+INFERENCE_CACHE_ROOT=
+# Minimum free filesystem space, in MiB, required by an owner-reviewed prune plan.
+INFERENCE_CACHE_FREE_RESERVE_MIB=20480
 
 # --- Legacy Intel/B70 standalone LLM container ---
 # These keys apply to `llm up`, not the AMD/SGLang K3s manifests.

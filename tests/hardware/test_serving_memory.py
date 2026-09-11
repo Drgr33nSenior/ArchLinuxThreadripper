@@ -121,6 +121,22 @@ class MemoryTests(unittest.TestCase):
         for manifest in ("source.files", "bridge-runtime.files"):
             self.assertIn("lib/workstation/serving_memory.py", (ROOT/"infrastructure/packages/bootstrap"/manifest).read_text().splitlines())
 
+    def test_sealed_telemetry_reserve_is_an_other_workload_floor(self):
+        telemetry = self.root/"telemetry-evidence.json"
+        store(telemetry, {"schema": 2, "status": "generated-not-deployed", "enabled": True,
+                          "profile": "metrics", "reserve_mib": 4352, "stack_limit_mib": 2944,
+                          "component_limits_mib": {"cluster_stack_mib": 2944, "host_alloy_mib": 512,
+                                                   "hardware_sampler_mib": 128}, "margin_mib": 768,
+                          "calculated_allowance_mib": 4352})
+        result = self.plan(telemetry_evidence=telemetry)
+        self.assertEqual(result["evidence_sha256"][str(telemetry.resolve())],
+                         hashlib.sha256(telemetry.read_bytes()).hexdigest())
+        with self.assertRaises(ValueError):
+            self.plan(other_mib=4351, telemetry_evidence=telemetry)
+        self.change(telemetry, lambda r: r.update(calculated_allowance_mib=1))
+        with self.assertRaises(ValueError):
+            self.plan(telemetry_evidence=telemetry)
+
     def test_limits_and_shared_memory_are_not_usage(self):
         rows = [sample(0), sample(10)]
         result = memory.window(rows, 38912, 16384, 65536, 0)

@@ -46,7 +46,7 @@ def mode(path, expected)
   raise "fixture owner changed: #{path}" unless st.uid == Process.uid
 end
 mode(output, 0700)
-public_files = %w[rules/alerts.yaml rules/alerts_test.yaml fixture/check.alloy fixture/installation.log fixture/kernel.log otlp/check.alloy otlp/traces.json]
+public_files = %w[rules/alerts.yaml rules/alerts_test.yaml fixture/check.alloy fixture/installation.log fixture/kernel.log otlp/check.alloy otlp/traces.json cluster-full/config.alloy cluster-metrics/config.alloy host-full/config.alloy host-metrics/config.alloy]
 Dir.glob("#{output}/**/*").each do |path|
   next unless File.file?(path)
   relative = path.delete_prefix("#{output}/")
@@ -73,6 +73,14 @@ elsif args.include?('/fixture/check.alloy')
   network == 'none' ? ['host', 'fixture', %w[check.alloy installation.log kernel.log], '473:473'] : ['otlp-server', 'otlp', %w[check.alloy], '473:473']
 else
   raise 'unexpected container user' unless %w[65534:65534 10001:10001 473:473].include?(value.call('--user'))
+  if args.include?('validate') && args.include?('/config')
+    mount = mounts.fetch(0)
+    profile = %w[cluster-full cluster-metrics host-full host-metrics].find { |name| mount == "type=bind,source=#{output}/#{name},target=/config,readonly" }
+    raise 'unexpected Alloy profile fixture mount' unless profile && mounts.length == 1
+    mode("#{output}/#{profile}", 0755)
+    mode("#{output}/#{profile}/config.alloy", 0644)
+    File.open("#{root}/launches", 'a') { |file| file.puts(profile) }
+  end
   exit
 end
 raise "wrong #{kind} reader" unless value.call('--user') == user
@@ -117,10 +125,10 @@ else
 fi
 ruby - "$TELEMETRY_FIXTURE_ROOT" <<'RUBY'
 root = ARGV[0]
-raise 'missing or duplicate consumer launches' unless File.readlines("#{root}/launches", chomp: true) == %w[rules host otlp-server otlp-client]
+raise 'missing or duplicate consumer launches' unless File.readlines("#{root}/launches", chomp: true) == %w[rules cluster-full cluster-metrics host-full host-metrics host otlp-server otlp-client]
 output = Dir.glob("#{root}/test-results/telemetry-images.*").fetch(0)
 raise 'evidence parent lost privacy' unless File.stat(output).mode & 07777 == 0700
-public_files = %w[rules/alerts.yaml rules/alerts_test.yaml fixture/check.alloy fixture/installation.log fixture/kernel.log otlp/check.alloy otlp/traces.json]
+public_files = %w[rules/alerts.yaml rules/alerts_test.yaml fixture/check.alloy fixture/installation.log fixture/kernel.log otlp/check.alloy otlp/traces.json cluster-full/config.alloy cluster-metrics/config.alloy host-full/config.alloy host-metrics/config.alloy]
 Dir.glob("#{output}/**/*").each do |path|
   raise 'unexpected symlink' if File.symlink?(path)
   next unless File.file?(path)

@@ -1,0 +1,86 @@
+// Metrics-only host Alloy profile. It deliberately has no journal, Loki, log
+// or trace pipeline. Replace the documentation address only in an owner review.
+logging {
+  level = "warn"
+  format = "json"
+}
+
+prometheus.scrape "self" {
+  targets = [{"__address__" = "127.0.0.1:12345", "job" = "workstation-host-alloy"}]
+  scrape_interval = "30s"
+  scrape_timeout = "10s"
+  sample_limit = 12000
+  label_limit = 32
+  label_value_length_limit = 256
+  body_size_limit = "8MiB"
+  forward_to = [prometheus.relabel.self.receiver]
+}
+
+prometheus.relabel "self" {
+  rule {
+    action = "keep"
+    source_labels = ["__name__"]
+    regex = "(alloy_build_info|up|otelcol_.*|prometheus_remote_storage_.*)"
+  }
+  forward_to = [prometheus.remote_write.self.receiver]
+}
+
+prometheus.remote_write "self" {
+  endpoint {
+    url = "http://192.0.2.5:9090/api/v1/write"
+    queue_config {
+      capacity = 64
+      min_shards = 1
+      max_shards = 1
+      max_samples_per_send = 128
+      batch_send_deadline = "5s"
+    }
+  }
+  wal {
+    truncate_frequency = "15m"
+    min_keepalive_time = "5m"
+    max_keepalive_time = "30m"
+  }
+}
+
+otelcol.receiver.otlp "bridge" {
+  http {
+    endpoint = "127.0.0.1:4318"
+    max_request_body_size = "4MiB"
+  }
+  output {
+    metrics = [otelcol.processor.memory_limiter.host.input]
+  }
+}
+
+otelcol.processor.memory_limiter "host" {
+  check_interval = "1s"
+  limit = "256MiB"
+  spike_limit = "32MiB"
+  output {
+    metrics = [otelcol.processor.batch.host.input]
+  }
+}
+
+otelcol.processor.batch "host" {
+  timeout = "5s"
+  send_batch_size = 128
+  send_batch_max_size = 256
+  output {
+    metrics = [otelcol.exporter.otlphttp.cluster.input]
+  }
+}
+
+otelcol.exporter.otlphttp "cluster" {
+  client {
+    endpoint = "http://192.0.2.4:4318"
+    timeout = "5s"
+  }
+  sending_queue {
+    queue_size = 64
+    num_consumers = 1
+  }
+  retry_on_failure {
+    max_elapsed_time = "30s"
+  }
+}

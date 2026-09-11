@@ -106,6 +106,15 @@ bridge_build() {
     printf 'Bridge memory contract rejected the selected installer source; no package was emitted.\n' >&2
     return 1
   }
+  (cd "$work/checkout" && go test -mod=readonly -list '^TestCandidateInstallerPerformanceContract$' ./internal/performance | grep -Fxq TestCandidateInstallerPerformanceContract) || {
+    printf 'Selected Bridge commit lacks the required selected-installer performance-contract test.\n' >&2
+    return 1
+  }
+  (cd "$work/checkout" && BRIDGE_INSTALLER_PERFORMANCE_CANDIDATE="$installer_root" \
+    go test -mod=readonly -count=1 -v -run '^TestCandidateInstallerPerformanceContract$' ./internal/performance) || {
+    printf 'Bridge performance contract rejected the selected installer source; no package was emitted.\n' >&2
+    return 1
+  }
   # Generate only from the verified checkout, using that commit's own generator.
   (cd "$work/checkout" && go run ./cmd/bridge-arch-package --version "$version")
   dirty=$(git -C "$work/checkout" status --porcelain --untracked-files=no) || return 1
@@ -151,7 +160,7 @@ bridge_build() {
   cp "$builder/versions.lock" "$builder/packages.txt" "$work/output/"
   cp build-info "$work/output/BUILDINFO"
   go env -json GOVERSION GOOS GOARCH CGO_ENABLED GOFLAGS >"$work/output/go-environment.json"
-  printf 'BUILDER_IMAGE_ID=%s\nGO_VERSION=%s\nGO_ARCHIVE_SHA256=%s\nSOURCE_SHA256=%s\nPKGBUILD_SHA256=%s\nINSTALLER_SOURCE_SHA256=%s\nMEMORY_CONTRACT=selected-installer-memory-v1\nGOMAXPROCS=4\nGOFLAGS=-p=4\nSOURCE_REPOSITORY=%s\nSOURCE_COMMIT=%s\n' \
+  printf 'BUILDER_IMAGE_ID=%s\nGO_VERSION=%s\nGO_ARCHIVE_SHA256=%s\nSOURCE_SHA256=%s\nPKGBUILD_SHA256=%s\nINSTALLER_SOURCE_SHA256=%s\nMEMORY_CONTRACT=selected-installer-memory-v1\nPERFORMANCE_CONTRACT=selected-installer-performance-v1\nGOMAXPROCS=4\nGOFLAGS=-p=4\nSOURCE_REPOSITORY=%s\nSOURCE_COMMIT=%s\n' \
     "${BUILDER_IMAGE_ID:?}" "$go_version" "$go_hash" "$source_hash" "$recipe_hash" "$installer_hash" "$repository" "$revision" >"$work/output/builder.lock"
   (cd "$work/output" && sha256sum ./*.pkg.tar.zst "$archive" PKGBUILD versions.lock packages.txt BUILDINFO go-environment.json builder.lock >SHA256SUMS)
   printf 'Unsigned Bridge package built and recipe tests passed; signing, bundling and workstation qualification are separate.\n'

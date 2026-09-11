@@ -2,9 +2,12 @@
 
 This runbook covers the local Prometheus, Grafana, Loki, Tempo and Grafana Alloy
 stack. It runs on the workstation's bare-metal K3s cluster, not the NAS or the
-optional KVM lab. Status: implemented and source/configuration-tested; not
-deployed or hardware qualified. No telemetry result authorizes an agent to
-install, restart services, change policy or tune hardware.
+optional KVM lab. The default `full` profile includes all listed components. The
+optional `metrics` profile retains Prometheus, Grafana, host/GPU/Bridge metrics
+and collector health only. It does not collect logs or traces. Status:
+implemented and source/configuration-tested; not deployed or hardware qualified.
+No telemetry result authorizes an agent to install, restart services, change
+policy or tune hardware.
 
 ## Design and authoritative inputs
 
@@ -102,11 +105,23 @@ the exact image passes acceptance. See
 
 ## Memory, CPU and storage
 
-Cluster container limits total **4736 MiB**. Host Alloy is limited to 512 MiB
-and the sampler to 128 MiB. The default **6144 MiB** allowance covers these plus
-768 MiB of planning margin. It is not an additional kubelet reservation or proof
-of actual consumption. Cluster CPU limits are summed. Host collector/sampler
-CPU quotas are 50%/10%; observe throttling before increasing collection rates.
+The full profile's cluster container limits total **4736 MiB**. Host Alloy is
+limited to 512 MiB and the sampler to 128 MiB. Its calculated allowance is
+6144 MiB: 4736 + 512 + 128 + the explicit 768 MiB planning margin. The metrics
+profile removes Loki (1024 MiB) and Tempo (768 MiB), so its calculated allowance
+is 4352 MiB. `TELEMETRY_RESERVE_MIB` remains the owner-approved capacity reserve;
+it must be at least the calculated allowance and may be higher. Do not allocate
+an apparent profile saving to model workloads without a separate reviewed plan.
+Neither allowance is a kubelet reservation, an RSS measurement or proof of
+consumption. Cluster CPU limits are summed. Host collector/sampler CPU quotas
+are 50%/10%; observe throttling before increasing collection rates.
+
+The offline SGLang memory planner can receive the reviewed nonsecret rendered
+`evidence.json` through `--telemetry-evidence`. It verifies the selected
+profile's schema and requires `--other-mib` to be at least `reserve_mib`; it
+hashes that input into the unqualified candidate. This adds a conservative floor
+only. Omitting the input remains compatible, but does not prove that telemetry
+is absent or make the corresponding capacity available to a model.
 
 On the nominal 64 GiB machine, existing 12 GiB host, 4 GiB K3s and 2 GiB eviction
 reserves leave 46 GiB. A 38 GiB SGLang pod, 2 GiB WebUI and 6 GiB telemetry
@@ -155,6 +170,8 @@ TELEMETRY_WORKSTATION_ADDRESS=192.168.50.10
 TELEMETRY_KUBELET=true
 TELEMETRY_NODE_NAME=arch-workstation
 TELEMETRY_RESERVE_MIB=6144
+TELEMETRY_PROFILE=full
+TELEMETRY_MARGIN_MIB=768
 TELEMETRY_WORKLOADS=sglang,open-webui
 TELEMETRY_GPU_EXPORTER=false
 TELEMETRY_SGLANG_TRACE=false
@@ -166,6 +183,58 @@ collector ingress and optional kubelet scraping. Numeric RFC1918/ULA addresses
 are required; missing, public, loopback and documentation addresses fail closed.
 Review this single-node design before using multiple nodes or API addresses.
 `TELEMETRY_KUBELET=false` omits its extra RBAC/configuration.
+
+Set `TELEMETRY_PROFILE=metrics` only after reviewing the generated render. It
+uses a Prometheus-only Grafana datasource, a metrics-only cluster Alloy
+pipeline, and a metrics-only host Alloy configuration. Loki/Tempo workloads,
+their ConfigMaps, NetworkPolicies, datasource navigation, journal collection and
+trace receivers are absent. The host self-scrape, bounded direct remote write,
+GPU textfile metrics, Bridge metric receiver, collector refusal/export alerts
+and missing-signal alerts remain. Existing full renders remain compatible.
+
+## Inference compiler-cache inventory and prune plans
+
+The SGLang cache PVC contains model-adjacent compiler caches. It is not the
+model-weight store, retained benchmark evidence, or the build worker's ccache.
+`inference_cache.py` inventories only these fixed managed paths below an
+owner-supplied host PVC mount:
+
+- `triton/workstation/<cache-identity>`
+- `torchinductor/workstation/<cache-identity>`
+
+Leave `INFERENCE_CACHE_ROOT` empty until the owner has discovered that mount.
+The tool refuses noncanonical roots, symlinks in the root ancestry or managed
+parents, mount crossings, special files, ownership drift, unsafe registry
+fields, and inputs larger than its fixed inventory bounds. It records
+unregistered namespace entries, but excludes them from every candidate list. It
+does not use atime as last-use evidence.
+
+Create the private owner registry separately. Every namespace must specify its
+exact relative path, runtime and model SHA-256 identities, expected UID/GID,
+active-reference list, last-known-good flag and managed-use timestamp. The
+registry is the provenance/liveness input; directory names and hashes alone are
+not deletion authority. Keep it owner-private because it identifies runtime
+artifacts.
+
+```sh
+umask 077
+python3 lib/workstation/inference_cache.py inventory \
+  /discovered/host/pvc/cache /private/cache-registry.json /private/evidence/cache-inventory-01
+python3 lib/workstation/inference_cache.py plan \
+  /private/evidence/cache-inventory-01 /private/evidence/cache-prune-plan-01 \
+  --reserve-mib 20480
+```
+
+The inventory records allocated filesystem bytes (`st_blocks * 512`), not
+logical file lengths. It counts a hard-linked inode once across the managed
+tree. Active, last-known-good, missing, unregistered and shared-content
+namespaces are excluded. The prune plan gives exact disposable candidates,
+estimated reclaim, the free-space shortfall and whether reviewed removal could
+meet the configured reserve. It always has a plan-only status and performs no
+deletion. If disposable space cannot meet the reserve, it returns a retained
+`blocked-insufficient-disposable-space` plan. A future deletion executor must
+independently revalidate the registry, paths, ownership, active references and
+free space. Do not delete cache data during inventory, startup or source tests.
 
 Owner read-only identity checks after K3s installation:
 
@@ -293,23 +362,25 @@ unsupported thermal/power series remain absent. Selected clocks are not sustaine
 clock measurements. Identical cards remain separate series; changed enumeration
 requires reinspection. No GPU allocation or combined VRAM is inferred.
 
-For host Alloy, obtain actual ClusterIPs:
+For host Alloy, obtain actual ClusterIPs. The full profile requires all three
+services. The metrics profile requires only Alloy and Prometheus:
 
 ```sh
 kubectl -n workstation-observability get svc alloy loki prometheus -o wide
 ```
 
-The owner copies `infrastructure/observability/host/config.alloy` to
+The owner copies `infrastructure/observability/host/config.alloy` for `full`,
+or `infrastructure/observability/host/config.metrics.alloy` for `metrics`, to
 `/etc/workstation-telemetry/host.alloy`, root-owned and readable by
-`workstation-alloy`. Replace all three example addresses with the actual
-Loki/Alloy/Prometheus ClusterIPs; IPv6 URLs need brackets. The host's Alloy
-listener self-scrapes only its bounded health metric families, including
-memory-limiter, remote-write, journal-drop and journal-write counters, under
-the distinct `workstation-host-alloy` job, then remote-writes them directly to Prometheus.
-This path is intentionally separate from host OTLP forwarding. The heartbeat
-alert uses a five-minute absence window plus a two-minute pending period; it
-also detects loss of the self-monitoring forwarding path. A separate exporter
-alert detects `up == 0` sustained for five minutes. Validate before starting:
+`workstation-alloy`. Replace the applicable example addresses with actual
+ClusterIPs; IPv6 URLs need brackets. The host's Alloy listener self-scrapes only
+its bounded health metric families under the distinct
+`workstation-host-alloy` job, then remote-writes them directly to Prometheus.
+The full profile also includes journal-drop and journal-write counters. This
+path is intentionally separate from host OTLP forwarding. The heartbeat alert
+uses a five-minute absence window plus a two-minute pending period; it also
+detects loss of the self-monitoring forwarding path. A separate exporter alert
+detects `up == 0` sustained for five minutes. Validate before starting:
 
 ```sh
 sudo -u workstation-alloy /usr/bin/grafana-alloy validate /etc/workstation-telemetry/host.alloy

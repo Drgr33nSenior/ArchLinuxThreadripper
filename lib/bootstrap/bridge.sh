@@ -36,13 +36,14 @@ bridge_official_signature() (
 # its separate manifest and qualification checks.
 bridge_memory_contract_identity() {
   (($# == 4)) || return 1
-  local lock=$1 installer=$2 bridge_source=$3 recipe=$4 source kind built_source built_recipe
+  local lock=$1 installer=$2 bridge_source=$3 recipe=$4 source kind performance built_source built_recipe
   [[ -f $lock && ! -L $lock && $installer =~ ^[a-f0-9]{64}$ && $bridge_source =~ ^[a-f0-9]{64}$ && $recipe =~ ^[a-f0-9]{64}$ ]] || return 1
   source=$(awk -F= '$1=="INSTALLER_SOURCE_SHA256" {n++; v=$2} END {if(n!=1 || v !~ /^[a-f0-9]{64}$/) exit 1; print v}' "$lock") || return 1
   built_source=$(awk -F= '$1=="SOURCE_SHA256" {n++; v=$2} END {if(n!=1 || v !~ /^[a-f0-9]{64}$/) exit 1; print v}' "$lock") || return 1
   built_recipe=$(awk -F= '$1=="PKGBUILD_SHA256" {n++; v=$2} END {if(n!=1 || v !~ /^[a-f0-9]{64}$/) exit 1; print v}' "$lock") || return 1
   kind=$(awk -F= '$1=="MEMORY_CONTRACT" {n++; v=$2} END {if(n!=1) exit 1; print v}' "$lock") || return 1
-  [[ $kind == selected-installer-memory-v1 && $source == "$installer" && $built_source == "$bridge_source" && $built_recipe == "$recipe" ]]
+  performance=$(awk -F= '$1=="PERFORMANCE_CONTRACT" {n++; v=$2} END {if(n!=1) exit 1; print v}' "$lock") || return 1
+  [[ $kind == selected-installer-memory-v1 && $performance == selected-installer-performance-v1 && $source == "$installer" && $built_source == "$bridge_source" && $built_recipe == "$recipe" ]]
 }
 
 bridge_verify_bundle() (

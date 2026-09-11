@@ -52,7 +52,10 @@ Commands:
   rocm serving-startup <pod-name> <cold|warm> <new-output-directory> [--memory]
   rocm benchmark-serving <workload.json> <evidence-directory> <new-output-directory>
   rocm serving-sweep <rendered-sglang-deployment.json> <new-output-directory>
-  rocm serving-memory-plan <deployment.json> <workload.json> <resource-plan.json> <new-output-directory> --observation <startup-dir> <serving-dir> [--observation ...] --other-mib N [--memory-mib N]
+  rocm serving-loading-plan <deployment.json> <kernel-evidence-directory> <new-output-directory> --threads N,N --reserve-mib N --per-thread-mib N
+  rocm serving-queue-plan <deployment.json> <kernel-evidence-directory> <new-output-directory> --maximum-queued N
+  rocm serving-warm-status <pod-name> <kernel-warmup-result.json|-> <new-output.json>
+  rocm serving-memory-plan <deployment.json> <workload.json> <resource-plan.json> <new-output-directory> --observation <startup-dir> <serving-dir> [--observation ...] --other-mib N [--memory-mib N] [--telemetry-evidence evidence.json]
   rocm kernel-evidence <pod-name> <new-output-directory>
   rocm kernel-plan <deployment.json> <workload.json> <evidence-directory> <new-output-directory> --profile <cache|capture|legacy-compile> --reserve-mib N --worker-mib N [--workers 1,2] [--experimental]
   rocm kernel-warmup <workload.json> <evidence-directory> <new-output-directory>
@@ -67,6 +70,9 @@ Commands:
   performance storage <owned-scratch-directory> <new-output-directory> <size-GiB>
   performance memory <workers> <MiB-per-array> <new-output-directory>
   performance stack
+  performance seal <private-bundle-directory> <kind> <target> <source-sha256>
+  performance inspect <private-bundle-directory> <manifest-sha256>
+  performance export <private-bundle-directory> <manifest-sha256> <new-output-directory> --target <target> --source-revision <source-sha256> --owner <actor>
   performance run <new-output-directory> <timeout-seconds> -- <command> [arguments]
   rocm validate <new-output-directory> [python-executable]
   rocm inference <llama-cli> <GGUF-model> <new-output-directory>
@@ -283,6 +289,18 @@ main() {
       (($# == 4)) || return 2
       "$(ws_measure_python)" "$repo_root/lib/workstation/serving_sweep.py" "$3" "$4"
       ;;
+    rocm:serving-loading-plan)
+      shift 2
+      "$(ws_measure_python)" "$repo_root/lib/workstation/serving_runtime.py" loading-plan "$@"
+      ;;
+    rocm:serving-queue-plan)
+      shift 2
+      "$(ws_measure_python)" "$repo_root/lib/workstation/serving_runtime.py" queue-plan "$@"
+      ;;
+    rocm:serving-warm-status)
+      (($# == 5)) || return 2
+      ws_serving_warm_status "$3" "$4" "$5"
+      ;;
     rocm:serving-memory-plan)
       shift 2
       "$(ws_measure_python)" "$repo_root/lib/workstation/serving_memory.py" "$@"
@@ -328,6 +346,31 @@ main() {
       (($# == 2)) || return 2
       ws_require_arch
       "$(ws_measure_python)" "$repo_root/lib/workstation/stack_inventory.py"
+      ;;
+    performance:bundle-seal)
+      (($# == 6)) || return 2
+      ws_performance_bundle seal "$3" "$4" "$5" "$6"
+      ;;
+    performance:seal)
+      (($# == 6)) || return 2
+      ws_performance_bundle seal "$3" "$4" "$5" "$6"
+      ;;
+    performance:bundle-inspect)
+      (($# == 4)) || return 2
+      ws_performance_bundle inspect "$3" "$4"
+      ;;
+    performance:inspect)
+      (($# == 4)) || return 2
+      ws_performance_bundle inspect "$3" "$4"
+      ;;
+    performance:bundle-export)
+      (($# == 7)) || return 2
+      ws_performance_bundle export "$3" "$4" "$5" "$6" "$7"
+      ;;
+    performance:export)
+      (($# == 11)) || return 2
+      shift 2
+      ws_performance_export "$@"
       ;;
     performance:run)
       (($# >= 6)) && [[ $5 == -- ]] || return 2

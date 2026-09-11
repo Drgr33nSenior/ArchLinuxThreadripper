@@ -14,6 +14,7 @@ import re
 
 from model_kernels import identity, mib, write
 from serving import finite, validate
+from telemetry import validate_evidence
 
 MIB = 1024**2
 
@@ -170,13 +171,18 @@ def check_runs(result, workload):
 
 
 def plan(deployment_path, workload_path, resource_path, observations, other_mib,
-         margin_mib=2048, margin_percent=25, minimum_seconds=60, memory_mib=None):
+         margin_mib=2048, margin_percent=25, minimum_seconds=60, memory_mib=None,
+         telemetry_evidence=None):
     inputs = Inputs()
     deployment, workload, resource = (inputs.read(p) for p in (deployment_path, workload_path, resource_path))
     for number in (other_mib, margin_mib, margin_percent, minimum_seconds):
         integer(number)
     if margin_mib < 512 or not 10 <= margin_percent <= 100 or not 30 <= minimum_seconds <= 21600:
         raise ValueError("require >=512 MiB and 10..100 percent headroom, 30..21600 seconds steady observation")
+    if telemetry_evidence is not None:
+        telemetry = validate_evidence(inputs.read(telemetry_evidence))
+        if other_mib < telemetry["reserve_mib"]:
+            raise ValueError("other-workload budget must include the sealed telemetry reserve")
     spec = deployment["spec"]["template"]["spec"]
     if (deployment.get("kind") != "Deployment" or len(spec["containers"]) != 1
             or spec.get("initContainers") or spec["containers"][0]["name"] != "sglang"):
@@ -289,7 +295,7 @@ def plan(deployment_path, workload_path, resource_path, observations, other_mib,
                        "shm_limit_mib": shm_mib, "observed_envelope_bytes": envelope, "headroom_bytes": safety},
             "observations": records, "evidence_sha256": inputs.hashes,
             "tool_sha256": {name: hashlib.sha256((Path(__file__).parent/name).read_bytes()).hexdigest()
-                            for name in ("serving_memory.py", "measurement.py", "performance.sh", "serving.py", "model_kernels.py")},
+                            for name in ("serving_memory.py", "measurement.py", "performance.sh", "serving.py", "model_kernels.py", "telemetry.py")},
             "patch": patch(spec, candidate), "rollback": patch(candidate, spec),
             "limitations": ["A plan is not measured safety at the smaller limit, qualification or permission to apply.",
                             "Cold/warm cache labels are owner declarations. Startup begins after Running; peak is lifetime.",
@@ -312,9 +318,11 @@ def main():
     parser.add_argument("--margin-percent", type=int, default=25)
     parser.add_argument("--minimum-seconds", type=int, default=60)
     parser.add_argument("--memory-mib", type=int)
+    parser.add_argument("--telemetry-evidence", help="sealed nonsecret telemetry evidence.json; sets a conservative other-workload floor")
     args = parser.parse_args()
     result = plan(args.deployment, args.workload, args.resource_plan, args.observation, args.other_mib,
-                  args.margin_mib, args.margin_percent, args.minimum_seconds, args.memory_mib)
+                  args.margin_mib, args.margin_percent, args.minimum_seconds, args.memory_mib,
+                  args.telemetry_evidence)
     output = Path(args.output)
     output.mkdir(mode=0o700)
     write(output/"patch.json", result.pop("patch"))

@@ -46,10 +46,87 @@ compatibility checks is not justified for this Radeon/model combination.
 [Current SGLang guidance](https://docs.sglang.io/docs/advanced_features/server_arguments)
 also warns that the legacy path is out of maintenance.
 
+On 11 September 2026, the current [SGLang model-loading guidance](https://docs.sglang.io/docs/advanced_features/model_loading)
+described multithread loading and sharded state. It is discovery material only:
+the locked image retains its existing defaults until its exact `--help` and
+hashed loader source prove a supported candidate control.
+
 [AMD's Radeon guidance](https://rocm.docs.amd.com/projects/ai-ecosystem/en/latest/inference/sglang.html)
 and existing Triton/AITER settings remain the baseline. No MI300 tile sizes,
 GEMM shapes, waves or memory fractions are copied. An FP8 checkpoint or a loaded
 BLAS library does not prove the hot operation uses that library.
+
+## Loading, warm state and admission candidates
+
+`serving_runtime.py` produces only independent JSON Patch candidates. It does
+not restart a Pod, send a warmup prompt, delete a cache, or select a profile.
+Before it offers loading threads or a queue cap, `kernel-evidence` runs the
+selected image's own `--help` and hashes the specific server/loader/scheduler
+source fragments that expose the control. A current online SGLang manual does
+not override a missing capability in that record.
+
+A loading candidate changes only the exact-image
+`--model-loader-extra-config` JSON value when the observed loader source proves
+both `enable_multithread_load` and `num_threads`. It explicitly enables the
+candidate; it does not assume that a selected image inherited a newer default.
+The planner bounds per-rank threads by observed effective
+CPU, Pod cgroup memory/current usage, a declared reserve and a declared
+per-thread allowance. It preserves weights and the existing default. Pre-sharded
+checkpoint creation is deliberately unsupported until the selected loader proves
+its derived-artifact format and an owner supplies a separate disk budget.
+
+The optional native queue candidate similarly requires an observed
+`--max-queued-requests` capability and is capped at 256 requests. It does not
+change `MAX_RUNNING_REQUESTS`, resource envelopes, Kubernetes priority or the
+Bridge management-operation queue. The current private clients do not convey a
+reviewed SGLang priority field, so interactive/background priority is explicitly
+unsupported rather than inferred from the Pod `PriorityClass`. Target testing
+must establish the exact overload response and cancellation release behavior;
+agent/tool work is never replayed automatically.
+
+Warm status remains separate from `/health` and Kubernetes readiness. A matching
+finished `kernel-warmup` with checked memory reports representative `ready` only
+while the current Pod is Ready. No warmup record leaves a ready Pod `healthy`
+with representative warmup `not-applicable`. A new UID, process/container identity, model/runtime/device
+identity, cancellation or failed warmup cannot report ready. An in-progress
+state requires an independently observed lifecycle record for the same process;
+a caller declaration is not evidence. The fixed synthetic workload is optional,
+bounded and owner-invoked only after the normal startup gate, and its prompts or
+raw outputs are not status payloads.
+
+Use the controller's owner-only wrappers after they have bound the current Pod
+and evidence identities. `workstationctl` exports only plans and status:
+
+```sh
+./bin/workstationctl --config config/workstation.conf rocm serving-loading-plan DEPLOYMENT.json EVIDENCE_DIR OUT --threads 1,2,4 --reserve-mib 32768 --per-thread-mib 256
+./bin/workstationctl --config config/workstation.conf rocm serving-queue-plan DEPLOYMENT.json EVIDENCE_DIR OUT --maximum-queued 8
+./bin/workstationctl --config config/workstation.conf rocm serving-warm-status sglang-EXACT-POD kernel-warmup-result.json OUT/status.json
+```
+
+`serving-warm-status` first observes the named scoped Pod. A Running but
+not-Ready Pod reports `model-loading` without reading old ready-only evidence.
+A Ready Pod still reports `unknown` if fresh model, runtime or device evidence
+cannot be collected. It does not run a representative warmup. Use `-` instead
+of a result file when no optional warmup was run.
+
+The existing `kernel-warmup` command is an owner-run non-root measurement. The
+installed session state and canonical lock are root-owned, so this release does
+not pass an unverified environment lock descriptor to that command. Run it only
+in an owner-coordinated AI maintenance window with no transition in progress.
+Bridge must report extra live warmup as unavailable until a reviewed typed
+root-to-non-root lock protocol exists. Do not relax session-state permissions or
+reuse a warm record after gaming, cancellation, timeout or process change.
+
+`kernel-evidence` records one read-only `statvfs` snapshot for the exact
+`MODEL_PATH`, `TRITON_CACHE_DIR`, and `TORCHINDUCTOR_CACHE_DIR`: path, filesystem
+device/inode, total/available bytes, and timestamp. Missing or unsafe roots stay
+unknown; the loading plan requires recollection before qualification. This is not
+sampled during a model load and is not a pure-loader timing measurement.
+
+Retain fresh cold/warm startup, host/cgroup/VRAM, disk-headroom, numerical and
+coding evidence for every candidate. Startup combines loading, JIT and engine
+warmup; it is not a pure loader timer. Synthetic source tests do not establish
+image execution, performance, queue fairness or target qualification.
 
 ## Generate independent candidates
 

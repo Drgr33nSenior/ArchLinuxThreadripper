@@ -85,12 +85,18 @@ check(alloy.include?('Len(span.links) > 0'), 'linked spans can export unreviewed
 check(alloy.include?('limit = "384MiB"') && alloy.include?('queue_size = 128'), 'unbounded collector memory/queue')
 check(alloy.include?('max_keepalive_time = "2h"'), 'unbounded metrics WAL retention')
 check(!alloy.include?('debug {') && !alloy.include?('otelcol.exporter.debug'), 'raw payload diagnostics enabled')
+metrics_alloy = File.read("#{root}/config/config.metrics.alloy")
+check(!metrics_alloy.include?('logs =') && !metrics_alloy.include?('traces =') && !metrics_alloy.include?('loki.'), 'metrics profile retains log/trace collection')
+check(metrics_alloy.include?('otelcol.receiver.otlp "local"') && metrics_alloy.include?('metrics ='), 'metrics profile lost Bridge metric intake')
+metrics_host = File.read("#{root}/host/config.metrics.alloy")
+check(!metrics_host.include?('loki.') && !metrics_host.include?('traces ='), 'metrics host profile retains journal/log/trace collection')
+check(metrics_host.include?('prometheus.scrape "self"') && metrics_host.include?('otelcol.receiver.otlp "bridge"'), 'metrics host profile lost health or Bridge metrics')
 check(File.read("#{root}/config/loki.yaml").include?('retention_period: 168h'), 'missing log retention')
 check(File.read("#{root}/config/tempo.yaml").include?('block_retention: 72h'), 'missing trace retention')
 dashboard = JSON.parse(File.read("#{root}/dashboards/workstation.json"))
 queue = dashboard['panels'].find { |p| p['title'] == 'SGLang queued requests' }
 check(queue['targets'][0]['expr'] == 'sglang:num_queue_reqs{job="sglang",priority=""}', 'queue total double-counts priority breakdowns')
-%w[prometheus.yaml alerts.yaml loki.yaml tempo.yaml datasources.yaml dashboards.yaml].each do |name|
+%w[prometheus.yaml alerts.yaml loki.yaml tempo.yaml datasources.yaml datasources.metrics.yaml dashboards.yaml].each do |name|
   YAML.load_file("#{root}/config/#{name}")
 end
 check(JSON.parse(File.read("#{root}/versions.json"))['deferred_amd_exporter']['status'] == 'deferred-not-deployed', 'AMD qualification silently promoted')

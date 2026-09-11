@@ -14,8 +14,12 @@ dir="$work/bundle"
 source_hash=$(printf source | common::sha256_file -)
 bridge_source=$(printf bridge-source | common::sha256_file -)
 recipe_hash=$(printf bridge-recipe | common::sha256_file -)
-printf 'INSTALLER_SOURCE_SHA256=%s\nSOURCE_SHA256=%s\nPKGBUILD_SHA256=%s\nMEMORY_CONTRACT=selected-installer-memory-v1\n' "$source_hash" "$bridge_source" "$recipe_hash" >"$work/builder.lock"
+printf 'INSTALLER_SOURCE_SHA256=%s\nSOURCE_SHA256=%s\nPKGBUILD_SHA256=%s\nMEMORY_CONTRACT=selected-installer-memory-v1\nPERFORMANCE_CONTRACT=selected-installer-performance-v1\n' "$source_hash" "$bridge_source" "$recipe_hash" >"$work/builder.lock"
 bridge_memory_contract_identity "$work/builder.lock" "$source_hash" "$bridge_source" "$recipe_hash"
+sed '/^PERFORMANCE_CONTRACT=/d' "$work/builder.lock" >"$work/missing-performance.lock"
+if bridge_memory_contract_identity "$work/missing-performance.lock" "$source_hash" "$bridge_source" "$recipe_hash"; then exit 1; fi
+sed 's/PERFORMANCE_CONTRACT=selected-installer-performance-v1/PERFORMANCE_CONTRACT=wrong/' "$work/builder.lock" >"$work/wrong-performance.lock"
+if bridge_memory_contract_identity "$work/wrong-performance.lock" "$source_hash" "$bridge_source" "$recipe_hash"; then exit 1; fi
 if bridge_memory_contract_identity "$work/builder.lock" "$(printf different | common::sha256_file -)" "$bridge_source" "$recipe_hash"; then exit 1; fi
 if bridge_memory_contract_identity "$work/builder.lock" "$source_hash" "$(printf another-source | common::sha256_file -)" "$recipe_hash"; then exit 1; fi
 if bridge_memory_contract_identity "$work/builder.lock" "$source_hash" "$bridge_source" "$(printf another-recipe | common::sha256_file -)"; then exit 1; fi

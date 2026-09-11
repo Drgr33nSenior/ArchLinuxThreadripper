@@ -59,6 +59,16 @@ image() {
 common=(--rm --pull never --network none --read-only --cap-drop ALL
   --security-opt no-new-privileges --memory 512m --cpus 1 --pids-limit 128)
 config=(--mount "type=bind,source=$root/infrastructure/observability/config,target=/config,readonly")
+for profile in cluster-full cluster-metrics host-full host-metrics; do
+  mkdir -m 755 "$output/$profile"
+done
+cp "$root/infrastructure/observability/config/config.alloy" "$output/cluster-full/config.alloy"
+cp "$root/infrastructure/observability/config/config.metrics.alloy" "$output/cluster-metrics/config.alloy"
+cp "$root/infrastructure/observability/host/config.alloy" "$output/host-full/config.alloy"
+cp "$root/infrastructure/observability/host/config.metrics.alloy" "$output/host-metrics/config.alloy"
+# These are nonsecret parser fixtures under a private evidence parent. The
+# configured non-root Alloy users must be able to read each one on Linux bind mounts.
+chmod 644 "$output"/{cluster-full,cluster-metrics,host-full,host-metrics}/config.alloy
 for component in prometheus alloy host-alloy loki tempo; do
   docker --context "$context" image inspect "$(image "$component")" --format '{{.Id}} {{.Os}}/{{.Architecture}}' >>"$output/images.txt"
 done
@@ -73,8 +83,12 @@ chmod 644 "$output/rules/alerts.yaml" "$output/rules/alerts_test.yaml"
 docker --context "$context" run "${common[@]}" --tmpfs /tmp:rw,noexec,nosuid,nodev,size=32m --user 65534:65534 --mount "type=bind,source=$output/rules,target=/rules,readonly" --entrypoint /bin/promtool "$(image prometheus)" test rules /rules/alerts_test.yaml >>"$output/prometheus.log" 2>&1
 docker --context "$context" run "${common[@]}" --user 10001:10001 "${config[@]}" "$(image loki)" -config.file=/config/loki.yaml -verify-config=true >"$output/loki.log" 2>&1
 docker --context "$context" run "${common[@]}" --user 10001:10001 "${config[@]}" "$(image tempo)" -config.file=/config/tempo.yaml -config.verify=true >"$output/tempo.log" 2>&1
-docker --context "$context" run "${common[@]}" --user 473:473 "${config[@]}" "$(image alloy)" validate /config >"$output/alloy.log" 2>&1
-docker --context "$context" run "${common[@]}" --user 473:473 --mount "type=bind,source=$root/infrastructure/observability/host,target=/config,readonly" "$(image host-alloy)" validate /config >>"$output/alloy.log" 2>&1
+for profile in cluster-full cluster-metrics; do
+  docker --context "$context" run "${common[@]}" --user 473:473 --mount "type=bind,source=$output/$profile,target=/config,readonly" "$(image alloy)" validate /config >>"$output/alloy.log" 2>&1
+done
+for profile in host-full host-metrics; do
+  docker --context "$context" run "${common[@]}" --user 473:473 --mount "type=bind,source=$output/$profile,target=/config,readonly" "$(image host-alloy)" validate /config >>"$output/alloy.log" 2>&1
+done
 
 # Execute the actual canonical Loki processors with synthetic files instead of
 # the host journal. Echo is a fixture-only sink; production never enables it.

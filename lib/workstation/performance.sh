@@ -54,6 +54,109 @@ ws_serving_evidence() (
   ws_note "private serving evidence retained in $output; no model was downloaded or server changed"
 )
 
+ws_serving_warm_status() (
+  # This is a read-only status probe. It deliberately does not run the optional
+  # representative warmup: the existing owner-run harness needs a non-root
+  # tunnel, while the canonical session lock is root-owned. Do not trust an
+  # environment FD or weaken the installed lock policy to bridge that gap.
+  set -euo pipefail
+  local pod=$1 warmup=$2 output=$3 current temporary evidence_dir warm_probe_status=0
+  [[ ! -e $output && ! -L $output ]] || ws_die 'use a new warm-status output path'
+  current="$(ws_serving_pod "$pod")" || ws_die 'cannot inspect the exact SGLang Pod'
+  jq -e --arg node "$SESSION_NODE" '.node == $node and (.uid|type == "string") and
+    (.image|test("@sha256:[a-f0-9]{64}$")) and (.image_id|type == "string" and length > 0) and
+    (.container_id|type == "string" and length > 0) and (.restart_count|type == "number" and . >= 0)' \
+    <<<"$current" >/dev/null || ws_die 'current SGLang Pod is outside the reviewed node scope or lacks process identity'
+  temporary="$(mktemp -d)" || ws_die 'cannot create private warm-status workspace'
+  trap 'warm_probe_status=$?; trap - EXIT; set +e
+    rm -f -- "$temporary/current-pod.json" "$temporary/evidence/pod.json" "$temporary/evidence/runtime.json" "$temporary/evidence/compiler.json"
+    rmdir -- "$temporary/evidence" 2>/dev/null || true
+    rmdir -- "$temporary" 2>/dev/null || true
+    exit "$warm_probe_status"' EXIT
+  printf '%s\n' "$current" >"$temporary/current-pod.json"
+  if [[ $(jq -r .ready <<<"$current") != true ]]; then
+    "$(ws_measure_python)" "$(ws_repo_root)/lib/workstation/serving_runtime.py" pod-status \
+      "$temporary/current-pod.json" "$output"
+    exit 0
+  fi
+  evidence_dir="$temporary/evidence"
+  if ! ws_kernel_evidence "$pod" "$evidence_dir"; then
+    # A live Ready bit is not sufficient to reuse an old model/runtime/device
+    # identity. Retain an explicit unknown state without exposing helper text.
+    jq -n --argjson pod "$current" '{schema:1,kind:"sglang-warm-status",status:"unknown",
+      kubernetes_readiness:"healthy",representative_warmup:"unknown",pod:{uid:$pod.uid,started_at:$pod.started_at,
+      container_id:$pod.container_id,restart_count:$pod.restart_count,image:$pod.image,image_id:$pod.image_id},identity:null,
+      reason:"fresh current model, runtime or allocated-device evidence is unavailable",
+      scope:"read-only status; no representative warmup was started"}' >"$output"
+    chmod 0600 "$output"
+    exit 0
+  fi
+  [[ $(jq -cS . "$evidence_dir/pod.json") == "$(jq -cS . <<<"$current")" ]] || {
+    jq -n --argjson pod "$current" '{schema:1,kind:"sglang-warm-status",status:"stale",
+      kubernetes_readiness:"unknown",representative_warmup:"unknown",pod:{uid:$pod.uid,started_at:$pod.started_at,
+      container_id:$pod.container_id,restart_count:$pod.restart_count,image:$pod.image,image_id:$pod.image_id},identity:null,
+      reason:"Pod changed during current evidence collection",scope:"read-only status; no representative warmup was started"}' >"$output"
+    chmod 0600 "$output"
+    exit 0
+  }
+  "$(ws_measure_python)" "$(ws_repo_root)/lib/workstation/serving_runtime.py" warm-status \
+    "$evidence_dir" "$warmup" "$output"
+)
+
+ws_performance_bundle_config() {
+  # Older owner configuration files predate this optional cache planner. Keep
+  # the conservative documented reserve unless policy deliberately overrides it.
+  INFERENCE_CACHE_FREE_RESERVE_MIB=${INFERENCE_CACHE_FREE_RESERVE_MIB:-20480}
+  [[ $INFERENCE_CACHE_FREE_RESERVE_MIB =~ ^[1-9][0-9]*$ ]] ||
+    ws_die 'INFERENCE_CACHE_FREE_RESERVE_MIB must be a positive integer'
+  [[ -z ${INFERENCE_CACHE_ROOT:-} ]] && return 0
+  [[ ${INFERENCE_CACHE_ROOT:-} == /* && "$INFERENCE_CACHE_ROOT" != / && -d "$INFERENCE_CACHE_ROOT" && ! -L "$INFERENCE_CACHE_ROOT" ]] ||
+    ws_die 'INFERENCE_CACHE_ROOT must be an existing absolute non-symlink directory from administrator configuration'
+}
+
+ws_performance_bundle() (
+  set -euo pipefail
+  local action=$1
+  shift
+  case "$action" in
+    seal)
+      (($# == 4)) || ws_die 'bundle seal requires directory, kind, target and source SHA-256'
+      "$(ws_measure_python)" "$(ws_repo_root)/lib/workstation/performance_bundle.py" seal "$1" \
+        --kind "$2" --target "$3" --source-revision "$4"
+      ;;
+    inspect)
+      (($# == 2)) || ws_die 'bundle inspect requires directory and manifest SHA-256'
+      "$(ws_measure_python)" "$(ws_repo_root)/lib/workstation/performance_bundle.py" inspect "$1" "$2"
+      ;;
+    export)
+      (($# == 5)) || ws_die 'bundle export requires directory, manifest SHA-256, new output, target and source SHA-256'
+      ws_performance_bundle_config
+      local -a bundle_cache_args=()
+      if [[ -n ${INFERENCE_CACHE_ROOT:-} ]]; then bundle_cache_args=(--cache-root "$INFERENCE_CACHE_ROOT"); fi
+      "$(ws_measure_python)" "$(ws_repo_root)/lib/workstation/performance_bundle.py" run "$1" "$2" "$3" \
+        --target "$4" --source-revision "$5" --owner "$(id -un)" \
+        --cache-free-reserve-mib "$INFERENCE_CACHE_FREE_RESERVE_MIB" "${bundle_cache_args[@]}"
+      ;;
+    *) ws_die 'performance bundle action must be seal, inspect or export' ;;
+  esac
+)
+
+ws_performance_export() (
+  # The typed Bridge helper supplies only the sealed bundle identity and its
+  # actor. Cache authority remains exclusively in administrator configuration.
+  set -euo pipefail
+  (($# == 9)) ||
+    ws_die 'performance export requires input, manifest SHA-256, new output, --target, --source-revision and --owner'
+  [[ $4 == --target && $6 == --source-revision && $8 == --owner ]] ||
+    ws_die 'performance export requires input, manifest SHA-256, new output, --target, --source-revision and --owner'
+  ws_performance_bundle_config
+  local -a bundle_cache_args=()
+  if [[ -n ${INFERENCE_CACHE_ROOT:-} ]]; then bundle_cache_args=(--cache-root "$INFERENCE_CACHE_ROOT"); fi
+  "$(ws_measure_python)" "$(ws_repo_root)/lib/workstation/performance_bundle.py" run "$1" "$2" "$3" \
+    --target "$5" --source-revision "$7" --owner "$9" \
+    --cache-free-reserve-mib "$INFERENCE_CACHE_FREE_RESERVE_MIB" "${bundle_cache_args[@]}"
+)
+
 ws_serving_benchmark() (
   set -euo pipefail
   local workload=$1 evidence=$2 output=$3 mode=${4:-serving} pod before after port_dir port_pid='' measure_pid='' port attempt boot

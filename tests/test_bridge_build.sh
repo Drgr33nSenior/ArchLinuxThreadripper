@@ -71,6 +71,16 @@ go() {
     [[ ${BRIDGE_TEST_FAILURE:-} != contract ]] || return 29
     return 0
   fi
+  if [[ $* == 'test -mod=readonly -list ^TestCandidateInstallerPerformanceContract$ ./internal/performance' ]]; then
+    [[ ${BRIDGE_TEST_FAILURE:-} != missing_performance ]] || return 0
+    printf '%s\n' TestCandidateInstallerPerformanceContract
+    return 0
+  fi
+  if [[ $* == 'test -mod=readonly -count=1 -v -run ^TestCandidateInstallerPerformanceContract$ ./internal/performance' ]]; then
+    [[ $BRIDGE_INSTALLER_PERFORMANCE_CANDIDATE == */installer/project && -f $BRIDGE_INSTALLER_PERFORMANCE_CANDIDATE/SOURCE-MANIFEST.sha256 ]] || return 1
+    [[ ${BRIDGE_TEST_FAILURE:-} != performance ]] || return 29
+    return 0
+  fi
   if [[ $* == 'run ./cmd/bridge-arch-package --version v0.0.0' ]]; then
     mkdir -p dist/arch
     cp "$BRIDGE_BUILD_FIXTURE/input/"* dist/arch/
@@ -114,8 +124,9 @@ grep -Fxq 'GO_VERSION=1.27.1' "$work/success/output/builder.lock"
 grep -Fxq "SOURCE_COMMIT=$revision" "$work/success/output/builder.lock"
 grep -Fxq "INSTALLER_SOURCE_SHA256=$(common::sha256_file "$work/installer/bootstrap-source.tar.gz")" "$work/success/output/builder.lock"
 grep -Fxq 'MEMORY_CONTRACT=selected-installer-memory-v1' "$work/success/output/builder.lock"
+grep -Fxq 'PERFORMANCE_CONTRACT=selected-installer-performance-v1' "$work/success/output/builder.lock"
 if bash "$script" "$revision" v0.0.0 "$work/success" "$work/builder" "$work/installer" >"$work/repeat.log" 2>&1; then exit 1; fi
-for failure in fetch legacy download status verify build provenance tamper contract missing_contract; do
+for failure in fetch legacy download status verify build provenance tamper contract missing_contract performance missing_performance; do
   mkdir "$work/$failure"
   status=0
   BRIDGE_TEST_FAILURE=$failure bash "$script" "$revision" v0.0.0 "$work/$failure" "$work/builder" "$work/installer" >"$work/$failure.log" 2>&1 || status=$?

@@ -76,6 +76,12 @@ lib/workstation/runtime.sh
 lib/workstation/serving.py
 lib/workstation/serving_memory.py
 lib/workstation/serving_sweep.py
+lib/workstation/serving_runtime.py
+lib/workstation/performance_profiles.py
+lib/workstation/performance_bundle.py
+lib/workstation/coding_eval.py
+lib/workstation/coding_tasks.json
+lib/workstation/inference_cache.py
 lib/workstation/session.sh
 lib/workstation/stack_inventory.py
 lib/workstation/storage_benchmark.py

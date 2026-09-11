@@ -7,7 +7,11 @@ ws_telemetry_config_validate() {
     [[ $value == true || $value == false ]] || ws_die "$key must be true or false"
   done
   [[ ${TELEMETRY_RESERVE_MIB:-6144} =~ ^[1-9][0-9]*$ ]] || ws_die 'TELEMETRY_RESERVE_MIB must be positive'
+  [[ ${TELEMETRY_MARGIN_MIB:-768} =~ ^[1-9][0-9]*$ ]] || ws_die 'TELEMETRY_MARGIN_MIB must be positive'
   [[ ${TELEMETRY_WORKLOADS:-sglang,open-webui} =~ ^[a-z0-9-]+(,[a-z0-9-]+)*$ ]] || ws_die 'TELEMETRY_WORKLOADS must contain comma-separated deployment names'
+  case ${TELEMETRY_PROFILE:-full} in full | metrics) ;; *) ws_die 'TELEMETRY_PROFILE must be full or metrics' ;; esac
+  [[ ${TELEMETRY_PROFILE:-full} == full || ${TELEMETRY_SGLANG_TRACE:-false} == false ]] ||
+    ws_die 'TELEMETRY_SGLANG_TRACE requires TELEMETRY_PROFILE=full'
 }
 
 ws_telemetry() (
@@ -22,7 +26,8 @@ ws_telemetry() (
         --gpu-exporter "${TELEMETRY_GPU_EXPORTER:-false}" --trace "${TELEMETRY_SGLANG_TRACE:-false}" \
         --api-address "${TELEMETRY_API_ADDRESS:-}" --host-address "${TELEMETRY_WORKSTATION_ADDRESS:-}" \
         --kubelet "${TELEMETRY_KUBELET:-false}" --node-name "${TELEMETRY_NODE_NAME:-}" \
-        --reserve-mib "${TELEMETRY_RESERVE_MIB:-6144}" --workloads "${TELEMETRY_WORKLOADS:-sglang,open-webui}"
+        --reserve-mib "${TELEMETRY_RESERVE_MIB:-6144}" --margin-mib "${TELEMETRY_MARGIN_MIB:-768}" \
+        --profile "${TELEMETRY_PROFILE:-full}" --workloads "${TELEMETRY_WORKLOADS:-sglang,open-webui}"
       ;;
     plan | verify) "$(ws_measure_python)" "$(ws_repo_root)/lib/workstation/telemetry.py" "$action" "$@" ;;
     *) ws_die 'telemetry supports render, plan and verify; no deployment or installer resume' ;;
