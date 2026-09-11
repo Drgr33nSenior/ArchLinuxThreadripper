@@ -51,9 +51,127 @@ def coding_bundle(path):
     save(path / "spec.json", {"schema": 1, "kind": "coding-eval", "responses": "responses.json", "corpus": "coding_tasks.json"})
 
 
+def candidate_bundle(path, kind, variant):
+    """Tiny actual producer inputs for the selected Python/Go export contract.
+
+    No summary is mocked. The caller seals and exports through workstationctl.
+    Cache inventory touches only a new sibling fixture directory, never a host cache.
+    """
+    import math
+    import inference_cache
+    import performance_profiles
+    from test_performance_profiles import bundle
+    from test_serving_runtime import fixtures
+
+    policy = {"schema": 1, "minimum_practical_gain_percent": 5, "maximum_regression_percent": 5, "noise_percent": 2}
+    spec = {"schema": 1, "kind": kind}
+    reserve = 1
+    if kind == "coding-eval":
+        coding_bundle(path)
+        if variant == "refused":
+            save(path / "responses.json", {})
+        return reserve
+    if kind in ("comparison", "profile-selection"):
+        bundle(path / "baseline", "baseline")
+        bundle(path / "candidate", "candidate", throughput=120)
+        if kind == "comparison":
+            result_path = path / "candidate/serving/result.json"
+            result = json.loads(result_path.read_text())
+            if variant == "incomplete":
+                result.pop("repeat_summary", None)
+            elif variant == "refused":
+                result["workload_sha256"] = "0" * 64
+            save(result_path, result)
+            save(path / "policy.json", policy)
+            spec.update(baseline_bundle="baseline", candidate_bundle="candidate", policy_json="policy.json", declared_variables=[])
+        else:
+            comparison = performance_profiles.compare(path / "baseline", path / "candidate", [], policy)
+            save(path / "comparison.json", comparison)
+            spec.update(comparison="comparison.json", candidate_id="absent" if variant == "refused" else "candidate", previous_selection=None)
+    elif kind in ("loading", "queue", "warm-status"):
+        deployment, (pod, runtime, compiler) = fixtures()
+        if variant == "refused":
+            compiler["sources"]["srt/server_args.py"] = "0" * 64
+        if variant == "unsupported":
+            compiler["runtime_capabilities"] = {}
+        for name, value in (("pod", pod), ("runtime", runtime), ("compiler", compiler)):
+            save(path / f"evidence/{name}.json", value)
+        spec["evidence"] = "evidence"
+        if kind == "loading":
+            save(path / "deployment.json", deployment)
+            spec.update(deployment="deployment.json", threads=[1, 2], reserve_mib=32768, per_thread_mib=256)
+        elif kind == "queue":
+            save(path / "deployment.json", deployment)
+            spec.update(deployment="deployment.json", maximum_queued=8)
+        else:
+            spec.update(warmup=None, lifecycle=None)
+            if variant == "unknown":
+                save(path / "warmup.json", {})
+                spec["warmup"] = "warmup.json"
+    elif kind == "cache":
+        cache_root = path.parent / "disposable-cache"
+        for backend in inference_cache.BACKENDS:
+            (cache_root / backend / "workstation").mkdir(parents=True, mode=0o700)
+        registry = path.parent / "registry.json"
+        save(registry, {"schema": 1, "kind": inference_cache.KIND, "namespaces": []})
+        observed = inference_cache.inventory(cache_root, registry, path / "inventory")
+        if variant == "incomplete":
+            reserve = math.ceil(observed["filesystem"]["available_bytes"] / 1024**2) + 1
+        elif variant == "refused":
+            save(path / "inventory/inventory.json", {})  # inner receipt must refuse
+        spec.update(mode="plan", inventory="inventory")
+    elif kind == "profile-status":
+        fixture = BundleTests()
+        current = fixture.current_identity()
+        selection = fixture.profile_selection()
+        if variant == "stale":
+            current["identity"]["software_sha256"] = "0" * 64
+        elif variant in ("stale-weights", "stale-resources"):
+            key = "model_files_sha256" if variant == "stale-weights" else "resources_sha256"
+            current["producer_conditions"][key] = "0" * 64
+        elif variant == "legacy-selection":
+            selection.pop("producer_conditions")
+        elif variant == "legacy-observation":
+            current.pop("producer_conditions")
+        elif variant == "malformed-conditions":
+            current["producer_conditions"] = {"runtime_sha256": True}
+        elif variant == "unknown":
+            current = {}
+        save(path / "current.json", current)
+        save(path / "selection.json", {} if variant == "refused" else selection)
+        spec.update(selection="selection.json", current_identity="current.json")
+    else:
+        raise ValueError("unknown contract fixture kind")
+    save(path / "spec.json", spec)
+    # The comparison fixture helpers use the ambient umask; explicitly keep
+    # all retained input directories and files private even when invoked alone.
+    for directory, _, files in os.walk(path):
+        private(directory, 0o700)
+        for name in files:
+            private(Path(directory) / name)
+    return reserve
+
+
 class BundleTests(unittest.TestCase):
+    def test_inspect_rejects_post_seal_directory_symlink(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "bundle"
+            root.mkdir(mode=0o700)
+            coding_bundle(root)
+            performance_bundle.seal(root, "coding-eval", "fixture-target", REVISION)
+            digest, _ = performance_bundle.sha(root / "manifest.json")
+            performance_bundle.inspect(root, digest)
+            empty = root / "empty"
+            (Path(tmp) / "retained-empty").mkdir(mode=0o700)
+            empty.symlink_to(Path(tmp) / "retained-empty", target_is_directory=True)
+            with self.assertRaisesRegex(ValueError, "directory.*unsafe"):
+                performance_bundle.inspect(root, digest)
+
     def profile_selection(self):
         return {"schema": 1, "kind": "workstation-measured-profile-selection", "selected_profile_id": "candidate",
+                "producer_conditions": {key: "9" * 64 for key in
+                                        ("runtime_sha256", "model_files_sha256", "model_settings_sha256",
+                                         "launch_settings_sha256", "resources_sha256")},
                 "runtime_identity": {"model_revision": "a" * 40, "tokenizer_sha256": "b" * 64,
                                      "workload_sha256": "c" * 64, "hardware_sha256": "d" * 64,
                                      "software_sha256": "e" * 64, "launch_sha256": "f" * 64,
@@ -64,7 +182,8 @@ class BundleTests(unittest.TestCase):
         return {"schema": 1, "kind": "workstation-performance-profile-identity-observation",
                 "status": "observed-not-qualified",
                 "observed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-                "boot_id": "11111111-2222-3333-4444-555555555555", "identity": identity}
+                "boot_id": "11111111-2222-3333-4444-555555555555", "identity": identity,
+                "producer_conditions": self.profile_selection()["producer_conditions"]}
 
     def test_seal_inspect_and_run_actual_coding_harness(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -52,7 +52,7 @@ target-address changes produce new pod references. All Deployments use
 `Recreate`: upgrades have downtime but do not need duplicate memory or
 simultaneous RWO mounts. No new operator or monitoring framework manages them.
 
-## Versions and support, reviewed 11 September 2026
+## Versions and support
 
 Cluster pins: Prometheus 3.14.0, Grafana 13.2.1, Loki 3.7.7, Tempo 3.0.3,
 Alloy 1.19.2, node-exporter 1.12.1 and kube-state-metrics 2.20.0. Exact digests
@@ -60,9 +60,9 @@ and release/configuration sources are in `versions.json`. Tempo 3 uses its own
 single-binary schema, not a copied Tempo 2 compactor configuration.
 
 The host uses Arch's `grafana-alloy` package, executable
-`/usr/bin/grafana-alloy`. The selected September 4 archive and current Arch
-metadata contain 1.13.2-1. The host config passes the matching official 1.13.2
-image parser and log-filter tests. This intentionally differs from cluster
+`/usr/bin/grafana-alloy`, pinned to 1.13.2-1 by the selected package sources.
+Validate its config with the matching official 1.13.2 image parser and
+log-filter tests before deployment. This intentionally differs from cluster
 Alloy 1.19.2: they exchange OTLP, not shared libraries. The Arch package still
 needs signature/installation and service qualification. Revalidate after rolling
 updates. See [Arch metadata](https://archlinux.org/packages/extra/x86_64/grafana-alloy/)
@@ -84,7 +84,7 @@ define the two families. The pinned transform can remove scope attributes but
 does not provide an individual span-link transform context. The collector
 [0.158 transform documentation](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/v0.158.0/processor/transformprocessor/README.md)
 therefore supports the fail-closed rule that drops spans with links. The local
-fixture proves the selected pinned image behavior with synthetic data only.
+fixture checks the selected pinned image behavior with synthetic data only.
 
 Do not infer exporter support from similar R9700/R9700S names. Released AMD
 exporter 1.5.1 selects older AMD-SMI/profiler inputs and its chart needs broad
@@ -94,7 +94,7 @@ does not need it and does not claim unsupported counters. A future candidate
 needs an available immutable image, actual R9700 driver/API checks, minimal
 device access and measured overhead.
 
-The SGLang baseline is unchanged. The exact locked AMD image source supports
+The exact locked AMD image source supports
 `--enable-metrics`, and optionally `--enable-trace --trace-modules request
 --otlp-traces-endpoint HOST:4317` with `SGLANG_TRACE_LEVEL=1`. There is no
 `--trace-level` flag. Source support does not establish that optional OTel
@@ -537,63 +537,21 @@ and host-log tests use `--network none`; the synthetic OTLP test uses an owned
 internal Docker network between its two restricted test containers. Missing images or
 tools block it; it does not pull implicitly. Private logs remain in `test-results`.
 It is not a disposable VM boot or service acceptance test.
-The retained Mac image checks used the Linux ARM64 variants of the pinned
-multi-platform images. They validate those parsers and pipelines, not execution
-of the target AMD64 binaries or the Arch host package.
+### Image-validation fixture access
 
-### Fixture permission correction — 2026-09-11
+The image validator makes only its nonsecret rule and OTLP input fixtures readable
+by their nonroot container consumers. Input directories are mounted read-only and
+separate from the private `0700` evidence parent; retained logs and IDs remain
+owner-private. Read-only mounts do not grant read access across UIDs. Do not
+replace these narrow modes with recursive permission changes or run consumers as
+root.
 
-Starting from clean source `3727dc172b3cced4f851ed676944d339ca3102b2`, the
-validator now explicitly sets only its four new nonsecret rule/OTLP input files
-to `0644`, before their consumers start. Existing host dummy inputs retain the
-same treatment. Mounted input directories remain `0755`; the enclosing evidence
-directory remains `0700`, and retained result logs/IDs remain `0600`. Bind mounts
-expose only the input subdirectory, not the private evidence parent. Read-only
-mounts do not grant read permission; explicit modes are required for native Linux
-readers whose UID differs from the writer's UID.
-
-The new launch-time regression first failed on `rules/alerts.yaml` at `0600`.
-It now checks promtool UID 65534, Alloy UID 473 and the OTLP wget client UID 65534,
-including file modes before each launch and evidence privacy after cleanup.
-It also checks the unchanged read-only mounts, nonroot users, resource bounds and
-network restrictions. Initial test-harness fixes retained Ruby 2.6 compatibility
-and resolved macOS temporary paths before comparison. No production control was
-weakened.
-Four isolated test copies then omitted each new file-mode assignment separately;
-each failed on that exact `0600` input at its consumer launch, including wget.
-Those synthetic sensitivity results remain in
-`test-results/telemetry-permission-probes.8mAb4b`; they are not container execution.
-
-The focused permission and telemetry-stack scripts, all nine telemetry Python
-tests, and ShellCheck passed. The actual command
-`bash infrastructure/observability/validate-images.sh desktop-linux` also passed
-using already-cached pinned Linux ARM64 images in the local Docker VM. It executed
-promtool rules, both Alloy parsers and the host/OTLP sanitization pipelines.
-Private results remain in `test-results/telemetry-images.q8gegf`; its owned
-containers and internal network were removed by normal validator cleanup.
-No image was pulled, port published or live collector contacted.
-
-`make check` passed all 56 test scripts with the existing prepared Python
-environment selected through child-only `PATH`, `HOME_LAB_PYTHON` and
-`PYTHONNOUSERSITE=1`. Shell syntax/ShellCheck, YAML, local Kubernetes rendering
-and Ansible syntax checks passed. Ansible reported empty-inventory/host-pattern
-warnings; it contacted no hosts. Explicit skips were shfmt, bats, real ccache
-repeat-build, generated CMake/Ninja pools, the selected GPU-operator chart,
-streaming-image and Linux Wayland process fixtures. Real HIP IPC and Linux
-systemd verification did not run. `make check-strict` was NOT RUN because those
-missing tools/inputs prevent a strict qualification claim.
-
-Native Linux host bind-mount/cross-UID execution is **NOT RUN** in this Mac
-environment. Earlier Mac parser tests and this Docker VM run do not establish
-native Linux file-sharing semantics. On an authorized disposable Linux host with
-the reviewed images already cached, run the two fixture/image commands above,
-replacing `desktop-linux` with its reviewed local Unix-socket Docker context.
-Expect readable inputs, passing rule/sanitization checks, and private retained
-logs. Keep failed evidence; do not recursively chmod it or run the consumers as
-root. Rerunning creates a fresh fixture directory; it does not repair or delete
-earlier evidence. This source correction updates no installed policy and requires no journal
-or runtime-state migration. Live host delivery, actual memory-pressure loss,
-Arch AMD64 service behavior and workstation overhead remain unqualified.
+On an authorized disposable Linux host with the reviewed images already cached,
+run the fixture and image-validator commands in the table above with a reviewed
+local Unix-socket Docker context. They check configuration parsing, rule behavior,
+sanitization, consumer access and retained-evidence privacy. They do not qualify
+the target AMD64 service, live delivery, collector memory-pressure behavior or
+workstation overhead.
 
 For SGLang tracing use the existing owner-approved pod exec path to run
 `python -c 'import opentelemetry.exporter.otlp.proto.grpc.trace_exporter'` and

@@ -116,6 +116,17 @@ def parse_object(text):
     return value
 
 
+def json_equal(actual, expected):
+    """Compare JSON values without Python's boolean-as-integer coercion."""
+    if isinstance(actual, bool) or isinstance(expected, bool):
+        return type(actual) is type(expected) and actual == expected
+    if isinstance(actual, dict) and isinstance(expected, dict):
+        return actual.keys() == expected.keys() and all(json_equal(actual[key], expected[key]) for key in expected)
+    if isinstance(actual, list) and isinstance(expected, list):
+        return len(actual) == len(expected) and all(json_equal(a, b) for a, b in zip(actual, expected))
+    return actual == expected
+
+
 def evaluate_task(task, response):
     """Return a redacted deterministic result.  Never retain response text."""
     result = {"task_id": task["id"], "kind": task["kind"], "attempts": response["attempts"],
@@ -125,15 +136,15 @@ def evaluate_task(task, response):
     try:
         actual = parse_object(response["response"])
         if task["kind"] == "structured":
-            if actual != task["expected"]:
+            if not json_equal(actual, task["expected"]):
                 raise ValueError("structured fields differ")
             result["status"] = "passed"
         elif task["kind"] == "tool":
-            if set(actual) != {"tool", "arguments"} or actual.get("tool") != task["expected"]["tool"] or actual.get("arguments") != task["expected"]["arguments"]:
+            if set(actual) != {"tool", "arguments"} or not json_equal(actual, task["expected"]):
                 raise ValueError("tool selection or arguments differ")
             result["status"] = "passed"
         elif task["kind"] == "negative":
-            if actual != task["expected"]:
+            if not json_equal(actual, task["expected"]):
                 raise ValueError("negative case did not refuse exactly")
             result["status"] = "passed"
         else:

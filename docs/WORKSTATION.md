@@ -1,10 +1,10 @@
 # Workstation setup
 
-Run this procedure only after stable and LTS boots, Secure Boot recovery, disk
-unlock, and the first offline LUKS-header copy have passed.
+Run this procedure only after you verify stable and LTS boots, Secure Boot
+recovery, disk unlock, and the first offline LUKS-header copy.
 For the AI-specific audit and measurement sequence, see
 [AI-PERFORMANCE.md](AI-PERFORMANCE.md). If installed from the custom ISO, review
-its dated mirrorlist and the explicit transition to rolling Arch first.
+its mirrorlist and the explicit transition to rolling Arch first.
 
 Use [Telemetry](TELEMETRY.md) for local Prometheus/Grafana/Loki/Tempo/Alloy,
 host sensors, Bridge instrumentation and capacity planning. The server profile

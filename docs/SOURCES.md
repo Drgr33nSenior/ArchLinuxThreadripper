@@ -32,9 +32,9 @@ install or upgrade.
 - [Intel llm-scaler vLLM guidance](https://github.com/intel/llm-scaler/blob/main/vllm/README.md)
 - [Podman run reference](https://docs.podman.io/en/latest/markdown/podman-run.1.html)
 
-## AMD migration (inspected 2026-09-04)
+## AMD migration
 
-- [Requested ROCm-X article](https://rocm.blogs.amd.com/ecosystems-and-partners/rocm-x-blog/README.html) — returned HTTP 429 during this audit; its contents were not assumed.
+- [ROCm-X overview](https://rocm.blogs.amd.com/ecosystems-and-partners/rocm-x-blog/README.html) — background reading, not a package or runtime qualification contract.
 - [TheRock at the locked commit](https://github.com/ROCm/TheRock/tree/b927c1865f37fa7bbecf5c7e35dee41b02afbb4f)
 - [Pinned TheRock environment and memory guidance](https://github.com/ROCm/TheRock/blob/b927c1865f37fa7bbecf5c7e35dee41b02afbb4f/docs/environment_setup_guide.md)
 - [Pinned TheRock ccache setup](https://github.com/ROCm/TheRock/blob/b927c1865f37fa7bbecf5c7e35dee41b02afbb4f/build_tools/setup_ccache.py)

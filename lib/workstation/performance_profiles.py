@@ -15,6 +15,7 @@ import re
 import statistics
 
 import coding_eval
+import model_kernels
 
 
 MAX_FILE = 16 * 1024 * 1024
@@ -23,13 +24,18 @@ IDENTITY = ("model_revision", "tokenizer_sha256", "workload_sha256", "hardware_s
 VARIABLES = frozenset(("compiler_backend", "image", "concurrency", "loading_strategy",
                        "loading_threads", "engine_queue", "interactive_priority",
                        "model", "tokenizer", "workload", "hardware", "software", "launch",
-                       "quantization", "coding_corpus", "generation"))
+                       "resources", "quantization", "coding_corpus", "generation", "profile", "prefix_state"))
 NON_EQUIVALENT_VARIABLES = frozenset(("model", "tokenizer", "workload", "hardware", "quantization",
-                                      "concurrency", "coding_corpus", "generation"))
+                                      "resources", "concurrency", "coding_corpus", "generation", "profile", "prefix_state"))
 
 
 def digest_bytes(data):
     return hashlib.sha256(data).hexdigest()
+
+
+def canonical_digest(value):
+    """Match producer identity hashes that use canonical JSON, not file bytes."""
+    return digest_bytes(json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode())
 
 
 def read_json(path):
@@ -92,29 +98,188 @@ def median_summary(value):
 
 def serving_metrics(result):
     if not isinstance(result, dict) or result.get("schema") != 1:
-        raise ValueError("unsupported serving result")
+        return {"status": "incomplete", "reason": "serving result is malformed"}
+    source_status = result.get("status")
+    if source_status == "measured-awaiting-provenance":
+        raise ValueError("serving result has not completed provenance verification")
+    if source_status != "measured-not-qualified":
+        return {"status": "incomplete", "source_status": source_status,
+                "reason": "serving result is not a completed measurement"}
     rows = result.get("repeat_summary")
     if not isinstance(rows, list) or not rows:
-        return {"status": "unknown", "reason": "repeat summary unavailable"}
+        return {"status": "incomplete", "source_status": source_status, "reason": "repeat summary unavailable"}
     cases = []
     seen = set()
     for row in rows:
         if (not isinstance(row, dict) or type(row.get("failures")) is not int or row["failures"] < 0
                 or type(row.get("context_tokens")) is not int or row["context_tokens"] < 1
                 or type(row.get("concurrency")) is not int or row["concurrency"] < 1):
-            raise ValueError("invalid serving repeat summary")
+            return {"status": "incomplete", "source_status": source_status,
+                    "reason": "serving repeat summary is malformed"}
         key = (row["context_tokens"], row["concurrency"])
         if key in seen:
-            raise ValueError("duplicate serving workload case")
+            return {"status": "incomplete", "source_status": source_status,
+                    "reason": "serving repeat summary has duplicate workload cases"}
         seen.add(key)
         case = {"context_tokens": key[0], "concurrency": key[1], "failures": row["failures"]}
         for source, target in (("throughput_across_repetitions", "throughput"),
                                ("request_latency_seconds", "latency"), ("ttft_seconds", "ttft")):
-            case[target] = median_summary(row.get(source))
+            try:
+                case[target] = median_summary(row.get(source))
+            except ValueError:
+                return {"status": "incomplete", "source_status": source_status,
+                        "reason": "serving repeat summary has invalid measurements"}
         cases.append(case)
     # Multiple workload cases remain distinct.  A single aggregate could hide
     # a regression at the long context or interactive concurrency.
-    return {"status": "observed", "source_status": result.get("status", "unknown"), "cases": cases}
+    return {"status": "observed", "source_status": source_status, "cases": cases}
+
+
+def tokenizer_digest(runtime):
+    """Derive tokenizer identity from retained verified model files only."""
+    files = runtime.get("model_files") if isinstance(runtime, dict) else None
+    if not isinstance(files, dict):
+        raise ValueError("runtime model files are unavailable")
+    names = ("tokenizer.json", "tokenizer_config.json", "special_tokens_map.json", "added_tokens.json",
+             "vocab.json", "merges.txt")
+    selected = {name: files[name] for name in sorted(files) if Path(name).name in names}
+    if not selected:
+        raise ValueError("runtime tokenizer files are unavailable")
+    for name, record in selected.items():
+        if (not isinstance(record, dict) or type(record.get("bytes")) is not int or record["bytes"] < 0
+                or not isinstance(record.get("sha256"), str) or not re.fullmatch(r"[a-f0-9]{64}", record["sha256"])):
+            raise ValueError(f"invalid tokenizer file identity: {name}")
+    return canonical_digest(selected)
+
+
+def model_files_digest(runtime):
+    """Validate and identify every retained model file, not only tokenizer files."""
+    files = runtime.get("model_files") if isinstance(runtime, dict) else None
+    if not isinstance(files, dict) or not files:
+        raise ValueError("runtime model files are unavailable")
+    for name, record in files.items():
+        if not isinstance(name, str):
+            raise ValueError("invalid model file identity")
+        path = Path(name)
+        if (path.is_absolute() or ".." in path.parts
+                or not isinstance(record, dict) or type(record.get("bytes")) is not int or record["bytes"] < 0
+                or not isinstance(record.get("sha256"), str) or not re.fullmatch(r"[a-f0-9]{64}", record["sha256"])):
+            raise ValueError("invalid model file identity")
+    return canonical_digest(files)
+
+
+def producer_identity(serving, retained_runtime, runtime_digest):
+    """Derive every manifest identity from the finalized serving producer."""
+    if not isinstance(serving, dict):
+        raise ValueError("serving producer is malformed")
+    runtime, pod = serving.get("runtime"), serving.get("pod")
+    if not isinstance(runtime, dict) or not isinstance(pod, dict) or not isinstance(runtime.get("settings"), dict):
+        raise ValueError("serving runtime or Pod identity is unavailable")
+    model_revision = runtime["settings"].get("MODEL_REVISION")
+    quantization = runtime.get("model_contract", {}).get("quant_method") if isinstance(runtime.get("model_contract"), dict) else None
+    workload = serving.get("workload_sha256")
+    runtime_hash = serving.get("runtime_sha256")
+    launch_hash = pod.get("launch_spec_sha256")
+    devices = runtime.get("devices")
+    resources = pod.get("resources")
+    node, image, image_id = pod.get("node"), pod.get("image"), pod.get("image_id")
+    packages, hip = runtime.get("packages"), runtime.get("hip")
+    launch = runtime.get("launch")
+    if (not isinstance(model_revision, str) or not model_revision
+            or not isinstance(quantization, str) or not quantization
+            or not isinstance(workload, str) or not re.fullmatch(r"[a-f0-9]{64}", workload)
+            or not isinstance(runtime_hash, str) or not re.fullmatch(r"[a-f0-9]{64}", runtime_hash)
+            or not isinstance(launch_hash, str) or not re.fullmatch(r"[a-f0-9]{64}", launch_hash)
+            or not isinstance(node, str) or not node
+            or not isinstance(image, str) or not re.search(r"@sha256:[a-f0-9]{64}$", image)
+            or not isinstance(image_id, str) or not re.search(r"sha256:[a-f0-9]{64}$", image_id)
+            or not isinstance(resources, dict) or not isinstance(resources.get("requests"), dict)
+            or not isinstance(resources.get("limits"), dict) or not resources["requests"]
+            or resources["requests"] != resources["limits"]
+            or not isinstance(packages, dict) or not packages
+            or not {"sglang", "torch", "triton", "pytorch-triton-rocm", "aiter", "transformers"} <= set(packages)
+            or not isinstance(packages.get("torch"), str) or not packages["torch"]
+            or not isinstance(hip, str) or not hip
+            or not isinstance(launch, list) or len(launch) != 1 or not isinstance(launch[0], dict)
+            or not isinstance(devices, list) or not devices):
+        raise ValueError("serving producer identity is incomplete")
+    identities = []
+    for device in devices:
+        if (not isinstance(device, dict) or not isinstance(device.get("uuid"), str) or not device["uuid"]
+                or device["uuid"].lower() in ("unknown", "none")
+                or not isinstance(device.get("gfx"), str) or device["gfx"].split(":", 1)[0] != "gfx1201"):
+            raise ValueError("serving producer GPU identity is incomplete")
+        identities.append(device["uuid"])
+    if len(identities) != len(set(identities)):
+        raise ValueError("serving producer GPU identities are not distinct")
+    if runtime != retained_runtime or runtime_hash != runtime_digest:
+        raise ValueError("serving runtime hash does not match retained runtime evidence")
+    return {"model_revision": model_revision, "tokenizer_sha256": tokenizer_digest(runtime),
+            "workload_sha256": workload, "hardware_sha256": canonical_digest({"node": pod.get("node"), "devices": devices}),
+            "software_sha256": canonical_digest({"image": pod.get("image"), "image_id": pod.get("image_id"),
+                                                   "packages": runtime.get("packages"), "hip": runtime.get("hip")}),
+            "launch_sha256": launch_hash, "quantization": quantization}
+
+
+def producer_conditions(serving, runtime_digest):
+    """Keep source-level conditions visible without changing the stable manifest identity."""
+    runtime, pod = serving["runtime"], serving["pod"]
+    settings = runtime.get("settings")
+    if not isinstance(settings, dict) or not settings:
+        raise ValueError("runtime settings are unavailable")
+    model_setting_names = {"MODEL_PATH", "MODEL_REVISION", "MODEL_REPOSITORY", "SERVED_MODEL_NAME", "MODEL_DTYPE"}
+    model_settings = {key: value for key, value in settings.items() if key in model_setting_names}
+    launch_settings = {key: value for key, value in settings.items() if key not in model_setting_names}
+    return {"runtime_sha256": runtime_digest, "model_files_sha256": model_files_digest(runtime),
+            "model_settings_sha256": canonical_digest(model_settings),
+            "launch_settings_sha256": canonical_digest(launch_settings),
+            "resources_sha256": canonical_digest(pod["resources"])}
+
+
+def valid_producer_conditions(value):
+    """Accept only the normalized source conditions persisted with a selection."""
+    required = {"runtime_sha256", "model_files_sha256", "model_settings_sha256",
+                "launch_settings_sha256", "resources_sha256"}
+    return (isinstance(value, dict) and set(value) == required
+            and all(isinstance(digest, str) and re.fullmatch(r"[a-f0-9]{64}", digest)
+                    for digest in value.values()))
+
+
+def startup_matches_serving(rows, serving):
+    """Bind successful startup observations to the serving image and launch."""
+    pod = serving.get("pod") if isinstance(serving, dict) else None
+    if not isinstance(pod, dict):
+        raise ValueError("serving Pod identity is unavailable")
+    for row in rows:
+        if not isinstance(row, dict) or row.get("status") != "observed-not-qualified":
+            continue
+        observed = row.get("pod")
+        if (not isinstance(observed, dict)
+                or any(observed.get(key) != pod.get(key) for key in
+                       ("node", "image", "image_id", "launch_spec_sha256", "resources"))):
+            raise ValueError("startup observation does not match retained serving runtime identity")
+
+
+def kernel_run_identity(run):
+    """Derive the profile-relevant identity from one finalized checked run."""
+    if not isinstance(run, dict) or not isinstance(run.get("identity"), dict) or not isinstance(run.get("pod"), dict):
+        raise ValueError("checked kernel run identity is unavailable")
+    record = {"runtime": run["identity"].get("runtime"), "pod": run["pod"],
+              "runtime_sha256": run.get("runtime_sha256"), "workload_sha256": run.get("workload_sha256")}
+    runtime = record["runtime"]
+    if not isinstance(runtime, dict):
+        raise ValueError("checked kernel run runtime is unavailable")
+    # Kernel-run records retain the runtime object, but not its original raw
+    # file. Validate the stable fields against the already verified serving
+    # source; raw-file equality remains the serving/runtime source check above.
+    return {"model_revision": runtime.get("settings", {}).get("MODEL_REVISION"),
+            "tokenizer_sha256": tokenizer_digest(runtime), "workload_sha256": record["workload_sha256"],
+            "hardware_sha256": canonical_digest({"node": record["pod"].get("node"), "devices": runtime.get("devices")}),
+            "software_sha256": canonical_digest({"image": run["identity"].get("image"),
+                                                   "image_id": run["identity"].get("image_id"),
+                                                   "packages": runtime.get("packages"), "hip": runtime.get("hip")}),
+            "launch_sha256": record["pod"].get("launch_spec_sha256"),
+            "quantization": runtime.get("model_contract", {}).get("quant_method")}
 
 
 def startup_metrics(rows):
@@ -262,18 +427,22 @@ def inspect(bundle_path):
         if not isinstance(value, str) or not value:
             raise ValueError(f"missing identity {key}")
     experiment = manifest.get("experiment", {})
-    if not isinstance(experiment, dict) or set(experiment) != {"variables"} or not isinstance(experiment["variables"], dict):
+    if (not isinstance(experiment, dict) or set(experiment) != {"variables", "profile", "prefix_state"}
+            or not isinstance(experiment["variables"], dict)):
         raise ValueError("invalid experiment variables")
     if set(experiment["variables"]) - VARIABLES or any(not isinstance(value, str) for value in experiment["variables"].values()):
         raise ValueError("unsupported experiment variable")
+    if (not isinstance(experiment["profile"], str) or not experiment["profile"]
+            or experiment["prefix_state"] not in ("new-prefix", "warm-prefix")):
+        raise ValueError("invalid experiment serving labels")
     sources = manifest.get("sources")
-    if not isinstance(sources, dict) or set(sources) - {"serving", "startup", "memory", "quality", "coding", "power"}:
+    if not isinstance(sources, dict) or set(sources) - {"serving", "runtime", "startup", "memory", "quality", "kernel_runs", "coding", "power"}:
         raise ValueError("invalid performance evidence sources")
-    if "serving" not in sources or "startup" not in sources:
-        raise ValueError("serving and startup evidence are required")
+    if not {"serving", "runtime", "startup"} <= set(sources):
+        raise ValueError("serving, runtime and startup evidence are required")
     artifact_hashes, decoded = {}, {}
     for kind, location in sources.items():
-        locations = location if kind == "startup" else [location]
+        locations = location if kind in ("startup", "kernel_runs") else [location]
         if not isinstance(locations, list) or not locations:
             raise ValueError("startup evidence must be a nonempty list")
         decoded[kind] = []
@@ -283,10 +452,43 @@ def inspect(bundle_path):
             artifact_hashes[f"{kind}:{item}"] = digest
     # Serving is one result.  Requiring exactly one makes a failed run visible
     # rather than letting a convenient result overwrite it in an aggregate.
-    if len(decoded["serving"]) != 1 or any(len(decoded[key]) != 1 for key in ("memory", "quality", "coding", "power") if key in decoded):
+    if (len(decoded["serving"]) != 1 or len(decoded["runtime"]) != 1
+            or any(len(decoded[key]) != 1 for key in ("memory", "quality", "coding", "power") if key in decoded)
+            or ("quality" in decoded and ("kernel_runs" not in decoded or len(decoded["kernel_runs"]) != 2))):
         raise ValueError("invalid performance evidence source cardinality")
+    runtime_location = sources["runtime"]
+    runtime_digest = artifact_hashes[f"runtime:{runtime_location}"]
+    derived_identity = producer_identity(decoded["serving"][0], decoded["runtime"][0], runtime_digest)
+    conditions = producer_conditions(decoded["serving"][0], runtime_digest)
+    if identity != derived_identity:
+        raise ValueError("manifest identity does not match retained serving producer evidence")
+    startup_matches_serving(decoded["startup"], decoded["serving"][0])
+    if (experiment["profile"] != decoded["serving"][0].get("profile")
+            or experiment["prefix_state"] != decoded["serving"][0].get("prefix_state")):
+        raise ValueError("manifest experiment labels do not match retained serving producer evidence")
+    if "quality" in decoded:
+        quality = decoded["quality"][0]
+        runs = decoded["kernel_runs"]
+        try:
+            if any(run.get("schema") != 1 for run in runs):
+                raise ValueError("kernel-run schema is unsupported")
+            memory_only = quality.get("comparison") == "host-memory-only" if isinstance(quality, dict) else False
+            tolerances = quality.get("quality") if isinstance(quality, dict) else None
+            expected_quality = model_kernels.compare_quality(runs[0], runs[1], tolerances["atol"], tolerances["rtol"], memory_only)
+            matching_runs = [run for run in runs
+                             if tuple(sorted(derived_identity.items())) == tuple(sorted(kernel_run_identity(run).items()))
+                             and run.get("pod", {}).get("resources") == decoded["serving"][0]["pod"]["resources"]
+                             and run.get("identity", {}).get("resources") == decoded["serving"][0]["pod"]["resources"]
+                             and model_files_digest(run["identity"]["runtime"]) == conditions["model_files_sha256"]]
+        except (KeyError, TypeError, ValueError):
+            raise ValueError("numerical quality does not bind retained checked kernel runs") from None
+        if (quality != expected_quality
+                or quality["baseline_sha256"] != canonical_digest(runs[0])
+                or quality["candidate_sha256"] != canonical_digest(runs[1])
+                or not matching_runs):
+            raise ValueError("numerical quality does not bind retained checked kernel runs")
     return {"schema": 1, "kind": "workstation-performance-evidence-inspection", "status": manifest["status"],
-            "profile_id": profile_id, "identity": identity, "experiment": experiment,
+            "profile_id": profile_id, "identity": identity, "producer_conditions": conditions, "experiment": experiment,
             "manifest_sha256": manifest_hash, "artifact_sha256": artifact_hashes,
             "metrics": {"serving": serving_metrics(decoded["serving"][0]),
                         "startup": startup_metrics(decoded["startup"]),
@@ -319,9 +521,24 @@ def differences(first, second, declared):
                            "quantization": "quantization"}[key]
             all_differences.append({"field": key, "baseline": first["identity"][key], "candidate": second["identity"][key],
                                     "declared_as": declaration, "declared": declaration in declared})
+    # The raw runtime hash remains provenance, not a comparison variable: it
+    # includes legitimate model/launch variation. These normalized conditions
+    # expose the substantive retained source changes that its digest covers.
+    for key, declaration in (("model_files_sha256", "model"), ("model_settings_sha256", "model"),
+                             ("launch_settings_sha256", "launch"),
+                             ("resources_sha256", "resources")):
+        left, right = first["producer_conditions"][key], second["producer_conditions"][key]
+        if left != right:
+            all_differences.append({"field": f"producer.{key}", "baseline": left, "candidate": right,
+                                    "declared_as": declaration, "declared": declaration in declared})
     keys = set(first["experiment"]["variables"]) | set(second["experiment"]["variables"])
     for key in sorted(keys):
         left, right = first["experiment"]["variables"].get(key), second["experiment"]["variables"].get(key)
+        if left != right:
+            all_differences.append({"field": key, "baseline": left, "candidate": right,
+                                    "declared_as": key, "declared": key in declared})
+    for key in ("profile", "prefix_state"):
+        left, right = first["experiment"][key], second["experiment"][key]
         if left != right:
             all_differences.append({"field": key, "baseline": left, "candidate": right,
                                     "declared_as": key, "declared": key in declared})
@@ -348,7 +565,12 @@ def coding_differences(first, second, declared):
 
 def align_cases(first, second):
     """Pair only identical workload labels; never rely on list ordering alone."""
-    left, right = first["metrics"]["serving"]["cases"], second["metrics"]["serving"]["cases"]
+    left_metrics, right_metrics = first["metrics"]["serving"], second["metrics"]["serving"]
+    if left_metrics["status"] != "observed" or right_metrics["status"] != "observed":
+        return {"status": "incomplete", "reason": "serving evidence is incomplete or malformed",
+                "baseline_status": left_metrics["status"], "candidate_status": right_metrics["status"],
+                "baseline_cases": [], "candidate_cases": []}, []
+    left, right = left_metrics["cases"], right_metrics["cases"]
     by_left = {(row["context_tokens"], row["concurrency"]): row for row in left}
     by_right = {(row["context_tokens"], row["concurrency"]): row for row in right}
     keys = sorted(set(by_left) | set(by_right))
@@ -519,7 +741,7 @@ def comparison_record(first, second, declared_variables, thresholds):
                          "memory": memory_gate(first, second),
                          "throughput": throughput_gate(paired_cases, limits["noise_percent"])}
     measurements_ready = (first["status"] == second["status"] == "measured-not-qualified"
-                          and base.get("source_status") == candidate.get("source_status") == "measured-awaiting-provenance"
+                          and base.get("source_status") == candidate.get("source_status") == "measured-not-qualified"
                           and all(row["failures"] == 0 for _key, row, _other in paired_cases)
                           and all(row["failures"] == 0 for _key, _other, row in paired_cases)
                           and all(row["throughput"]["status"] == "observed" for _key, left, right in paired_cases for row in (left, right)))
@@ -550,8 +772,10 @@ def comparison_record(first, second, declared_variables, thresholds):
             outcome, recommendation = "candidate-improves-throughput", "candidate"
         elif gain <= -limits["maximum_regression_percent"]:
             outcome = "candidate-regresses-throughput"
-    elif case_alignment["status"] != "matching":
+    elif case_alignment["status"] == "incompatible":
         outcome = "inconclusive-incompatible-cases"
+    elif case_alignment["status"] == "incomplete":
+        outcome = "inconclusive-incomplete-serving-evidence"
     return {"schema": 1, "kind": "workstation-performance-comparison", "status": "comparison-not-qualified",
             "baseline": first, "candidate": second, "declared_variables": declared_variables,
             "differences": declared_differences, "case_alignment": case_alignment, "thresholds": limits, "outcome": outcome,
@@ -608,20 +832,39 @@ def select(comparison, owner, candidate_id, previous=None):
             "previous_selection": previous_record, "comparison_sha256": digest_bytes(json.dumps(comparison, sort_keys=True, separators=(",", ":")).encode()),
             "runtime_identity": comparison["candidate"]["identity"], "evidence": {"candidate_manifest_sha256": comparison["candidate"]["manifest_sha256"],
                                                                             "baseline_manifest_sha256": comparison["baseline"]["manifest_sha256"]},
+            "producer_conditions": comparison["candidate"]["producer_conditions"],
             "selection_reason": comparison["recommendation"],
             "limitations": ["Owner selection retains the prior baseline and does not apply a source patch or start a workload.",
                             "Qualification is stale after a relevant runtime, model, launch, software, or hardware identity change."]}
 
 
-def selection_status(selection, current_identity):
+def selection_status(selection, current_identity, current_conditions=None):
     if selection.get("schema") != 1 or selection.get("kind") != "workstation-measured-profile-selection":
         raise ValueError("unsupported selection")
     if not isinstance(current_identity, dict) or set(current_identity) != set(IDENTITY):
         raise ValueError("current identity is incomplete")
     changed = [key for key in IDENTITY if current_identity[key] != selection["runtime_identity"].get(key)]
+    if changed:
+        return {"schema": 1, "kind": "workstation-measured-profile-status", "status": "stale",
+                "selected_profile_id": selection["selected_profile_id"], "changed_identity_fields": changed,
+                "changed_condition_fields": [],
+                "reason": "selected profile identity changed: " + ", ".join(changed)}
+    selected_conditions = selection.get("producer_conditions")
+    if not valid_producer_conditions(selected_conditions):
+        return {"schema": 1, "kind": "workstation-measured-profile-status", "status": "unknown",
+                "selected_profile_id": selection["selected_profile_id"], "changed_identity_fields": changed,
+                "reason": "selected profile lacks normalized source conditions"}
+    if not valid_producer_conditions(current_conditions):
+        return {"schema": 1, "kind": "workstation-measured-profile-status", "status": "unknown",
+                "selected_profile_id": selection["selected_profile_id"], "changed_identity_fields": changed,
+                "reason": "current identity observation lacks normalized source conditions"}
+    condition_changed = [key for key in sorted(selected_conditions) if current_conditions[key] != selected_conditions[key]]
     return {"schema": 1, "kind": "workstation-measured-profile-status",
-            "status": "stale" if changed else "selected-unqualified-current",
-            "selected_profile_id": selection["selected_profile_id"], "changed_identity_fields": changed}
+            "status": "stale" if condition_changed else "selected-unqualified-current",
+            "selected_profile_id": selection["selected_profile_id"], "changed_identity_fields": changed,
+            "changed_condition_fields": condition_changed,
+            "reason": ("current identity matches the selected unqualified profile" if not condition_changed
+                       else "selected profile source conditions changed: " + ", ".join(condition_changed))}
 
 
 def write(path, value):
@@ -672,6 +915,7 @@ def main():
     state = sub.add_parser("status")
     state.add_argument("selection")
     state.add_argument("current_identity")
+    state.add_argument("--conditions", help="owner-prepared normalized source conditions JSON")
     args = parser.parse_args()
     if args.action == "inspect":
         print(json.dumps(inspect(args.bundle), indent=2))
@@ -689,7 +933,8 @@ def main():
     else:
         selection, _ = read_json(args.selection)
         current, _ = read_json(args.current_identity)
-        print(json.dumps(selection_status(selection, current), indent=2))
+        conditions = read_json(args.conditions)[0] if args.conditions else None
+        print(json.dumps(selection_status(selection, current, conditions), indent=2))
 
 
 if __name__ == "__main__":

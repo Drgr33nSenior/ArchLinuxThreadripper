@@ -1,22 +1,7 @@
-# Performance validation: September 2026 audit
+# Performance validation
 
 The [opt-in model-kernel workflow](MODEL-KERNELS.md) adds independent compilation,
 warmup, restart-reuse and numerical/dispatch evidence without promoting defaults.
-
-See [the 9 September implementation record](validation/AUDIT-FOLLOWUP-2026-09-09.md) for
-runtime-library provenance, matching benchmark/quality configuration, installed
-kernel verification, provider-aware monitoring and strict-check results.
-
-See [validation of e5281734](validation/VALIDATION-e5281734.md) for the dependency-prepared
-follow-up checks, retained logs, corrections and remaining qualification blockers.
-
-Reviewed 2026-09-09 against checkout `bd4077f58afb6f81f3bfdd33986d001d46170dcc`,
-the same revision reviewed externally on 8 September. Existing uncommitted
-template annotations were preserved. No installer, GPU workload, live cluster,
-firmware change or storage benchmark was run on the development Mac.
-
-The [measurement-contract corrections](#measurement-contract-corrections) below
-address the subsequent review of `46641c1f0d684654548547816ebdab4c02119289`.
 
 **No performance default was promoted and no workstation speedup is claimed.**
 Use the commands below on the installed target after its existing qualification
@@ -265,32 +250,13 @@ Do not bypass a failed rollback test after unrelated configuration changes.
 
 The default remains 38 GiB until target evidence supports promotion. This work
 does not change session handover, create a second boot path or implement automatic
-resizing. Agent/Bridge integration is a separate client of the same deterministic
-planner; see [the Go-agent handoff](BRIDGE-MEMORY-AGENT-PROMPT.md).
+resizing. Bridge uses the same deterministic planner; advice and telemetry do
+  not approve or apply a memory change.
 
 Mechanism references: [Linux cgroup v2](https://docs.kernel.org/admin-guide/cgroup-v2.html),
 [Kubernetes Guaranteed QoS](https://kubernetes.io/docs/tasks/configure-pod-container/quality-service-pod/),
 [SGLang loading](https://docs.sglang.io/docs/advanced_features/model_loading).
 No MI300 constants, loader change or experimental ROCm flag is introduced.
-
-Local validation on 11 September 2026 used installer HEAD `843a52b` plus the
-uncommitted memory increment, preserving prior telemetry/ISO changes. With the
-prepared validation tools, configured Python 3.11 (`HOME_LAB_PYTHON`) and pinned
-operator chart (`HOME_LAB_GPU_CHART`), `make check-strict` passed. It ran 55 shell
-test scripts, including 14 memory tests, six Bats cases and three Ansible syntax
-checks. ShellCheck, shfmt, shell syntax, YAML and local manifest checks passed.
-Ansible reported the expected empty/example-inventory warnings; no playbook ran
-against a host. Local Markdown references and `git diff --check` also passed.
-
-Private evidence is in `test-results/strict-check.FDAWLU/`. The preceding attempt
-in `test-results/strict-check.NXy30i/` correctly failed because the pinned chart
-was not selected; the chart was then supplied without changing skip policy.
-Three permitted checks remain **SKIPPED**: built gaming-image smoke tests
-(`HOME_LAB_GAME_IMAGE` unset), Linux Wayland process-group tests
-(`HOME_LAB_WAYLAND_RUNTIME_IMAGE` unset), and `systemd-analyze` verification
-(development host is macOS). All startup/serving memory evidence in these tests
-is synthetic. Actual target collection, smaller-limit measurements, numerical
-qualification and any RAM saving remain **NOT RUN**.
 
 ### Telemetry interpretation
 
@@ -480,36 +446,7 @@ coding-quality, memory, stability and recovery gates pass. Rollback is the
 retained config/manifest/image baseline; no benchmark changes disks, encryption,
 kernel mitigations or cluster defaults automatically.
 
-## Local verification record
-
-Executed on the development Mac, not the workstation:
-
-- `make -j2 check`: syntax, ShellCheck and YAML checks completed. Its test target
-  initially rejected the newly added display key against the old exact baseline.
-  The assertion was updated to require **60 Hz**, with separate 2100/1800/120
-  startup/probe/termination checks; no resource or security checks were removed.
-  Earlier ShellCheck findings and a TuneD failure-status regression were fixed.
-- `HOME_LAB_PYTHON=/usr/local/bin/python3.11 PYTHONDONTWRITEBYTECODE=1 make test bats ansible kubernetes systemd`:
-  exit 0 after those fixes; **43 test files passed**, including 11 standard-library
-  Python fixtures, HIP IPC control-flow simulation, all selected Kustomize
-  overlays, configuration templates, model locks and existing safety tests.
-- Focused `shellcheck -x tests/test_performance.sh`, Ruby manifest-checker syntax,
-  and AST parsing of all 11 changed/new Python files passed.
-- `c++ -std=c++17 -Wall -Wextra -Werror -fsyntax-only tests/hardware/memory-bandwidth.cpp`
-  passed. This is compiler syntax validation, not a memory bandwidth result.
-- Both documentation advisory audits and `git diff --check` passed.
-
-Unavailable/skipped: shfmt; Bats; a working Ansible executable; Linux systemd
-verification; real ccache and CMake/Ninja repeat-build fixtures; the pinned local
-GPU Operator chart render; prebuilt gaming/Wayland image smoke tests; the USB
-Bash-4 signal fixture. No dependencies were installed to hide these gaps.
-Physical tests, GPU compiler execution and complete ROCm packaging remain pending.
-
-## Measurement-contract corrections
-
-The follow-up checkout was clean and exactly at
-`46641c1f0d684654548547816ebdab4c02119289`. Software pins, model settings,
-resource budgets and pending hardware qualification are unchanged.
+## Measurement evidence semantics
 
 - Numerical qualification now requires the pinned CSV header, supported required
   operations, empty error fields on supported rows, and a successful executable
@@ -590,19 +527,3 @@ Expect shell status 143, a failed aggregate `result.json`, an interrupted child
 file remains for explicit owner cleanup. Do not target another process or raw
 device. Local regression tests use sleeping subprocesses, a 16-byte temporary
 fixture file and mocked storage metadata; they do not execute fio.
-
-### Follow-up local verification
-
-`HOME_LAB_PYTHON=/usr/local/bin/python3.11 PYTHONDONTWRITEBYTECODE=1 make -j2 check`
-completed with exit 0: **44 test files**, including 14 Python fixtures and the
-new complete HIP/Vulkan qualification invocation-to-parser regression. Shell,
-YAML, manifest and available static checks passed. The SIGTERM fixture verifies
-TERM-resistant parent/descendant termination, retained failed records, an
-unaffected unrelated process and preservation of exit status 7 on a normal
-workload failure. A focused ShellCheck pass also covered the synthetic executable.
-
-Unavailable checks remain: shfmt, Bats, working Ansible, Linux systemd
-verification, real ccache/CMake/Ninja build fixtures, the local GPU Operator
-chart, gaming/Wayland image smoke tests and the Bash-4 USB signal fixture.
-Documentation advisory audits and the final whitespace diff check passed.
-No dependencies were installed and no hardware qualification was promoted.

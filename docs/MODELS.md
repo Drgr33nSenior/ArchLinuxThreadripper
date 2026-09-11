@@ -1,6 +1,6 @@
 # Model defaults and qualification
 
-Reviewed on 2026-09-08. Prefer current open-weight models that fit the selected
+Prefer open-weight models that fit the selected
 workload and serving backend. Pin each release; do not use a moving `latest`
 checkpoint or assume that a newer model is faster on this workstation.
 
@@ -170,22 +170,8 @@ through maintenance. Leave replicas at zero if no combination has passed.
 Retain old model and RAG data volumes; do not overwrite, delete or reinterpret
 MiniLM indexes as Qwen embeddings. The [RAG migration](RAG.md) uses new volumes.
 
-## Local verification record — 2026-09-08
+## Qualification boundary
 
-- `HOME_LAB_PYTHON=/usr/local/bin/python3.11 make check`: passed all 38 test
-  files using the configured development interpreter. This includes model-lock
-  validation, rendered defaults, RAG staging fixtures and session regression tests.
-- Strict kubeconform validation against Kubernetes 1.35: `default` and
-  `single-gpu` each passed 24 resources; `rag` and `rag-dense` each passed 28.
-  No resources were skipped. The default and dual-GPU renders are identical.
-- Independent source review found no defects in the selected model configuration
-  or RAG migration. Documentation audits and changed-file whitespace checks passed.
-
-The full suite reported unavailable optional checks: shfmt, Bats, Ansible,
-Linux systemd verification, the real ccache/CMake fixtures, Bash 4 USB signal
-fixtures, the local GPU Operator chart and a built streaming image. These were
-skipped, not passed. No dependencies were installed to run the checks.
-
-Physical validation: **NOT RUN — target hardware unavailable**. Local rendering,
-lock checks and synthetic model-file tests do not prove runtime compatibility,
+Source validation covers model locks, rendered defaults, model staging refusal
+paths and RAG migration fixtures. It does not prove runtime compatibility,
 inference speed, embedding quality, memory fit or GPU handover.

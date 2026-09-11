@@ -1,6 +1,8 @@
 """Offline fixtures: no cluster, hardware, credentials or model requests."""
 import argparse
 import json
+import shutil
+import subprocess
 from pathlib import Path
 import sys
 import tempfile
@@ -14,6 +16,40 @@ import telemetry_sample
 
 
 class TelemetryTests(unittest.TestCase):
+    def test_runtime_allowlist_closes_both_telemetry_profiles(self):
+        # Use only files shipped to the installed runtime, not the larger
+        # source export or any imports/assets from the development checkout.
+        runtime = self.work / "runtime"
+        runtime.mkdir()
+        names = (ROOT / "infrastructure/packages/bootstrap/bridge-runtime.files").read_text().splitlines()
+        self.assertEqual(len(names), len(set(names)))
+        for name in names:
+            if not name or name.startswith("#"):
+                continue
+            source = ROOT / name
+            self.assertFalse(source.is_symlink(), name)
+            self.assertTrue(source.is_file(), name)
+            target = runtime / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+        for profile, allowance in (("full", 6144), ("metrics", 4352)):
+            with self.subTest(profile=profile):
+                args = self.args(profile, root=str(runtime), profile=profile)
+                argv = [sys.executable, "-B", str(runtime / "lib/workstation/telemetry.py"), "render", args.output, args.overlay]
+                for key, value in vars(args).items():
+                    if key in ("output", "overlay"):
+                        continue
+                    argv.extend(["--" + key.replace("_", "-"), str(value)])
+                completed = subprocess.run(argv, capture_output=True, text=True, timeout=45)
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                checked = telemetry.verify(args.output)
+                self.assertEqual(checked["calculated_allowance_mib"], allowance)
+                self.assertEqual(checked["profile"], profile)
+                host = runtime / "infrastructure/observability/host" / ("config.alloy" if profile == "full" else "config.metrics.alloy")
+                self.assertTrue(host.is_file())
+                self.assertEqual(host.read_bytes(), (ROOT / host.relative_to(runtime)).read_bytes())
+                self.assertIn('prometheus.scrape "self"', host.read_text())
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.work = Path(self.temp.name)

@@ -87,12 +87,40 @@ failed summary. It does not turn a partial observation into success.
 ## Evidence bundle
 
 Place a private `manifest.json` in a new owner-owned directory. Use schema 1
-and kind `workstation-performance-evidence`. The manifest must identify one
-profile, provide complete model, tokenizer, workload, hardware, software,
-launch and quantization identities, and list only relative regular JSON files
-below that directory. The required sources are one `serving` result and one or
-more `startup` records. Optional sources are the existing memory-plan,
-kernel-quality, coding-evaluation and device-power evidence.
+and kind `workstation-performance-evidence`. The required sources are one
+finalized `serving` result, its original `runtime` evidence JSON, and one or
+more `startup` records. A serving result is eligible only after the existing
+provenance step changes its status to `measured-not-qualified`.
+
+`experiment` contains exactly `variables`, `profile`, and `prefix_state`. The
+profile and prefix values must match the retained serving result. If they differ
+between profiles, declare `profile` or `prefix_state` in the comparison; the
+report treats either difference as non-equivalent conditions.
+
+The reader derives the seven manifest identity fields from producer evidence and
+rejects copied values. It binds model revision to `runtime.settings.MODEL_REVISION`,
+tokenizer identity to the retained tokenizer-file records, workload identity to
+the serving workload hash, hardware identity to the observed node/device records,
+software identity to the image/image-ID/package/HIP subset, and launch identity
+to the observed Pod launch-spec hash. It also verifies that the original runtime
+file hash equals `serving.runtime_sha256`. Quantization comes from the observed
+model contract. The source record must identify an immutable image and image ID,
+Guaranteed Pod resources, distinct observed `gfx1201` GPU UUIDs, package and HIP
+identity, model-file hashes and tokenizer files. The reader retains the raw
+runtime hash as provenance and separately compares normalized model-file,
+model-setting, launch-setting and resource conditions. This prevents a changed
+weight file or resource budget from being concealed by an unchanged model
+revision.
+
+Optional sources are the existing memory plan, coding evaluation and device-power
+evidence. If a numerical-quality result is present, include exactly two retained
+finalized `kernel_runs`, listed in baseline then candidate order. Both must pass
+the existing `model_kernels.compare_quality` contract, including schema 1,
+`memory.status: checked`, complete warmup cases and sampled output checks. The
+canonical comparison must contain the baseline hash of the first run and the
+candidate hash of the second run. At least one run must also match the serving
+runtime, Pod resources and derived profile identity. A matching digest does not
+make a run qualified.
 
 The comparison reader rejects symlinks, path escapes, oversized files and
 unknown manifest fields. It records source hashes. Keep this bundle private:
@@ -129,9 +157,10 @@ python3 lib/workstation/performance_profiles.py compare \
 The supported declared variables are `compiler_backend`, `image`,
 `concurrency`, `loading_strategy`, `loading_threads`, `engine_queue`,
 `interactive_priority`, `model`, `tokenizer`, `workload`, `hardware`,
-`software`, `launch`, `quantization`, `coding_corpus` and `generation`. The
-command rejects every other difference. It preserves and matches each serving
-case by context-token and concurrency labels; it never pairs list positions as
+`software`, `launch`, `resources`, `quantization`, `coding_corpus`, `generation`,
+`profile` and `prefix_state`. The command rejects every other difference. It
+preserves and matches each serving case by context-token and concurrency labels;
+it never pairs list positions as
 if they were comparable. Model, tokenizer, quantization, workload, hardware,
 concurrency, coding-corpus and generation variants may be retained as declared
 experiments, but cannot receive an equivalent-quality throughput recommendation.
@@ -172,7 +201,8 @@ python3 lib/workstation/performance_profiles.py select \
   artifacts/profile-selection.json --previous artifacts/previous-selection.json
 
 python3 lib/workstation/performance_profiles.py status \
-  artifacts/profile-selection.json artifacts/current-runtime-identity.json
+  artifacts/profile-selection.json artifacts/current-runtime-identity.json \
+  --conditions artifacts/current-runtime-conditions.json
 ```
 
 `select` requires the exact candidate ID and an eligible `candidate`
@@ -181,9 +211,16 @@ regression, incomplete quality evidence or incomparable experiment. It retains
 the previous selection by hash. Before selecting, it recomputes the canonical
 comparison from its retained inspected evidence, declared variables and
 thresholds; a free-form recommendation or altered quality/case report is
-refused. `status` marks the selection stale when model,
-tokenizer, workload, hardware, software, launch or quantization identity
-changes. Recollect evidence before treating a stale selection as relevant.
+refused. `status` marks the selection stale when model, tokenizer, workload,
+hardware, software, launch or quantization identity changes. It also compares
+the retained normalized source conditions: runtime provenance, model files,
+model settings, launch settings and resources. The conditions file contains
+exactly those five SHA-256 fields and no credentials or full runtime record. A
+new selection stores the candidate conditions. A legacy selection or a current
+observation without them reports `unknown`; it never reports a profile as
+current. A known seven-field identity change remains `stale` even when
+conditions are missing. Recollect evidence before treating a stale selection as
+relevant.
 
 For Bridge's read-only `profile-status` bundle, `current_identity` is a
 root-policy-approved owner observation in sealed evidence. It is not a
@@ -191,7 +228,8 @@ client-supplied identity or an automatic all-identity probe. The helper verifies
 the current boot, source and hardware conditions before export. It has schema 1, kind
 `workstation-performance-profile-identity-observation`, status
 `observed-not-qualified`, an RFC3339 UTC `observed_at`, the current Linux
-`boot_id`, and all seven runtime identity fields. The dispatcher accepts an
+`boot_id`, all seven runtime identity fields, and the five normalized
+source-condition hashes. The dispatcher accepts an
 observation only when it is no more than 15 minutes old. A missing, future,
 stale or malformed observation reports `unknown`; it never reports a selected
 profile as current. A matching observation maps the exported summary to

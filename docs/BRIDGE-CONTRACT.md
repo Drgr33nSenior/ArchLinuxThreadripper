@@ -41,9 +41,8 @@ installation, review the Bridge runtime artifact manifest and complete its
 target-machine qualification checklist. No service or policy is installed by
 these source changes.
 
-The Qwen client catalog was reconciled separately with Bridge `deb6a93` during
-[installer 67a5060 revalidation](validation/VALIDATION-67a5060.md). Both source exports now
-select Qwen Code 0.23.2 / `f56de980b316cd5410f067fbb62357481ebd66b8`. The pinned
-cross-repository test compares complete native bundles and retains rejection of
-stale pins. This does not authorize changes to root-owned installed runtime
-manifests or owner-reviewed executable hashes.
+The source export selects Qwen Code 0.23.2 /
+`f56de980b316cd5410f067fbb62357481ebd66b8`. The pinned cross-repository test
+compares complete native bundles and rejects stale pins. This does not authorize
+changes to root-owned installed runtime manifests or owner-reviewed executable
+hashes.

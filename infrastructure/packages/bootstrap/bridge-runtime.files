@@ -126,14 +126,17 @@ versions.lock
 docs/TELEMETRY.md
 infrastructure/observability/config/alerts.yaml
 infrastructure/observability/config/config.alloy
+infrastructure/observability/config/config.metrics.alloy
 infrastructure/observability/config/dashboards.yaml
 infrastructure/observability/config/datasources.yaml
+infrastructure/observability/config/datasources.metrics.yaml
 infrastructure/observability/config/loki.yaml
 infrastructure/observability/config/prometheus.yaml
 infrastructure/observability/config/tempo.yaml
 infrastructure/observability/dashboards/workstation.json
 infrastructure/observability/host-metrics.yaml
 infrastructure/observability/host/config.alloy
+infrastructure/observability/host/config.metrics.alloy
 infrastructure/observability/kubelet/access.yaml
 infrastructure/observability/kubelet/config.alloy
 infrastructure/observability/kubelet/kustomization.yaml

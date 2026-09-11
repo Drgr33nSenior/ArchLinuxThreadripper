@@ -46,7 +46,7 @@ compatibility checks is not justified for this Radeon/model combination.
 [Current SGLang guidance](https://docs.sglang.io/docs/advanced_features/server_arguments)
 also warns that the legacy path is out of maintenance.
 
-On 11 September 2026, the current [SGLang model-loading guidance](https://docs.sglang.io/docs/advanced_features/model_loading)
+The [SGLang model-loading guidance](https://docs.sglang.io/docs/advanced_features/model_loading)
 described multithread loading and sharded state. It is discovery material only:
 the locked image retains its existing defaults until its exact `--help` and
 hashed loader source prove a supported candidate control.
@@ -297,44 +297,12 @@ original cache paths without deleting evidence. Set `LLAMA_HIP_EXPORT_METRICS=0`
 and build a fresh ordinary native candidate. Recollect evidence after any
 software/model/device change.
 
-| Coverage | Local tests | Hardware status |
-| --- | --- | --- |
-| Profile generation | CPU/RAM/TP bounds, overrides, unsupported flags, identities | NOT RUN |
-| Warmup/numerical checks | Synthetic response and sampler/cgroup failures | NOT RUN |
-| Restart evidence | Process, retained-artifact and positive-hit fixtures | NOT RUN |
-| Dispatch/tuning | GPU-event and provenance/review validation | NOT RUN |
-| HIP diagnostics | Existing build fixture checks effective flags | Native build NOT RUN |
+Run `make check-strict` with the documented private dependency environment before
+changing source. Fixture success does not qualify a runtime image, a GPU build,
+restart cache reuse, numerical correctness, dispatch behavior or sustained
+performance. Run the target procedure above before selecting a candidate.
 
-Run `make check-strict` with the documented private dependency environment.
-Fixture success is not hardware qualification. Local evidence is retained under
-`test-results/model-kernels.h23HSB/`.
-
-Validation on 9 September 2026:
-
-- Dependency-prepared `make check-strict` exited 0. The runner completed 46 shell
-  scripts, including the explicit exceptions below; 32 Python tests, six Bats
-  cases and three Ansible syntax checks passed. Strict logs are in
-  `test-results/strict-check.SAZ7Pg/`. Ansible reported empty inventories; no
-  playbook was applied to a host.
-- The first strict run rejected the new source hashes in the existing K3s lock
-  allowlist. The allowlist and SHA-256 validation were extended. Both the failed
-  log and successful rerun are retained.
-- After the final post-probe Pod identity guard, ShellCheck, shfmt, shell syntax
-  and `tests/test_performance.sh` passed again, including all 32 Python tests.
-- All 14 model-kernel tests also passed under Python 3.14 in an isolated,
-  network-disabled Linux container. This was standard-library fixture testing,
-  not execution of the AMD SGLang image.
-- **Skipped:** gaming-image smoke tests (`HOME_LAB_GAME_IMAGE` unset), isolated
-  Wayland process tests (`HOME_LAB_WAYLAND_RUNTIME_IMAGE` unset), and
-  `systemd-analyze` service verification (the development host is macOS).
-
-Actual model compilation, restart cache hits, GPU numerical correctness,
-dispatch, tuning and sustained performance are **NOT RUN — target workstation
-unavailable**. No hardware-qualified improvement or faster default is claimed.
-
-The focused revalidation of installer `67a5060` and Bridge `deb6a93` is recorded
-in [VALIDATION-67a5060.md](validation/VALIDATION-67a5060.md). Shell cleanup now preserves the
-primary workload/signal outcome, stops only its owned process groups and removes
-its three named temporary files, including `compiler-before.json`. Unexpected
-temporary contents are retained with a warning. Persistent caches and run
-evidence are never cleanup targets.
+Shell cleanup preserves the primary workload or signal outcome, stops only owned
+process groups, and removes only its named temporary files. It retains unexpected
+temporary contents with a warning. Persistent caches and run evidence are never
+cleanup targets.

@@ -51,8 +51,6 @@ docs/HOME-LAB.md
 docs/ROCM.md
 docs/AI-PERFORMANCE.md
 docs/MODEL-KERNELS.md
-docs/validation/VALIDATION-67a5060.md
-docs/validation/AUDIT-FOLLOWUP-2026-09-09.md
 docs/WORKSTATION.md
 docs/OPERATIONS.md
 docs/ARCHITECTURE.md
@@ -171,14 +169,15 @@ tests/hardware/test_performance_profiles.py
 tests/hardware/test_performance_bundle.py
 tests/hardware/test_coding_eval.py
 tests/hardware/test_serving_runtime.py
+tests/test_serving_runtime.sh
+tests/hardware/test_serving_orchestration.py
+tests/fixtures/kernel-orchestration.sh
 tests/hardware/test_inference_cache.py
+tests/workstation/test_telemetry.py
 docs/PERFORMANCE-PROFILES.md
 tests/hardware/torch-rocm.py
 infrastructure/packages/bootstrap/bridge-runtime.files
 infrastructure/packages/bootstrap/bridge-reference.files
-docs/validation/VALIDATION-BRIDGE-ISO.md
-docs/validation/VALIDATION-CODEX-INSTALL.md
-docs/validation/VALIDATION-e5281734.md
 docs/TELEMETRY.md
 infrastructure/observability/config/alerts.yaml
 infrastructure/observability/config/config.alloy

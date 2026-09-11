@@ -5,14 +5,8 @@ R9700 AI TOP cards, and 64 GiB DDR5-5600 ECC RDIMM. Both GPUs belong to the Arch
 host. The existing K3s VM remains optional and receives neither GPU by default.
 The policy is LUKS2/Argon2id, no swap, no zram and no hibernation.
 
-The 2026-09-04 audit found an offline-tested shell architecture for the
-RAID0/UKI installer, AUR/kernel builds, workstation tools and KVM/K3s. It found
-Intel-specific packages/tests, fixed compilation job counts, no ccache workflow,
-and no ROCm provenance or dual-GPU checks. There were no commits or TODO files;
-the implementation was untracked alongside pre-staged IDE files. Those files
-were preserved. Installation is a one-shot operation, not a resumable installer;
-do not rerun it over a partial installation.
-The ISO milestone now packages the UKI synchronization helper and ALPM hook as
+Installation is a one-shot operation, not a resumable installer; do not rerun
+it over a partial installation. The ISO packages the UKI synchronization helper and ALPM hook as
 `arch-workstation-boot`. The optional `arch-workstation-backup` package owns the
 Restic runtime. Existing unowned installations require reviewed manual migration;
 these packages do not make the pending ROCm source build a packaged release.
@@ -31,7 +25,7 @@ these packages do not make the pending ROCm source build a packaged release.
 manifest proving reproducibility. `rocm build-llama` builds the application,
 not ROCm itself, and records `built-not-qualified`. The full ROCm source build
 and automatic installation workflow remains pending. See the
-[AI audit and measurement procedure](AI-PERFORMANCE.md) for the 2026-09-07 changes.
+[AI measurement procedure](AI-PERFORMANCE.md).
 
 ## Reviewed ROCm 10 SDK provider
 
@@ -45,8 +39,7 @@ host SDK is not a prerequisite for that container's userspace libraries.
 `versions.lock` records the AUR repository, exact commit, PKGBUILD hash, package
 version, AMD archive URL and recipe-declared archive hash. The immutable
 [reviewed recipe](https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h=rocm-gfx120x-bin&id=ccac18259575a393b402ea90cd9ef3552081721e)
-was inspected on 2026-09-07. Its 2.42 GB source archive was not downloaded or
-independently hashed during this code change. Verify it during the reviewed
+declares the 2.42 GB source archive. Verify its bytes during the reviewed
 package build; retain `.BUILDINFO`, package hashes and signatures. Installed
 package name/version/ownership checks do not prove how a package was built.
 
@@ -120,9 +113,9 @@ legacy ROCm SMI inventory, installed packages,
 PCI topology and boot ID. Missing tools remain visible in `commands.json`.
 On another OS/architecture, `hardware.json` says `pending` and has no GPU target.
 Inspect `gpu-monitor.json` for the selected provider and command/schema status.
-See the [audit follow-up](validation/AUDIT-FOLLOWUP-2026-09-09.md) for runtime-library
-manifests and matching benchmark/quality configuration. Older llama builds
-without sealed runtime manifests need rebuilding in new directories.
+Use sealed runtime-library manifests and matching benchmark/quality configuration.
+Older llama builds without sealed runtime manifests need rebuilding in new
+directories.
 An observed report requires two distinct AMD PCI devices bound to `amdgpu` and
 two ROCm agents with the same `gfx*` target. HIP testing also checks the R9700
 model and independent PCI addresses. Never substitute a guessed architecture.

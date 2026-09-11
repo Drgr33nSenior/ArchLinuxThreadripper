@@ -17,7 +17,7 @@ Arch supplies signed binary packages; it does not rebuild the distribution for
 this CPU. Keep the coherent distribution/vendor baseline and measure selected
 source builds before promotion.
 
-## Audit decisions
+## Design boundaries
 
 | Layer | Configuration in this repository | Qualification still required |
 | --- | --- | --- |
@@ -74,13 +74,11 @@ The benchmark excludes tokenization/sampling; measure serving latency separately
 Stop competing builds/VMs when necessary to preserve the 64 GiB no-swap budget.
 Keep failures, and promote only after numerical, memory, thermal and recovery checks.
 
-## First-tranche implementation record
+## Configuration and qualification boundaries
 
-Reviewed on 2026-09-07. The repository is `ArchLinuxThreadripperAI`. The research
-workbook was not available in this checkout; no Include/Reject decisions were
-invented. All inventory values in the brief remain expectations until collected
-on the workstation. The current two modules do not establish their trained speed
-or channel configuration. Two 32 GiB GPUs have separate memory pools.
+All inventory values in this guide remain expectations until collected on the
+workstation. The current two modules do not establish their trained speed or
+channel configuration. Two 32 GiB GPUs have separate memory pools.
 
 The existing flow is retained: `config/install*.conf` → `bin/bootstrap-arch` →
 `lib/bootstrap/{config,preflight,install,verify}.sh` and `templates/arch/` →
@@ -92,7 +90,7 @@ K3s runtime. `infrastructure/gpu-operator/` owns the device-plugin configuration
 `apps/` Kustomize overlays select disabled workload manifests and persistent
 local-path PVCs. The existing KVM/AlmaLinux lab is a separate retained workflow.
 
-| Candidate | Existing files/behaviour | Evidence and applicable versions | Decision | Implementation | Validation |
+| Area | Source paths and behavior | Constraints and applicable versions | Change posture | Current configuration | Qualification |
 | --- | --- | --- | --- | --- | --- |
 | Target topology | `lib/workstation/hardware.sh`: observed/pending GPU report | [Linux topology ABI](https://www.kernel.org/doc/html/latest/admin-guide/cputopology.html), [9960X](https://www.amd.com/en/products/processors/ryzen-threadripper/9000-series/amd-ryzen-threadripper-9960x.html) | Extend | CPU/SMT/cache/NUMA, RAM/DIMMs, board/BIOS, BDF/render/link/BAR, NVMe/SMART and TRIM evidence; optional probes stay nullable | `tests/test_hardware_topology.sh`; physical NOT RUN |
 | Slot placement | Expected TRX50 AI TOP, no observed revision | [Gigabyte specifications](https://www.gigabyte.com/Motherboard/TRX50-AI-TOP/sp#sp): CPU-specific M2A/B/C Gen5 support; M2D unavailable for non-PRO | Discover, do not relocate automatically | Record revision and negotiated links, then compare the matching manual and physical slot labels | Owner inspection under load; NOT RUN |
@@ -107,10 +105,8 @@ local-path PVCs. The existing KVM/AlmaLinux lab is a separate retained workflow.
 | Persistent storage | Model/creative/game PVCs, ccache; HF cache previously ephemeral | [K3s local storage](https://docs.k3s.io/storage) | Extend, retain layout | Separate 16 GiB HF cache PVC; read-only model mount retained. Existing gaming home holds shader caches; existing TRIM timer/encryption discard and backup design unchanged | Render/PVC tests and read-only discovery; actual cooling/TRIM/retention NOT RUN |
 | Functional peer transfers | BAR/PCI metadata cannot prove a transfer | [HIP peer API](https://rocm.docs.amd.com/projects/HIP/en/latest/doxygen/html/group___peer_to_peer.html) | Explicit diagnostic only | `tests/hardware/hip-peer-copy.cpp`: ordered pairs, 16 MiB transfer, UUID/PCI identity and readback verification | Compiled mock-HIP API tests; actual HIP compile and physical transfer NOT RUN |
 
-No dependency pins were advanced in that first tranche. The subsequent
-[9 September follow-up](validation/AUDIT-FOLLOWUP-2026-09-09.md) selects K3s
-`v1.35.8+k3s1` and Qwen Code 0.23.2. `versions.lock` remains authoritative;
-the retained llama.cpp pin is
+`versions.lock` remains authoritative. It selects K3s `v1.35.8+k3s1` and Qwen
+Code 0.23.2. The retained llama.cpp pin is
 `427291b5b34cd914a31b3fd3b61a68f6184f4b9f`, TheRock
 `b927c1865f37fa7bbecf5c7e35dee41b02afbb4f`, and the existing kernel/AUR pair.
 The operator chart remains `v1.5.1`, with archive and image digests in
@@ -379,8 +375,6 @@ configuration and filesystem durability are retained.
 
 ### Validation and RAG
 
-Dated test counts and the original RAG tranche record are retained with
-[the audit evidence](validation/AUDIT-FOLLOWUP-2026-09-09.md#earlier-ai-performance-records).
-They are not current hardware qualification. Use [RAG.md](RAG.md) for the current
-composition, migration, preparation, evaluation and rollback procedure; do not
-infer its base overlay from an older audit narrative.
+Use [RAG.md](RAG.md) for the current composition, migration, preparation,
+evaluation and rollback procedure. RAG source configuration and fixture checks
+do not qualify a model, image or target hardware.

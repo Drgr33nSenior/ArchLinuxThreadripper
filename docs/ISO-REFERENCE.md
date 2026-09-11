@@ -1,12 +1,9 @@
-# ISO reference: manual stages, implementation and recovery
+# ISO reference: manual stages and recovery
 
 Use [ISO.md](ISO.md) for the normal controller workflow and
 [INSTALLATION.md](INSTALLATION.md) at the workstation. This reference is for
 manual/native builds, trust boundaries, diagnostics and disposable acceptance.
 Do not run these lower-level steps in addition to the release coordinator.
-
-Dated build results and failures are retained under [validation/](validation).
-They do not establish a boot-qualified or Secure Boot-qualified workstation.
 
 ## Components and boundaries
 
@@ -141,8 +138,8 @@ compiler archive digest. Package tests are not service or hardware qualification
 The frozen 2026/09/04 Arch snapshot provides Go 1.27.0; the reviewed Bridge source
 requires 1.27.1. Keep the snapshot intact. Its Go package satisfies makepkg's
 build dependency; the build job uses the separately pinned official Linux AMD64
-compiler archive, with `GOTOOLCHAIN=local`. The version and SHA256 were checked
-against [Go's download metadata](https://go.dev/dl/?mode=json) on 2026-09-09.
+compiler archive, with `GOTOOLCHAIN=local`. Verify the version and SHA256
+against [Go's download metadata](https://go.dev/dl/?mode=json).
 Neither compiler is included as a Bridge runtime dependency. No toolchain, recipe,
 source digest, module integrity or test check is bypassed. A changed Bridge
 compiler requirement needs an explicit review of the build-only lock.
@@ -447,7 +444,7 @@ snapshot. The builder checks package and executable versions and signatures.
 The bootstrap package depends on that pin and owns the launcher, skill,
 references and generated guardrail adapter. No unpinned npm/AUR install runs at
 boot; no credentials enter the source package or ISO. A changed snapshot requires
-a reviewed rebuild. See [the recorded CLI checks](validation/VALIDATION-CODEX-INSTALL.md).
+a reviewed rebuild.
 
 Follow the [two file-backed disk VM procedure](#4-disposable-uefi-installation-tests) with outbound networking;
 never pass host disks through. On the booted ISO, before installation:
@@ -473,13 +470,13 @@ is a performance measurement. Remaining physical acceptance is owner-run.
 
 ## Signature-verification retry
 
-The 2026-09-05 failure was reproduced in the builder's GPGME library. The pinned
-`pacstrap` runs pacman as PID 1 in a nested PID namespace. GPGME leaves orphaned
+The pinned upstream `pacstrap` launcher runs pacman as PID 1 in a nested PID
+namespace. GPGME can leave orphaned
 child processes that pacman does not reap. These zombies exhaust the process
 limit, after which verification reports misleading `ioctl` and corrupt-package
 errors. This is distinct from a bad signature or a signing-passphrase prompt.
 
-The builder now uses a [pacstrap adapter](../infrastructure/iso/docker/pacstrap.sh)
+The builder uses a [pacstrap adapter](../infrastructure/iso/docker/pacstrap.sh)
 that keeps Bash as PID 1 to reap children. It changes only the nested process
 launcher, refuses an unexpected upstream launcher, and leaves `/usr/bin/pacstrap`
 unchanged. Package signatures, the 512-PID limit and Docker security controls

@@ -69,7 +69,7 @@ ws_serving_warm_status() (
     <<<"$current" >/dev/null || ws_die 'current SGLang Pod is outside the reviewed node scope or lacks process identity'
   temporary="$(mktemp -d)" || ws_die 'cannot create private warm-status workspace'
   trap 'warm_probe_status=$?; trap - EXIT; set +e
-    rm -f -- "$temporary/current-pod.json" "$temporary/evidence/pod.json" "$temporary/evidence/runtime.json" "$temporary/evidence/compiler.json"
+    rm -f -- "$temporary/current-pod.json" "$temporary/warm-status.error" "$temporary/evidence/pod.json" "$temporary/evidence/runtime.json" "$temporary/evidence/compiler.json"
     rmdir -- "$temporary/evidence" 2>/dev/null || true
     rmdir -- "$temporary" 2>/dev/null || true
     exit "$warm_probe_status"' EXIT
@@ -80,7 +80,11 @@ ws_serving_warm_status() (
     exit 0
   fi
   evidence_dir="$temporary/evidence"
-  if ! ws_kernel_evidence "$pod" "$evidence_dir"; then
+  if ! ws_kernel_evidence "$pod" "$evidence_dir" ||
+    ! jq -e 'type == "object" and (.uid|type == "string") and (.container_id|type == "string") and
+      (.image|type == "string") and (.image_id|type == "string") and (.restart_count|type == "number")' "$evidence_dir/pod.json" >/dev/null 2>&1 ||
+    ! jq -e 'type == "object" and .schema == 1' "$evidence_dir/runtime.json" >/dev/null 2>&1 ||
+    ! jq -e 'type == "object" and .schema == 1' "$evidence_dir/compiler.json" >/dev/null 2>&1; then
     # A live Ready bit is not sufficient to reuse an old model/runtime/device
     # identity. Retain an explicit unknown state without exposing helper text.
     jq -n --argjson pod "$current" '{schema:1,kind:"sglang-warm-status",status:"unknown",
@@ -99,8 +103,20 @@ ws_serving_warm_status() (
     chmod 0600 "$output"
     exit 0
   }
-  "$(ws_measure_python)" "$(ws_repo_root)/lib/workstation/serving_runtime.py" warm-status \
-    "$evidence_dir" "$warmup" "$output"
+  # serving_runtime validates the complete evidence through model_kernels.evidence.
+  # A schema marker alone is not enough: an incomplete current record must not
+  # turn a Ready Pod into an apparently fresh warm status. Keep Python failures
+  # private and return the same bounded unknown state as failed collection.
+  if ! "$(ws_measure_python)" "$(ws_repo_root)/lib/workstation/serving_runtime.py" warm-status \
+    "$evidence_dir" "$warmup" "$output" 2>"$temporary/warm-status.error"; then
+    jq -n --argjson pod "$current" '{schema:1,kind:"sglang-warm-status",status:"unknown",
+      kubernetes_readiness:"healthy",representative_warmup:"unknown",pod:{uid:$pod.uid,started_at:$pod.started_at,
+      container_id:$pod.container_id,restart_count:$pod.restart_count,image:$pod.image,image_id:$pod.image_id},identity:null,
+      reason:"fresh current model, runtime or allocated-device evidence is unavailable",
+      scope:"read-only status; no representative warmup was started"}' >"$output"
+    chmod 0600 "$output"
+    exit 0
+  fi
 )
 
 ws_performance_bundle_config() {
@@ -264,8 +280,8 @@ ws_kernel_probe() {
 ws_kernel_evidence() (
   set -euo pipefail
   local pod=$1 output=$2
-  ws_serving_evidence "$pod" "$output"
-  ws_kernel_probe "$pod" >"$output/compiler.json"
+  ws_serving_evidence "$pod" "$output" || return $?
+  ws_kernel_probe "$pod" >"$output/compiler.json" || return $?
   [[ $(jq -cS . "$output/pod.json") == "$(ws_serving_pod "$pod" | jq -cS .)" ]] || ws_die 'pod changed during compiler evidence'
   ws_note 'Compiler/cache evidence retained; no compilation, restart or tuning performed'
 )

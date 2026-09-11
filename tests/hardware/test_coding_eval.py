@@ -11,6 +11,20 @@ import coding_eval
 
 
 class CodingEvalTests(unittest.TestCase):
+    def test_json_assertions_distinguish_booleans_from_numbers_recursively(self):
+        for kind in ("structured", "tool", "negative"):
+            for expected, actual in ((1, True), (False, 0),
+                                     ({"nested": [1, {"value": False}]}, {"nested": [True, {"value": 0}]})):
+                wanted, got = {"value": expected}, {"value": actual}
+                if kind == "tool":
+                    wanted, got = ({"tool": "fixture", "arguments": value} for value in (wanted, got))
+                task = {"id": "fixture", "kind": kind, "expected": wanted}
+                response = {"attempts": 1, "response": json.dumps(got)}
+                with self.subTest(kind=kind, expected=expected):
+                    self.assertEqual(coding_eval.evaluate_task(task, response)["status"], "failed")
+                    response["response"] = json.dumps(wanted)
+                    self.assertEqual(coding_eval.evaluate_task(task, response)["status"], "passed")
+
     def responses(self, corpus, digest):
         rows = []
         for task in corpus["tasks"]:

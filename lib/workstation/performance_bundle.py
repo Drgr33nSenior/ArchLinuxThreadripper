@@ -85,6 +85,12 @@ def tree(root, include_manifest=False, output=False):
         for name in names + files:
             if not NAME.fullmatch(name):
                 raise ValueError("bundle tree has an unsafe name")
+        # os.walk does not descend directory symlinks with followlinks=False.
+        # Validate those entries here, including empty/post-seal additions.
+        for name in names:
+            info = (directory_path / name).stat(follow_symlinks=False)
+            if not stat.S_ISDIR(info.st_mode) or not private(info):
+                raise ValueError("bundle directory entry is unsafe or not private")
         for name in files:
             path = directory_path / name
             relative = path.relative_to(root).as_posix()
@@ -267,7 +273,8 @@ def current_profile_identity(value, now=None):
     into a claim that the workstation remains unchanged after export.
     """
     required = {"schema", "kind", "status", "observed_at", "boot_id", "identity"}
-    if not isinstance(value, dict) or set(value) != required:
+    optional = {"producer_conditions"}
+    if not isinstance(value, dict) or not required <= set(value) or set(value) - required - optional:
         return None, "current identity observation is missing required fields"
     if (value.get("schema") != 1 or value.get("kind") != "workstation-performance-profile-identity-observation"
             or value.get("status") != "observed-not-qualified" or not isinstance(value.get("observed_at"), str)
@@ -289,7 +296,10 @@ def current_profile_identity(value, now=None):
     age = (current - observed_at.astimezone(timezone.utc)).total_seconds()
     if age < 0 or age > MAX_PROFILE_IDENTITY_AGE_SECONDS:
         return None, "current identity observation is older than 15 minutes or from the future"
-    return {"identity": identity, "observed_at": value["observed_at"], "boot_id": value["boot_id"]}, None
+    # Legacy observations retain known identity drift, but cannot establish
+    # current status for newly bound model-file/settings/resource conditions.
+    return {"identity": identity, "producer_conditions": value.get("producer_conditions"),
+            "observed_at": value["observed_at"], "boot_id": value["boot_id"]}, None
 
 
 def profile_status(selection, current):
@@ -298,7 +308,7 @@ def profile_status(selection, current):
     if observed is None:
         return {"schema": 1, "kind": "workstation-measured-profile-status", "status": "unknown",
                 "reason": reason, "scope": "read-only identity observation; not live qualification"}
-    result = performance_profiles.selection_status(selection, observed["identity"])
+    result = performance_profiles.selection_status(selection, observed["identity"], observed["producer_conditions"])
     result["observed_at"] = observed["observed_at"]
     result["boot_id"] = observed["boot_id"]
     result["scope"] = "read-only status as of observed_at; not live qualification"

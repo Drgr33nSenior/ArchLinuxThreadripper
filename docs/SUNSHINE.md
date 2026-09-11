@@ -12,7 +12,7 @@ private streaming exposure, egress, capture placement and encode quality must be
 accepted on the target workstation before a session command can enable gaming.
 Sunshine is the server; Moonlight is its client.
 
-## Implementation record — 8 September 2026
+## Design and qualification boundary
 
 | Change | Source and evidence | Implementation | Remaining validation |
 | --- | --- | --- | --- |
@@ -233,48 +233,21 @@ only if repeatable latency/drop or bitrate-quality results justify its trade-off
 AMF forks, blanket maximum clocks, voltage changes and unrelated ROCm tuning are
 outside this change.
 
-## Verification status — 8 September 2026
+## Image and target qualification
 
-The following repository check completed successfully (41 test files reported,
-including explicit optional skips):
-
-```sh
-HOME_LAB_PYTHON=/usr/local/bin/python3.11 \
-HOME_LAB_WAYLAND_RUNTIME_IMAGE=sha256:a6025d38327649c9d2837c235b9b897d4ddf242c45e65e4074104896d5b02145 \
-  make check
-```
-
-Shell syntax, ShellCheck, YAML parsing, offline Kustomize semantics and the
-configured Python Jinja/TOML checks passed. Focused fixtures cover dimensions,
-capture/encoder compatibility, device mapping, existing paired state, renderer
-refusal, missing session prerequisites and build-target selection. The Linux
-process test used the **previous local image only as a Bash/setsid runtime**,
-with one read-only source-file mount. Repeated cleanup and TERM-resistant child
-shutdown passed without network, devices or privileges. This is not a test of
-the new compositor or image. Documentation audits and `git diff --check` passed.
-
-The new image build was attempted at
-`artifacts/sunshine-wayland-20260908-01`. APT resolved the Wayland package set,
-then stopped because Docker Desktop's 59-GB Linux disk had no free space. The
-failed context is retained; there is no new image ID or success receipt. No
-Docker images, containers, volumes or caches were pruned. Increase the Docker
-disk limit, then retry with a new output directory:
+Build a fresh candidate image in a new output directory, then run its bounded
+nonroot smoke test before target testing:
 
 ```sh
-./bin/workstationctl sunshine image-build artifacts/sunshine-wayland-20260908-02
-gaming_image_id=$(jq -r .local_image_id artifacts/sunshine-wayland-20260908-02/build-result.json)
+./bin/workstationctl sunshine image-build artifacts/sunshine-wayland-candidate
+gaming_image_id=$(jq -r .local_image_id artifacts/sunshine-wayland-candidate/build-result.json)
 HOME_LAB_GAME_IMAGE="$gaming_image_id" bash tests/test_sunshine_image.sh
 ```
-
-New-image smoke tests remain **BLOCKED — Docker disk full**. Other skipped
-checks: shfmt, Bats, Ansible, real ccache compilation, CMake/Ninja integration,
-operator rendering without its local chart archive, the Bash-4-only USB signal
-fixture, and Linux systemd verification. No tools were installed to bypass skips.
 
 A bounded non-root image smoke test can check packaging and startup prerequisites,
 but cannot qualify GPU rendering, capture, encoding, portal/input consent,
 controller input, audio, real clients, latency, frame times or power.
 
-Those physical checks remain **NOT RUN — target hardware unavailable**. Do not
-mark the deployment qualified merely because a local image build or rendered
-manifest succeeds.
+Run the target diagnostics and paired measurements above before marking the
+deployment qualified. A local image build or rendered manifest is not target
+qualification.

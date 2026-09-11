@@ -130,9 +130,8 @@ and volumes are retained; inspect the printed container with `docker logs` and
 retry Bridge compilation into a fresh output directory. Do not rebuild successful
 installer packages or mix unrelated runs. An existing bundle is never overwritten.
 
-As checked on 2026-09-09, GitHub commit `0d775872b18676147b10128781ad21ad432386cb`
-lacks the required package source-identity field. Select a reviewed published
-commit containing the Bridge ISO integration changes; local uncommitted fixes are
+Select a reviewed published commit with the required package source-identity
+field and selected-pair gates; local uncommitted fixes are
 not fetched. The workflow refuses old recipes rather than patching fetched source.
 
 For media without Bridge, omit its build/bundle stages and explicitly configure
@@ -348,8 +347,6 @@ until the flash drive is available.
 
 ## Qualification
 
-Use the [dated validation records](validation/VALIDATION-BRIDGE-ISO.md) for exact
-source/package identities, completed checks, failures and pending acceptance.
 A package build, signature or USB readback does not qualify ISO boot, live Secure
 Boot, disk unlock, recovery or physical hardware.
 

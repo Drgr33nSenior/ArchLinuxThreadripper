@@ -63,7 +63,7 @@ if command -v bsdtar >/dev/null; then
     [[ -f $packaged_root/BUILD-IDENTITY && -f $packaged_root/docs/INSTALLATION.md ]]
     [[ -f $packaged_root/docs/ISO.md && -f $packaged_root/docs/ISO-REFERENCE.md ]]
     [[ -f $packaged_root/infrastructure/iso/mkarchiso.sh ]]
-    [[ -f $packaged_root/docs/validation/VALIDATION-BRIDGE-ISO.md ]]
+    [[ -f $packaged_root/docs/OPERATIONS.md && -f $packaged_root/docs/SECURITY.md ]]
     [[ ! -e $packaged_root/docs/BRIDGE-ISO.md && ! -e $packaged_root/docs/CODEX-INSTALL.md ]]
     cmp "$packaged_root/AGENTS.md" "$packaged_root/.aiassistant/rules/workstation-guardrails.md"
     [[ " ${depends[*]} " == *" openai-codex=$(common::lock_get "$root/infrastructure/iso/versions.lock" CODEX_PACKAGE_VERSION) "* ]]

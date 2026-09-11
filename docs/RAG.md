@@ -1,6 +1,6 @@
 # Local RAG pilot and context experiments
 
-Reviewed on 2026-09-08. This is an opt-in, CPU-only Open WebUI pilot for the
+This is an opt-in, CPU-only Open WebUI pilot for the
 Threadripper workstation. It does not start workloads, ingest documents, create
 accounts or contact a cluster automatically. Physical testing is pending.
 
@@ -129,7 +129,7 @@ selected document; do not upload credentials, customer data or private incident
 material without authority. `corpus.json` is a sidecar record, not automatically
 enforced vector metadata or access control.
 
-## Workstation qualification procedure — NOT RUN
+## Workstation qualification procedure
 
 Preconditions: installed/qualified SGLang and its model, reviewed private ingress,
 working storage/backups and sufficient memory headroom. Do not run the OS
@@ -230,21 +230,10 @@ PVC sizes are advisory, not filesystem quotas. Monitor the 20 GiB data and
 quiesce SQLite/Chroma for a consistent copy. Never run automatic cleanup over
 the original documents, vector database or shared model directory.
 
-## Local verification record — 2026-09-08
+## Qualification boundary
 
-- `bash -n lib/workstation/rag.sh apps/overlays/rag/verify-models.sh
-  apps/overlays/rag/validate-profile.sh tests/test_rag.sh`: passed.
-- `bash tests/test_rag.sh`: passed. It exercises the Qwen lock, native query
-  prefix in rendered manifests, distinct PVCs, CPU resource envelope, synthetic
-  staging/corruption, model-path symlink rejection and RAG/dense isolation.
-- `kubectl kustomize apps/overlays/rag` and `apps/overlays/rag-dense`: passed
-  through the focused test; no cluster access occurred.
-- Hugging Face metadata and the small pinned files were checked over HTTPS. The
-  1,191,586,416-byte `model.safetensors` SHA-256 is pinned from the revision's
-  LFS metadata; its weights were not downloaded.
-
-NOT RUN: `rag stage-models`, `rag verify-models` against real model files, Open
-WebUI container startup, embedding execution, retrieval/answer evaluation,
-account isolation, persistence/restore on K3s and physical RAM/GPU performance.
-Keep replicas at zero until the workstation qualification procedure passes;
-source validation is not promotion.
+Source validation covers the lock, query bridge, bundle/refusal paths and RAG
+profile rendering with synthetic fixtures. It does not stage real model files,
+start Open WebUI or Chroma, ingest private content, establish retrieval quality,
+or qualify resource use, network policy, backup or migration. Keep replicas at
+zero until the workstation qualification procedure passes.
