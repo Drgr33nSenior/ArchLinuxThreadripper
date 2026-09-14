@@ -95,8 +95,7 @@ for that package transaction. `DownloadUser = alpm` and package-signature checks
 remain enabled, as do Docker's own security controls. This is a builder-only
 compatibility exception, not a host security policy. Do not copy the builder's
 pacman configuration into the live ISO or installed host; their configuration
-comes from separate project templates. No sandbox setting was changed by the
-documentation-directory fix.
+comes from separate project templates.
 
 If pacman's download sandbox fails, retain the error and stop. Do not add
 `DisableSandbox`, `--disable-sandbox`, weak-signature exceptions or an unconfined
@@ -119,14 +118,16 @@ only in tmpfs, not in image layers or exported artifacts.
 
 ## Bridge package build on Apple Silicon
 
-The `release.sh bridge-build ISO_RUN COMMIT VERSION NEW_OUTPUT` stage uses the existing Docker
-wrapper and a fresh Linux-backed job volume. It does not rebuild or sign the
+The `release.sh bridge-build ISO_RUN COMMIT VERSION NEW_OUTPUT` stage builds an
+exact published commit. The explicit `bridge-build-local` alternative builds a
+reviewed source archive, including local changes. Both use the existing Docker
+wrapper and a fresh Linux-backed job volume. Neither rebuilds or signs the
 installer package run. See [ISO.md](ISO.md#1a-bundle-bridge-unless-explicitly-opting-out)
 for the owner sequence. Existing reviewed CI artifacts can skip compilation and
 go directly to bundling.
 
-It fetches only the supplied full commit from the fixed Bridge GitHub repository
-and checks the resolved commit before executing its source generator. Branches,
+The GitHub path fetches only the supplied full commit from the fixed Bridge
+repository and checks the resolved commit before executing its source generator. Branches,
 floating tags and credential prompts are refused. The generated `SHA256SUMS`
 must describe exactly its source archive and PKGBUILD; both are checked before
 and after building. The Bridge recipe remains authoritative. The
@@ -144,13 +145,56 @@ Neither compiler is included as a Bridge runtime dependency. No toolchain, recip
 source digest, module integrity or test check is bypassed. A changed Bridge
 compiler requirement needs an explicit review of the build-only lock.
 
-Each attempt retains its fetched checkout, source, compiler, Go caches and failed build state in
-the named volume. Only successful outputs are exported to the new host directory;
-no service starts or repository signing occurs. Source generation, compilation
-and package tests run inside AMD64 Linux. Only Docker and the existing controller
-tools are needed on the Mac. No owner credentials or local Bridge modifications
-are passed through. If GitHub access requires authentication, use the separately
-reviewed CI artifact path rather than placing a token in the build command.
+Each attempt retains its selected source, compiler, Go caches and failed build
+state in the named volume; GitHub attempts also retain the fetched checkout.
+Only successful outputs are exported to the new host directory. No service starts
+or repository signing occurs. Compilation and package tests run inside AMD64
+Linux. GitHub source generation also runs there, so that path needs no Go compiler
+on the Mac and passes no local Bridge changes. Neither path accepts owner
+credentials. If GitHub access requires authentication, use reviewed CI artifacts
+or an explicitly reviewed local source export; do not add a token to the command.
+
+### Local Bridge source boundary
+
+Follow [the local-source procedure](ISO.md#build-reviewed-local-bridge-source)
+to run Bridge's existing source generator in its reviewed checkout with the exact
+`.go-version`. Select a new output directory and review its three generated files:
+`spry-bridge-0.0.0-src.tar.gz` (for `v0.0.0`), `PKGBUILD` and `SHA256SUMS`. Select the archive by
+its reviewed SHA-256, not by a branch name or an assumed clean Git state. There is
+no automatic fallback from GitHub to local source.
+
+The coordinator commands and variable setup are in the linked procedure. For a
+manually coordinated build, the equivalent lower-level form is:
+
+```sh
+bash infrastructure/iso/docker.sh bridge-build-local \
+  bridge-local-01 "$BRIDGE_SOURCE_SHA256" "$BRIDGE_VERSION" \
+  "$ISO_RUN/source" "$BRIDGE_SOURCE" "$BRIDGE_ARTIFACTS"
+```
+
+This command previews by default. Add `--execute` before `bridge-build-local`
+only after review. A lower-level attempt needs a fresh job name and output
+directory; do not run both forms for the same build.
+
+For reuse of completed installer source and packages, follow the
+[frozen-source boundary](ISO.md#select-your-build-directory).
+
+The wrapper mounts only the three selected Bridge files read-only, not the
+checkout, its parent, `.git` or credentials. It also mounts the selected
+installer archive and lock. The bounded archive validation rejects links and
+unsafe paths before extraction. Inside the existing unprivileged container, the
+generator must reproduce the archive and recipe exactly before package execution.
+The pinned compiler, module integrity, selected-installer memory and performance
+contracts, makepkg tests and output provenance checks remain mandatory. Review
+source before execution: matching checksums and deterministic generation do not
+make arbitrary source or a PKGBUILD trustworthy.
+
+For this path, `builder.lock` records `SOURCE_KIND=local-archive`, the selected
+`SOURCE_SHA256` and matching installer source identity. It does not claim a Git
+commit represents uncommitted bytes. A source identity is build evidence, not
+approval of host-executor policy or installed runtime hashes. Existing GitHub
+provenance remains unchanged. The two source paths converge at the same Bridge
+bundle, manual signing and explicitly authorized ISO-mount stages.
 
 ## 1. Prepare the source package
 
@@ -170,15 +214,13 @@ For Docker builds, use the package command in [ISO.md](ISO.md#1-build-fresh-pack
 the coordinator prepares the source, checks userspace and exports all four
 split packages. Native Arch source builds are described below.
 
-If image construction reports `archiso: /usr/share/doc (No such file or directory)`
-and the equivalent warning for `/usr/share/man`, the failure is from
-`pacman -Qkk archiso`, not seccomp. The official base image's
+Builder setup creates `/usr/share/doc` and `/usr/share/man` with mode `0755`
+before package installation. The official base image's
 [NoExtract rules](https://github.com/archlinux/archlinux-docker/blob/master/pacman-conf.d-noextract.conf)
-omit documentation. Builder setup restores these two shared parent directories
-before package installation, with mode `0755`. Documentation contents remain
-subject to `NoExtract`; package-file verification still stops on other mismatches.
-Do not suppress the check with `|| true`. Rebuild with the commands above; the
-changed recipe generates a new image tag without pruning existing images.
+omit documentation contents; `pacman -Qkk archiso` still requires those shared
+parent directories. If either is missing, inspect builder setup and rebuild its
+image. Preserve package-file verification and prior images; do not suppress the
+check with `|| true` or change sandbox controls for this error.
 
 The intended outputs are four `*.pkg.tar.zst` files: bootstrap, boot, backup and
 Bridge runtime/reference payload.
@@ -356,9 +398,42 @@ acceptance gates. Refer to [HOME-LAB.md](HOME-LAB.md) and [INSTALLATION.md](INST
 launcher integrity, split-package staging and source-only reconstruction,
 CLI/headless-profile safety, failed-probe and ESP-identity regressions,
 synthetic Docker context/privilege checks and VM command-boundary
-tests. It never contacts Docker, creates a real VM or builds an ISO.
+tests. The default source run does not contact Docker, create a real VM or build
+an ISO. Image tests have separate explicit environment opt-ins.
 Real makepkg, mkarchiso and QEMU/UEFI tests are separate operator-run acceptance
 steps. Keep a last-known-good ISO, source bundle and package set off the RAID0.
+
+Run these developer checks from the full reviewed repository checkout, not an
+exported source or installed runtime payload; those omit the full test harness.
+Select an existing executable Python with Jinja2 and PyYAML. Have the Makefile's
+ShellCheck, shfmt, Ruby, Bats, Ansible and kubectl tools
+available, plus the fixture tools required by the suites (including libarchive
+`bsdtar`, jq, build tools and the checksum-locked local GPU chart). The validation
+checkout's `tests/validation-macos-arm64.lock` applies only to its stated
+macOS/Python platform; do not install packages or change pins to conceal failures.
+
+```sh
+env -u HOME_LAB_GAME_IMAGE -u HOME_LAB_WAYLAND_RUNTIME_IMAGE \
+  KUBECONFIG=/dev/null HOME_LAB_PYTHON=/absolute/path/to/prepared/python \
+  HOME_LAB_GPU_CHART=/absolute/path/to/pinned/chart.tgz make check-strict
+```
+
+The strict wrapper runs `make -k check`, retains private logs and checks skips.
+It fails on command failures, failed log recording and unapproved skips. Only
+the two unselected image suites and Linux-only systemd verification are accepted
+exceptions. Read `check.log`, `make.exit`, `tee.exit` and `skips.txt` in its printed
+evidence directory. A strict run satisfies `make check`; do not repeat both full
+runs without a relevant change. Missing tools remain blockers to a complete
+strict result. The [actual telemetry image validator](TELEMETRY.md#acceptance-failures-and-rollback)
+is a separate, explicitly authorized disposable-environment check.
+
+When changing discovery or validation, exercise the real producer and consumer
+with failed, partial and empty output. Capture and check discovery before use:
+process-substitution failures do not set the surrounding loop's status, and
+`errexit` is disabled inside commands tested by an `if` or `||` condition.
+Keep explicit failure returns and verify complete argument lists. Use
+`tests/test_check_gates.sh`, `tests/test_check_strict.sh` and the affected
+installer/runtime fixture suite for focused checks.
 
 New installations require the signed runtime package before erasure. On an
 official ISO, pass it explicitly with `--boot-package FILE` and establish its

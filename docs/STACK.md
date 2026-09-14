@@ -17,8 +17,8 @@ outputs. Edit the source and regenerate both previews; do not edit them separate
 
 - The primary AI deployment is bare-metal K3s on Arch. The optional AlmaLinux
   K3s VM is a separate lab with its own datastore and network boundaries.
-- Application replicas default to zero. AI images remain unqualified. The historical gaming box describes the older `SYS_ADMIN` admission conflict,
-  not the current non-root Wayland candidate. Use [SUNSHINE.md](SUNSHINE.md) for
+- Application replicas default to zero. AI images and the non-root Wayland gaming
+  candidate remain unqualified. Use [SUNSHINE.md](SUNSHINE.md) for
   current capture/admission and input acceptance. No diagram arrow qualifies it.
 - Open WebUI calls the internal SGLang OpenAI-compatible API. SwarmUI expects
   an in-pod ROCm ComfyUI backend; its ClusterIP service remains internal and
@@ -44,7 +44,8 @@ outputs. Edit the source and regenerate both previews; do not edit them separate
   configure the chosen off-array destination separately.
 
 The view omits the retained Intel-only legacy commands, detailed port rules,
-individual PVC sizes and family account overlays. See the linked source guides
+individual PVC sizes, family account overlays and the [telemetry composition](TELEMETRY.md).
+Versions belong to the linked locks, not diagram labels. See the linked source guides
 for those details. Solid boxes identify repository configuration paths, not
 qualified deployment status. Dashed boxes also carry an explicit optional,
 blocked or unqualified label; colour alone does not convey status.

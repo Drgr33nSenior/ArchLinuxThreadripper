@@ -273,7 +273,7 @@ def current_profile_identity(value, now=None):
     into a claim that the workstation remains unchanged after export.
     """
     required = {"schema", "kind", "status", "observed_at", "boot_id", "identity"}
-    optional = {"producer_conditions"}
+    optional = {"producer_conditions", "experimental_kv"}
     if not isinstance(value, dict) or not required <= set(value) or set(value) - required - optional:
         return None, "current identity observation is missing required fields"
     if (value.get("schema") != 1 or value.get("kind") != "workstation-performance-profile-identity-observation"
@@ -298,7 +298,10 @@ def current_profile_identity(value, now=None):
         return None, "current identity observation is older than 15 minutes or from the future"
     # Legacy observations retain known identity drift, but cannot establish
     # current status for newly bound model-file/settings/resource conditions.
-    return {"identity": identity, "producer_conditions": value.get("producer_conditions"),
+    descriptor = value.get("experimental_kv")
+    if descriptor is not None and not isinstance(descriptor, dict):
+        return None, "current identity experimental KV descriptor is malformed"
+    return {"identity": identity, "producer_conditions": value.get("producer_conditions"), "experimental_kv": descriptor,
             "observed_at": value["observed_at"], "boot_id": value["boot_id"]}, None
 
 
@@ -308,7 +311,8 @@ def profile_status(selection, current):
     if observed is None:
         return {"schema": 1, "kind": "workstation-measured-profile-status", "status": "unknown",
                 "reason": reason, "scope": "read-only identity observation; not live qualification"}
-    result = performance_profiles.selection_status(selection, observed["identity"], observed["producer_conditions"])
+    result = performance_profiles.selection_status(selection, observed["identity"], observed["producer_conditions"],
+                                                   observed["experimental_kv"])
     result["observed_at"] = observed["observed_at"]
     result["boot_id"] = observed["boot_id"]
     result["scope"] = "read-only status as of observed_at; not live qualification"

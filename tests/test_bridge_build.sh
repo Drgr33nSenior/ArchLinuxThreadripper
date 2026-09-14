@@ -14,11 +14,10 @@ if [[ $(uname -s) == Darwin ]]; then
   sha256sum() { command shasum -a 256 "$@"; }
   export -f sha256sum
 fi
-mkdir -p "$work/input" "$work/builder" "$work/tree/spry-ai-workstation-bridge-0.0.0" "$work/compiler/go/bin"
-printf '1.27.1\n' >"$work/tree/spry-ai-workstation-bridge-0.0.0/.go-version"
-bsdtar -czf "$work/input/spry-bridge-0.0.0-src.tar.gz" -C "$work/tree" spry-ai-workstation-bridge-0.0.0
-printf '# reviewed synthetic recipe\n' >"$work/input/PKGBUILD"
-(cd "$work/input" && sha256sum spry-bridge-0.0.0-src.tar.gz PKGBUILD >SHA256SUMS)
+mkdir -p "$work/input" "$work/builder" "$work/compiler/go/bin"
+PYTHONDONTWRITEBYTECODE=1 python3 "$root/tests/workstation/test_bridge_source.py"
+PYTHONDONTWRITEBYTECODE=1 python3 "$root/tests/workstation/test_bridge_source.py" --fixture "$work/input"
+cp "$root/infrastructure/iso/docker/bridge-source.py" "$work/builder/"
 bsdtar -czf "$work/go.tar.gz" -C "$work/compiler" go
 printf 'BRIDGE_GO_VERSION=1.27.1\nBRIDGE_GO_LINUX_AMD64_SHA256=%s\nSOURCE_DATE_EPOCH=1788480000\n' \
   "$(common::sha256_file "$work/go.tar.gz")" >"$work/builder/versions.lock"
@@ -32,6 +31,8 @@ export BRIDGE_BUILD_FIXTURE="$work" BUILDER_IMAGE_ID
 revision=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 # shellcheck disable=SC2329
 git() {
+  printf '%s\n' "$*" >>"$BRIDGE_BUILD_FIXTURE/git.log"
+  [[ ${BRIDGE_TEST_NO_GIT:-} != 1 ]] || return 99
   case "$*" in
     init*) mkdir -p "$2/packaging/arch" ;;
     *' fetch '*)
@@ -64,6 +65,13 @@ go() {
   if [[ $* == 'test -mod=readonly -list ^TestCandidateInstallerMemoryContract$ ./internal/memory' ]]; then
     [[ ${BRIDGE_TEST_FAILURE:-} != missing_contract ]] || return 0
     printf '%s\n' TestCandidateInstallerMemoryContract
+    [[ ${BRIDGE_TEST_FAILURE:-} != list_memory_after_match ]] || return 31
+    if [[ ${BRIDGE_TEST_LIST_TRAILING:-} == 1 ]]; then
+      # A real `go test -list` writes an `ok` summary after the matching name.
+      # Exceed the pipe buffer so grep -q's early close is deterministic.
+      awk 'BEGIN { for (i = 0; i < 200000; i++) print "ok example/internal/memory 0.001s" }'
+      return $?
+    fi
     return 0
   fi
   if [[ $* == 'test -mod=readonly -count=1 -v -run ^TestCandidateInstallerMemoryContract$ ./internal/memory' ]]; then
@@ -74,6 +82,12 @@ go() {
   if [[ $* == 'test -mod=readonly -list ^TestCandidateInstallerPerformanceContract$ ./internal/performance' ]]; then
     [[ ${BRIDGE_TEST_FAILURE:-} != missing_performance ]] || return 0
     printf '%s\n' TestCandidateInstallerPerformanceContract
+    [[ ${BRIDGE_TEST_FAILURE:-} != list_performance_after_match ]] || return 32
+    if [[ ${BRIDGE_TEST_LIST_TRAILING:-} == 1 ]]; then
+      # Keep the producer alive beyond grep -q's match, as Go does with its summary.
+      awk 'BEGIN { for (i = 0; i < 200000; i++) print "ok example/internal/performance 0.001s" }'
+      return $?
+    fi
     return 0
   fi
   if [[ $* == 'test -mod=readonly -count=1 -v -run ^TestCandidateInstallerPerformanceContract$ ./internal/performance' ]]; then
@@ -84,6 +98,7 @@ go() {
   if [[ $* == 'run ./cmd/bridge-arch-package --version v0.0.0' ]]; then
     mkdir -p dist/arch
     cp "$BRIDGE_BUILD_FIXTURE/input/"* dist/arch/
+    if [[ ${BRIDGE_TEST_FAILURE:-} == regeneration ]]; then printf 'changed\n' >>dist/arch/PKGBUILD; fi
     return
   fi
   if [[ $* == 'env -json '* ]]; then
@@ -110,10 +125,18 @@ makepkg() {
     *) return 1 ;;
   esac
 }
-export -f uname id git curl go makepkg
+# shellcheck disable=SC2329
+find() {
+  command find "$@" || return
+  case ${BRIDGE_TEST_FAILURE:-}:$* in
+    source_types:*'-mindepth 1'*) return 41 ;;
+    source_files:'. -type f -print') return 43 ;;
+  esac
+}
+export -f uname id git curl go makepkg find
 script="$root/infrastructure/iso/docker/bridge-build.sh"
 mkdir "$work/success"
-bash "$script" "$revision" v0.0.0 "$work/success" "$work/builder" "$work/installer" >"$work/success.log" 2>&1 || {
+BRIDGE_TEST_LIST_TRAILING=1 bash "$script" "$revision" v0.0.0 "$work/success" "$work/builder" "$work/installer" >"$work/success.log" 2>&1 || {
   cat "$work/success.log"
   exit 1
 }
@@ -125,12 +148,37 @@ grep -Fxq "SOURCE_COMMIT=$revision" "$work/success/output/builder.lock"
 grep -Fxq "INSTALLER_SOURCE_SHA256=$(common::sha256_file "$work/installer/bootstrap-source.tar.gz")" "$work/success/output/builder.lock"
 grep -Fxq 'MEMORY_CONTRACT=selected-installer-memory-v1' "$work/success/output/builder.lock"
 grep -Fxq 'PERFORMANCE_CONTRACT=selected-installer-performance-v1' "$work/success/output/builder.lock"
+grep -Fxq 'SOURCE_KIND=git-commit' "$work/success/output/builder.lock"
+source_hash=$(common::sha256_file "$work/input/spry-bridge-0.0.0-src.tar.gz")
+cp "$work/git.log" "$work/git-before-local.log"
+mkdir "$work/local-success"
+BRIDGE_TEST_NO_GIT=1 bash "$script" "$source_hash" v0.0.0 "$work/local-success" "$work/builder" "$work/installer" "$work/input" >"$work/local-success.log" 2>&1 || {
+  cat "$work/local-success.log"
+  exit 1
+}
+cmp "$work/git-before-local.log" "$work/git.log"
+(cd "$work/local-success/output" && sha256sum --check --strict SHA256SUMS >/dev/null)
+grep -Fxq 'SOURCE_KIND=local-archive' "$work/local-success/output/builder.lock"
+grep -Fxq "SOURCE_SHA256=$source_hash" "$work/local-success/output/builder.lock"
+if grep -Eq 'SOURCE_COMMIT=|SOURCE_REPOSITORY=|/Users/|/home/' "$work/local-success/output/builder.lock"; then exit 1; fi
+for failure in regeneration verify build provenance tamper contract performance missing_contract missing_performance; do
+  mkdir "$work/local-$failure"
+  if BRIDGE_TEST_NO_GIT=1 BRIDGE_TEST_FAILURE=$failure bash "$script" "$source_hash" v0.0.0 "$work/local-$failure" "$work/builder" "$work/installer" "$work/input" >"$work/local-$failure.log" 2>&1; then exit 1; fi
+  [[ ! -e $work/local-$failure/output ]]
+done
+cmp "$work/git-before-local.log" "$work/git.log"
+mkdir "$work/local-bad-hash"
+if BRIDGE_TEST_NO_GIT=1 bash "$script" "$(printf '%064d' 0)" v0.0.0 "$work/local-bad-hash" "$work/builder" "$work/installer" "$work/input" >"$work/local-bad-hash.log" 2>&1; then exit 1; fi
+[[ ! -e $work/local-bad-hash/checkout && ! -e $work/local-bad-hash/output ]]
 if bash "$script" "$revision" v0.0.0 "$work/success" "$work/builder" "$work/installer" >"$work/repeat.log" 2>&1; then exit 1; fi
-for failure in fetch legacy download status verify build provenance tamper contract missing_contract performance missing_performance; do
+for failure in source_types source_files fetch legacy download status verify build provenance tamper contract missing_contract performance missing_performance list_memory_after_match list_performance_after_match; do
   mkdir "$work/$failure"
   status=0
   BRIDGE_TEST_FAILURE=$failure bash "$script" "$revision" v0.0.0 "$work/$failure" "$work/builder" "$work/installer" >"$work/$failure.log" 2>&1 || status=$?
-  [[ $status != 0 && ! -e $work/$failure/output && -d $work/$failure/checkout ]]
+  [[ $status != 0 && ! -e $work/$failure/output && -d $work/$failure/checkout ]] || {
+    printf 'Bridge builder accepted failed %s stage\n' "$failure" >&2
+    exit 1
+  }
   case $failure in download) [[ $status == 13 ]] ;; verify) [[ $status == 17 ]] ;; build) [[ $status == 19 ]] ;; esac
 done
 for failure in arch uid go package_arch revision; do

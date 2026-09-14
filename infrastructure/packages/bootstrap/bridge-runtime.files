@@ -150,6 +150,7 @@ infrastructure/observability/workloads.yaml
 lib/workstation/telemetry.py
 lib/workstation/telemetry.sh
 lib/workstation/telemetry_sample.py
+lib/workstation/telemetry_power.py
 templates/workstation/telemetry/workstation-alloy.service
 templates/workstation/telemetry/workstation-telemetry.service
 templates/workstation/telemetry/workstation-telemetry.sysusers

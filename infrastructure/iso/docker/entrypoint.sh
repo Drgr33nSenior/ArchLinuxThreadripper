@@ -58,6 +58,13 @@ case ${1:-check} in
       fail 'bridge-build requires the selected installer source bundle'
     bash "$builder/bridge-build.sh" "$2" "$3" /work "$builder" /installer
     ;;
+  bridge-build-local)
+    (($# == 3)) || fail 'bridge-build-local requires source SHA-256 and version'
+    [[ -f /installer/bootstrap-source.tar.gz && ! -L /installer/bootstrap-source.tar.gz &&
+      -f /installer/source.lock && ! -L /installer/source.lock ]] ||
+      fail 'bridge-build-local requires the selected installer source bundle'
+    bash "$builder/bridge-build.sh" "$2" "$3" /work "$builder" /installer /candidate
+    ;;
   bridge)
     (($# == 1)) || fail 'bridge accepts no arguments'
     [[ $(id -u) != 0 ]] || fail 'bundle as the unprivileged builder'
@@ -91,5 +98,5 @@ case ${1:-check} in
     cp /work/prepared/release.lock /work/prepared/artifacts.lock /work/prepared/builder-packages.txt /work/output/
     printf 'BUILDER_IMAGE_ID=%s\n' "${BUILDER_IMAGE_ID:?}" >/work/output/builder.lock
     ;;
-  *) fail 'supported actions: check, packages, bridge-build, bridge, iso' ;;
+  *) fail 'supported actions: check, packages, bridge-build, bridge-build-local, bridge, iso' ;;
 esac

@@ -26,7 +26,10 @@ ws_serving_pod() {
 
 # A not-Ready Pod is current model loading. The wrapper must not obtain stale
 # ready-only evidence or start a representative warmup.
-ws_kernel_evidence() { : >"$work/kernel-evidence-called"; return 99; }
+ws_kernel_evidence() {
+  : >"$work/kernel-evidence-called"
+  return 99
+}
 FIXTURE_READY=false ws_serving_warm_status fixture - "$work/loading.json"
 jq -e '.status == "model-loading" and .representative_warmup == "not-applicable" and .identity == null' "$work/loading.json" >/dev/null
 [[ ! -e $work/kernel-evidence-called ]]
@@ -54,7 +57,10 @@ ws_serving_evidence() {
   printf '%s\n' '{"schema":1}' >"$2/runtime.json"
 }
 # shellcheck disable=SC2329 # Called indirectly through the restored ws_kernel_evidence wrapper.
-ws_kernel_probe() { printf '%s\n' 'private compiler probe failure'; return 97; }
+ws_kernel_probe() {
+  printf '%s\n' 'private compiler probe failure'
+  return 97
+}
 FIXTURE_READY=true ws_serving_warm_status fixture - "$work/probe-failed.json"
 jq -e '.status == "unknown" and .identity == null and (.reason|test("fresh current"))' "$work/probe-failed.json" >/dev/null
 if grep -F -- 'private compiler probe failure' "$work/probe-failed.json" >/dev/null; then
@@ -177,7 +183,7 @@ cli_warm_status() {
     SESSION_AI_DEPLOYMENT=sglang SESSION_GAME_DEPLOYMENT=gaming SESSION_ENVIRONMENT=dev \
     FIXTURE_EXEC_MARKER="$output.exec" \
     bash "$root/bin/workstationctl" rocm serving-warm-status sglang-fixture - "$output" \
-      >"$output.stdout" 2>"$output.stderr"
+    >"$output.stdout" 2>"$output.stderr"
 }
 cli_warm_status loading "$work/cli-loading.json"
 jq -e '.status == "model-loading" and .kubernetes_readiness == "model-loading" and .identity == null' \
@@ -244,7 +250,16 @@ revision=$(printf 'a%.0s' {1..64})
 printf '%s\n' '{"schema":1,"kind":"loading","deployment":"missing-deployment.json","evidence":"missing-evidence","threads":[1],"reserve_mib":1024,"per_thread_mib":64}' >"$bundle/spec.json"
 chmod 600 "$bundle/spec.json"
 WORKSTATION_PYTHON="$HOME_LAB_PYTHON" bash "$root/bin/workstationctl" performance seal "$bundle" loading fixture-target "$revision" >/dev/null
-manifest=$(shasum -a 256 "$bundle/manifest.json" | awk '{print $1}')
+# Arch's builder has sha256sum, not Perl's shasum. Keep that path covered even
+# on development hosts with both tools; the portable helper retains its fallback.
+if command -v sha256sum >/dev/null 2>&1; then
+  # shellcheck disable=SC2329 # A regression to a direct shasum call must fail.
+  shasum() {
+    printf 'unexpected shasum dependency in serving fixture\n' >&2
+    return 127
+  }
+fi
+manifest=$(common::sha256_file "$bundle/manifest.json")
 WORKSTATION_PYTHON="$HOME_LAB_PYTHON" bash "$root/bin/workstationctl" performance export "$bundle" "$manifest" "$work/public-output" --target fixture-target --source-revision "$revision" --owner bridge-owner >/dev/null
 jq -e '.status == "failed" and (.artifacts|length == 1 and .[0].name == "failure.json")' "$work/public-output/summary.json" >/dev/null
 

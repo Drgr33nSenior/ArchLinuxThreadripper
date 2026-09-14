@@ -16,9 +16,13 @@ if ! "$HOME_LAB_PYTHON" -c 'import jinja2, yaml'; then
   exit 1
 fi
 make -k check 2>&1 | tee "$output/check.log"
-status=${PIPESTATUS[0]}
-printf '%s\n' "$status" >"$output/make.exit"
-awk '/SKIP:|SKIPPED:|BLOCKED:|^OK \(skipped=/' "$output/check.log" >"$output/skips.txt"
+statuses=("${PIPESTATUS[@]}")
+printf '%s\n' "${statuses[0]}" >"$output/make.exit" || exit 1
+printf '%s\n' "${statuses[1]}" >"$output/tee.exit" || exit 1
+awk '/SKIP:|SKIPPED:|BLOCKED:|^OK \(skipped=/' "$output/check.log" >"$output/skips.txt" || {
+  printf 'FAILED: cannot inspect validation skips; retain %s\n' "$output" >&2
+  exit 1
+}
 unexpected=0
 while IFS= read -r skip; do
   case $skip in
@@ -28,8 +32,8 @@ while IFS= read -r skip; do
     *) unexpected=1 ;;
   esac
 done <"$output/skips.txt"
-if ((status != 0 || unexpected != 0)); then
-  printf 'FAILED: software check failure or unexpected skip; inspect %s\n' "$output"
+if ((statuses[0] != 0 || statuses[1] != 0 || unexpected != 0)); then
+  printf 'FAILED: software check, evidence recording or unexpected skip; inspect %s\n' "$output"
   exit 1
 fi
 printf 'PASS: strict software checks; image/Linux exceptions are listed in %s/skips.txt. Hardware remains unqualified.\n' "$output"

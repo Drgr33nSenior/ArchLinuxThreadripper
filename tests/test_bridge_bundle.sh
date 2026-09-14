@@ -75,6 +75,28 @@ printf 'SYNTHETIC SIGNATURE\n' >"$dir/bridge-bundle.json.sig"
 gpg() { [[ ${bad_signature:-false} == false ]] && printf '[GNUPG:] VALIDSIG AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n[GNUPG:] TRUST_FULLY\n'; }
 bridge_official_signature() { [[ ${bad_official:-false} == false ]]; }
 bridge_verify_bundle "$dir" fixture AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+# Failed or partial record discovery must not skip per-archive verification.
+for scenario in failed partial empty; do
+  if (
+    jq() {
+      if [[ ${1:-} == -c && ${2:-} == *'path:'* ]]; then
+        case $scenario in
+          failed) return 42 ;;
+          partial)
+            command jq "$@"
+            return 42
+            ;;
+          empty) return 0 ;;
+        esac
+      fi
+      command jq "$@"
+    }
+    bridge_verify_bundle "$dir" fixture
+  ); then
+    printf 'Bridge verification accepted %s archive discovery\n' "$scenario" >&2
+    exit 1
+  fi
+done
 if (
   bad_signature=true
   bridge_verify_bundle "$dir" fixture
@@ -137,6 +159,41 @@ if (
 ); then exit 1; fi
 printf 'OWNER_STATE_SENTINEL\n' >"$BOOTSTRAP_TARGET/etc/bridge/server.json"
 printf '[options]\nSigLevel = Required DatabaseOptional\n' >"$BOOTSTRAP_TARGET/etc/pacman.conf"
+# Both consumers must refuse failed/partial target enumeration before pacman.
+# Preflight itself was exercised above; isolate the later install construction.
+for action in bridge_offline_transaction bootstrap_install_bridge; do
+  for scenario in failed partial empty; do
+    (
+      bootstrap_bridge_preflight() { :; }
+      pacman() {
+        printf 'unexpected transaction\n' >"$work/discovery-transaction"
+        return 0
+      }
+      jq() {
+        if [[ ${1:-} == -r || ${1:-} == -er ]] &&
+          [[ ${2:-} == *'.packages[]|select('* || ${2:-} == *'.dependencies[].file'* ]]; then
+          case $scenario in
+            failed) return 42 ;;
+            partial)
+              command jq "$@"
+              return 42
+              ;;
+            empty) return 0 ;;
+          esac
+        fi
+        command jq "$@"
+      }
+      if "$action" "$dir" >"$work/discovery.log" 2>&1; then
+        printf '%s accepted %s target discovery\n' "$action" "$scenario" >&2
+        exit 1
+      fi
+      [[ ! -e $work/discovery-transaction ]] || {
+        printf '%s reached pacman after %s discovery\n' "$action" "$scenario" >&2
+        exit 1
+      }
+    )
+  done
+done
 bootstrap_install_bridge >/dev/null
 bootstrap_install_bridge >/dev/null
 [[ $(wc -l <"$work/target-transactions" | tr -d ' ') == 2 ]]

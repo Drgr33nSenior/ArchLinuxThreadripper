@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+source "$root/lib/common.sh"
 wrapper="$root/infrastructure/iso/docker.sh"
 work=$(mktemp -d)
 trap 'rm -rf -- "$work"' EXIT
@@ -63,6 +64,41 @@ done
 if bash "$wrapper" bridge-build candidate-01 "$revision" latest "$work/source" "$work/bridge-package" >/dev/null 2>&1; then exit 1; fi
 if bash "$wrapper" bridge-build candidate-01 "$revision" v0.0.0 "$work/missing" "$work/bridge-package" >/dev/null 2>&1; then exit 1; fi
 
+# The local path receives only three sealed files, not a checkout or credentials.
+# Full archive validation is exercised by test_bridge_build.sh, inside the
+# installed builder boundary. This preflight must reject drift before Docker.
+mkdir "$work/local-source"
+local_source=$(cd -- "$work/local-source" && pwd -P)
+printf 'tiny fixture archive\n' >"$work/local-source/spry-bridge-0.0.0-src.tar.gz"
+printf 'tiny fixture recipe\n' >"$work/local-source/PKGBUILD"
+printf 'never mount\n' >"$work/local-source/unrelated-private-file"
+source_sha=$(common::sha256_file "$work/local-source/spry-bridge-0.0.0-src.tar.gz")
+recipe_sha=$(common::sha256_file "$work/local-source/PKGBUILD")
+printf '%s  spry-bridge-0.0.0-src.tar.gz\n%s  PKGBUILD\n' "$source_sha" "$recipe_sha" >"$work/local-source/SHA256SUMS"
+plan=$(bash "$wrapper" bridge-build-local candidate-01 "$source_sha" v0.0.0 "$work/source" "$work/local-source" "$work/local-package")
+[[ $plan == *"bridge-build-local $source_sha v0.0.0"* && $plan == *'--user 1000:1000'* && $plan == *'--cap-drop ALL'* ]]
+[[ $plan == *'--memory-swap 6g'* && $plan != *SYS_ADMIN* && $plan != *unrelated-private-file* && $plan != *"source=$local_source\\,target="* ]]
+for file in spry-bridge-0.0.0-src.tar.gz PKGBUILD SHA256SUMS; do
+  [[ $plan == *"target=/candidate/$file\\,readonly"* ]]
+done
+[[ ! -e $work/local-package && ! -e $ISO_DOCKER_TEST_LOG ]]
+for bad_identity in "$revision" main "${source_sha/a/b}"; do
+  [[ $bad_identity != "$source_sha" ]] || continue
+  if bash "$wrapper" bridge-build-local candidate-01 "$bad_identity" v0.0.0 "$work/source" "$work/local-source" "$work/local-package" >/dev/null 2>&1; then exit 1; fi
+done
+if bash "$wrapper" --allow-iso-mounts bridge-build-local candidate-01 "$source_sha" v0.0.0 "$work/source" "$work/local-source" "$work/local-package" >/dev/null 2>&1; then exit 1; fi
+if bash "$wrapper" bridge-build-local candidate-01 "$source_sha" latest "$work/source" "$work/local-source" "$work/local-package" >/dev/null 2>&1; then exit 1; fi
+printf 'tampered\n' >>"$work/local-source/spry-bridge-0.0.0-src.tar.gz"
+if bash "$wrapper" bridge-build-local candidate-01 "$source_sha" v0.0.0 "$work/source" "$work/local-source" "$work/local-package" >/dev/null 2>&1; then exit 1; fi
+printf 'tiny fixture archive\n' >"$work/local-source/spry-bridge-0.0.0-src.tar.gz"
+printf 'unlisted manifest record\n' >>"$work/local-source/SHA256SUMS"
+if bash "$wrapper" bridge-build-local candidate-01 "$source_sha" v0.0.0 "$work/source" "$work/local-source" "$work/local-package" >/dev/null 2>&1; then exit 1; fi
+printf '%s  spry-bridge-0.0.0-src.tar.gz\n%s  PKGBUILD\n' "$source_sha" "$recipe_sha" >"$work/local-source/SHA256SUMS"
+mv "$work/local-source/PKGBUILD" "$work/local-source/retained-recipe"
+ln -s retained-recipe "$work/local-source/PKGBUILD"
+if bash "$wrapper" bridge-build-local candidate-01 "$source_sha" v0.0.0 "$work/source" "$work/local-source" "$work/local-package" >/dev/null 2>&1; then exit 1; fi
+[[ ! -e $work/local-package && ! -e $ISO_DOCKER_TEST_LOG ]]
+
 mkdir "$work/bundle-input" "$work/candidate"
 for name in bootstrap boot backup bridge-runtime; do
   printf 'fixture\n' >"$work/bundle-input/arch-workstation-$name-0.1.0-1-any.pkg.tar.zst"
@@ -108,8 +144,10 @@ if ISO_DOCKER_TEST_STATE_FAIL=true bash "$wrapper" --execute packages candidate-
 grep -Eq '^FROM docker.io/library/archlinux@sha256:[a-f0-9]{64}$' "$root/infrastructure/iso/docker/Dockerfile"
 grep -Fq -- '--mount=type=tmpfs,target=/etc/pacman.d/gnupg' "$root/infrastructure/iso/docker/Dockerfile"
 grep -Fxq '**' "$root/infrastructure/iso/.dockerignore"
-[[ $(sed -n '/^!/p' "$root/infrastructure/iso/.dockerignore" | wc -l | tr -d ' ') == 7 ]]
+[[ $(sed -n '/^!/p' "$root/infrastructure/iso/.dockerignore" | wc -l | tr -d ' ') == 8 ]]
 grep -Fxq '!docker/bridge-build.sh' "$root/infrastructure/iso/.dockerignore"
+grep -Fxq '!docker/bridge-source.py' "$root/infrastructure/iso/.dockerignore"
+grep -Fq 'COPY docker/bridge-build.sh docker/bridge-source.py /opt/arch-workstation-builder/' "$root/infrastructure/iso/docker/Dockerfile"
 grep -Fxq '!docker/pacstrap.sh' "$root/infrastructure/iso/.dockerignore"
 grep -Fq 'COPY --chmod=0755 docker/pacstrap.sh /opt/arch-workstation-builder/bin/pacstrap' "$root/infrastructure/iso/docker/Dockerfile"
 

@@ -12,6 +12,7 @@ usage() {
     '  check' \
     '  packages JOB SOURCE_BUNDLE_DIRECTORY NEW_OUTPUT_DIRECTORY' \
     '  bridge-build JOB BRIDGE_COMMIT BRIDGE_VERSION SOURCE_BUNDLE_DIRECTORY NEW_OUTPUT_DIRECTORY' \
+    '  bridge-build-local JOB SOURCE_SHA256 BRIDGE_VERSION INSTALLER_SOURCE_BUNDLE LOCAL_BRIDGE_SOURCE NEW_OUTPUT' \
     '  bridge JOB RUN_PACKAGE_DIRECTORY REVIEWED_BRIDGE_DIRECTORY NEW_OUTPUT_DIRECTORY' \
     '  iso JOB SIGNED_PACKAGE_DIRECTORY PUBLIC_KEY.asc FINGERPRINT NEW_OUTPUT_DIRECTORY' \
     'Default: dry-run, local desktop-linux context; all job state is retained.'
@@ -80,7 +81,7 @@ main() {
   # The Dockerfile is the authoritative base-image pin. Include every build
   # input in the local tag; a lock/recipe change cannot silently reuse old tools.
   digest=$(for file in infrastructure/iso/docker/Dockerfile infrastructure/iso/docker/setup.sh \
-    infrastructure/iso/docker/entrypoint.sh infrastructure/iso/docker/pacstrap.sh infrastructure/iso/docker/bridge-build.sh \
+    infrastructure/iso/docker/entrypoint.sh infrastructure/iso/docker/pacstrap.sh infrastructure/iso/docker/bridge-build.sh infrastructure/iso/docker/bridge-source.py \
     infrastructure/iso/.dockerignore infrastructure/iso/versions.lock; do
     common::sha256_file "$root/$file"
   done | common::sha256_file -)
@@ -97,17 +98,40 @@ main() {
         mounts+=(--mount "type=bind,source=$source/$file,target=/input/$file,readonly")
       done
       ;;
-    bridge-build)
-      (($# == 5)) || common::die 'bridge-build requires JOB, exact commit, version, selected source bundle and new output'
+    bridge-build | bridge-build-local)
+      if [[ $action == bridge-build ]]; then
+        (($# == 5)) || common::die 'bridge-build requires JOB, exact commit, version, selected source bundle and new output'
+      else
+        (($# == 6)) || common::die 'bridge-build-local requires JOB, source SHA-256, version, installer bundle, local source bundle and new output'
+      fi
       job=$1
       bridge_commit=$2 bridge_version=$3
-      [[ $bridge_commit =~ ^[a-f0-9]{40}$ && $bridge_version =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || common::die 'select a full lowercase commit and vMAJOR.MINOR.PATCH version, not a branch or tag reference'
+      [[ $bridge_version =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || common::die 'select a vMAJOR.MINOR.PATCH version'
+      if [[ $action == bridge-build ]]; then
+        [[ $bridge_commit =~ ^[a-f0-9]{40}$ ]] || common::die 'select a full lowercase commit, not a branch or tag reference'
+      else
+        [[ $bridge_commit =~ ^[a-f0-9]{64}$ ]] || common::die 'select the reviewed lowercase source archive SHA-256'
+      fi
       source=$(directory_path "$4")
       for file in bootstrap-source.tar.gz source.lock; do
         regular_file "$source/$file"
         mounts+=(--mount "type=bind,source=$source/$file,target=/installer/$file,readonly")
       done
-      output=$(new_output_path "$5")
+      if [[ $action == bridge-build ]]; then
+        output=$(new_output_path "$5")
+      else
+        local local_source local_archive expected_sums
+        local_source=$(directory_path "$5")
+        local_archive="spry-bridge-${bridge_version#v}-src.tar.gz"
+        for file in "$local_archive" PKGBUILD SHA256SUMS; do
+          regular_file "$local_source/$file"
+          mounts+=(--mount "type=bind,source=$local_source/$file,target=/candidate/$file,readonly")
+        done
+        [[ $(common::sha256_file "$local_source/$local_archive") == "$bridge_commit" ]] || common::die 'local Bridge archive differs from reviewed SHA-256'
+        expected_sums=$(printf '%s  %s\n%s  PKGBUILD\n' "$bridge_commit" "$local_archive" "$(common::sha256_file "$local_source/PKGBUILD")")
+        [[ $(<"$local_source/SHA256SUMS") == "$expected_sums" ]] || common::die 'local Bridge source requires the exact archive/recipe checksum manifest'
+        output=$(new_output_path "$6")
+      fi
       ;;
     bridge)
       (($# == 4)) || common::die 'bridge requires JOB, run packages, reviewed Bridge inputs, new output'
@@ -181,7 +205,7 @@ main() {
     *) common::die 'unknown action' ;;
   esac
   [[ $action == iso || $allow_mounts == false ]] || common::die '--allow-iso-mounts is only valid for ISO assembly'
-  if [[ $action == packages || $action == bridge-build || $action == bridge || $action == iso ]]; then
+  if [[ $action == packages || $action == bridge-build || $action == bridge-build-local || $action == bridge || $action == iso ]]; then
     [[ $job =~ ^[a-z][a-z0-9-]{0,31}$ ]] || common::die 'JOB must be a short lowercase identifier'
   fi
   local container="arch-workstation-iso-$action-$job" volume="arch-workstation-iso-$action-$job"
@@ -211,7 +235,7 @@ main() {
     else
       run+=(--name "$container" --label io.arch-workstation.scope=dev --label io.arch-workstation.purpose=iso-builder
         --mount "type=volume,source=$volume,target=/work")
-      if [[ $action == packages || $action == bridge-build || $action == bridge ]]; then
+      if [[ $action == packages || $action == bridge-build || $action == bridge-build-local || $action == bridge ]]; then
         run+=(--cap-drop ALL --user 1000:1000)
         [[ $action != packages ]] || run+=(--network none)
       else
@@ -222,7 +246,7 @@ main() {
     # macOS ships Bash 3.2: expanding an empty array with nounset fails there.
     if [[ $action != check ]]; then run+=("${mounts[@]}"); fi
     run+=("${image_id:-$image}" "$action")
-    [[ $action != bridge-build ]] || run+=("$bridge_commit" "$bridge_version")
+    if [[ $action == bridge-build || $action == bridge-build-local ]]; then run+=("$bridge_commit" "$bridge_version"); fi
     [[ $action != iso ]] || run+=("$fingerprint")
   fi
   common::print_command "${run[@]}"

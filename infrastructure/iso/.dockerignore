@@ -8,3 +8,4 @@ docker/**
 !docker/entrypoint.sh
 !docker/pacstrap.sh
 !docker/bridge-build.sh
+!docker/bridge-source.py

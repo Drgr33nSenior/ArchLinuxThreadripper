@@ -62,7 +62,7 @@ Commands:
   rocm kernel-profile <workload.json> <evidence-directory> <new-output-directory>
   rocm kernel-compare <cold-run> <warm-run> <cold-startup.json> <warm-startup.json> <new-result.json> --rank-log FILE [--rank-log FILE] --atol N --rtol N
   rocm kernel-dispatch <trace.json[.gz]> <profile-run/result.json> <new-result.json>
-  rocm kernel-quality <baseline/result.json> <candidate/result.json> <new-result.json> --atol N --rtol N [--memory-only]
+  rocm kernel-quality <baseline/result.json> <candidate/result.json> <new-result.json> --atol N --rtol N [--memory-only|--experimental-kv]
   rocm kernel-seal-tuning <profile-result.json> <dispatch.json> <review.json> <tuning-file> <new-directory> --kind <triton|hipblaslt>
   rocm qualify-llama <hardware.json> <candidate-directory> <model.gguf> <corpus.txt> <new-output-directory> <devices> [paired-benchmark-directory]
   rocm validate-pod <pod-name> <new-output-directory>

@@ -6,6 +6,7 @@ frequencies are observations, not APERF/MPERF sustained-clock measurements.
 
 import argparse
 from contextlib import contextmanager
+from fnmatch import fnmatchcase
 import hashlib
 import json
 import os
@@ -54,8 +55,9 @@ def snapshot(sys=Path("/sys"), proc=Path("/proc"), cgroup=Path("/sys/fs/cgroup")
     sensors = {}
     for device in sorted((sys / "class/hwmon").glob("hwmon*")):
         values = {}
-        for pattern in ("temp*_input", "power*_average", "power*_input", "energy*_input", "freq*_input"):
-            for sensor in device.glob(pattern):
+        for sensor in device.glob("*"):
+            if any(fnmatchcase(sensor.name, pattern) for pattern in
+                   ("temp*_input", "power*_average", "power*_input", "energy*_input", "freq*_input")):
                 values[sensor.name] = read(sensor)
         sensors[str(device.resolve())] = {"name": read(device / "name"), "values": values}
     gpus = {}

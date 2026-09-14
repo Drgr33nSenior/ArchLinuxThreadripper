@@ -3,13 +3,20 @@
 set -euo pipefail
 
 bridge_build() {
-  (($# == 5)) || {
-    printf 'usage: bridge-build.sh COMMIT VERSION WORK BUILDER INSTALLER_SOURCE_BUNDLE\n' >&2
+  (($# == 5 || $# == 6)) || {
+    printf 'usage: bridge-build.sh COMMIT_OR_SOURCE_SHA256 VERSION WORK BUILDER INSTALLER_SOURCE_BUNDLE [LOCAL_SOURCE_BUNDLE]\n' >&2
     return 1
   }
-  local revision=$1 version=$2 work=$3 builder=$4 installer_bundle=$5 input archive go_version go_hash package source_hash recipe_hash field dirty installer_hash installer_root
+  local revision=$1 version=$2 work=$3 builder=$4 installer_bundle=$5 local_bundle=${6:-} input archive go_version go_hash package source_hash recipe_hash field dirty installer_hash installer_root nonregular
+  local source_kind=git-commit
   local repository=https://github.com/Drgr33nSenior/Spry.ai-workstation-bridge.git
-  [[ $revision =~ ^[a-f0-9]{40}$ && $version =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || return 1
+  [[ $version =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || return 1
+  if (($# == 6)); then
+    [[ -n $local_bundle && $revision =~ ^[a-f0-9]{64}$ ]] || return 1
+    source_kind=local-archive
+  else
+    [[ $revision =~ ^[a-f0-9]{40}$ ]] || return 1
+  fi
   [[ $(uname -m) == x86_64 && $(id -u) != 0 ]] || {
     printf 'Unprivileged amd64 builder required\n' >&2
     return 1
@@ -24,12 +31,16 @@ bridge_build() {
   [[ ! -e $work/checkout && ! -L $work/checkout && ! -e $work/installer && ! -L $work/installer && ! -e $work/source && ! -L $work/source && ! -e $work/output && ! -L $work/output ]] || return 1
   local archives=() packages=()
   shopt -s nullglob
-  export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/bin/false
-  git init "$work/checkout"
-  git -C "$work/checkout" -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=60 fetch --depth=1 "$repository" "$revision"
-  [[ $(git -C "$work/checkout" rev-parse 'FETCH_HEAD^{commit}') == "$revision" ]] || return 1
-  git -C "$work/checkout" -c core.hooksPath=/dev/null checkout --detach "$revision"
-  [[ $(git -C "$work/checkout" rev-parse HEAD) == "$revision" ]] || return 1
+  if [[ $source_kind == local-archive ]]; then
+    python3 "$builder/bridge-source.py" "$local_bundle" "$revision" "$version" "$work/checkout"
+  else
+    export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/bin/false
+    git init "$work/checkout"
+    git -C "$work/checkout" -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=60 fetch --depth=1 "$repository" "$revision"
+    [[ $(git -C "$work/checkout" rev-parse 'FETCH_HEAD^{commit}') == "$revision" ]] || return 1
+    git -C "$work/checkout" -c core.hooksPath=/dev/null checkout --detach "$revision"
+    [[ $(git -C "$work/checkout" rev-parse HEAD) == "$revision" ]] || return 1
+  fi
   installer_hash=$(awk -F= '$1=="SOURCE_SHA256" {n++; v=$2} END {if(n!=1 || v !~ /^[a-f0-9]{64}$/) exit 1; print v}' "$installer_bundle/source.lock") || {
     printf 'Selected installer source lock lacks one valid source identity.\n' >&2
     return 1
@@ -51,16 +62,21 @@ bridge_build() {
   bsdtar -xzf "$installer_bundle/bootstrap-source.tar.gz" -C "$work/installer"
   installer_root="$work/installer/project"
   [[ -d $installer_root && ! -L $installer_root && -f $installer_root/SOURCE-MANIFEST.sha256 && ! -L $installer_root/SOURCE-MANIFEST.sha256 ]] || return 1
-  if find "$installer_root" -mindepth 1 ! -type d ! -type f -print -quit | grep -q .; then
+  nonregular=$(find "$installer_root" -mindepth 1 ! -type d ! -type f -print -quit) || {
+    printf 'Selected installer source entry discovery failed.\n' >&2
+    return 1
+  }
+  if [[ -n $nonregular ]]; then
     printf 'Selected installer source tree contains a non-regular entry.\n' >&2
     return 1
   fi
   (
-    cd "$installer_root"
-    awk '{if ($1 !~ /^[a-f0-9]{64}$/ || $2 !~ /^[A-Za-z0-9_.@\/-]+$/ || $2 ~ /(^|\/)\.\.($|\/)/) exit 1; print $2}' SOURCE-MANIFEST.sha256 | sort >"$work/installer-expected-files"
-    printf '%s\n' SOURCE-MANIFEST.sha256 source.files >>"$work/installer-expected-files"
-    sort -u "$work/installer-expected-files" -o "$work/installer-expected-files"
-    find . -type f -print | sed 's|^\./||' | sort >"$work/installer-actual-files"
+    # This subshell is an OR-list condition: errexit is disabled throughout it.
+    cd "$installer_root" || exit 1
+    awk '{if ($1 !~ /^[a-f0-9]{64}$/ || $2 !~ /^[A-Za-z0-9_.@\/-]+$/ || $2 ~ /(^|\/)\.\.($|\/)/) exit 1; print $2}' SOURCE-MANIFEST.sha256 | sort >"$work/installer-expected-files" || exit 1
+    printf '%s\n' SOURCE-MANIFEST.sha256 source.files >>"$work/installer-expected-files" || exit 1
+    sort -u "$work/installer-expected-files" -o "$work/installer-expected-files" || exit 1
+    find . -type f -print | sed 's|^\./||' | sort >"$work/installer-actual-files" || exit 1
     cmp "$work/installer-expected-files" "$work/installer-actual-files"
   ) || {
     printf 'Selected installer source tree differs from its declared source closure.\n' >&2
@@ -72,7 +88,7 @@ bridge_build() {
   }
   # Older published recipes cannot satisfy the existing signed-bundle contract.
   grep -Fq '/source.sha256' "$work/checkout/packaging/arch/PKGBUILD.in" || {
-    printf 'Selected Bridge commit lacks ISO package source identity; publish/review the Bridge integration changes and select their exact commit. No fallback to local edits.\n' >&2
+    printf 'Selected Bridge source lacks ISO package source identity; review a compatible source before retrying. No implicit fallback.\n' >&2
     return 1
   }
   mkdir "$work/source"
@@ -97,7 +113,9 @@ bridge_build() {
   # This gate uses only the immutable source bundle selected for this installer
   # run. It is evidence for this release pair, not authority for an installed
   # Bridge runtime or host policy.
-  (cd "$work/checkout" && go test -mod=readonly -list '^TestCandidateInstallerMemoryContract$' ./internal/memory | grep -Fxq TestCandidateInstallerMemoryContract) || {
+  # Drain the trailing Go package summary. grep -q can close the pipe early,
+  # making a successful listing fail with SIGPIPE under pipefail.
+  (cd "$work/checkout" && go test -mod=readonly -list '^TestCandidateInstallerMemoryContract$' ./internal/memory | grep -Fx TestCandidateInstallerMemoryContract >/dev/null) || {
     printf 'Selected Bridge commit lacks the required selected-installer memory-contract test.\n' >&2
     return 1
   }
@@ -106,7 +124,7 @@ bridge_build() {
     printf 'Bridge memory contract rejected the selected installer source; no package was emitted.\n' >&2
     return 1
   }
-  (cd "$work/checkout" && go test -mod=readonly -list '^TestCandidateInstallerPerformanceContract$' ./internal/performance | grep -Fxq TestCandidateInstallerPerformanceContract) || {
+  (cd "$work/checkout" && go test -mod=readonly -list '^TestCandidateInstallerPerformanceContract$' ./internal/performance | grep -Fx TestCandidateInstallerPerformanceContract >/dev/null) || {
     printf 'Selected Bridge commit lacks the required selected-installer performance-contract test.\n' >&2
     return 1
   }
@@ -115,16 +133,28 @@ bridge_build() {
     printf 'Bridge performance contract rejected the selected installer source; no package was emitted.\n' >&2
     return 1
   }
-  # Generate only from the verified checkout, using that commit's own generator.
+  # Generate only from the verified source, using its own generator. Local
+  # candidates must reproduce the sealed inputs, not create a different recipe.
   (cd "$work/checkout" && go run ./cmd/bridge-arch-package --version "$version")
-  dirty=$(git -C "$work/checkout" status --porcelain --untracked-files=no) || return 1
-  [[ -z $dirty ]] || return 1
+  if [[ $source_kind == git-commit ]]; then
+    dirty=$(git -C "$work/checkout" status --porcelain --untracked-files=no) || return 1
+    [[ -z $dirty ]] || return 1
+  fi
   input="$work/checkout/dist/arch"
   archives=("$input"/spry-bridge-*-src.tar.gz)
   ((${#archives[@]} == 1)) || return 1
   archive="spry-bridge-${version#v}-src.tar.gz"
   [[ ${archives[0]##*/} == "$archive" ]] || return 1
   for field in "$archive" PKGBUILD SHA256SUMS; do [[ -f $input/$field && ! -L $input/$field ]] || return 1; done
+  if [[ $source_kind == local-archive ]]; then
+    python3 "$builder/bridge-source.py" "$local_bundle" "$revision" "$version"
+    for field in "$archive" PKGBUILD SHA256SUMS; do
+      cmp "$local_bundle/$field" "$input/$field" || {
+        printf 'Bridge source regeneration differs from the reviewed local bundle; no package emitted.\n' >&2
+        return 1
+      }
+    done
+  fi
   cp -- "$input/$archive" "$input/PKGBUILD" "$input/SHA256SUMS" "$work/source/"
   # Compare the exact two-file manifest, never follow paths supplied in a checksum file.
   sha256sum "$archive" PKGBUILD >expected-sums
@@ -152,16 +182,24 @@ bridge_build() {
   cmp expected-sums final-sums || return 1
   (cd "$input" && sha256sum "$archive" PKGBUILD) >input-sums
   cmp expected-sums input-sums || return 1
-  dirty=$(git -C "$work/checkout" status --porcelain --untracked-files=no) || return 1
-  [[ $(git -C "$work/checkout" rev-parse HEAD) == "$revision" && -z $dirty ]] || return 1
+  if [[ $source_kind == git-commit ]]; then
+    dirty=$(git -C "$work/checkout" status --porcelain --untracked-files=no) || return 1
+    [[ $(git -C "$work/checkout" rev-parse HEAD) == "$revision" && -z $dirty ]] || return 1
+  else
+    python3 "$builder/bridge-source.py" "$local_bundle" "$revision" "$version"
+    for field in "$archive" PKGBUILD SHA256SUMS; do cmp "$local_bundle/$field" "$input/$field" || return 1; done
+  fi
   # Publish only to this new local output after all checks; failures retain job state.
   mkdir "$work/output"
   cp -- "$package" "$archive" PKGBUILD "$work/output/"
   cp "$builder/versions.lock" "$builder/packages.txt" "$work/output/"
   cp build-info "$work/output/BUILDINFO"
   go env -json GOVERSION GOOS GOARCH CGO_ENABLED GOFLAGS >"$work/output/go-environment.json"
-  printf 'BUILDER_IMAGE_ID=%s\nGO_VERSION=%s\nGO_ARCHIVE_SHA256=%s\nSOURCE_SHA256=%s\nPKGBUILD_SHA256=%s\nINSTALLER_SOURCE_SHA256=%s\nMEMORY_CONTRACT=selected-installer-memory-v1\nPERFORMANCE_CONTRACT=selected-installer-performance-v1\nGOMAXPROCS=4\nGOFLAGS=-p=4\nSOURCE_REPOSITORY=%s\nSOURCE_COMMIT=%s\n' \
-    "${BUILDER_IMAGE_ID:?}" "$go_version" "$go_hash" "$source_hash" "$recipe_hash" "$installer_hash" "$repository" "$revision" >"$work/output/builder.lock"
+  printf 'BUILDER_IMAGE_ID=%s\nGO_VERSION=%s\nGO_ARCHIVE_SHA256=%s\nSOURCE_SHA256=%s\nPKGBUILD_SHA256=%s\nINSTALLER_SOURCE_SHA256=%s\nMEMORY_CONTRACT=selected-installer-memory-v1\nPERFORMANCE_CONTRACT=selected-installer-performance-v1\nGOMAXPROCS=4\nGOFLAGS=-p=4\nSOURCE_KIND=%s\n' \
+    "${BUILDER_IMAGE_ID:?}" "$go_version" "$go_hash" "$source_hash" "$recipe_hash" "$installer_hash" "$source_kind" >"$work/output/builder.lock"
+  if [[ $source_kind == git-commit ]]; then
+    printf 'SOURCE_REPOSITORY=%s\nSOURCE_COMMIT=%s\n' "$repository" "$revision" >>"$work/output/builder.lock"
+  fi
   (cd "$work/output" && sha256sum ./*.pkg.tar.zst "$archive" PKGBUILD versions.lock packages.txt BUILDINFO go-environment.json builder.lock >SHA256SUMS)
   printf 'Unsigned Bridge package built and recipe tests passed; signing, bundling and workstation qualification are separate.\n'
 }

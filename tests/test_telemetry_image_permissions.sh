@@ -4,7 +4,10 @@
 set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 for tool in ruby jq; do
-  command -v "$tool" >/dev/null || { printf 'BLOCKED: fixture permission test requires %s\n' "$tool" >&2; exit 1; }
+  command -v "$tool" >/dev/null || {
+    printf 'BLOCKED: fixture permission test requires %s\n' "$tool" >&2
+    exit 1
+  }
 done
 umask 077
 scratch=$(mktemp -d)

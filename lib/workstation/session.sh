@@ -236,7 +236,7 @@ ws_session_stop() {
 }
 
 ws_session_gpu_free() {
-  local hardware="$1" pods bdf path device number fd pid found=0 current expected
+  local hardware="$1" pods bdf bdfs path device number fd pid found=0 current expected
   pods="$(ws_session_kubectl get pods -A -o json)" || ws_die 'cannot verify GPU allocations, including pending consumers'
   jq -e 'all(.items[];
     ((.status.phase == "Succeeded" or .status.phase == "Failed") and .metadata.deletionTimestamp == null) or
@@ -248,6 +248,8 @@ ws_session_gpu_free() {
   expected="$(jq -c '.pci_gpus|map({bdf,device_id,driver})|sort_by(.bdf)' "$hardware")"
   [[ "$expected" == "$(jq -c 'map({bdf,device_id,driver})|sort_by(.bdf)' <<<"$current")" ]] ||
     ws_die 'current PCI GPU identities differ from the hardware report'
+  bdfs="$(jq -er '.[].bdf' <<<"$current")" || ws_die 'cannot enumerate live GPU identities'
+  [[ -n "$bdfs" ]] || ws_die 'live GPU identity enumeration is empty'
   local -a device_numbers=()
   while IFS= read -r bdf; do
     path="/sys/bus/pci/devices/$bdf/drm"
@@ -261,7 +263,7 @@ ws_session_gpu_free() {
       found=1
     done
     ((found == 1)) || ws_die 'GPU has no resolvable DRM device'
-  done < <(jq -r '.[].bdf' <<<"$current")
+  done <<<"$bdfs"
   # Root plus a complete procfs view is required. Compare device numbers so
   # container paths and renamed render nodes cannot evade the holder check.
   local proc_options

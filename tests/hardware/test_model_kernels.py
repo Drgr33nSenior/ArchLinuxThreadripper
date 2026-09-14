@@ -57,6 +57,38 @@ def fixtures():
     return deployment, workload, (pod, runtime, compiler)
 
 
+def experimental_descriptor():
+    configuration = {"gpu_arch": "gfx1201", "tensor_parallel": 1, "compute_dtype": "float16",
+                     "attention": "causal-full", "head_dimension": 128, "kv_heads": 8,
+                     "query_heads": 32, "page_size": 1, "rotation": "post-rope-qk"}
+    return {"schema": 1, "runtime": "sglang", "source_repository": "sgl-project/sglang",
+            "source_revision": "a" * 40, "source_tree_sha256": "b" * 64, "patch_sha256": "c" * 64,
+            "binary_sha256": "d" * 64,
+            "compiler_revision": "clang-sha256:" + "f" * 64,
+            "dependencies_sha256": "e" * 64, "codec": "ultraquant-rdna4-v1",
+            "configuration_sha256": kernels.identity(configuration), "configuration": configuration,
+            "requested_mode": "ultraquant-rdna4-v1", "observed_mode": "compressed-gpu",
+            "qualification": "unqualified", "restart_required": True}
+
+
+def experimental_observed():
+    _deployment, _workload, (pod, runtime, compiler) = fixtures()
+    pod = copy.deepcopy(pod)
+    pod["image"] = "candidate@sha256:" + "9" * 64
+    pod["image_id"] = "containerd://sha256:" + "9" * 64
+    runtime = copy.deepcopy(runtime)
+    runtime["settings"].update({"MODEL_DTYPE": "float16", "TENSOR_PARALLEL": "1"})
+    runtime["devices"] = [runtime["devices"][0]]
+    runtime["launch"] = [{"--model-path": "/models/fixture", "--attention-backend": "ultraquant-rdna4-v1",
+                          "--dtype": "float16", "--tp": "1", "--enable-torch-compile": False}]
+    runtime["model_contract"] = {"architectures": ["LlamaForCausalLM"], "quant_method": "unquantized"}
+    runtime["experimental_kv"] = experimental_descriptor()
+    compiler = copy.deepcopy(compiler)
+    compiler["compiler"] = {"sha256": "f" * 64}
+    compiler["loaded_libraries"]["/opt/sglang/libuq_hip.so"] = {"sha256": "d" * 64}
+    return pod, runtime, compiler
+
+
 class KernelTests(unittest.TestCase):
     def setUp(self):
         self.deployment, self.workload, self.observed = fixtures()
@@ -124,6 +156,47 @@ class KernelTests(unittest.TestCase):
             (Path(directory)/"runtime.json").write_text(json.dumps(runtime))
             with self.assertRaises(ValueError):
                 kernels.evidence(directory)
+
+    def test_experimental_kv_provenance_and_quality_keep_compiler_identity(self):
+        candidate = experimental_observed()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            for name, data in zip(("pod.json", "runtime.json", "compiler.json"), candidate):
+                kernels.write(path / name, data)
+            self.assertEqual(kernels.evidence(path), candidate)
+
+        baseline_pod, baseline_runtime, baseline_compiler = copy.deepcopy(candidate)
+        baseline_runtime.pop("experimental_kv")
+        baseline_runtime["launch"][0]["--attention-backend"] = "triton"
+        baseline_compiler["loaded_libraries"].pop("/opt/sglang/libuq_hip.so")
+        contract = {"repetitions": 3, "concurrency": [1],
+                    "cases": [{"context_tokens": 1, "output_tokens": 1}]}
+        quality = [{"case": [repeat, 1, 1, 0], "tokens": [1], "logprobs": [-.2]} for repeat in range(3)]
+        def run(pod, runtime, compiler):
+            return {"status": "measured-not-qualified", "kind": "kernel-warmup", "memory": {"status": "checked"},
+                    "workload_sha256": "a" * 64, "warmup_contract": contract, "quality": quality,
+                    "identity": kernels.runtime_key(pod, runtime, compiler)}
+        result = kernels.compare_quality(run(baseline_pod, baseline_runtime, baseline_compiler),
+                                         run(*candidate), 0, 0, experimental_kv=True)
+        self.assertEqual(result["comparison"], "experimental-kv")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            kernels.write(path / "baseline.json", run(baseline_pod, baseline_runtime, baseline_compiler))
+            kernels.write(path / "candidate.json", run(*candidate))
+            with patch.object(sys, "argv", ["model_kernels.py", "quality", str(path / "baseline.json"),
+                                              str(path / "candidate.json"), str(path / "quality.json"),
+                                              "--atol", "0", "--rtol", "0", "--experimental-kv"]):
+                kernels.main()
+            self.assertEqual(kernels.load(path / "quality.json")["comparison"], "experimental-kv")
+        changed_compiler = copy.deepcopy(candidate[2])
+        changed_compiler["hip"] = "different"
+        with self.assertRaises(ValueError):
+            kernels.compare_quality(run(baseline_pod, baseline_runtime, baseline_compiler),
+                                    run(candidate[0], candidate[1], changed_compiler), 0, 0, experimental_kv=True)
+        wrong_launch = copy.deepcopy(candidate[1])
+        wrong_launch["launch"][0]["--dtype"] = "bfloat16"
+        with self.assertRaises(ValueError):
+            kernels.experimental_kv_runtime(wrong_launch)
 
     def test_numerical_contract(self):
         valid = {"meta_info": {"finish_reason": {"type": "length"}, "completion_tokens": 2,

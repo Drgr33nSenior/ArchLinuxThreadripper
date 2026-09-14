@@ -11,6 +11,8 @@ usage() {
     '                                 Build installer; optionally fetch/build/bundle Bridge.' \
     '  bridge-build ISO_RUN_DIRECTORY BRIDGE_COMMIT BRIDGE_VERSION NEW_OUTPUT_DIRECTORY' \
     '                                 Build/test an unsigned Bridge package in amd64 Arch.' \
+    '  bridge-build-local ISO_RUN_DIRECTORY SOURCE_SHA256 BRIDGE_VERSION LOCAL_SOURCE_BUNDLE NEW_OUTPUT_DIRECTORY' \
+    '                                 Build/test a reviewed local Bridge source snapshot.' \
     '  bridge RUN_DIRECTORY REVIEWED_BRIDGE_DIRECTORY' \
     '                                 Add target payload/dependencies before owner signing.' \
     '  iso RUN_DIRECTORY PUBLIC_KEY.asc FINGERPRINT' \
@@ -103,20 +105,29 @@ main() {
         common::info 'Preview only: no files, Docker queries or jobs were created. --execute will choose its own fresh run.'
       fi
       ;;
-    bridge-build)
-      (($# == 4)) || common::die 'bridge-build requires installer run, exact commit, version and new output directory'
+    bridge-build | bridge-build-local)
+      if [[ $action == bridge-build ]]; then
+        (($# == 4)) || common::die 'bridge-build requires installer run, exact commit, version and new output directory'
+      else
+        (($# == 5)) || common::die 'bridge-build-local requires installer run, source SHA-256, version, local source bundle and new output directory'
+      fi
       [[ $allow_mounts == false ]] || common::die '--allow-iso-mounts is only valid for ISO assembly'
       run=$(cd -- "$1" && pwd -P) || common::die 'supply an existing installer run directory'
       [[ -f $run/source/bootstrap-source.tar.gz && ! -L $run/source/bootstrap-source.tar.gz &&
         -f $run/source/source.lock && ! -L $run/source/source.lock ]] ||
         common::die 'installer run lacks the selected source bundle; do not use a checkout or another run'
       # Validate paths through the wrapper before creating an image or a job.
-      bash "$wrapper" "${docker_options[@]}" bridge-build "$job" "$2" "$3" "$run/source" "$4" || return
+      local build_args=("$action" "$job" "$2" "$3" "$run/source" "$4") build_output=$4
+      if [[ $action == bridge-build-local ]]; then
+        build_args+=("$5")
+        build_output=$5
+      fi
+      bash "$wrapper" "${docker_options[@]}" "${build_args[@]}" || return
       step '1/3: Build or reuse the pinned tools image' bash "$wrapper" "${docker_options[@]}" --execute image || return
       step '2/3: Check unprivileged amd64 userspace' bash "$wrapper" "${docker_options[@]}" --execute check || return
-      step '3/3: Verify selected installer memory contract, then fetch/build/test Bridge' bash "$wrapper" "${docker_options[@]}" --execute bridge-build "$job" "$2" "$3" "$run/source" "$4" || return
+      step '3/3: Verify selected source contracts, then build/test Bridge' bash "$wrapper" "${docker_options[@]}" --execute "${build_args[@]}" || return
       if [[ $execute == true ]]; then
-        printf 'BRIDGE_ARTIFACTS=%q\n' "$(cd -- "$4" && pwd -P)"
+        printf 'BRIDGE_ARTIFACTS=%q\n' "$(cd -- "$build_output" && pwd -P)"
       fi
       ;;
     bridge)
@@ -151,7 +162,7 @@ main() {
       fi
       bash "$wrapper" "${docker_options[@]}" iso "$job" "$selected" "$2" "$3" "$run/$job" || return
       ;;
-    *) common::die 'unknown action; use packages, bridge-build, bridge or iso' ;;
+    *) common::die 'unknown action; use packages, bridge-build, bridge-build-local, bridge or iso' ;;
   esac
 }
 

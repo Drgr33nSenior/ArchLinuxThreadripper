@@ -78,7 +78,11 @@ ls "$ISO_RUN/source/source.lock" "$ISO_RUN/packages/source.lock"
 Keep this assignment through bundling, signing and assembly. In a new terminal,
 restore the same reviewed absolute path. Missing manifests mean an incomplete
 or wrong selection; do not create them or rebuild merely to restore context.
-Changed source requires a new package run. Failed jobs and prior artifacts remain
+Changes to the installer payload or installed runtime require a new package run.
+For a reviewed builder-only fix, you may deliberately reuse completed frozen
+source and packages. Their recorded source hash remains authoritative, and they
+retain the earlier packaged documentation. Never rewrite `source.lock` or claim
+that this reuse includes newer source. Failed jobs and prior artifacts remain
 available for inspection.
 
 ## 1a. Bundle Bridge, unless explicitly opting out
@@ -87,8 +91,9 @@ If the command above completed with `ISO_RUN/bundled`, continue to signing.
 Do not rebuild or bundle that run again. `INSTALL_BRIDGE=true` is the default,
 including when older configurations omit the key.
 
-For a run built without Bridge arguments, select either a reviewed CI artifact
-directory or build the exact GitHub commit in a separate job:
+For a run built without Bridge arguments, select reviewed CI artifacts, build the
+exact GitHub commit below, or use the [explicit local-source path](#build-reviewed-local-bridge-source).
+The GitHub path never includes local uncommitted changes:
 
 ```sh
 BRIDGE_ARTIFACTS="$ISO_RUN/bridge-artifacts-retry1"
@@ -100,12 +105,67 @@ These calls preview, then fetch/build/test in the AMD64 Arch container. They nev
 run `makepkg` on macOS. The container has four CPU equivalents, 6 GiB RAM and no
 swap. Only the selected run's sealed installer source archive and lock are mounted;
 the release gate verifies that archive's exact-tree manifest and runs Bridge's
-selected-pair memory contract before it emits a package. It records the installer
-source SHA-256 in `builder.lock`. That source identity is release evidence, not
+selected-pair memory and performance contracts before it emits a package. It
+records the installer source SHA-256 in `builder.lock`. That source identity is release evidence, not
 authority for an installed runtime or host policy. The reviewed commit's generator
 produces its PKGBUILD and checksummed source archive. The exact compiler must match
 its `.go-version`; mismatches stop the build. Review `builder.lock`, `BUILDINFO`,
 `go-environment.json` and `SHA256SUMS` in the output. See [compiler provenance](ISO-REFERENCE.md#bridge-package-build-on-apple-silicon).
+
+### Build reviewed local Bridge source
+
+Use this path to include reviewed uncommitted Bridge changes without committing
+or pushing them. It is an explicit alternative, not a fallback after a GitHub
+failure. First complete an installer package run with `release.sh packages`
+without Bridge arguments. Keep its printed absolute `ISO_RUN` path. New installer
+payload or runtime changes need a new run. The reviewed builder-only exception
+[above](#select-your-build-directory) permits reuse of the frozen installer;
+do not modify its source or package inputs.
+
+In the Bridge checkout, review the source and packaging recipe, including local
+changes. Prepare the exact Go version in `.go-version` on the Mac. Then export to
+a new directory:
+
+```sh
+BRIDGE_VERSION=v0.0.0
+BRIDGE_SOURCE="${ISO_RUN:?}/bridge-source-local"
+env GOTOOLCHAIN=local CGO_ENABLED=0 go run ./cmd/bridge-arch-package \
+  --version "$BRIDGE_VERSION" --output "$BRIDGE_SOURCE"
+(cd "$BRIDGE_SOURCE" && shasum -a 256 -c SHA256SUMS)
+shasum -a 256 "$BRIDGE_SOURCE/spry-bridge-${BRIDGE_VERSION#v}-src.tar.gz"
+```
+
+The export contains exactly the source archive, `PKGBUILD` and `SHA256SUMS`.
+Review these inputs before building: the generator, package recipe and tests
+execute source code. Checksums identify bytes; they do not establish that the
+code is trusted. Do not add credentials or unrelated files to the bundle.
+Copy the reviewed archive's 64-character SHA-256 into `BRIDGE_SOURCE_SHA256`.
+
+Return to the installer checkout, keeping the same variables, then preview and
+execute the local build:
+
+```sh
+BRIDGE_SOURCE_SHA256=REPLACE_WITH_REVIEWED_64_CHARACTER_ARCHIVE_SHA256
+BRIDGE_ARTIFACTS="$ISO_RUN/bridge-artifacts-local"
+bash infrastructure/iso/release.sh bridge-build-local \
+  "$ISO_RUN" "$BRIDGE_SOURCE_SHA256" "$BRIDGE_VERSION" "$BRIDGE_SOURCE" "$BRIDGE_ARTIFACTS"
+bash infrastructure/iso/release.sh --execute bridge-build-local \
+  "$ISO_RUN" "$BRIDGE_SOURCE_SHA256" "$BRIDGE_VERSION" "$BRIDGE_SOURCE" "$BRIDGE_ARTIFACTS"
+```
+
+The unprivileged AMD64 builder receives only those three Bridge files as
+read-only inputs, plus the selected installer archive and lock. It does not
+mount the Bridge checkout or `.git`. It validates the archive, regenerates the
+archive and recipe byte-for-byte, and runs the same pinned-toolchain, package and
+selected-pair checks as the GitHub path. An existing output directory or changed
+input is refused. Failed jobs remain available for inspection.
+
+Review `builder.lock`: local provenance uses `SOURCE_KIND=local-archive` and the
+approved `SOURCE_SHA256`, not a fabricated repository commit. This identity does
+not approve installed runtime hashes or qualify hardware. Continue with bundling
+below, then owner signing; no local-source stage signs or installs anything.
+
+### Bundle the selected artifacts
 
 Keep the original `ISO_RUN`. For CI, set `BRIDGE_ARTIFACTS` to the downloaded
 directory containing one package, its exact PKGBUILD and source archive. Then:
@@ -130,9 +190,10 @@ and volumes are retained; inspect the printed container with `docker logs` and
 retry Bridge compilation into a fresh output directory. Do not rebuild successful
 installer packages or mix unrelated runs. An existing bundle is never overwritten.
 
-Select a reviewed published commit with the required package source-identity
-field and selected-pair gates; local uncommitted fixes are
-not fetched. The workflow refuses old recipes rather than patching fetched source.
+For GitHub builds, select a reviewed published commit with the required package
+source-identity field and selected-pair gates. Local changes require the explicit
+local-source path above. Both paths refuse old recipes rather than patching
+selected source to pass a gate.
 
 For media without Bridge, omit its build/bundle stages and explicitly configure
 `INSTALL_BRIDGE=false`. No stage signs packages, starts services, or qualifies
@@ -226,10 +287,10 @@ package-list query uses that same configuration, not the live keyring, which
 is initialized at ISO boot. If the query fails, emits diagnostics (even with
 exit status zero), or returns an empty list, assembly stops. An upstream query
 change also stops the guarded adapter for review.
-For the earlier `key is unknown` error during package-list generation, retry
-assembly with the corrected scripts and the same signed package run; do not
-regenerate your key or resign packages. The adapter is mounted from the checkout;
-this correction does not require rebuilding the Docker image or packages.
+The guarded adapter is mounted from the checkout. A reviewed adapter-only change
+can reuse the same signed package run; follow the
+[frozen-source reuse boundary](#select-your-build-directory). A package-list error
+does not by itself require a new signing key or package signatures.
 
 `GPG key: None` in mkarchiso output refers to its separate image-signing option,
 not package verification. `Secureboot key directory doesn't exist, not signing!`
@@ -244,8 +305,8 @@ Package signing is not Secure Boot qualification for the live medium.
 
 ## 4. Write a USB installer on macOS
 
-Use the separate [USB writer](../infrastructure/iso/usb.sh) after the flash drive
-arrives. ISO assembly never selects or writes a USB device. The writer uses
+Use the separate [USB writer](../infrastructure/iso/usb.sh) with the selected flash
+drive. ISO assembly never selects or writes a USB device. The writer uses
 macOS `diskutil`, `ioreg`, `plutil`, `dd`, `head` and `cmp`, plus the project's
 existing `jq` dependency. It does not need Docker or rebuild the ISO.
 
@@ -270,7 +331,7 @@ bash infrastructure/iso/usb.sh list
    `/dev/rdisk4` alias. The placeholders deliberately do not select a disk.
 
 ```sh
-ISO_FILE='/absolute/path/to/completed/arch-workstation-2026.09.04-x86_64.iso'
+ISO_FILE='/absolute/path/to/completed/arch-workstation-VERSION-x86_64.iso'
 USB_DISK='/dev/diskN'
 bash infrastructure/iso/usb.sh write "$ISO_FILE" "$USB_DISK"
 ```
@@ -323,17 +384,18 @@ before manually removing that exact empty directory.
 
 `tests/test_iso_usb.sh` exercises the safety and copy-verification path with
 mocked OS adapters and regular temporary files. No test unmounts or writes a
-real device. Physical USB write/readback and target boot tests remain **NOT RUN**
-until the flash drive is available.
+real device. Record physical USB write/readback and target boot results separately
+for each selected release and device.
 
 ## If a stage fails
 
 - **Repeated `GPGME error: Inappropriate ioctl for device` during package integrity
   checks:** see the [signature-verification retry](ISO-REFERENCE.md#signature-verification-retry)
   below. Do not delete packages or change your signing key based on this message.
-- **Missing `/work/source/launch-bootstrap`:** a manually selected bundle contains
-  the older recipe. Run stage 1 above; changing only `candidate-01` to `candidate-02`
-  does not refresh a bundle. Do not patch generated recipes or copy loose launchers.
+- **Missing `/work/source/launch-bootstrap`:** inspect the selected source archive
+  and recipe. A stale or incomplete bundle needs a fresh source/package run from
+  stage 1; renaming its directory does not refresh it. Do not patch generated
+  recipes or copy loose launchers.
 - **Job state already exists:** a lower-level command reused an old job name. The
   coordinator generates fresh names. Existing jobs are evidence, not disposable
   clutter to prune automatically.

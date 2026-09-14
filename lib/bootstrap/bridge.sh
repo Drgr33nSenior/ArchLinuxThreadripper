@@ -47,7 +47,7 @@ bridge_memory_contract_identity() {
 }
 
 bridge_verify_bundle() (
-  local dir=$1 keyring=${2:-} fingerprint=${3:-} record path name version arch digest listing desc file count=0
+  local dir=$1 keyring=${2:-} fingerprint=${3:-} record records path name version arch digest listing desc file count=0
   [[ -f $dir/bridge-bundle.json && ! -L $dir/bridge-bundle.json ]] || return 1
   [[ -z $keyring ]] || bridge_signature "$dir/bridge-bundle.json" "$keyring" "$fingerprint" || return 1
   jq -e '
@@ -71,6 +71,9 @@ bridge_verify_bundle() (
   shopt -s nullglob
   local bundle_packages=("$dir"/*.pkg.tar.zst) deps=("$dir"/dependencies/*.pkg.tar.zst)
   ((${#bundle_packages[@]} == 5 && ${#deps[@]} == $(jq '.dependencies|length' "$dir/bridge-bundle.json"))) || return 1
+  records=$(jq -c '(.packages[] | . + {path:.file}),
+    (.dependencies[] | . + {path:("dependencies/"+.file)})' "$dir/bridge-bundle.json") || return 1
+  [[ -n $records ]] || return 1
   while IFS= read -r record; do
     path=$(jq -r .path <<<"$record")
     name=$(jq -r .name <<<"$record") version=$(jq -r .version <<<"$record")
@@ -83,10 +86,7 @@ bridge_verify_bundle() (
         bridge_official_signature "$file" || return 1
       else bridge_signature "$file" "$keyring" "$fingerprint" || return 1; fi
     fi
-  done < <(
-    jq -c '.packages[] | . + {path:.file}' "$dir/bridge-bundle.json"
-    jq -c '.dependencies[] | . + {path:("dependencies/"+.file)}' "$dir/bridge-bundle.json"
-  )
+  done <<<"$records"
   # Database must describe exactly these local packages, not an older repo-add run.
   for name in arch-workstation-bootstrap arch-workstation-bridge-runtime spry-ai-workstation-bridge; do
     file="$dir/$(jq -r --arg n "$name" '.packages[]|select(.name==$n)|.file' "$dir/bridge-bundle.json")"
@@ -133,11 +133,11 @@ bridge_offline_transaction() (
   trap 'exit 143' TERM
   mkdir "$scratch/db" "$scratch/root"
   printf '[options]\nArchitecture = x86_64\nSigLevel = Required DatabaseOptional\nLocalFileSigLevel = Required\n' >"$scratch/pacman.conf"
-  local files=() path
-  while IFS= read -r path; do files+=("$dir/$path"); done < <(
-    jq -r '.packages[]|select(.name=="spry-ai-workstation-bridge" or .name=="arch-workstation-bridge-runtime")|.file' "$dir/bridge-bundle.json"
-    jq -r '.dependencies[].file|"dependencies/"+.' "$dir/bridge-bundle.json"
-  )
+  local files=() path paths
+  paths=$(jq -er '(.packages[]|select(.name=="spry-ai-workstation-bridge" or .name=="arch-workstation-bridge-runtime")|.file),
+    (.dependencies[].file|"dependencies/"+.)' "$dir/bridge-bundle.json") || return 1
+  [[ -n $paths ]] || return 1
+  while IFS= read -r path; do files+=("$dir/$path"); done <<<"$paths"
   # Empty private database proves dependency closure; print never installs.
   pacman --config "$scratch/pacman.conf" --root "$scratch/root" --dbpath "$scratch/db" \
     --logfile "$scratch/pacman.log" --arch x86_64 -Up --print-format '%n %v' -- "${files[@]}"
@@ -183,11 +183,11 @@ bootstrap_install_bridge() {
     bootstrap_die 'target pacman configuration still references live-ISO storage'
     return 1
   fi
-  local files=()
-  while IFS= read -r path; do files+=("$dir/$path"); done < <(
-    jq -r '.packages[]|select(.name=="spry-ai-workstation-bridge" or .name=="arch-workstation-bridge-runtime")|.file' "$dir/bridge-bundle.json"
-    jq -r '.dependencies[].file|"dependencies/"+.' "$dir/bridge-bundle.json"
-  )
+  local files=() paths
+  paths=$(jq -er '(.packages[]|select(.name=="spry-ai-workstation-bridge" or .name=="arch-workstation-bridge-runtime")|.file),
+    (.dependencies[].file|"dependencies/"+.)' "$dir/bridge-bundle.json") || return 1
+  [[ -n $paths ]] || return 1
+  while IFS= read -r path; do files+=("$dir/$path"); done <<<"$paths"
   # Only local archives; target database and normal package hooks. No live install.
   bootstrap_run pacman --root "$BOOTSTRAP_TARGET" --gpgdir /etc/pacman.d/gnupg --needed --noconfirm -U -- "${files[@]}" || return 1
   bootstrap_run install -Dm644 "$dir/bridge-bundle.json" "$BOOTSTRAP_TARGET/usr/share/doc/arch-workstation-bridge-runtime/bridge-bundle.json"

@@ -29,6 +29,9 @@ printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' \
   '  bridge-build)' \
   '    [[ $mounts == false && ! -e $5 && $2 =~ ^[a-f0-9]{40}$ && $3 == v0.0.0 && $4 == */source && -f $4/bootstrap-source.tar.gz && -f $4/source.lock ]] || exit 1' \
   '    if [[ $execute == true ]]; then mkdir "$5"; fi ;;' \
+  '  bridge-build-local)' \
+  '    [[ $mounts == false && ! -e $6 && $2 =~ ^[a-f0-9]{64}$ && $3 == v0.0.0 && $4 == */source && -f $4/bootstrap-source.tar.gz && -f $4/source.lock && -d $5 ]] || exit 1' \
+  '    if [[ $execute == true ]]; then mkdir "$6"; fi ;;' \
   '  packages)' \
   '    [[ $execute == true && $mounts == false && $1 =~ ^[a-z][a-z0-9-]{0,31}$ ]] || exit 1' \
   '    [[ $2 == */source && $3 == "${2%/source}/packages" && $1 == "$(basename -- "${2%/source}")" ]] || exit 1' \
@@ -140,6 +143,28 @@ for failed_stage in image check bridge-build; do
 done
 mkdir "$work/incomplete-run"
 if bash "$release" bridge-build "$work/incomplete-run" "$revision" v0.0.0 "$work/bridge-missing-run" >/dev/null 2>&1; then exit 1; fi
+
+# Local source is explicit, preflighted before Docker work, and never silently
+# substitutes for the commit flow. This fixture checks coordinator boundaries.
+mkdir "$work/local-source"
+source_sha=$(printf '%064d' 0)
+: >"$ISO_RELEASE_TEST_LOG"
+bash "$release" bridge-build-local "$second_run" "$source_sha" v0.0.0 "$work/local-source" "$work/local-built" >"$work/result" 2>&1
+[[ ! -e $work/local-built && $(tr '\n' ' ' <"$ISO_RELEASE_TEST_LOG") == 'bridge-build-local ' ]]
+: >"$ISO_RELEASE_TEST_LOG"
+bash "$release" --execute bridge-build-local "$second_run" "$source_sha" v0.0.0 "$work/local-source" "$work/local-built" >"$work/result" 2>&1
+[[ -d $work/local-built && $(tr '\n' ' ' <"$ISO_RELEASE_TEST_LOG") == 'bridge-build-local image check bridge-build-local ' ]]
+grep -q '^BRIDGE_ARTIFACTS=' "$work/result"
+for failed_stage in image check bridge-build-local; do
+  status=0
+  ISO_RELEASE_TEST_FAIL=$failed_stage bash "$release" --execute bridge-build-local "$second_run" "$source_sha" v0.0.0 "$work/local-source" "$work/local-failed" >"$work/result" 2>&1 || status=$?
+  [[ $status == 7 && ! -e $work/local-failed ]]
+  if grep -q '^BRIDGE_ARTIFACTS=' "$work/result"; then exit 1; fi
+done
+before=$(<"$ISO_RELEASE_TEST_LOG")
+if bash "$release" bridge-build-local "$work/incomplete-run" "$source_sha" v0.0.0 "$work/local-source" "$work/local-missing" >/dev/null 2>&1; then exit 1; fi
+if bash "$release" --allow-iso-mounts bridge-build-local "$second_run" "$source_sha" v0.0.0 "$work/local-source" "$work/local-missing" >/dev/null 2>&1; then exit 1; fi
+[[ $(<"$ISO_RELEASE_TEST_LOG") == "$before" ]]
 
 # One reviewed command builds installer, fetches/builds Bridge, then bundles it.
 : >"$ISO_RELEASE_TEST_LOG"

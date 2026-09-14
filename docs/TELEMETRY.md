@@ -22,7 +22,7 @@ policy or tune hardware.
 | node-exporter | CPU, RAM, pressure, filesystem, disk and textfile metrics | Read-only host paths, separate admission namespace; no GPU device mounts |
 | kube-state-metrics | Pod/deployment state, requests and limits | Read-only Kubernetes RBAC; not actual resource utilisation |
 | Optional kubelet scrape | Actual pod memory, CPU time and throttling | Verified TLS and node-specific `nodes/metrics` RBAC |
-| Host sysfs sampler | Per-PCI-device GPU sensors and CPU power-policy state | Atomic textfile; unprivileged timer; no ROCm library injection |
+| Host sysfs sampler | GPU sensors, CPU power-policy state and supported Corsair PSU output power | Atomic textfile and private sampled-energy state; unprivileged timer; no ROCm library injection |
 
 The main namespace is `workstation-observability`. Only
 `workstation-observability-host` permits hostPath admission for node-exporter;
@@ -54,10 +54,9 @@ simultaneous RWO mounts. No new operator or monitoring framework manages them.
 
 ## Versions and support
 
-Cluster pins: Prometheus 3.14.0, Grafana 13.2.1, Loki 3.7.7, Tempo 3.0.3,
-Alloy 1.19.2, node-exporter 1.12.1 and kube-state-metrics 2.20.0. Exact digests
-and release/configuration sources are in `versions.json`. Tempo 3 uses its own
-single-binary schema, not a copied Tempo 2 compactor configuration.
+Cluster versions, immutable digests and upstream configuration sources are
+authoritative in [versions.json](../infrastructure/observability/versions.json).
+Use its selected Tempo single-binary schema when reviewing configuration.
 
 The host uses Arch's `grafana-alloy` package, executable
 `/usr/bin/grafana-alloy`, pinned to 1.13.2-1 by the selected package sources.
@@ -86,9 +85,9 @@ does not provide an individual span-link transform context. The collector
 therefore supports the fail-closed rule that drops spans with links. The local
 fixture checks the selected pinned image behavior with synthetic data only.
 
-Do not infer exporter support from similar R9700/R9700S names. Released AMD
-exporter 1.5.1 selects older AMD-SMI/profiler inputs and its chart needs broad
-device privileges. The researched 1.5.2 artifact could not be resolved.
+Do not infer exporter support from similar R9700/R9700S names. The
+`deferred_amd_exporter` entry in `versions.json` records the reviewed artifact,
+its older AMD-SMI/profiler inputs and the chart's broad device privileges.
 `TELEMETRY_GPU_EXPORTER=true` therefore fails explicitly. The sysfs sampler
 does not need it and does not claim unsupported counters. A future candidate
 needs an available immutable image, actual R9700 driver/API checks, minimal
@@ -362,6 +361,120 @@ unsupported thermal/power series remain absent. Selected clocks are not sustaine
 clock measurements. Identical cards remain separate series; changed enumeration
 requires reinspection. No GPU allocation or combined VRAM is inferred.
 
+### Corsair PSU power and tracked energy
+
+Connect the PSU's supported USB telemetry cable to the motherboard, following
+the exact PSU revision's manual. Confirm the label: **HX1500i** is a supported
+Corsair HXi model; a similar product name alone does not establish support.
+The selected Linux source
+[`73e3f0710014fe6d4ed98cfc02292f6121db7558`](https://github.com/torvalds/linux/blob/73e3f0710014fe6d4ed98cfc02292f6121db7558/drivers/hwmon/corsair-psu.c)
+includes HX1500i USB identity `1b1c:1c1f`, registers the `corsairpsu` hwmon
+name, and exposes read-only power sensors. The installed kernel must have
+`CONFIG_SENSORS_CORSAIR_PSU` enabled and bind the actual device. A source pin
+does not establish the installed kernel configuration or sensor accuracy.
+
+The sampler automatically discovers one `corsairpsu` hwmon device; it does not
+assume `hwmon0` or add a USB/hidraw permission. Multiple matching devices are
+ambiguous and produce unavailable values. It reads only fixed sensor labels:
+`power total`, `power +12v`, `power +5v` and `power +3.3v`. The hwmon suffix
+`_input` means a sensor reading, **not AC input power**. Here the power readings
+are DC output watts delivered to components. Rails are components of the total,
+not additional consumption. GPU power remains a separate device observation.
+
+No liquidctl/iCUE controller, fan control, rail-mode change, efficiency curve
+or new daemon is added. Do not calculate AC watts from volts times amps: that
+does not account for power factor. Use a separate measured wall-power source
+for socket energy or electricity costs. See the
+[Corsair cable instructions](https://assets.corsair.com/image/upload/v1701372411/documents/49_002658_AA_WW_HXi_Series_QSG_Web.pdf)
+and the [input-power estimation limitation](https://github.com/liquidctl/liquidctl/blob/v1.15.0/docs/corsair-hxi-rmi-psu-guide.md).
+
+Both telemetry profiles carry these bounded metrics through the existing
+node-exporter textfile path:
+
+| Metric | Meaning |
+| --- | --- |
+| `workstation_psu_output_power_watts` | Valid reported DC total, never a sum of total and rails |
+| `workstation_psu_rail_power_watts` | Separate available DC rail readings; fixed `rail` labels `12v`, `5v`, `3v3` |
+| `workstation_psu_available` | Whether one usable total-power sensor was read |
+| `workstation_psu_sample_timestamp_seconds` | Actual valid sensor sample time, not the last Prometheus scrape |
+| `workstation_psu_output_energy_joules_total` | Persisted estimate integrating covered DC power intervals |
+| `workstation_psu_energy_covered_seconds_total` | Cumulative duration included in that estimate |
+| `workstation_psu_energy_available` | Whether the private energy state is usable and persisted |
+| `workstation_psu_energy_sample_timestamp_seconds` | Time of the corresponding energy-state observation |
+
+The energy estimate uses trapezoidal integration between adjacent valid
+samples. It requires the same boot and device, consistent elapsed clocks, and
+an interval no longer than 90 seconds. Reboots, missing readings, suspend/clock
+discontinuities, device replacement and long gaps do not contribute invented
+energy. Coverage excludes those intervals. A first sample has no covered
+interval; zero coverage is not evidence of zero consumption. Sampling can miss
+fast power changes. This is neither a hardware energy meter nor a complete
+electricity bill.
+
+The sampler serializes collection and publication using its private lock. Its
+versioned `.psu-energy.json` in `/var/lib/workstation-telemetry` is mode `0600`;
+only `hardware.prom` is reader-visible. It durably saves the counters before
+publishing them. Invalid state is retained, not reset: energy becomes
+unavailable while other valid sensors remain usable. A stopped sampler's last
+textfile becomes stale; PSU panels and Bridge use the embedded timestamps,
+not scrape freshness, with a 90-second threshold.
+
+Grafana includes DC total/rail history, cumulative estimated kWh and coverage.
+One kWh is 3,600,000 joules. The cumulative stat is **not** energy consumed
+within the dashboard's selected range. Prometheus retains time-series history
+for at most 14 days or 24 GB; the private counter persists independently.
+Back up that state with the existing host-state procedure. Do not reset it to
+make a graph look healthy. No tariff, billing calculation or PSU alert is
+enabled for machines without an explicitly expected PSU.
+
+#### Owner qualification on the installed workstation
+
+These are owner-run checks, not installation actions performed by source tests.
+First confirm the exact PSU/cable and the reviewed kernel/runtime package.
+The following reads do not change the driver or PSU:
+
+```sh
+uname -r
+lsusb -d 1b1c:
+for name in /sys/class/hwmon/hwmon*/name; do
+  [ "$(cat "$name")" = corsairpsu ] || continue
+  sensor_dir=${name%/name}
+  printf '%s\n' "$sensor_dir"
+  cat "$sensor_dir/power1_label" "$sensor_dir/power1_input"
+done
+systemctl show workstation-telemetry.service \
+  -p User -p Group -p PrivateDevices -p NoNewPrivileges -p MemoryMax
+```
+
+After the existing reviewed telemetry activation, inspect two or more timer
+samples at least 30 seconds apart:
+
+```sh
+systemctl status workstation-telemetry.timer workstation-telemetry.service
+rg '^workstation_psu_' /var/lib/workstation-telemetry/hardware.prom
+stat -c '%a %U %n' /var/lib/workstation-telemetry/.psu-energy.json
+```
+
+Require reader-visible watts, fresh timestamps, increasing covered duration,
+and private state owned by `workstation-telemetry`. Verify these readings arrive
+at the private Prometheus endpoint and both Grafana and Bridge. Compare idle
+and an already approved workload; do not launch a GPU stress test solely for
+this check. Verify missing/stale behavior during a separately approved
+interruption, and that no energy is extrapolated across reboot or USB loss.
+A wall meter may read higher because it includes conversion losses; it is not
+an equality check against DC output. Inspect timer duration and CPU/memory
+overhead; source fixtures do not qualify USB access or the packaged sandbox.
+
+If energy state is corrupt, stop the timer through the normal owner maintenance
+procedure and wait until the service is inactive. Retain the exact private
+state and diagnose ownership/schema/storage first. Restore only a verified
+backup while collection is stopped; never repair arbitrary fields or delete
+the file to clear the error. A backup restore can decrease counters, so preserve
+that discontinuity in monitoring interpretation. Do not change service
+permissions, expose hidraw or run the sampler as root to obtain readings.
+
+### Host forwarding and Bridge access
+
 For host Alloy, obtain actual ClusterIPs. The full profile requires all three
 services. The metrics profile requires only Alloy and Prometheus:
 
@@ -431,7 +544,7 @@ redirects/proxy-environment routing and bounds exporter queues.
 Bridge emits registered HTTP-route and operation metrics/spans, not request
 bodies, command output, credentials or prompts. Its owner-only
 `GET /api/v1/telemetry/summary` accepts no custom PromQL, URL or selectors. It
-returns bounded RAM, pressure, SGLang queue and TTFT observations with source
+returns bounded RAM, pressure, SGLang queue, TTFT and PSU observations with source
 age, not a general database proxy or GPU qualification. Existing authorization,
 approval and capability checks remain unchanged.
 
@@ -524,6 +637,7 @@ Record passed, failed, blocked or not run for each gate:
 | Host package | `pacman -Qkk arch-workstation-bridge-runtime grafana-alloy` | Package files, not service/hardware health |
 | Host services | `systemctl status workstation-alloy.service workstation-telemetry.timer` | Actual execution and local failure diagnosis |
 | Metrics path | Private `up` query, fresh hardware timestamp and two distinct GPU identities | Ingestion, not GPU correctness |
+| PSU path | Exact USB/kernel identity, unprivileged fresh DC watts, persistent energy/coverage, gap behavior and private dashboard | Actual PSU/sandbox qualification; not measured wall energy |
 | Kubelet | `up{job="kubelet-cadvisor"}` and actual memory/throttling series | TLS/RBAC and usable observations; no `nodes/proxy` workaround |
 | SGLang | Ready qualified model; nonempty serving metrics during test requests | Actual metrics contract with this image/model |
 | Optional tracing | OTel import/help check in exact image, maintenance trace profile, sanitized spans | Dependencies and delivery, not numerical correctness |
@@ -531,13 +645,13 @@ Record passed, failed, blocked or not run for each gate:
 | Persistence | Owner-controlled backend restart; old data remains queryable | PVC/WAL recovery, not backup |
 | Overhead | Matched repeated serving/build/gaming runs | Measured cost and uncertainty |
 
-The image validator only permits a named local Docker context, no external
-network, no real journal/device/host-root access and no published ports. Parser
-and host-log tests use `--network none`; the synthetic OTLP test uses an owned
-internal Docker network between its two restricted test containers. Missing images or
-tools block it; it does not pull implicitly. Private logs remain in `test-results`.
-It is not a disposable VM boot or service acceptance test.
 ### Image-validation fixture access
+
+Run the image validator only in an explicitly authorized disposable environment
+with a reviewed local Unix-socket Docker context and the pinned images cached.
+Missing images or tools block it; it does not pull. Parser and host-log tests use
+`--network none`; the synthetic OTLP pair uses an owned internal Docker network.
+No external network, real journal, devices, host root or published ports are used.
 
 The image validator makes only its nonsecret rule and OTLP input fixtures readable
 by their nonroot container consumers. Input directories are mounted read-only and
@@ -546,9 +660,7 @@ owner-private. Read-only mounts do not grant read access across UIDs. Do not
 replace these narrow modes with recursive permission changes or run consumers as
 root.
 
-On an authorized disposable Linux host with the reviewed images already cached,
-run the fixture and image-validator commands in the table above with a reviewed
-local Unix-socket Docker context. They check configuration parsing, rule behavior,
+The fixture and image-validator commands in the table check parsing, rule behavior,
 sanitization, consumer access and retained-evidence privacy. They do not qualify
 the target AMD64 service, live delivery, collector memory-pressure behavior or
 workstation overhead.

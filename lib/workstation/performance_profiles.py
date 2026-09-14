@@ -24,7 +24,7 @@ IDENTITY = ("model_revision", "tokenizer_sha256", "workload_sha256", "hardware_s
 VARIABLES = frozenset(("compiler_backend", "image", "concurrency", "loading_strategy",
                        "loading_threads", "engine_queue", "interactive_priority",
                        "model", "tokenizer", "workload", "hardware", "software", "launch",
-                       "resources", "quantization", "coding_corpus", "generation", "profile", "prefix_state"))
+                       "resources", "quantization", "coding_corpus", "generation", "profile", "prefix_state", "kv_cache"))
 NON_EQUIVALENT_VARIABLES = frozenset(("model", "tokenizer", "workload", "hardware", "quantization",
                                       "resources", "concurrency", "coding_corpus", "generation", "profile", "prefix_state"))
 PRODUCER_CONDITIONS_SCHEMA = 2
@@ -35,8 +35,10 @@ OBSERVED_LAUNCH_OPTIONS = frozenset(("--model-path", "--revision", "--served-mod
                                     "--model-loader-extra-config", "--schedule-policy", "--chunked-prefill-size", "--attention-backend",
                                     "--stream-interval", "--torch-compile-max-bs", "--cuda-graph-backend-decode",
                                     "--cuda-graph-backend-prefill", "--cuda-graph-tc-compiler", "--enable-torch-compile",
-                                    "--cuda-graph-bs-decode", "--cuda-graph-bs-prefill"))
+                                    "--cuda-graph-bs-decode", "--cuda-graph-bs-prefill", "--kv-cache-dtype",
+                                    "--page-size", "--max-total-tokens", "--disable-overlap-schedule"))
 OBSERVED_LAUNCH_LIST_OPTIONS = frozenset(("--cuda-graph-bs-decode", "--cuda-graph-bs-prefill"))
+OBSERVED_LAUNCH_BOOL_OPTIONS = frozenset(("--enable-torch-compile", "--disable-overlap-schedule"))
 
 
 def digest_bytes(data):
@@ -187,7 +189,7 @@ def normalized_observed_launch(runtime):
     for option, value in launch[0].items():
         if option not in OBSERVED_LAUNCH_OPTIONS:
             raise ValueError("observed runtime launch contains an unsupported option")
-        if option == "--enable-torch-compile":
+        if option in OBSERVED_LAUNCH_BOOL_OPTIONS:
             if type(value) is not bool:
                 raise ValueError("observed runtime launch compiler flag is malformed")
         elif option in OBSERVED_LAUNCH_LIST_OPTIONS:
@@ -200,6 +202,94 @@ def normalized_observed_launch(runtime):
     if "--enable-torch-compile" not in normalized:
         raise ValueError("observed runtime launch compiler state is unavailable")
     return normalized
+
+
+def experimental_kv_descriptor(runtime, measured=False):
+    """Validate the optional stable experimental cache observation.
+
+    The runtime receipt collector removes process IDs, start ticks and counters
+    before this value reaches evidence. The remaining descriptor binds source,
+    mapped binary, codec and effective configuration without treating weight
+    quantization as KV-cache execution.
+    """
+    if not isinstance(runtime, dict):
+        raise ValueError("runtime evidence is unavailable")
+    present = "experimental_kv" in runtime
+    value = runtime.get("experimental_kv")
+    launch = normalized_observed_launch(runtime)
+    requested = launch.get("--attention-backend") == "ultraquant-rdna4-v1"
+    if not present:
+        if requested:
+            raise ValueError("requested experimental KV backend lacks an execution descriptor")
+        return None
+    if value is None:
+        raise ValueError("experimental KV descriptor cannot be null")
+    if not isinstance(value, dict):
+        raise ValueError("experimental KV descriptor is malformed")
+    required = {"schema", "runtime", "source_repository", "source_revision", "source_tree_sha256",
+                "patch_sha256", "binary_sha256", "compiler_revision", "dependencies_sha256", "codec",
+                "configuration_sha256", "configuration", "requested_mode", "observed_mode", "qualification",
+                "restart_required"}
+    if set(value) != required:
+        raise ValueError("experimental KV descriptor keys are unsupported")
+    config = value["configuration"]
+    config_keys = {"gpu_arch", "tensor_parallel", "compute_dtype", "attention", "head_dimension",
+                   "kv_heads", "query_heads", "page_size", "rotation"}
+    if (type(value["schema"]) is not int or value["schema"] != 1 or value["runtime"] != "sglang" or value["source_repository"] != "sgl-project/sglang"
+            or not isinstance(value["source_revision"], str) or not re.fullmatch(r"[a-f0-9]{40}", value["source_revision"])
+            or any(not isinstance(value[key], str) or not re.fullmatch(r"[a-f0-9]{64}", value[key])
+                   for key in ("source_tree_sha256", "patch_sha256", "dependencies_sha256", "configuration_sha256"))
+            or not isinstance(value["compiler_revision"], str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 ._+:/-]{0,239}", value["compiler_revision"])
+            or value["codec"] != "ultraquant-rdna4-v1" or value["requested_mode"] != "ultraquant-rdna4-v1"
+            or value["qualification"] != "unqualified" or value["restart_required"] is not True
+            or value["observed_mode"] not in ("not-run", "compressed-gpu")
+            or not isinstance(config, dict) or set(config) != config_keys):
+        raise ValueError("experimental KV descriptor values are unsupported")
+    binary = value["binary_sha256"]
+    if binary is not None and (not isinstance(binary, str) or not re.fullmatch(r"[a-f0-9]{64}", binary)):
+        raise ValueError("experimental KV binary digest is malformed")
+    if (config["gpu_arch"] != "gfx1201" or type(config["tensor_parallel"]) is not int or config["tensor_parallel"] != 1
+            or config["compute_dtype"] != "float16" or config["attention"] != "causal-full"
+            or type(config["head_dimension"]) is not int or config["head_dimension"] not in (32, 64, 128, 256)
+            or type(config["kv_heads"]) is not int or not 1 <= config["kv_heads"] <= 64
+            or type(config["query_heads"]) is not int or not config["kv_heads"] <= config["query_heads"] <= 128
+            or config["query_heads"] % config["kv_heads"] or type(config["page_size"]) is not int or config["page_size"] != 1
+            or config["rotation"] != "post-rope-qk"
+            or canonical_digest(config) != value["configuration_sha256"]):
+        raise ValueError("experimental KV configuration is unsupported")
+    settings, devices = runtime.get("settings"), runtime.get("devices")
+    tp_options = [option for option in ("--tp", "--tp-size") if option in launch]
+    if (not requested or launch.get("--dtype") != "float16" or len(tp_options) != 1
+            or launch[tp_options[0]] != "1" or not isinstance(settings, dict) or settings.get("MODEL_DTYPE") != "float16"
+            or str(settings.get("TENSOR_PARALLEL")) != "1" or not isinstance(devices, list) or len(devices) != 1
+            or devices[0].get("gfx", "").split(":", 1)[0] != "gfx1201"):
+        raise ValueError("experimental KV descriptor does not match observed launch/runtime")
+    architectures = runtime.get("model_contract", {}).get("architectures")
+    if (not isinstance(architectures, list) or not architectures
+            or any(not isinstance(item, str) for item in architectures)
+            or architectures != ["LlamaForCausalLM"]):
+        raise ValueError("experimental KV model architecture is unsupported")
+    if value["observed_mode"] == "compressed-gpu" and binary is None:
+        raise ValueError("compressed experimental KV observation lacks mapped binary digest")
+    if measured and (value["observed_mode"] != "compressed-gpu" or binary is None):
+        raise ValueError("experimental KV profile needs observed compressed GPU execution")
+    return value
+
+
+def valid_stable_experimental_kv_descriptor(value):
+    """Validate a retained stable descriptor when no live runtime JSON exists."""
+    if not isinstance(value, dict) or not isinstance(value.get("configuration"), dict):
+        return False
+    runtime = {"settings": {"MODEL_DTYPE": "float16", "TENSOR_PARALLEL": "1"},
+               "devices": [{"gfx": "gfx1201"}],
+               "launch": [{"--attention-backend": "ultraquant-rdna4-v1", "--dtype": "float16",
+                           "--tp": "1", "--enable-torch-compile": False}],
+               "model_contract": {"architectures": ["LlamaForCausalLM"], "quant_method": "unquantized"},
+               "experimental_kv": value}
+    try:
+        return experimental_kv_descriptor(runtime) == value
+    except (KeyError, TypeError, ValueError):
+        return False
 
 
 def observed_launch_digest(runtime):
@@ -279,7 +369,12 @@ def producer_conditions(serving, runtime_digest):
 
 def producer_condition_details(serving):
     """Private, bounded values that explain a changed observed launch digest."""
-    return {"observed_launch": normalized_observed_launch(serving["runtime"])}
+    runtime = serving["runtime"]
+    result = {"observed_launch": normalized_observed_launch(runtime)}
+    descriptor = experimental_kv_descriptor(runtime)
+    if descriptor is not None:
+        result["experimental_kv"] = descriptor
+    return result
 
 
 def valid_producer_conditions(value):
@@ -290,7 +385,7 @@ def valid_producer_conditions(value):
                     for key in PRODUCER_CONDITION_KEYS - {"schema"}))
 
 
-def checked_run_matches_profile(run, identity, conditions):
+def checked_run_matches_profile(run, identity, conditions, descriptor=None):
     """Revalidate the selected quality run without trusting a stored status."""
     if not isinstance(run, dict) or not valid_producer_conditions(conditions):
         return False
@@ -303,7 +398,8 @@ def checked_run_matches_profile(run, identity, conditions):
     return (derived == identity
             and run_identity.get("resources") == pod.get("resources")
             and all(run_conditions[key] == conditions[key]
-                    for key in PRODUCER_CONDITION_KEYS - {"runtime_sha256"}))
+                    for key in PRODUCER_CONDITION_KEYS - {"runtime_sha256"})
+            and experimental_kv_descriptor(runtime) == descriptor)
 
 
 def startup_matches_serving(rows, serving):
@@ -535,14 +631,16 @@ def inspect(bundle_path):
             if any(run.get("schema") != 1 for run in runs):
                 raise ValueError("kernel-run schema is unsupported")
             memory_only = quality.get("comparison") == "host-memory-only" if isinstance(quality, dict) else False
+            experimental = quality.get("comparison") == "experimental-kv" if isinstance(quality, dict) else False
             tolerances = quality.get("quality") if isinstance(quality, dict) else None
-            expected_quality = model_kernels.compare_quality(runs[0], runs[1], tolerances["atol"], tolerances["rtol"], memory_only)
+            expected_quality = model_kernels.compare_quality(runs[0], runs[1], tolerances["atol"], tolerances["rtol"], memory_only, experimental)
             selected_run = runs[1]
             selected_matches_serving = (
                 selected_run.get("pod") == decoded["serving"][0]["pod"]
                 and selected_run.get("workload_sha256") == decoded["serving"][0]["workload_sha256"]
                 and selected_run.get("identity", {}).get("runtime") == decoded["serving"][0]["runtime"]
-                and checked_run_matches_profile(selected_run, derived_identity, conditions))
+                and checked_run_matches_profile(selected_run, derived_identity, conditions,
+                                                condition_details.get("experimental_kv")))
         except (KeyError, TypeError, ValueError):
             raise ValueError("numerical quality does not bind retained checked kernel runs") from None
         if (quality != expected_quality
@@ -608,6 +706,11 @@ def differences(first, second, declared):
                 right = second.get("producer_condition_details", {}).get("observed_launch")
             all_differences.append({"field": f"producer.{key}", "baseline": left, "candidate": right,
                                     "declared_as": declaration, "declared": declaration in declared})
+    left = first.get("producer_condition_details", {}).get("experimental_kv")
+    right = second.get("producer_condition_details", {}).get("experimental_kv")
+    if left != right:
+        all_differences.append({"field": "producer.experimental_kv", "baseline": left, "candidate": right,
+                                "declared_as": "kv_cache", "declared": "kv_cache" in declared})
     keys = set(first["experiment"]["variables"]) | set(second["experiment"]["variables"])
     for key in sorted(keys):
         left, right = first["experiment"]["variables"].get(key), second["experiment"]["variables"].get(key)
@@ -664,12 +767,14 @@ def retained_quality_run(record):
             or details.get("observed_launch") != normalized_observed_launch(run["identity"]["runtime"])
             or conditions.get("observed_launch_sha256")
             != canonical_digest(details["observed_launch"])
-            or not checked_run_matches_profile(run, record.get("identity"), conditions)):
+            or not checked_run_matches_profile(run, record.get("identity"), conditions,
+                                               details.get("experimental_kv"))):
         return None
     try:
         tolerances = quality["quality"]
         if model_kernels.compare_quality(baseline, run, tolerances["atol"], tolerances["rtol"],
-                                         quality.get("comparison") == "host-memory-only") != quality:
+                                         quality.get("comparison") == "host-memory-only",
+                                         quality.get("comparison") == "experimental-kv") != quality:
             return None
     except (KeyError, TypeError, ValueError):
         return None
@@ -688,7 +793,9 @@ def cross_profile_quality(first, second, declared_differences):
         left, right = (value["quality"] for value in source)
         if left.get("atol") != right.get("atol") or left.get("rtol") != right.get("rtol"):
             raise ValueError("quality tolerances differ")
-        result = model_kernels.compare_quality(baseline, candidate, left["atol"], left["rtol"])
+        experimental = (source[0].get("comparison") == "experimental-kv"
+                        or source[1].get("comparison") == "experimental-kv")
+        result = model_kernels.compare_quality(baseline, candidate, left["atol"], left["rtol"], False, experimental)
     except (KeyError, TypeError, ValueError):
         return {"status": "incomplete", "reason": "matched cross-profile kernel runs or tolerances differ"}
     return {"status": "passed", "baseline_sha256": canonical_digest(baseline),
@@ -956,12 +1063,21 @@ def select(comparison, owner, candidate_id, previous=None):
         raise ValueError("selection must name the comparison candidate exactly")
     if comparison.get("recommendation") != "candidate":
         raise ValueError("candidate is not eligible for selection from this comparison")
+    descriptor = comparison["candidate"].get("producer_condition_details", {}).get("experimental_kv")
+    if descriptor is not None:
+        # Revalidate from the retained profile runtime before an owner can
+        # record selection. A source receipt or requested flag is not proof of
+        # writer+reader execution and remains unselectable.
+        runtime = comparison["candidate"].get("quality_run", {}).get("identity", {}).get("runtime")
+        if not isinstance(runtime, dict) or runtime.get("experimental_kv") != descriptor:
+            raise ValueError("experimental KV selection lacks retained checked runtime evidence")
+        experimental_kv_descriptor(runtime, measured=True)
     previous_record = None
     if previous is not None:
         if previous.get("schema") != 1 or previous.get("kind") != "workstation-measured-profile-selection":
             raise ValueError("unsupported previous selection")
         previous_record = {"profile_id": previous["selected_profile_id"], "selection_sha256": digest_bytes(json.dumps(previous, sort_keys=True, separators=(",", ":")).encode())}
-    return {"schema": 1, "kind": "workstation-measured-profile-selection", "status": "selected-unqualified",
+    result = {"schema": 1, "kind": "workstation-measured-profile-selection", "status": "selected-unqualified",
             "owner": owner, "selected_profile_id": candidate_id, "baseline_profile_id": comparison["baseline"]["profile_id"],
             "previous_selection": previous_record, "comparison_sha256": digest_bytes(json.dumps(comparison, sort_keys=True, separators=(",", ":")).encode()),
             "runtime_identity": comparison["candidate"]["identity"], "evidence": {"candidate_manifest_sha256": comparison["candidate"]["manifest_sha256"],
@@ -970,9 +1086,12 @@ def select(comparison, owner, candidate_id, previous=None):
             "selection_reason": comparison["recommendation"],
             "limitations": ["Owner selection retains the prior baseline and does not apply a source patch or start a workload.",
                             "Qualification is stale after a relevant runtime, model, launch, software, or hardware identity change."]}
+    if descriptor is not None:
+        result["experimental_kv"] = descriptor
+    return result
 
 
-def selection_status(selection, current_identity, current_conditions=None):
+def selection_status(selection, current_identity, current_conditions=None, current_descriptor=None):
     if selection.get("schema") != 1 or selection.get("kind") != "workstation-measured-profile-selection":
         raise ValueError("unsupported selection")
     if not isinstance(current_identity, dict) or set(current_identity) != set(IDENTITY):
@@ -992,6 +1111,24 @@ def selection_status(selection, current_identity, current_conditions=None):
         return {"schema": 1, "kind": "workstation-measured-profile-status", "status": "unknown",
                 "selected_profile_id": selection["selected_profile_id"], "changed_identity_fields": changed,
                 "reason": "current identity observation lacks normalized source conditions"}
+    selected_descriptor = selection.get("experimental_kv")
+    if selected_descriptor is not None and not valid_stable_experimental_kv_descriptor(selected_descriptor):
+        return {"schema": 1, "kind": "workstation-measured-profile-status", "status": "unknown",
+                "selected_profile_id": selection["selected_profile_id"], "changed_identity_fields": changed,
+                "reason": "selected profile experimental KV descriptor is malformed"}
+    if selected_descriptor is not None and current_descriptor is None:
+        return {"schema": 1, "kind": "workstation-measured-profile-status", "status": "unknown",
+                "selected_profile_id": selection["selected_profile_id"], "changed_identity_fields": changed,
+                "reason": "current identity observation lacks experimental KV execution descriptor"}
+    if current_descriptor is not None and not valid_stable_experimental_kv_descriptor(current_descriptor):
+        return {"schema": 1, "kind": "workstation-measured-profile-status", "status": "unknown",
+                "selected_profile_id": selection["selected_profile_id"], "changed_identity_fields": changed,
+                "reason": "current identity experimental KV descriptor is malformed"}
+    if selected_descriptor != current_descriptor:
+        return {"schema": 1, "kind": "workstation-measured-profile-status", "status": "stale",
+                "selected_profile_id": selection["selected_profile_id"], "changed_identity_fields": changed,
+                "changed_condition_fields": ["experimental_kv"],
+                "reason": "selected profile experimental KV descriptor changed"}
     condition_changed = [key for key in sorted(selected_conditions) if current_conditions[key] != selected_conditions[key]]
     return {"schema": 1, "kind": "workstation-measured-profile-status",
             "status": "stale" if condition_changed else "selected-unqualified-current",

@@ -184,7 +184,10 @@ for _ in {1..20}; do
   fi
   sleep 1
 done
-((otlp_delivered)) || { printf 'OTLP fixture did not accept its synthetic trace request\n' >&2; exit 1; }
+((otlp_delivered)) || {
+  printf 'OTLP fixture did not accept its synthetic trace request\n' >&2
+  exit 1
+}
 sleep 2
 docker --context "$context" logs "$otlp_name" >"$output/otlp.log" 2>&1
 ruby - "$output/otlp.log" <<'RUBY'

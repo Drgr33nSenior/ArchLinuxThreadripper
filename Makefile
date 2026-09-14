@@ -14,24 +14,36 @@ test:
 	@bash tests/run.sh
 
 shellcheck:
-	@if command -v shellcheck >/dev/null 2>&1; then \
-		{ rg --files -g '*.sh' -g 'bin/*' -g 'PKGBUILD' -g 'launch-*'; printf '%s\n' templates/arch/uki-sync templates/workstation/restic/workstation-restic; } | sort -u | xargs shellcheck -x; \
+	@set -euo pipefail; if command -v shellcheck >/dev/null 2>&1; then \
+		files=$$(rg --files -g '*.sh' -g 'bin/*' -g 'PKGBUILD' -g 'launch-*'); \
+		[[ -n $$files ]] || { echo 'FAIL: shellcheck discovery returned no files' >&2; exit 1; }; \
+		files=$$(printf '%s\n' "$$files" templates/arch/uki-sync templates/workstation/restic/workstation-restic | sort -u); \
+		args=(); while IFS= read -r file; do args+=("$$file"); done <<<"$$files"; \
+		shellcheck -x "$${args[@]}"; \
 	else \
 		echo 'SKIP: shellcheck is not installed'; \
 	fi
 
 shfmt:
-	@if command -v shfmt >/dev/null 2>&1; then \
-		{ rg --files -g '*.sh' -g 'bin/*'; printf '%s\n' templates/arch/uki-sync templates/workstation/restic/workstation-restic; } | sort -u | xargs shfmt -d -i 2 -ci; \
+	@set -euo pipefail; if command -v shfmt >/dev/null 2>&1; then \
+		files=$$(rg --files -g '*.sh' -g 'bin/*'); \
+		[[ -n $$files ]] || { echo 'FAIL: shfmt discovery returned no files' >&2; exit 1; }; \
+		files=$$(printf '%s\n' "$$files" templates/arch/uki-sync templates/workstation/restic/workstation-restic | sort -u); \
+		args=(); while IFS= read -r file; do args+=("$$file"); done <<<"$$files"; \
+		shfmt -d -i 2 -ci "$${args[@]}"; \
 	else \
 		echo 'SKIP: shfmt is not installed'; \
 	fi
 
 yaml:
-	@if command -v ruby >/dev/null 2>&1; then \
-		ruby -ryaml -e 'ARGV.each { |path| YAML.load_stream(File.read(path)) }' \
-			$$(find ansible cloud-init kubernetes -type f \( -name '*.yml' -o -name '*.yaml' -o -name '*.tmpl' \) ! -name '*.j2' | sort) && \
-		ruby -ryaml -e 'ARGV.each { |path| YAML.load_stream(File.read(path)) }' $$(rg --files infrastructure apps -g '*.yml' -g '*.yaml'); \
+	@set -euo pipefail; if command -v ruby >/dev/null 2>&1; then \
+		files=$$(find ansible cloud-init kubernetes -type f \( -name '*.yml' -o -name '*.yaml' -o -name '*.tmpl' \) ! -name '*.j2' | sort); \
+		[[ -n $$files ]] || { echo 'FAIL: YAML discovery returned no files' >&2; exit 1; }; \
+		extra=$$(rg --files infrastructure apps -g '*.yml' -g '*.yaml'); \
+		[[ -n $$extra ]] || { echo 'FAIL: workload YAML discovery returned no files' >&2; exit 1; }; \
+		args=(); while IFS= read -r file; do args+=("$$file"); done <<<"$$files"; \
+		while IFS= read -r file; do args+=("$$file"); done <<<"$$extra"; \
+		ruby -ryaml -e 'ARGV.each { |path| YAML.load_stream(File.read(path)) }' "$${args[@]}"; \
 	else \
 		echo 'SKIP: Ruby YAML parser is unavailable'; \
 	fi

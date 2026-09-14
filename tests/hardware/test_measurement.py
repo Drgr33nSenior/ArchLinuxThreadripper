@@ -53,6 +53,34 @@ class Handler(BaseHTTPRequestHandler):
 
 
 class Tests(unittest.TestCase):
+    def test_hwmon_snapshot_enumerates_each_device_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            device = root / "class/hwmon/hwmon0"
+            device.mkdir(parents=True)
+            (device / "name").write_text("fixture")
+            fields = {"temp1_input": "31000", "power1_average": "1000000",
+                      "power1_input": "2000000", "energy1_input": "3000000",
+                      "freq1_input": "4000000"}
+            for name, value in fields.items():
+                (device / name).write_text(value)
+            (device / "temp1_label").write_text("ignored label")
+            (device / "power2_input").symlink_to("missing")
+            (device / "temp2_input").mkdir()
+            scandir = os.scandir
+            scans = []
+
+            def counted(path):
+                if Path(path) == device:
+                    scans.append(path)
+                return scandir(path)
+
+            with patch.object(os, "scandir", side_effect=counted):
+                sample = measurement.snapshot(sys=root, proc=root, cgroup=root)
+            self.assertEqual(sample["hwmon"], {str(device.resolve()): {
+                "name": "fixture", "values": {**fields, "power2_input": None, "temp2_input": None}}})
+            self.assertEqual(len(scans), 1)
+
     def test_pod_cgroup_identity_and_unknown_layout(self):
         uid = "11111111-2222-3333-4444-555555555555"
         with tempfile.TemporaryDirectory() as tmp:

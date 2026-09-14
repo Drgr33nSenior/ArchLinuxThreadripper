@@ -2,7 +2,7 @@
   "uid": "workstation-overview",
   "title": "Workstation: host, serving and telemetry",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "editable": false,
   "tags": [
     "workstation",
@@ -465,12 +465,52 @@
       ]
     },
     {
+      "id": 105,
+      "type": "timeseries",
+      "title": "PSU DC output power (not wall power)",
+      "description": "Corsair native hwmon total, not the sum of total and rails. Missing, ambiguous or stale readings are gaps. This excludes PSU conversion losses and is not AC socket power.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"x": 0, "y": 64, "w": 12, "h": 8},
+      "fieldConfig": {"defaults": {"unit": "watt", "custom": {"spanNulls": false}}, "overrides": []},
+      "targets": [{"refId": "A", "expr": "workstation_psu_output_power_watts{job=\"node\"} and on(job,instance) (workstation_psu_available{job=\"node\"} == 1) and on(job,instance) (time() - workstation_psu_sample_timestamp_seconds{job=\"node\"} <= 90) and on(job,instance) (workstation_psu_sample_timestamp_seconds{job=\"node\"} - time() <= 10)", "legendFormat": "{{instance}} DC output"}]
+    },
+    {
+      "id": 106,
+      "type": "timeseries",
+      "title": "PSU DC rail power",
+      "description": "Components of PSU output; never add these to total power. Unknown sensors are absent.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"x": 12, "y": 64, "w": 12, "h": 8},
+      "fieldConfig": {"defaults": {"unit": "watt", "custom": {"spanNulls": false}}, "overrides": []},
+      "targets": [{"refId": "A", "expr": "workstation_psu_rail_power_watts{job=\"node\"} and on(job,instance) (workstation_psu_available{job=\"node\"} == 1) and on(job,instance) (time() - workstation_psu_sample_timestamp_seconds{job=\"node\"} <= 90) and on(job,instance) (workstation_psu_sample_timestamp_seconds{job=\"node\"} - time() <= 10)", "legendFormat": "{{instance}} {{rail}} V"}]
+    },
+    {
+      "id": 107,
+      "type": "stat",
+      "title": "Tracked DC energy estimate (cumulative kWh)",
+      "description": "Latest cumulative integral since private sampler state was created, NOT energy for the selected dashboard range or billed AC energy. Only covered intervals count; consult coverage alongside this number. Prometheus retains history for at most 14 days / 24 GB.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"x": 0, "y": 72, "w": 12, "h": 8},
+      "fieldConfig": {"defaults": {"unit": "kwatth", "decimals": 3}, "overrides": []},
+      "targets": [{"refId": "A", "instant": true, "expr": "(workstation_psu_output_energy_joules_total{job=\"node\"} / 3600000) and on(job,instance) (workstation_psu_energy_available{job=\"node\"} == 1) and on(job,instance) (time() - workstation_psu_energy_sample_timestamp_seconds{job=\"node\"} <= 90) and on(job,instance) (workstation_psu_energy_sample_timestamp_seconds{job=\"node\"} - time() <= 10)", "legendFormat": "{{instance}} sampled DC kWh"}]
+    },
+    {
+      "id": 108,
+      "type": "stat",
+      "title": "Tracked energy coverage (cumulative time)",
+      "description": "Elapsed intervals actually integrated, not workstation uptime. Reboots, missing readings, clock/device changes and gaps over 90 seconds are excluded. Zero coverage means no measured interval yet, not zero power consumption.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"x": 12, "y": 72, "w": 12, "h": 8},
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
+      "targets": [{"refId": "A", "instant": true, "expr": "workstation_psu_energy_covered_seconds_total{job=\"node\"} and on(job,instance) (workstation_psu_energy_available{job=\"node\"} == 1) and on(job,instance) (time() - workstation_psu_energy_sample_timestamp_seconds{job=\"node\"} <= 90) and on(job,instance) (workstation_psu_energy_sample_timestamp_seconds{job=\"node\"} - time() <= 10)", "legendFormat": "{{instance}} observed intervals"}]
+    },
+    {
       "id": 100,
       "type": "text",
       "title": "Qualification and evidence",
       "gridPos": {
         "x": 0,
-        "y": 64,
+        "y": 80,
         "w": 24,
         "h": 4
       },

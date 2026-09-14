@@ -110,6 +110,29 @@ expect_failure ws_session_gpu_free "$work/unused-hardware.json"
 printf '{"items":[]}\n' >"$work/api/pods.json"
 printf '{"items":[]}\n' >"$work/api/rs.json"
 
+# A failed PCI enumeration must stop before /sys or /proc holder inspection.
+# Force failure without output so this fixture cannot touch real GPU devices.
+(
+  ws_pci_amd_gpus() { printf '[{"bdf":"0000:01:00.0","device_id":"0x7550","driver":"amdgpu"}]\n'; }
+  ws_pci_amd_gpus | jq '{pci_gpus:.}' >"$work/holder-hardware.json"
+  # Called indirectly by the canonical ws_session_gpu_free implementation.
+  # shellcheck disable=SC2329
+  jq() {
+    if [[ ${*: -1} == '.[].bdf' ]]; then return 42; fi
+    command jq "$@"
+  }
+  # shellcheck disable=SC2329
+  findmnt() {
+    printf 'holder probe reached\n' >"$work/holder-probe"
+    return 1
+  }
+  expect_failure ws_session_gpu_free "$work/holder-hardware.json"
+  if [[ -e $work/holder-probe ]]; then
+    printf 'failed PCI enumeration reached the holder probe\n' >&2
+    exit 1
+  fi
+)
+
 # From here only the host holder probe is mocked, including a failed release.
 ws_session_gpu_free() { [[ ! -e "$work/gpu-held" ]] || ws_die 'fixture GPU still held'; }
 ws_session_plan gaming | jq -e '.status=="plan-only-no-cluster-contact"' >/dev/null

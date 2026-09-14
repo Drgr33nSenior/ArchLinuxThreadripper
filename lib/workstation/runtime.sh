@@ -3,28 +3,30 @@
 
 set -o errexit -o nounset -o pipefail
 
+ws_runtime_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck source=lib/workstation/build.sh
-source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/build.sh"
+source "$ws_runtime_dir/build.sh"
 # shellcheck source=lib/workstation/hardware.sh
-source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/hardware.sh"
+source "$ws_runtime_dir/hardware.sh"
 # shellcheck source=lib/workstation/rocm.sh
-source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/rocm.sh"
+source "$ws_runtime_dir/rocm.sh"
 # shellcheck source=lib/workstation/packages.sh
-source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/packages.sh"
+source "$ws_runtime_dir/packages.sh"
 # shellcheck source=lib/workstation/resources.sh
-source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/resources.sh"
+source "$ws_runtime_dir/resources.sh"
 # shellcheck source=lib/workstation/session.sh
-source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/session.sh"
+source "$ws_runtime_dir/session.sh"
 # shellcheck source=lib/workstation/sunshine.sh
-source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/sunshine.sh"
+source "$ws_runtime_dir/sunshine.sh"
 # shellcheck source=lib/workstation/rag.sh
-source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/rag.sh"
+source "$ws_runtime_dir/rag.sh"
 # shellcheck source=lib/workstation/agents.sh
-source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/agents.sh"
+source "$ws_runtime_dir/agents.sh"
 # shellcheck source=lib/workstation/performance.sh
-source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/performance.sh"
+source "$ws_runtime_dir/performance.sh"
 # shellcheck source=lib/workstation/telemetry.sh
-source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/telemetry.sh"
+source "$ws_runtime_dir/telemetry.sh"
+unset ws_runtime_dir
 
 ws_die() {
   printf 'workstationctl: %s\n' "$*" >&2

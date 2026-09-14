@@ -38,7 +38,20 @@ def refresh_serving_identity(root):
     serving["runtime"] = runtime
     serving["runtime_sha256"] = profiles.digest_bytes((root / "runtime.json").read_bytes())
     save(root / "serving/result.json", serving)
+    for index in range(2):
+        path = root / f"startup/{index}.json"
+        startup_row = load(path)
+        if startup_row.get("status") == "observed-not-qualified":
+            startup_row["pod"] = serving["pod"]
+            save(path, startup_row)
     runs = []
+    compiler = {"python": "fixture", "host_kernel": "fixture", "amdgpu_srcversion": None,
+                "packages": {"sglang": "fixture", "torch": "fixture"}, "hip": "fixture",
+                "compiler": {"sha256": "f" * 64}, "sources": {"srt/server_args.py": "fixture",
+                "srt/compilation/torch_compile_decoration.py": "fixture", "srt/models/qwen3_5.py": "fixture"},
+                "loaded_libraries": {"/opt/rocm/lib/libhip.so": {"sha256": "e" * 64}}, "settings": {}}
+    if "experimental_kv" in runtime:
+        compiler["loaded_libraries"]["/opt/sglang/libuq_hip.so"] = {"sha256": runtime["experimental_kv"]["binary_sha256"]}
     for side in ("baseline", "candidate"):
         path = root / f"kernel-runs/{side}.json"
         run = load(path)
@@ -46,7 +59,7 @@ def refresh_serving_identity(root):
         run["pod"] = serving["pod"]
         run["workload_sha256"] = serving["workload_sha256"]
         run["identity"] = {"image": serving["pod"]["image"], "image_id": serving["pod"]["image_id"],
-                           "resources": serving["pod"]["resources"], "runtime": runtime}
+                           "resources": serving["pod"]["resources"], "runtime": runtime, "compiler": compiler}
         save(path, run)
         runs.append(run)
     quality = profiles.model_kernels.compare_quality(runs[0], runs[1], 0, 0)
@@ -56,6 +69,60 @@ def refresh_serving_identity(root):
     manifest["experiment"]["profile"] = serving["profile"]
     manifest["experiment"]["prefix_state"] = serving["prefix_state"]
     save(root / "manifest.json", manifest)
+
+
+def experimental_descriptor():
+    configuration = {"gpu_arch": "gfx1201", "tensor_parallel": 1, "compute_dtype": "float16",
+                     "attention": "causal-full", "head_dimension": 128, "kv_heads": 8,
+                     "query_heads": 32, "page_size": 1, "rotation": "post-rope-qk"}
+    return {"schema": 1, "runtime": "sglang", "source_repository": "sgl-project/sglang",
+            "source_revision": "a" * 40, "source_tree_sha256": "b" * 64, "patch_sha256": "c" * 64,
+            "binary_sha256": "d" * 64, "compiler_revision": "clang-sha256:" + "f" * 64, "dependencies_sha256": "e" * 64,
+            "codec": "ultraquant-rdna4-v1", "configuration_sha256": profiles.canonical_digest(configuration),
+            "configuration": configuration, "requested_mode": "ultraquant-rdna4-v1",
+            "observed_mode": "compressed-gpu", "qualification": "unqualified", "restart_required": True}
+
+
+def install_experimental_descriptor(root):
+    runtime = load(root / "runtime.json")
+    baseline_runtime = copy.deepcopy(runtime)
+    serving = load(root / "serving/result.json")
+    baseline_pod = copy.deepcopy(serving["pod"])
+    runtime["settings"]["MODEL_DTYPE"] = "float16"
+    runtime["launch"][0]["--attention-backend"] = "ultraquant-rdna4-v1"
+    runtime["launch"][0]["--dtype"] = "float16"
+    runtime["launch"][0]["--tp"] = "1"
+    runtime["model_contract"]["architectures"] = ["LlamaForCausalLM"]
+    runtime["model_contract"]["quant_method"] = "unquantized"
+    runtime["experimental_kv"] = experimental_descriptor()
+    save(root / "runtime.json", runtime)
+    serving["pod"]["image"] = "candidate@sha256:" + "9" * 64
+    serving["pod"]["image_id"] = "containerd://sha256:" + "9" * 64
+    save(root / "serving/result.json", serving)
+    refresh_serving_identity(root)
+    baseline = load(root / "kernel-runs/baseline.json")
+    baseline_compiler = copy.deepcopy(baseline["identity"]["compiler"])
+    baseline_compiler["loaded_libraries"].pop("/opt/sglang/libuq_hip.so")
+    baseline["pod"] = baseline_pod
+    baseline["identity"] = {"image": baseline_pod["image"], "image_id": baseline_pod["image_id"],
+                            "resources": baseline_pod["resources"], "runtime": baseline_runtime,
+                            "compiler": baseline_compiler}
+    save(root / "kernel-runs/baseline.json", baseline)
+    candidate = load(root / "kernel-runs/candidate.json")
+    quality = profiles.model_kernels.compare_quality(baseline, candidate, 0, 0, experimental_kv=True)
+    save(root / "quality.json", quality)
+
+
+def install_unquantized_llama_baseline(root):
+    runtime = load(root / "runtime.json")
+    runtime["settings"]["MODEL_DTYPE"] = "float16"
+    runtime["settings"]["TENSOR_PARALLEL"] = "1"
+    runtime["launch"][0]["--dtype"] = "float16"
+    runtime["launch"][0]["--tp"] = "1"
+    runtime["launch"][0]["--attention-backend"] = "triton"
+    runtime["model_contract"] = {"quant_method": "unquantized", "architectures": ["LlamaForCausalLM"]}
+    save(root / "runtime.json", runtime)
+    refresh_serving_identity(root)
 
 
 def bundle(root, profile_id, throughput=100, status="measured-not-qualified", variables=None, identity=None,
@@ -135,6 +202,30 @@ def bundle(root, profile_id, throughput=100, status="measured-not-qualified", va
 
 
 class ProfilesTests(unittest.TestCase):
+    def test_experimental_kv_descriptor_is_opt_in_and_stable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bundle(root / "candidate", "candidate")
+            install_experimental_descriptor(root / "candidate")
+            record = profiles.inspect(root / "candidate")
+            self.assertEqual(record["producer_condition_details"]["experimental_kv"], experimental_descriptor())
+            malformed = load(root / "candidate/runtime.json")
+            malformed["experimental_kv"]["observed_mode"] = "not-run"
+            save(root / "candidate/runtime.json", malformed)
+            with self.assertRaisesRegex(ValueError, "runtime hash|descriptor"):
+                profiles.inspect(root / "candidate")
+            for option, value in (("--dtype", "bfloat16"), ("--tp-size", "1")):
+                malformed = load(root / "candidate/runtime.json")
+                malformed["experimental_kv"]["observed_mode"] = "compressed-gpu"
+                malformed["launch"][0][option] = value
+                with self.assertRaises(ValueError):
+                    profiles.experimental_kv_descriptor(malformed, measured=True)
+            malformed = load(root / "candidate/runtime.json")
+            malformed["experimental_kv"]["observed_mode"] = "compressed-gpu"
+            malformed["launch"][0]["--disable-overlap-schedule"] = "true"
+            with self.assertRaises(ValueError):
+                profiles.experimental_kv_descriptor(malformed, measured=True)
+
     def test_compare_declared_differences_and_selection_staleness(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

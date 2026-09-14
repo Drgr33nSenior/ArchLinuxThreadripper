@@ -39,22 +39,107 @@ def mib(value):
     return int(match[1]) * (1024 if match[2] == "Gi" else 1)
 
 
+def experimental_kv_runtime(runtime):
+    """Validate the only candidate allowed to relax image/package equality."""
+    descriptor = runtime.get("experimental_kv") if isinstance(runtime, dict) else None
+    required = {"schema", "runtime", "source_repository", "source_revision", "source_tree_sha256",
+                "patch_sha256", "binary_sha256", "compiler_revision", "dependencies_sha256", "codec",
+                "configuration_sha256", "configuration", "requested_mode", "observed_mode", "qualification",
+                "restart_required"}
+    config_keys = {"gpu_arch", "tensor_parallel", "compute_dtype", "attention", "head_dimension",
+                   "kv_heads", "query_heads", "page_size", "rotation"}
+    if (not isinstance(descriptor, dict) or set(descriptor) != required
+            or type(descriptor.get("schema")) is not int or descriptor.get("schema") != 1 or descriptor.get("runtime") != "sglang"
+            or descriptor.get("source_repository") != "sgl-project/sglang"
+            or not isinstance(descriptor.get("source_revision"), str) or not re.fullmatch(r"[a-f0-9]{40}", descriptor["source_revision"])
+            or any(not isinstance(descriptor.get(key), str) or not re.fullmatch(r"[a-f0-9]{64}", descriptor[key])
+                   for key in ("source_tree_sha256", "patch_sha256", "binary_sha256", "dependencies_sha256", "configuration_sha256"))
+            or not isinstance(descriptor.get("compiler_revision"), str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 ._+:/-]{0,239}", descriptor["compiler_revision"])
+            or descriptor.get("codec") != "ultraquant-rdna4-v1" or descriptor.get("requested_mode") != "ultraquant-rdna4-v1"
+            or descriptor.get("observed_mode") != "compressed-gpu" or descriptor.get("qualification") != "unqualified"
+            or descriptor.get("restart_required") is not True or not isinstance(descriptor.get("configuration"), dict)
+            or set(descriptor["configuration"]) != config_keys):
+        raise ValueError("experimental-KV quality lacks a complete candidate descriptor")
+    config = descriptor["configuration"]
+    if (config.get("gpu_arch") != "gfx1201" or type(config.get("tensor_parallel")) is not int or config.get("tensor_parallel") != 1
+            or config.get("compute_dtype") != "float16" or config.get("attention") != "causal-full"
+            or type(config.get("head_dimension")) is not int or config["head_dimension"] not in (32, 64, 128, 256)
+            or type(config.get("kv_heads")) is not int or not 1 <= config["kv_heads"] <= 64
+            or type(config.get("query_heads")) is not int or not config["kv_heads"] <= config["query_heads"] <= 128
+            or config["query_heads"] % config["kv_heads"] or type(config.get("page_size")) is not int or config.get("page_size") != 1
+            or config.get("rotation") != "post-rope-qk" or identity(config) != descriptor["configuration_sha256"]):
+        raise ValueError("experimental-KV quality has an unsupported configuration")
+    settings, devices, launch = runtime.get("settings"), runtime.get("devices"), runtime.get("launch")
+    tp_options = [option for option in ("--tp", "--tp-size") if option in launch[0]] if isinstance(launch, list) and len(launch) == 1 and isinstance(launch[0], dict) else []
+    if (not isinstance(settings, dict) or settings.get("MODEL_DTYPE") != "float16" or str(settings.get("TENSOR_PARALLEL")) != "1"
+            or not isinstance(devices, list) or len(devices) != 1 or devices[0].get("gfx", "").split(":", 1)[0] != "gfx1201"
+            or not isinstance(launch, list) or len(launch) != 1 or launch[0].get("--attention-backend") != "ultraquant-rdna4-v1"
+            or launch[0].get("--dtype") != "float16" or len(tp_options) != 1 or launch[0][tp_options[0]] != "1"
+            or runtime.get("model_contract", {}).get("architectures") != ["LlamaForCausalLM"]
+            or runtime.get("model_contract", {}).get("quant_method") != "unquantized"):
+        raise ValueError("experimental-KV descriptor does not match runtime observation")
+    return descriptor
+
+
+def experimental_kv_compiler_identity(baseline, candidate, descriptor):
+    """Retain all host/compiler identity except the named candidate extension.
+
+    Candidate SGLang sources are identified by the sealed descriptor rather
+    than pretending that they equal the pinned baseline.  All non-SGLang
+    packages, compiler/driver/settings and mapped libraries remain equal.
+    """
+    if not isinstance(baseline, dict) or not isinstance(candidate, dict):
+        raise ValueError("experimental-KV quality lacks compiler identity")
+    for key in ("python", "host_kernel", "amdgpu_srcversion", "hip", "compiler", "settings"):
+        if baseline.get(key) != candidate.get(key):
+            raise ValueError("experimental-KV quality changed compiler/driver/settings identity")
+    baseline_packages, candidate_packages = baseline.get("packages"), candidate.get("packages")
+    if not isinstance(baseline_packages, dict) or not isinstance(candidate_packages, dict):
+        raise ValueError("experimental-KV quality lacks compiler package identity")
+    for key in set(baseline_packages) | set(candidate_packages):
+        if key.lower().replace("_", "-") not in ("sglang", "sglang-kernel", "sgl-kernel") and baseline_packages.get(key) != candidate_packages.get(key):
+            raise ValueError("experimental-KV quality changed an unrelated compiler package")
+    baseline_libraries, candidate_libraries = baseline.get("loaded_libraries"), candidate.get("loaded_libraries")
+    if not isinstance(baseline_libraries, dict) or not isinstance(candidate_libraries, dict):
+        raise ValueError("experimental-KV quality lacks mapped GPU-library identity")
+    changed_libraries = {key for key in set(baseline_libraries) | set(candidate_libraries)
+                         if baseline_libraries.get(key) != candidate_libraries.get(key)}
+    if any(Path(key).name != "libuq_hip.so" for key in changed_libraries):
+        raise ValueError("experimental-KV quality changed an unrelated mapped GPU library")
+    if len(changed_libraries) != 1:
+        raise ValueError("experimental-KV quality requires one mapped candidate library")
+    library = candidate_libraries[next(iter(changed_libraries))]
+    if not isinstance(library, dict) or library.get("sha256") != descriptor["binary_sha256"]:
+        raise ValueError("experimental-KV quality candidate library does not match descriptor")
+    baseline_sources, candidate_sources = baseline.get("sources"), candidate.get("sources")
+    if not isinstance(baseline_sources, dict) or not isinstance(candidate_sources, dict) or set(baseline_sources) != set(candidate_sources):
+        raise ValueError("experimental-KV quality changed the observed SGLang source inventory")
+    compiler_hash = candidate.get("compiler", {}).get("sha256") if isinstance(candidate.get("compiler"), dict) else None
+    if (not isinstance(compiler_hash, str) or not re.fullmatch(r"[a-f0-9]{64}", compiler_hash)
+            or f"sha256:{compiler_hash}" not in descriptor["compiler_revision"]):
+        raise ValueError("experimental-KV descriptor does not bind the observed compiler")
+
+
 def evidence(directory):
     directory = Path(directory)
     pod, runtime, compiler = (load(directory / name) for name in ("pod.json", "runtime.json", "compiler.json"))
     lock = dict(line.split("=", 1) for line in (Path(__file__).resolve().parents[2] / "versions.lock").read_text().splitlines()
                 if line and not line.startswith("#"))
-    if (pod["image"] != lock["SGLANG_ROCM_IMAGE"] or not pod.get("image_id") or not pod.get("uid")
+    if (not pod.get("image_id") or not pod.get("uid")
             or compiler["status"] != "observed-not-qualified" or compiler["schema"] != 1):
         raise ValueError("require observed compiler evidence from the pinned image")
+    candidate = "experimental_kv" in runtime
+    if not candidate and pod["image"] != lock["SGLANG_ROCM_IMAGE"]:
+        raise ValueError("require observed compiler evidence from the pinned image")
     actual_digest = re.search(r"sha256:[a-f0-9]{64}$", pod["image_id"])
-    if not actual_digest or actual_digest[0] not in (lock["SGLANG_ROCM_IMAGE"].split("@")[-1], lock["SGLANG_ROCM_CONFIG_DIGEST"]):
+    if (candidate and not actual_digest) or (not candidate and (not actual_digest or actual_digest[0] not in
+                           (lock["SGLANG_ROCM_IMAGE"].split("@")[-1], lock["SGLANG_ROCM_CONFIG_DIGEST"]))):
         raise ValueError("runtime image ID does not identify the locked amd64 manifest/config")
-    if compiler["sources"].get("srt/server_args.py") != lock["SGLANG_SERVER_ARGS_SHA256"]:
+    if not candidate and compiler["sources"].get("srt/server_args.py") != lock["SGLANG_SERVER_ARGS_SHA256"]:
         raise ValueError("image CLI source differs from reviewed contract; review before planning")
-    if compiler["sources"].get("srt/compilation/torch_compile_decoration.py") != lock["SGLANG_COMPILE_DECORATION_SHA256"]:
+    if not candidate and compiler["sources"].get("srt/compilation/torch_compile_decoration.py") != lock["SGLANG_COMPILE_DECORATION_SHA256"]:
         raise ValueError("image compilation source differs from reviewed contract")
-    if compiler["sources"].get("srt/models/qwen3_5.py") != lock["SGLANG_QWEN35_SOURCE_SHA256"]:
+    if not candidate and runtime.get("model_contract", {}).get("architectures") == ["Qwen3_5ForConditionalGeneration"] and compiler["sources"].get("srt/models/qwen3_5.py") != lock["SGLANG_QWEN35_SOURCE_SHA256"]:
         raise ValueError("image model implementation differs from reviewed contract")
     devices = runtime["devices"]
     uuids = [d["uuid"] for d in devices]
@@ -64,7 +149,9 @@ def evidence(directory):
         raise ValueError("require distinct observed gfx1201 GPU identities, not ordinal assumptions")
     if not compiler["compiler"] or not compiler["loaded_libraries"] or not compiler["packages"]:
         raise ValueError("compiler and loaded GPU-library identity unavailable")
-    if runtime.get("model_contract", {}).get("architectures") != ["Qwen3_5ForConditionalGeneration"]:
+    if candidate:
+        experimental_kv_runtime(runtime)
+    elif runtime.get("model_contract", {}).get("architectures") not in (["Qwen3_5ForConditionalGeneration"], ["LlamaForCausalLM"]):
         raise ValueError("model architecture not reviewed for this opt-in workflow")
     return pod, runtime, compiler
 
@@ -177,7 +264,7 @@ def quality_compare(first, second, atol, rtol):
             "absolute_logprob_difference": summary(differences), "scope": "not full model or coding-task qualification"}
 
 
-def compare_quality(baseline, candidate, atol, rtol, memory_only=False):
+def compare_quality(baseline, candidate, atol, rtol, memory_only=False, experimental_kv=False):
     for result in (baseline, candidate):
         if (result["status"] != "measured-not-qualified" or result.get("kind") != "kernel-warmup"
                 or result.get("memory", {}).get("status") != "checked"):
@@ -196,6 +283,8 @@ def compare_quality(baseline, candidate, atol, rtol, memory_only=False):
     if baseline["warmup_contract"] != candidate["warmup_contract"]:
         raise ValueError("warmup shapes differ")
     a, b = baseline["identity"], candidate["identity"]
+    if memory_only and experimental_kv:
+        raise ValueError("quality comparison cannot combine host-memory and experimental-KV modes")
     if memory_only:
         # Explicitly compare a smaller host-memory envelope, not another model,
         # compiler, GPU, launch configuration or CPU allocation. Keep the
@@ -212,15 +301,31 @@ def compare_quality(baseline, candidate, atol, rtol, memory_only=False):
         if normalized[0] != normalized[1] or mib(b["resources"]["limits"]["memory"]) >= mib(a["resources"]["limits"]["memory"]):
             raise ValueError("memory-only comparison permits only a smaller host-memory request/limit")
     for key in ("image", "image_id", "resources"):
+        if experimental_kv and key in ("image", "image_id"):
+            continue
         if memory_only and key == "resources":
             continue
         if a[key] != b[key]:
             raise ValueError("quality comparison changed image/resources")
-    for key in ("model_files", "packages", "devices", "hip"):
+    for key in ("model_files", "devices", "hip"):
         if a["runtime"][key] != b["runtime"][key]:
             raise ValueError("quality comparison changed model/software/GPU identity")
+    if experimental_kv:
+        base_descriptor = a["runtime"].get("experimental_kv")
+        if base_descriptor is not None:
+            raise ValueError("experimental-KV quality needs unchanged baseline and identified candidate descriptor")
+        descriptor = experimental_kv_runtime(b["runtime"])
+        # The patched SGLang package is the only package identity permitted to
+        # change in this narrow mode. Compiler/dependency hashes remain bound
+        # by the descriptor and the other ROCm package identities stay equal.
+        for key in set(a["runtime"]["packages"]) | set(b["runtime"]["packages"]):
+            if key != "sglang" and a["runtime"]["packages"].get(key) != b["runtime"]["packages"].get(key):
+                raise ValueError("experimental-KV quality changed an unrelated package")
+        experimental_kv_compiler_identity(a.get("compiler"), b.get("compiler"), descriptor)
+    elif a["runtime"]["packages"] != b["runtime"]["packages"]:
+        raise ValueError("quality comparison changed model/software/GPU identity")
     return {"schema": 1, "status": "sampled-quality-passed-not-qualified",
-            "comparison": "host-memory-only" if memory_only else "kernel",
+            "comparison": "experimental-kv" if experimental_kv else ("host-memory-only" if memory_only else "kernel"),
             "baseline_sha256": identity(baseline), "candidate_sha256": identity(candidate),
             "quality": quality_compare(baseline["quality"], candidate["quality"], atol, rtol)}
 
@@ -361,7 +466,9 @@ def main():
         p.add_argument(name)
     p.add_argument("--atol", type=float, required=True)
     p.add_argument("--rtol", type=float, required=True)
-    p.add_argument("--memory-only", action="store_true")
+    mode = p.add_mutually_exclusive_group()
+    mode.add_argument("--memory-only", action="store_true")
+    mode.add_argument("--experimental-kv", action="store_true")
     p = sub.add_parser("seal-tuning")
     for name in ("run", "dispatch", "review", "artifact", "output"):
         p.add_argument(name)
@@ -380,7 +487,8 @@ def main():
     elif args.mode == "dispatch":
         write(args.output, dispatch(args.trace, load(args.run)))
     elif args.mode == "quality":
-        write(args.output, compare_quality(load(args.baseline), load(args.candidate), args.atol, args.rtol, args.memory_only))
+        write(args.output, compare_quality(load(args.baseline), load(args.candidate), args.atol, args.rtol,
+                                           args.memory_only, args.experimental_kv))
     else:
         seal_tuning(load(args.run), load(args.dispatch), args.review, args.artifact, args.kind, args.output)
 

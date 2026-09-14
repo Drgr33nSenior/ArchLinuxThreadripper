@@ -164,6 +164,7 @@ tests/hardware/sglang-evidence.py
 tests/hardware/sglang-kernel-evidence.py
 tests/hardware/sglang-profile-evidence.py
 tests/hardware/test_model_kernels.py
+tests/hardware/test_sglang_evidence.py
 tests/hardware/test_serving_memory.py
 tests/hardware/test_performance_profiles.py
 tests/hardware/test_performance_bundle.py
@@ -174,6 +175,7 @@ tests/hardware/test_serving_orchestration.py
 tests/fixtures/kernel-orchestration.sh
 tests/hardware/test_inference_cache.py
 tests/workstation/test_telemetry.py
+tests/workstation/test_telemetry_power.py
 docs/PERFORMANCE-PROFILES.md
 tests/hardware/torch-rocm.py
 infrastructure/packages/bootstrap/bridge-runtime.files
@@ -205,6 +207,7 @@ infrastructure/observability/workloads.yaml
 lib/workstation/telemetry.py
 lib/workstation/telemetry.sh
 lib/workstation/telemetry_sample.py
+lib/workstation/telemetry_power.py
 templates/workstation/telemetry/workstation-alloy.service
 templates/workstation/telemetry/workstation-telemetry.service
 templates/workstation/telemetry/workstation-telemetry.sysusers

@@ -65,7 +65,8 @@ def candidate_bundle(path, kind, variant):
     import math
     import inference_cache
     import performance_profiles
-    from test_performance_profiles import bundle, load, refresh_serving_identity
+    from test_performance_profiles import (bundle, install_experimental_descriptor,
+                                           install_unquantized_llama_baseline, load, refresh_serving_identity)
     from test_serving_runtime import fixtures
 
     policy = {"schema": 1, "minimum_practical_gain_percent": 5, "maximum_regression_percent": 5, "noise_percent": 2}
@@ -80,7 +81,12 @@ def candidate_bundle(path, kind, variant):
         bundle(path / "baseline", "baseline")
         bundle(path / "candidate", "candidate", throughput=120)
         declared = []
-        if variant == "declared-launch":
+        if variant == "experimental-kv":
+            install_unquantized_llama_baseline(path / "baseline")
+            install_unquantized_llama_baseline(path / "candidate")
+            install_experimental_descriptor(path / "candidate")
+            declared = ["image", "software", "launch", "kv_cache"]
+        elif variant == "declared-launch":
             runtime = load(path / "candidate/runtime.json")
             runtime["launch"][0]["--attention-backend"] = "triton"
             save(path / "candidate/runtime.json", runtime)
@@ -187,6 +193,9 @@ def candidate_bundle(path, kind, variant):
             current["producer_conditions"]["schema"] = 1
         elif variant == "unknown":
             current = {}
+        elif variant == "experimental-missing-observation":
+            from test_performance_profiles import experimental_descriptor
+            selection["experimental_kv"] = experimental_descriptor()
         save(path / "current.json", current)
         save(path / "selection.json", {} if variant == "refused" else selection)
         spec.update(selection="selection.json", current_identity="current.json")
@@ -400,6 +409,7 @@ class BundleTests(unittest.TestCase):
 
     def test_candidate_bundle_exercises_cross_profile_quality_variants(self):
         expected = {"declared-launch": "candidate-improves-throughput",
+                    "experimental-kv": "candidate-improves-throughput",
                     "cross-quality-mismatch": "inconclusive-quality-evidence",
                     "cross-logprob-mismatch": "inconclusive-quality-evidence",
                     "unrelated-quality": "inconclusive-quality-evidence",
@@ -429,6 +439,7 @@ class BundleTests(unittest.TestCase):
         # sealed dispatcher separately so a report that is not selection-safe
         # cannot become a selected profile after artifact exchange.
         expected = {"declared-launch": "selected-unqualified",
+                    "experimental-kv": "selected-unqualified",
                     "cross-quality-mismatch": "failed",
                     "cross-logprob-mismatch": "failed",
                     "unrelated-quality": "failed",

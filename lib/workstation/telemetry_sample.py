@@ -3,13 +3,12 @@
 import argparse
 import json
 import math
-import os
 from pathlib import Path
 import re
 import sys
-import tempfile
 
 from measurement import read, snapshot
+import telemetry_power
 
 
 def number(value):
@@ -85,26 +84,27 @@ def metrics(sample, sysfs=Path("/sys")):
 
 
 def write_textfile(directory, text):
-    directory = Path(directory)
-    stat = directory.stat()
-    if directory.is_symlink() or not directory.is_dir() or stat.st_uid != os.geteuid() or stat.st_mode & 0o022:
-        raise ValueError("textfile directory must be caller-owned, non-symlink and not group/world writable")
-    target = directory / "hardware.prom"
-    if target.is_symlink() or (target.exists() and (not target.is_file() or target.stat().st_uid != os.geteuid())):
-        raise ValueError("refusing unowned or non-regular hardware.prom")
-    name = None
+    output = telemetry_power.Directory(directory)
     try:
-        with tempfile.NamedTemporaryFile(mode="w", prefix=".hardware-", dir=directory, delete=False) as file:
-            name = file.name
-            file.write(text)
-            file.flush()
-            os.fsync(file.fileno())
-            os.fchmod(file.fileno(), 0o644)
-        os.replace(name, target)
-        name = None
+        with output.locked():
+            output.write("hardware.prom", text, 0o644)
     finally:
-        if name is not None:
-            os.unlink(name)
+        output.close()
+
+
+def sample_once(directory, sysfs=Path("/sys"), proc=Path("/proc"), collect=snapshot, clock=None):
+    """Keep sampling, durable energy and public publication under one lock."""
+    output = telemetry_power.Directory(directory)
+    try:
+        with output.locked():
+            # Refuse unsafe publication before updating any accumulated state.
+            output.check_existing("hardware.prom")
+            hardware = collect()
+            power = telemetry_power.collect(sysfs, proc, clock)
+            energy, reason = output.energy(power)
+            output.write("hardware.prom", metrics(hardware, sysfs) + telemetry_power.metrics(power, energy, reason), 0o644)
+    finally:
+        output.close()
 
 
 def main():
@@ -114,7 +114,7 @@ def main():
     if sys.platform != "linux":
         parser.error("target Linux only; fixtures must call the pure metrics function")
     try:
-        write_textfile(args.directory, metrics(snapshot()))
+        sample_once(args.directory)
     except (OSError, ValueError):
         print("FAILED: hardware textfile sampling; previous sample is retained and will become stale", file=sys.stderr)
         return 1

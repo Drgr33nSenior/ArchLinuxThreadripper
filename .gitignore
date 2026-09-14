@@ -21,6 +21,8 @@ cloud-init/seed/
 # Test output
 coverage/
 test-results/
+__pycache__/
+*.py[cod]
 infrastructure/ansible/inventory.local.ini
 infrastructure/ansible/group_vars/*.local.yml
 infrastructure/host/*.conf

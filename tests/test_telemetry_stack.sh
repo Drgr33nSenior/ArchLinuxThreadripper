@@ -96,6 +96,18 @@ check(File.read("#{root}/config/tempo.yaml").include?('block_retention: 72h'), '
 dashboard = JSON.parse(File.read("#{root}/dashboards/workstation.json"))
 queue = dashboard['panels'].find { |p| p['title'] == 'SGLang queued requests' }
 check(queue['targets'][0]['expr'] == 'sglang:num_queue_reqs{job="sglang",priority=""}', 'queue total double-counts priority breakdowns')
+psu_panels = dashboard['panels'].select { |p| (105..108).include?(p['id']) }
+check(psu_panels.length == 4, 'missing PSU power, rails, energy or coverage panel')
+psu_panels.each do |panel|
+  expr = panel.fetch('targets')[0].fetch('expr')
+  check(expr.include?('job="node"') && expr.include?('sample_timestamp_seconds') && expr.include?('<= 90'), 'PSU panel presents stale textfile data as live')
+  check(expr.include?('- time() <= 10'), 'PSU panel accepts a future source clock')
+  check(!expr.include?('sum(') && !expr.include?('or vector(0)'), 'PSU panel hides ambiguous or missing measurements')
+end
+check(psu_panels[0]['title'].include?('not wall power'), 'DC output represented as AC input')
+check(psu_panels[2]['targets'][0]['expr'].include?('/ 3600000'), 'incorrect joule to kWh conversion')
+check(psu_panels[2]['description'].include?('NOT energy for the selected dashboard range'), 'cumulative energy scope lost')
+check(psu_panels[3]['targets'][0]['expr'].include?('energy_covered_seconds_total'), 'energy coverage omitted')
 %w[prometheus.yaml alerts.yaml loki.yaml tempo.yaml datasources.yaml datasources.metrics.yaml dashboards.yaml].each do |name|
   YAML.load_file("#{root}/config/#{name}")
 end
