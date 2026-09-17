@@ -35,6 +35,70 @@ MODEL = {"architectures": ["LlamaForCausalLM"], "num_attention_heads": 32,
 
 
 class SGLangExperimentalKVReceiptTests(unittest.TestCase):
+    def test_launch_records_orthogonal_experiments_without_unrelated_arguments(self):
+        launch = evidence.observed_launch([
+            "python3", "-m", "sglang.launch_server", "--quantization=quark",
+            "--speculative-algorithm", "EAGLE", "--speculative-num-steps", "3",
+            "--speculative-adaptive", "--mamba-ssm-dtype", "float32",
+            "--api-key", "synthetic-private", "--cuda-graph-bs-decode", "1", "2"])
+        self.assertEqual(launch["--quantization"], "quark")
+        self.assertEqual(launch["--speculative-num-steps"], "3")
+        self.assertIs(launch["--speculative-adaptive"], True)
+        self.assertEqual(launch["--mamba-ssm-dtype"], "float32")
+        self.assertEqual(launch["--cuda-graph-bs-decode"], ["1", "2"])
+        self.assertNotIn("synthetic-private", json.dumps(launch))
+
+    def test_ambiguous_launch_never_becomes_valid_experiment_identity(self):
+        for args in (["--speculative-num-steps", "3", "--speculative-num-steps=7"],
+                     ["--speculative-adaptive=false"], ["--quantization"],
+                     ["--cuda-graph-bs-decode", "1", "--cuda-graph-bs-decode", "2"],
+                     ["--enable-torch-compile", "--enable-torch-compile"]):
+            with self.subTest(args=args), self.assertRaises(RuntimeError):
+                evidence.observed_launch(args)
+
+    def test_observer_and_comparison_accept_the_same_launch_surface(self):
+        sys.path.insert(0, str(ROOT / "lib/workstation"))
+        import performance_profiles
+        self.assertEqual(evidence.LAUNCH_SCALARS | evidence.LAUNCH_BOOLEANS | evidence.LAUNCH_LISTS,
+                         performance_profiles.OBSERVED_LAUNCH_OPTIONS | performance_profiles.OBSERVED_LAUNCH_LIST_OPTIONS)
+
+    def test_staged_draft_hashes_change_with_bytes_and_refuse_external_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            draft = root / "draft"
+            draft.mkdir()
+            weights = draft / "tiny.safetensors"
+            weights.write_bytes(b"synthetic-weights-a")
+            launch = {"--speculative-draft-model-path": str(draft)}
+            before = evidence.experiment_artifacts(launch, root / "target", {}, root)
+            weights.write_bytes(b"synthetic-weights-b")
+            after = evidence.experiment_artifacts(launch, root / "target", {}, root)
+            self.assertNotEqual(before, after)
+            with self.assertRaises(RuntimeError):
+                evidence.experiment_artifacts(launch, root / "target", {}, root / "elsewhere")
+            def partial_walk(path, **options):
+                yield str(path), [], [weights.name]
+                options["onerror"](PermissionError("synthetic unreadable directory"))
+            with mock.patch.object(evidence.os, "walk", side_effect=partial_walk), self.assertRaises(PermissionError):
+                evidence.experiment_artifacts(launch, root / "target", {}, root)
+            link = draft / "mutable-link"
+            link.symlink_to(weights)
+            with self.assertRaises(RuntimeError):
+                evidence.experiment_artifacts(launch, root / "target", {}, root)
+
+    def test_reused_draft_inventory_is_bounded_without_rehashing(self):
+        model = Path("/models/target")
+        launch = {"--speculative-draft-model-path": str(model)}
+        files = {f"part-{index}.safetensors": {"bytes": 1, "sha256": "a" * 64}
+                 for index in range(2048)}
+        with mock.patch.object(evidence, "digest") as digest:
+            result = evidence.experiment_artifacts(launch, model, files)
+            self.assertIs(result["--speculative-draft-model-path"]["files"], files)
+            files["extra.safetensors"] = {"bytes": 1, "sha256": "b" * 64}
+            with self.assertRaisesRegex(RuntimeError, "bounded"):
+                evidence.experiment_artifacts(launch, model, files)
+            digest.assert_not_called()
+
     def test_mapped_binary_deduplicates_normal_library_segments(self):
         with tempfile.TemporaryDirectory() as directory:
             library = Path(directory) / "libuq_hip.so"

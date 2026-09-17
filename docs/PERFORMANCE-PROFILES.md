@@ -255,6 +255,137 @@ profile as current. A matching observation maps the exported summary to
 `selected-unqualified-current`. The result is only true as of `observed_at` and
 does not establish live qualification or trigger reconciliation.
 
+## Native SGLang experiment plans
+
+Keep the existing SGLang image, target weights and resource envelope. The
+following commands read a retained Deployment and exact-image kernel evidence;
+they do not contact Kubernetes or start an inference request. Collect the inputs
+with the [kernel evidence procedure](MODEL-KERNELS.md#loading-warm-state-and-admission-candidates).
+Use a new private output directory for each plan.
+
+```sh
+workstationctl rocm serving-experiment-plan deployment.json artifacts/kernel-evidence \
+  artifacts/ngram-plan --axis speculation --algorithm NGRAM --values off,2,4
+workstationctl rocm serving-experiment-plan deployment.json artifacts/kernel-evidence \
+  artifacts/state-plan --axis hybrid-state --values float32,float16
+```
+
+Expect `plan.json` with `status: plan-only-unqualified` and one JSON Patch per
+candidate. Directories are mode 0700; files are mode 0600. Each patch tests the
+whole original Pod spec before it changes only container arguments. An existing
+output directory, ambiguous arguments, missing exact-image flags, or experiment
+controls that differ between manifest and observed launch cause refusal. Supply
+explicit matching experiment values, not environment substitutions.
+
+| Axis | Candidates | Boundary |
+| --- | --- | --- |
+| Speculation, NGRAM | `off`, fixed draft-token limits `1,2,3,4,7,8` | No draft model; CLI presence is not proof of HIP/model support |
+| Speculation, EAGLE or NEXTN | `off`, fixed steps `1,2,3,4,7` with top-k 1 | Requires an already observed setup with that algorithm and top-k; retains its staged draft arguments |
+| Speculation, EAGLE only | `adaptive` | Uses native default tiers; starts at 3 steps/4 slots, may allocate up to 7 steps/8 slots; custom adaptive configs are refused by the planner |
+| Hybrid state | `float32`, `float16`, `bfloat16` | Observed Qwen3.5-family architecture only; changes recurrent-state dtype, not target weights or full-attention KV dtype |
+
+For an owner-prepared EAGLE setup, replace the first command's algorithm with
+`EAGLE` and values with `off,3,adaptive`. Do not combine these plans with the
+separate experimental KV backend. No plan changes the installed default or
+selects a profile. Bridge can consume the resulting measured comparison through
+the existing bundle contract; it does not apply these experiment patches.
+
+The reviewed behavior comes from the selected upstream SGLang
+[server arguments](https://github.com/sgl-project/sglang/blob/0b3bb0cbe31873994c9f989fddfe2f87ca839fdd/python/sglang/srt/server_args.py)
+and [adaptive decoding contract](https://github.com/sgl-project/sglang/blob/0b3bb0cbe31873994c9f989fddfe2f87ca839fdd/docs/advanced_features/adaptive_speculative_decoding.md).
+`versions.lock` remains the image and source-hash authority. Requested arguments
+are not evidence of effective adaptation, kernel dispatch or absence of fallback.
+
+The runtime probe now retains allowlisted quantization, speculative and hybrid
+controls. A draft checkpoint or adaptive config must be a regular, symlink-free
+artifact under `/models`; remote identifiers are refused. Draft inventories are
+bounded to 2048 files; a config is bounded to 64 KiB. File hashes bind these inputs
+to launch conditions independently of target-weight identity. Recollect older
+evidence for experiments with draft/config paths: missing artifact identities
+are refused, not inferred from a path or revision. Ordinary earlier evidence
+without these controls remains compatible.
+
+Weight-format kernel experiments remain separate. Online Quark MXFP4 is blocked
+by the selected source's gfx95 check; do not override it for gfx1201. Prequantized
+MXFP4 needs verified gfx1201 GEMM dispatch and independent weight/quality evidence.
+No reviewed SGLang ParoQuant implementation is supplied. The selected
+`extra_buffer_lazy` hybrid-cache path excludes HIP and speculative decoding.
+These cases stay unsupported or unqualified in the plan; no kernels or model
+conversions are fabricated to make them available.
+
+### Petit weight-kernel option
+
+Petit is an explicit **blocked experiment option**, not an enabled R9700 backend.
+Use the same retained Deployment and exact-image evidence as above:
+
+```sh
+workstationctl rocm serving-experiment-plan deployment.json artifacts/kernel-evidence \
+  artifacts/petit-plan --axis weight-kernel --values petit_nvfp4
+```
+
+With valid inputs, expect exit status **2**, a refusal on stderr, and a private
+`plan.json` with `status: blocked`, `qualification: unqualified`, the requested
+quantization, the separately observed launch value, and an empty `cases` object.
+No JSON Patch is written. An existing output directory or invalid evidence is
+refused without overwriting it. Do not suppress this failure in automation.
+Installing a package, supplying a capability label, or observing the requested
+CLI flag does not override the hardware gate. Other planner axes are unchanged.
+
+The selected SGLang source already includes the
+[Petit adapter](https://github.com/sgl-project/sglang/blob/0b3bb0cbe31873994c9f989fddfe2f87ca839fdd/python/sglang/srt/layers/quantization/petit.py).
+That adapter selects prequantized **NVFP4, group size 16** dense linear weights;
+it is not a general Petit MXFP4, MoE, or KV-cache selector. The library's broader
+capabilities do not establish support in this adapter. See its
+[checkpoint and dispatch checks](https://github.com/sgl-project/sglang/blob/0b3bb0cbe31873994c9f989fddfe2f87ca839fdd/python/sglang/srt/layers/quantization/petit_utils.py).
+The command does not convert FP8/BF16 weights or download a different checkpoint.
+
+Petit source revision `d6f5289987ac01234830682840b65bad8256f1b0`
+[documents CDNA2/3/4 support](https://github.com/causalflow-ai/petit-kernel/blob/d6f5289987ac01234830682840b65bad8256f1b0/README.md).
+Its [matrix intrinsics and layouts](https://github.com/causalflow-ai/petit-kernel/blob/d6f5289987ac01234830682840b65bad8256f1b0/lib/gemm/rocm/amd_intrinsics.cuh)
+use CDNA MFMA and 64-lane waves. A `gfx1201` BF16 conversion utility in that file
+does not establish an RDNA4 matrix path. This reviewed source identity is not a
+new dependency pin: the installer neither fetches nor builds Petit. The existing
+image authority remains `versions.lock`; Petit package presence in that image
+has not been established by these source checks.
+
+Any necessary GPU-kernel port belongs in `Spry.ai-sglang-runtime`, separate from
+the UltraQuant KV implementation. Keep the existing SGLang adapter when its
+semantics are sufficient. Bridge continues to own experiment orchestration and
+evidence consumption, not GPU kernels. Neither repository needs a placeholder
+adapter to represent this blocked selection.
+
+Before enabling the option, the owner must retain an exact runtime build and
+dependency inventory, demonstrate `gfx1201` compilation and actual Petit
+dispatch without fallback, and review the adapter/checkpoint relationship.
+Compare the same identified NVFP4 weights across the baseline and candidate
+backends; compare quantized weights with a higher-precision reference separately.
+Retain numerical/coding checks, long-context behavior, cancellation, host RAM and
+each GPU's peak/steady VRAM independently. Do not combine this experiment with
+the separate KV backend or promote it automatically. Until those source and
+runtime requirements are met, leave the gate closed and use the unchanged
+baseline. A blocked report requires no rollback because nothing was applied.
+
+### Diagnostic interpretation
+
+Serving `result.json` retains diagnostic snapshots in `queue_before` and
+`queue_after`. Missing, malformed or oversized metrics remain unavailable.
+Prometheus timestamps are not metric values. Distinct label sets retain opaque
+series hashes; the collector does not sum ranks or expose label values.
+
+Native speculative acceptance rate/length are batch gauges, not workload-wide
+acceptance statistics. Acceptance length includes the bonus token. Native step
+and draft-token gauges can expose adaptation, but two snapshots cannot prove
+the complete adaptation history. Hybrid Mamba capacity gauges count state slots,
+not full-attention KV tokens or bytes. Keep each GPU's memory separate from host
+RAM and from the other GPU. See the pinned
+[metric definitions](https://github.com/sgl-project/sglang/blob/0b3bb0cbe31873994c9f989fddfe2f87ca839fdd/python/sglang/srt/observability/metrics_collector.py).
+
+These snapshots do not time GPU kernels. Keep request TTFT/latency, host
+scheduling or IPC time, synchronized GPU timing, and profiler instrumentation
+overhead separate. Use the existing [profiling procedure](MODEL-KERNELS.md#profile-before-tuning)
+for owner-run dispatch and timing evidence; do not infer a GPU speedup from a
+shorter host enqueue interval.
+
 ## Coding and tool evaluation
 
 The versioned suite has ten small local tasks. It covers structured output,
@@ -281,6 +412,39 @@ python3 lib/workstation/coding_eval.py artifacts/coding-responses.json \
 The result omits prompt and response text. Missing latency or token accounting
 is unknown, not zero. The suite supplements the existing numerical checks and
 does not qualify a model, quantization or profile.
+
+### Streaming tool-call pairs
+
+For each tool task, optionally add `protocol` to its existing response row:
+
+```json
+{
+  "protocol": {
+    "non_streaming": {"choices": []},
+    "streaming": "RAW_SSE_BODY"
+  }
+}
+```
+
+This illustrates the fields, not a passing response. Replace both values with
+the actual paired `/v1/chat/completions` responses: the parsed non-streaming JSON
+and the raw streaming SSE body. Retain the required `response` field and use the
+same task, model, prompt and generation settings for both requests. Captures
+are owner-collected, private and bounded to 64 KiB per pair; this evaluator does
+not make requests or execute tool calls.
+
+Both responses must select the corpus's single expected function with complete
+JSON arguments. The checker assembles fragmented stream arguments and requires
+`finish_reason: tool_calls` followed by `[DONE]`. Truncated markup, disconnects,
+cancellation/length finishes, extra calls, duplicate JSON keys and mismatched
+arguments fail. Separate requests may have different tool-call IDs.
+
+Legacy or missing captures remain `unknown-not-collected`, not protocol success.
+The private result records only the capture hash and outcome. Bridge's public
+summary reports `protocol_passed`, `protocol_failed` and `protocol_missing`
+counts without function names, arguments or raw responses. This narrow check is
+not full OpenAI-protocol conformance or a substitute for runtime cancellation,
+long-recurrence and speculative-rollback qualification.
 
 ## Target qualification
 

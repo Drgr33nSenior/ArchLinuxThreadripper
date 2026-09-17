@@ -10,7 +10,7 @@ PYTHONDONTWRITEBYTECODE=1 "$HOME_LAB_PYTHON" "$root/tests/hardware/test_llama_ru
 PYTHONDONTWRITEBYTECODE=1 "$HOME_LAB_PYTHON" "$root/tests/hardware/test_model_kernels.py"
 PYTHONDONTWRITEBYTECODE=1 "$HOME_LAB_PYTHON" "$root/tests/hardware/test_sglang_evidence.py"
 PYTHONDONTWRITEBYTECODE=1 "$HOME_LAB_PYTHON" "$root/tests/hardware/test_serving_orchestration.py"
-for suite in test_performance_profiles.py test_performance_bundle.py test_coding_eval.py test_serving_runtime.py test_inference_cache.py; do
+for suite in test_performance_profiles.py test_performance_bundle.py test_coding_eval.py test_serving_runtime.py test_serving_diagnostics.py test_inference_cache.py; do
   PYTHONDONTWRITEBYTECODE=1 "$HOME_LAB_PYTHON" "$root/tests/hardware/$suite"
 done
 # shellcheck source=lib/common.sh

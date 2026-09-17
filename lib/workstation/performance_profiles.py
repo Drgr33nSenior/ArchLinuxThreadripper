@@ -36,9 +36,17 @@ OBSERVED_LAUNCH_OPTIONS = frozenset(("--model-path", "--revision", "--served-mod
                                     "--stream-interval", "--torch-compile-max-bs", "--cuda-graph-backend-decode",
                                     "--cuda-graph-backend-prefill", "--cuda-graph-tc-compiler", "--enable-torch-compile",
                                     "--cuda-graph-bs-decode", "--cuda-graph-bs-prefill", "--kv-cache-dtype",
-                                    "--page-size", "--max-total-tokens", "--disable-overlap-schedule"))
+                                    "--page-size", "--max-total-tokens", "--disable-overlap-schedule",
+                                    "--quantization", "--speculative-algorithm", "--speculative-num-steps",
+                                    "--speculative-eagle-topk", "--speculative-num-draft-tokens",
+                                    "--speculative-draft-model-path", "--speculative-draft-model-revision",
+                                    "--speculative-draft-model-quantization", "--speculative-adaptive",
+                                    "--speculative-adaptive-config", "--mamba-ssm-dtype", "--mamba-full-memory-ratio",
+                                    "--max-mamba-cache-size", "--mamba-radix-cache-strategy", "--disable-radix-cache",
+                                    "--linear-attn-decode-backend", "--linear-attn-prefill-backend"))
 OBSERVED_LAUNCH_LIST_OPTIONS = frozenset(("--cuda-graph-bs-decode", "--cuda-graph-bs-prefill"))
-OBSERVED_LAUNCH_BOOL_OPTIONS = frozenset(("--enable-torch-compile", "--disable-overlap-schedule"))
+OBSERVED_LAUNCH_BOOL_OPTIONS = frozenset(("--enable-torch-compile", "--disable-overlap-schedule",
+                                         "--speculative-adaptive", "--disable-radix-cache"))
 
 
 def digest_bytes(data):
@@ -359,6 +367,20 @@ def producer_conditions(serving, runtime_digest):
         raise ValueError("runtime model dtype is unavailable")
     model_settings = {key: value for key, value in settings.items() if key in model_setting_names}
     launch_settings = {key: value for key, value in settings.items() if key not in model_setting_names}
+    launch = normalized_observed_launch(runtime)
+    expected_artifacts = {key for key in ("--speculative-draft-model-path", "--speculative-adaptive-config") if key in launch}
+    artifacts = runtime.get("experiment_artifacts", {})
+    if not isinstance(artifacts, dict) or set(artifacts) != expected_artifacts:
+        raise ValueError("speculative experiment lacks matching staged artifact identities")
+    for option, artifact in artifacts.items():
+        if (not isinstance(artifact, dict) or set(artifact) != {"path", "files"}
+                or artifact["path"] != launch[option]):
+            raise ValueError("speculative artifact does not match observed launch")
+        model_files_digest({"model_files": artifact["files"]})
+    if artifacts:
+        # These are speculative execution inputs, not replacement target weights.
+        # A changed draft/config remains an explicit launch-condition difference.
+        launch_settings["experiment_artifacts"] = artifacts
     return {"schema": PRODUCER_CONDITIONS_SCHEMA,
             "runtime_sha256": runtime_digest, "model_files_sha256": model_files_digest(runtime),
             "model_settings_sha256": canonical_digest(model_settings),

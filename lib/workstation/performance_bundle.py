@@ -337,7 +337,10 @@ def run_kind(root, kind, spec, output, owner, cache_root, reserve_mib):
         private.mkdir(mode=0o700)
         write_json(private / "result.json", result)
         return result["status"], result["execution"], [("successes", str(result["successes"]), "tasks", "observed"),
-                                                          ("unavailable", str(result["unavailable"]), "tasks", "observed")]
+                                                          ("unavailable", str(result["unavailable"]), "tasks", "observed"),
+                                                          ("protocol_passed", str(result["protocol"]["passed"]), "tasks", "observed"),
+                                                          ("protocol_failed", str(result["protocol"]["failed"]), "tasks", "observed"),
+                                                          ("protocol_missing", str(result["protocol"]["unknown-not-collected"]), "tasks", "observed")]
     if kind in ("loading", "queue", "warm-status"):
         observed = kernel_evidence(child(root, spec["evidence"]))
         private = output / kind

@@ -54,6 +54,7 @@ Commands:
   rocm serving-sweep <rendered-sglang-deployment.json> <new-output-directory>
   rocm serving-loading-plan <deployment.json> <kernel-evidence-directory> <new-output-directory> --threads N,N --reserve-mib N --per-thread-mib N
   rocm serving-queue-plan <deployment.json> <kernel-evidence-directory> <new-output-directory> --maximum-queued N
+  rocm serving-experiment-plan <deployment.json> <kernel-evidence-directory> <new-output-directory> --axis <speculation|hybrid-state|weight-kernel> --values <comma-separated> [--algorithm <NGRAM|EAGLE|NEXTN>]
   rocm serving-warm-status <pod-name> <kernel-warmup-result.json|-> <new-output.json>
   rocm serving-memory-plan <deployment.json> <workload.json> <resource-plan.json> <new-output-directory> --observation <startup-dir> <serving-dir> [--observation ...] --other-mib N [--memory-mib N] [--telemetry-evidence evidence.json]
   rocm kernel-evidence <pod-name> <new-output-directory>
@@ -296,6 +297,10 @@ main() {
     rocm:serving-queue-plan)
       shift 2
       "$(ws_measure_python)" "$repo_root/lib/workstation/serving_runtime.py" queue-plan "$@"
+      ;;
+    rocm:serving-experiment-plan)
+      shift 2
+      "$(ws_measure_python)" "$repo_root/lib/workstation/serving_runtime.py" experiment-plan "$@"
       ;;
     rocm:serving-warm-status)
       (($# == 5)) || return 2

@@ -365,8 +365,12 @@ storage stack or automatic cache/data deletion.
 | 4 | Stock versus existing native kernel, then supported TuneD/EPP or GPU power-cap experiments with explicit prior-value restoration | Improved work/joule or latency with stable clocks/temperatures and no correctness/boot regression |
 | 5 | Qualified Sunshine Vulkan versus VAAPI on the real clients, using upstream-supported capture paths | Lower encode latency/drops and good frame-time tails at identical codec/quality settings |
 
+[Native SGLang experiment plans](PERFORMANCE-PROFILES.md#native-sglang-experiment-plans)
+cover speculative depth and hybrid-state precision without enabling either.
+Their runtime support and performance remain owner-qualified experiments.
+
 ASPM changes, direct HIP P2P reductions, Q6_K patches, AITER/FP8 workarounds,
-speculative decoding, development compiler patches, sched_ext, forced NUMA/NPS,
+development compiler patches, sched_ext, forced NUMA/NPS,
 global hugepages, memory overclocking, PBO/Curve Optimizer, undervolting and
 external AMF forks remain deferred. Their exact revisions and upstream merge
 status must be reverified before a separate experiment; none was silently

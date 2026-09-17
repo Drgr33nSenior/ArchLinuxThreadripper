@@ -95,25 +95,132 @@ def response_map(value, corpus_hash):
     generation_settings(value["generation"])
     rows = {}
     for row in value["responses"]:
-        if (not isinstance(row, dict) or set(row) - {"task_id", "attempts", "latency_ms", "input_tokens", "output_tokens", "response"}
+        if (not isinstance(row, dict) or set(row) - {"task_id", "attempts", "latency_ms", "input_tokens", "output_tokens", "response", "protocol"}
                 or not isinstance(row.get("task_id"), str) or row["task_id"] in rows
                 or not isinstance(row.get("attempts"), int) or not 1 <= row["attempts"] <= 3
                 or not isinstance(row.get("response"), str) or len(row["response"].encode()) > MAX_RESPONSE):
             raise ValueError("invalid task response")
+        if "protocol" in row and (not isinstance(row["protocol"], dict) or len(canonical(row["protocol"])) > MAX_RESPONSE):
+            raise ValueError("protocol response exceeds its bound")
         for name in ("latency_ms", "input_tokens", "output_tokens"):
             number(row.get(name), name)
         rows[row["task_id"]] = row
     return rows
 
 
+def _unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON member")
+        result[key] = value
+    return result
+
+
+def _invalid_constant(_value):
+    raise ValueError("non-finite JSON constant")
+
+
 def parse_object(text):
     try:
-        value = json.loads(text)
+        value = json.loads(text, object_pairs_hook=_unique_object, parse_constant=_invalid_constant)
     except json.JSONDecodeError:
         raise ValueError("response is not a JSON object") from None
     if not isinstance(value, dict):
         raise ValueError("response is not a JSON object")
     return value
+
+
+def protocol_tool(value, expected):
+    """Validate one complete tool call from real OpenAI-compatible wire shapes.
+
+    This is an offline assertion, never permission to invoke the named tool.
+    A disconnect, cancellation or token-limit finish is incomplete, even when
+    the arguments parsed before the interruption. Call IDs may differ by run.
+    """
+    if (not isinstance(value, dict) or set(value) != {"non_streaming", "streaming"}
+            or not isinstance(value["streaming"], str) or len(canonical(value)) > MAX_RESPONSE):
+        raise ValueError("invalid bounded protocol pair")
+
+    def choice(message):
+        if not isinstance(message, dict) or "error" in message:
+            raise ValueError("protocol error response")
+        rows = message.get("choices")
+        if (not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict)
+                or type(rows[0].get("index")) is not int or rows[0]["index"] != 0):
+            raise ValueError("require exactly one protocol choice")
+        return rows[0]
+
+    def checked_call(call):
+        if (not isinstance(call, dict) or call.get("type") != "function"
+                or not isinstance(call.get("id"), str) or not 1 <= len(call["id"]) <= 256
+                or not isinstance(call.get("function"), dict)):
+            raise ValueError("incomplete protocol tool identity")
+        function = call["function"]
+        if not isinstance(function.get("arguments"), str):
+            raise ValueError("protocol arguments must be a complete JSON string")
+        actual = {"tool": function.get("name"), "arguments": parse_object(function["arguments"])}
+        if not json_equal(actual, expected):
+            raise ValueError("protocol tool selection or arguments differ")
+
+    whole = choice(value["non_streaming"])
+    message = whole.get("message")
+    if (whole.get("finish_reason") != "tool_calls" or not isinstance(message, dict)
+            or message.get("content") not in (None, "") or not isinstance(message.get("tool_calls"), list)
+            or len(message["tool_calls"]) != 1):
+        raise ValueError("non-streaming tool call is incomplete or leaks content")
+    checked_call(message["tool_calls"][0])
+    body = value["streaming"].replace("\r\n", "\n")
+    if not body.endswith("\n\n"):
+        raise ValueError("incomplete SSE frame")
+    call = {"function": {"name": "", "arguments": ""}}
+    finished = done = False
+    for frame in body.split("\n\n"):
+        if not frame:
+            continue
+        lines = [line for line in frame.splitlines() if not line.startswith(":")]
+        if not lines:
+            continue
+        if done or any(not line.startswith("data:") for line in lines):
+            raise ValueError("unexpected SSE frame")
+        data = "\n".join(line[5:].lstrip(" ") for line in lines)
+        if data == "[DONE]":
+            if not finished:
+                raise ValueError("tool call lacks a successful finish")
+            done = True
+            continue
+        chunk = parse_object(data)
+        if finished and chunk.get("choices") == [] and isinstance(chunk.get("usage"), dict) and "error" not in chunk:
+            continue
+        row = choice(chunk)
+        delta = row.get("delta")
+        if finished or not isinstance(delta, dict) or delta.get("content") not in (None, ""):
+            raise ValueError("stream leaks content or continues after finish")
+        calls = delta.get("tool_calls", [])
+        if not isinstance(calls, list) or len(calls) > 1:
+            raise ValueError("unexpected streamed tool count")
+        for item in calls:
+            if not isinstance(item, dict) or type(item.get("index")) is not int or item["index"] != 0:
+                raise ValueError("unexpected streamed tool index")
+            for key in ("id", "type"):
+                if key in item:
+                    if key in call and call[key] != item[key]:
+                        raise ValueError("streamed tool identity changed")
+                    call[key] = item[key]
+            function = item.get("function", {})
+            if not isinstance(function, dict) or set(function) - {"name", "arguments"}:
+                raise ValueError("invalid streamed function")
+            for key, fragment in function.items():
+                if not isinstance(fragment, str):
+                    raise ValueError("invalid streamed fragment")
+                call["function"][key] += fragment
+        if row.get("finish_reason") is not None:
+            if row["finish_reason"] != "tool_calls":
+                raise ValueError("tool stream was truncated or cancelled")
+            finished = True
+    if not done:
+        raise ValueError("tool stream disconnected before DONE")
+    checked_call(call)
 
 
 def json_equal(actual, expected):
@@ -133,7 +240,14 @@ def evaluate_task(task, response):
               "latency_ms": response.get("latency_ms"), "input_tokens": response.get("input_tokens"),
               "output_tokens": response.get("output_tokens"),
               "response_sha256": digest(response["response"].encode())}
+    if task["kind"] == "tool":
+        result["protocol_status"] = "unknown-not-collected"
+        if "protocol" in response:
+            result["protocol_sha256"] = digest(canonical(response["protocol"]))
+            result["protocol_status"] = "failed"
     try:
+        if "protocol" in response and task["kind"] != "tool":
+            raise ValueError("protocol pairs are supported only for tool tasks")
         actual = parse_object(response["response"])
         if task["kind"] == "structured":
             if not json_equal(actual, task["expected"]):
@@ -142,6 +256,9 @@ def evaluate_task(task, response):
         elif task["kind"] == "tool":
             if set(actual) != {"tool", "arguments"} or not json_equal(actual, task["expected"]):
                 raise ValueError("tool selection or arguments differ")
+            if "protocol" in response:
+                protocol_tool(response["protocol"], task["expected"])
+                result["protocol_status"] = "passed"
             result["status"] = "passed"
         elif task["kind"] == "negative":
             if not json_equal(actual, task["expected"]):
@@ -173,6 +290,8 @@ def evaluate(corpus_file, responses_file):
         row = rows.pop(task["id"], None)
         if row is None:
             results.append({"task_id": task["id"], "kind": task["kind"], "status": "unknown-missing-response"})
+            if task["kind"] == "tool":
+                results[-1]["protocol_status"] = "unknown-not-collected"
         else:
             results.append(evaluate_task(task, row))
     if rows:
@@ -181,12 +300,14 @@ def evaluate(corpus_file, responses_file):
     failed = sum(row["status"] == "failed" for row in results)
     unavailable = sum(row["status"] == "unavailable-no-reviewed-isolated-executor" for row in results)
     unknown = sum(row["status"].startswith("unknown") for row in results)
+    protocol = {status: sum(row.get("protocol_status") == status for row in results)
+                for status in ("passed", "failed", "unknown-not-collected")}
     status = "passed" if failed == unavailable == unknown == 0 else "incomplete-unqualified"
     return {"schema": 1, "kind": "workstation-coding-evaluation", "status": status,
             "corpus_version": corpus["version"], "corpus_sha256": corpus_hash,
             "template_sha256": templates, "responses_sha256": response_hash,
             "generation": responses["generation"], "results": results, "successes": passed,
-            "failures": failed, "unavailable": unavailable, "unknown": unknown,
+            "failures": failed, "unavailable": unavailable, "unknown": unknown, "protocol": protocol,
             "execution": "unavailable: Bridge worker only accepts named build recipes; response text was not executed",
             "limitations": ["Task text, model responses and tool payloads are not retained in this result.",
                             "Static parsing is not a compile or unit-test result.",

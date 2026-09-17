@@ -8,12 +8,122 @@ import re
 import stat
 
 
+LAUNCH_SCALARS = frozenset((
+    "--model-path", "--revision", "--served-model-name", "--dtype", "--tp", "--tp-size",
+    "--context-length", "--mem-fraction-static", "--max-running-requests", "--max-queued-requests",
+    "--model-loader-extra-config", "--schedule-policy", "--chunked-prefill-size", "--attention-backend",
+    "--stream-interval", "--torch-compile-max-bs", "--cuda-graph-backend-decode",
+    "--cuda-graph-backend-prefill", "--cuda-graph-tc-compiler", "--kv-cache-dtype", "--page-size",
+    "--max-total-tokens", "--quantization", "--speculative-algorithm", "--speculative-num-steps",
+    "--speculative-eagle-topk", "--speculative-num-draft-tokens", "--speculative-draft-model-path",
+    "--speculative-draft-model-revision", "--speculative-draft-model-quantization",
+    "--speculative-adaptive-config", "--mamba-ssm-dtype", "--mamba-full-memory-ratio",
+    "--max-mamba-cache-size", "--mamba-radix-cache-strategy",
+    "--linear-attn-decode-backend", "--linear-attn-prefill-backend",
+))
+LAUNCH_BOOLEANS = frozenset(("--enable-torch-compile", "--disable-overlap-schedule",
+                             "--speculative-adaptive", "--disable-radix-cache"))
+LAUNCH_LISTS = frozenset(("--cuda-graph-bs-decode", "--cuda-graph-bs-prefill"))
+
+
+def observed_launch(args):
+    """Project actual argv, not effective defaults; refuse ambiguous known options.
+
+    This helper is streamed into a container on its own. The offline consumer
+    maintains its own validation boundary; a regression test checks their sets.
+    Unknown arguments (including authentication) are never returned.
+    """
+    observed = {}
+    index = 0
+    while index < len(args):
+        argument = args[index]
+        option, equals, value = argument.partition("=")
+        index += 1
+        if option not in LAUNCH_SCALARS | LAUNCH_BOOLEANS | LAUNCH_LISTS:
+            continue
+        if option in observed:
+            raise RuntimeError(f"observed SGLang argument is duplicated: {option}")
+        if option in LAUNCH_BOOLEANS:
+            if equals:
+                raise RuntimeError(f"observed boolean SGLang argument is malformed: {option}")
+            observed[option] = True
+            continue
+        if not equals:
+            if index >= len(args) or not args[index] or args[index].startswith("--"):
+                raise RuntimeError(f"observed SGLang argument is malformed: {option}")
+            value = args[index]
+            index += 1
+        if not value or len(value) > 4096:
+            raise RuntimeError(f"observed SGLang argument is malformed: {option}")
+        if option in LAUNCH_LISTS:
+            values = [value]
+            while index < len(args) and args[index] and not args[index].startswith("--"):
+                values.append(args[index])
+                index += 1
+            if len(values) > 256 or any(not item.isdigit() or int(item) < 1 for item in values):
+                raise RuntimeError(f"observed SGLang list argument is malformed: {option}")
+            observed[option] = values
+        else:
+            observed[option] = value
+    observed.setdefault("--enable-torch-compile", False)
+    return observed
+
+
 def digest(path):
     value = hashlib.sha256()
     with path.open("rb") as stream:
         for chunk in iter(lambda: stream.read(8 * 1024 * 1024), b""):
             value.update(chunk)
     return value.hexdigest()
+
+
+def experiment_artifacts(launch, model, model_files, models_root=Path("/models")):
+    """Bind staged draft/config bytes; never follow a URL or read outside /models."""
+    def discovery_error(error):
+        raise error
+
+    result = {}
+    for option in ("--speculative-draft-model-path", "--speculative-adaptive-config"):
+        if option not in launch:
+            continue
+        path = Path(launch[option])
+        if (not path.is_absolute() or path.resolve() != path or path.is_symlink()
+                or not (path == models_root or models_root in path.parents)):
+            raise RuntimeError("experiment artifact must be staged without symlinks under /models")
+        if option == "--speculative-draft-model-path" and path == model:
+            files = model_files
+        else:
+            if option == "--speculative-draft-model-path":
+                if not path.is_dir():
+                    raise RuntimeError("staged draft directory is unavailable")
+                paths = (Path(directory) / name
+                         for directory, directories, filenames in os.walk(path, onerror=discovery_error, followlinks=False)
+                         for name in directories + filenames)
+            else:
+                if not path.is_file() or path.stat().st_size > 64 * 1024:
+                    raise RuntimeError("adaptive configuration must be a bounded staged file")
+                paths = (path,)
+            files = {}
+            for item in paths:
+                info = item.lstat()
+                if stat.S_ISLNK(info.st_mode):
+                    raise RuntimeError("experiment artifact contains a symlink")
+                if stat.S_ISDIR(info.st_mode):
+                    continue
+                if not stat.S_ISREG(info.st_mode) or len(files) >= 2048:
+                    raise RuntimeError("experiment artifact is not a bounded regular-file tree")
+                checksum = digest(item)
+                after = item.stat()
+                if (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns) != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns):
+                    raise RuntimeError("experiment artifact changed during hashing")
+                name = item.name if item == path else str(item.relative_to(path))
+                files[name] = {"bytes": info.st_size, "sha256": checksum}
+        if len(files) > 2048:
+            raise RuntimeError("experiment artifact is not a bounded regular-file tree")
+        if not files or (option == "--speculative-draft-model-path" and not any(name.endswith(".safetensors") for name in files)):
+            raise RuntimeError("experiment artifact inventory is incomplete")
+        result[option] = {"path": str(path), "files": files}
+    return result
 
 
 def process_start_ticks(pid):
@@ -196,13 +306,6 @@ def main():
                         "bytes": prop.total_memory, "uuid": str(getattr(prop, "uuid", "unknown"))})
     if not devices or any(not d["gfx"].split(":")[0] == "gfx1201" for d in devices):
         raise RuntimeError("allocated devices do not report gfx1201")
-    allowed = {"--model-path", "--revision", "--served-model-name", "--dtype", "--tp", "--tp-size",
-               "--context-length", "--mem-fraction-static", "--max-running-requests", "--max-queued-requests",
-               "--model-loader-extra-config", "--schedule-policy",
-               "--chunked-prefill-size", "--attention-backend", "--stream-interval", "--torch-compile-max-bs",
-               "--cuda-graph-backend-decode", "--cuda-graph-backend-prefill", "--cuda-graph-tc-compiler",
-               "--kv-cache-dtype", "--page-size", "--max-total-tokens", "--disable-overlap-schedule"}
-    bool_flags = {"--disable-overlap-schedule"}
     launch, launch_processes = [], []
     for process in Path("/proc").glob("[0-9]*/cmdline"):
         try:
@@ -210,39 +313,16 @@ def main():
         except (OSError, UnicodeError):
             continue
         if "sglang.launch_server" in args:
-            observed = {}
-            for index, argument in enumerate(args):
-                if argument in allowed:
-                    if argument in bool_flags:
-                        if argument in observed:
-                            raise RuntimeError(f"observed SGLang argument is duplicated: {argument}")
-                        observed[argument] = True
-                        continue
-                    if index + 1 >= len(args) or not args[index + 1] or args[index + 1].startswith("--"):
-                        raise RuntimeError(f"observed SGLang argument is malformed: {argument}")
-                    if argument in observed:
-                        raise RuntimeError(f"observed SGLang argument is duplicated: {argument}")
-                    observed[argument] = args[index + 1]
-                elif "=" in argument:
-                    option, value = argument.split("=", 1)
-                    if option in allowed:
-                        if not value or option in observed:
-                            raise RuntimeError(f"observed SGLang argument is malformed or duplicated: {option}")
-                        observed[option] = value
-            observed["--enable-torch-compile"] = "--enable-torch-compile" in args
-            for option in ("--cuda-graph-bs-decode", "--cuda-graph-bs-prefill"):
-                if option in args:
-                    values = []
-                    for value in args[args.index(option)+1:]:
-                        if not value or value.startswith("--"):
-                            break
-                        values.append(value)
-                    observed[option] = values
+            observed = observed_launch(args)
             launch.append(observed)
             launch_processes.append((int(process.parent.name), observed))
     result = {"schema": 1, "settings": settings, "packages": packages,
                       "hip": torch.version.hip, "devices": devices, "launch": launch,
                       "model_files": files, "model_contract": model_contract}
+    if len(launch) == 1:
+        artifacts = experiment_artifacts(launch[0], model, files)
+        if artifacts:
+            result["experiment_artifacts"] = artifacts
     descriptor = experimental_kv_receipt(launch_processes, config)
     if descriptor is not None:
         result["experimental_kv"] = descriptor

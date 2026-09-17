@@ -11,6 +11,51 @@ import coding_eval
 
 
 class CodingEvalTests(unittest.TestCase):
+    def protocol(self):
+        tool = {"id": "fixture-call", "type": "function", "function": {
+            "name": "lookup", "arguments": '{"city":"Paris"}'}}
+        whole = {"choices": [{"index": 0, "finish_reason": "tool_calls",
+                               "message": {"role": "assistant", "content": None, "tool_calls": [tool]}}]}
+        chunks = [{"choices": [{"index": 0, "finish_reason": None, "delta": {"tool_calls": [
+            {"index": 0, "id": "stream-call", "type": "function", "function": {
+                "name": "lookup", "arguments": '{"city":'}}]}}]},
+                  {"choices": [{"index": 0, "finish_reason": None, "delta": {"tool_calls": [
+                      {"index": 0, "function": {"arguments": '"Paris"}'}}]}}]},
+                  {"choices": [{"index": 0, "finish_reason": "tool_calls", "delta": {}}]}]
+        return {"non_streaming": whole, "streaming": "".join("data: " + json.dumps(item) + "\n\n" for item in chunks) + "data: [DONE]\n\n"}
+
+    def test_real_protocol_shapes_match_without_executing_tools(self):
+        expected = {"tool": "lookup", "arguments": {"city": "Paris"}}
+        task = {"id": "fixture", "kind": "tool", "expected": expected}
+        row = {"attempts": 1, "response": json.dumps(expected), "protocol": self.protocol()}
+        result = coding_eval.evaluate_task(task, row)
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["protocol_status"], "passed")
+        self.assertNotIn("Paris", json.dumps(result))
+
+    def test_truncated_disconnected_or_leaking_protocol_fails(self):
+        expected = {"tool": "lookup", "arguments": {"city": "Paris"}}
+        task = {"id": "fixture", "kind": "tool", "expected": expected}
+        for variant in ("disconnect", "length", "partial-arguments", "markup", "after-done", "bad-index", "duplicate-json"):
+            protocol = self.protocol()
+            if variant == "disconnect":
+                protocol["streaming"] = protocol["streaming"].replace("data: [DONE]\n\n", "")
+            elif variant == "length":
+                protocol["non_streaming"]["choices"][0]["finish_reason"] = "length"
+            elif variant == "partial-arguments":
+                protocol["non_streaming"]["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"] = '{"city":"Par'
+            elif variant == "markup":
+                protocol["non_streaming"]["choices"][0]["message"]["content"] = '<tool_call><function'
+            elif variant == "after-done":
+                protocol["streaming"] += 'data: {}\n\n'
+            elif variant == "bad-index":
+                protocol["streaming"] = protocol["streaming"].replace('"index": 0', '"index": true')
+            else:
+                protocol["non_streaming"]["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"] = '{"city":"Rome","city":"Paris"}'
+            row = {"attempts": 1, "response": json.dumps(expected), "protocol": protocol}
+            with self.subTest(variant=variant):
+                self.assertEqual(coding_eval.evaluate_task(task, row)["status"], "failed")
+
     def test_json_assertions_distinguish_booleans_from_numbers_recursively(self):
         for kind in ("structured", "tool", "negative"):
             for expected, actual in ((1, True), (False, 0),
@@ -24,6 +69,18 @@ class CodingEvalTests(unittest.TestCase):
                     self.assertEqual(coding_eval.evaluate_task(task, response)["status"], "failed")
                     response["response"] = json.dumps(wanted)
                     self.assertEqual(coding_eval.evaluate_task(task, response)["status"], "passed")
+
+    def test_failed_or_missing_tool_response_cannot_hide_protocol_coverage(self):
+        corpus, digest, _ = coding_eval.load_corpus()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "responses.json"
+            responses = self.responses(corpus, digest)
+            tools = [row for row in responses["responses"] if row["task_id"].startswith("tool-")]
+            tools[0].update(response="not JSON", protocol=self.protocol())
+            responses["responses"].remove(tools[1])
+            path.write_text(json.dumps(responses))
+            result = coding_eval.evaluate(coding_eval.corpus_path(), path)
+            self.assertEqual(result["protocol"], {"passed": 0, "failed": 1, "unknown-not-collected": 2})
 
     def responses(self, corpus, digest):
         rows = []

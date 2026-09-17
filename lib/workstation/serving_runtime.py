@@ -239,6 +239,159 @@ def queue_plan(deployment, observed, maximum_queued):
                 "The management-operation queue remains separate from this engine queue."]}}
 
 
+def _without_arguments(args, scalar, boolean=()):
+    """Separate named controls from unchanged args; reject ambiguous pairs."""
+    result, controls = [], {}
+    index = 0
+    while index < len(args):
+        item = args[index]
+        option, equals, value = item.partition("=")
+        index += 1
+        if option not in scalar and option not in boolean:
+            result.append(item)
+            continue
+        if option in controls or (option in boolean and equals):
+            raise ValueError("ambiguous existing experiment argument")
+        if option in scalar:
+            if not equals:
+                if index >= len(args) or args[index].startswith("--"):
+                    raise ValueError("missing existing experiment argument")
+                value = args[index]
+                index += 1
+            if not value:
+                raise ValueError("empty existing experiment argument")
+        controls[option] = True if option in boolean else value
+    return result, controls
+
+
+def experiment_plan(deployment, observed, axis, values, algorithm=None):
+    """Plan native SGLang controls, never infer kernel support from CLI presence."""
+    pod, runtime, compiler = observed
+    spec, container, root = _single(deployment, pod)
+    launch = _launch(runtime)
+    if "experimental_kv" in runtime or launch.get("--attention-backend") == "ultraquant-rdna4-v1":
+        raise ValueError("do not combine native inference experiments with the separate experimental KV backend")
+    if (not isinstance(values, list) or not 1 <= len(values) <= 8
+            or any(not isinstance(value, str) for value in values) or len(set(values)) != len(values)):
+        raise ValueError("require one to eight distinct candidate values")
+    base_args = container.get("args")
+    if not isinstance(base_args, list) or not all(isinstance(item, str) and item for item in base_args):
+        raise ValueError("require explicit baseline container arguments")
+    flags = compiler.get("flags", ())
+    cases = {}
+
+    def require_flags(*required):
+        if any(flag not in flags for flag in required):
+            raise ValueError("candidate control is absent from exact-image help")
+
+    if axis == "speculation":
+        if algorithm not in ("NGRAM", "EAGLE", "NEXTN"):
+            raise ValueError("choose NGRAM, or an already observed EAGLE/NEXTN setup")
+        current = launch.get("--speculative-algorithm")
+        if current not in (None, algorithm):
+            raise ValueError("do not change draft algorithms in a depth experiment")
+        if algorithm != "NGRAM" and current != algorithm:
+            raise ValueError("EAGLE/NEXTN requires an owner-prepared observed draft setup first")
+        if launch.get("--speculative-adaptive-config"):
+            raise ValueError("custom adaptive configuration needs a separately reviewed artifact contract")
+        if algorithm != "NGRAM" and launch.get("--speculative-eagle-topk") != "1":
+            raise ValueError("this bounded experiment requires observed top-k 1")
+        if algorithm == "NGRAM" and any(key.startswith("--speculative-draft-model") for key in launch):
+            raise ValueError("NGRAM does not use a draft-model artifact")
+        scalar = {"--speculative-algorithm", "--speculative-num-steps", "--speculative-num-draft-tokens",
+                  "--speculative-eagle-topk", "--speculative-draft-model-path",
+                  "--speculative-draft-model-revision", "--speculative-draft-model-quantization"}
+        boolean = {"--speculative-adaptive"}
+        allowed = scalar | boolean
+        if any(item.split("=", 1)[0].startswith("--speculative-") and item.split("=", 1)[0] not in allowed
+               for item in base_args):
+            raise ValueError("unreviewed existing speculative control; do not silently overwrite it")
+        require_flags("--speculative-algorithm", "--speculative-num-draft-tokens")
+        unchanged, controls = _without_arguments(base_args, scalar, boolean)
+        if controls != {key: value for key, value in launch.items() if key in allowed}:
+            raise ValueError("manifest experiment controls differ from observed launch; require explicit matching values")
+        for value in values:
+            args = list(unchanged)
+            if value != "off":
+                args += ["--speculative-algorithm", algorithm]
+                for flag in sorted(scalar):
+                    if flag.startswith("--speculative-draft-model") and flag in launch:
+                        args += [flag, launch[flag]]
+                if value == "adaptive":
+                    if algorithm != "EAGLE":
+                        raise ValueError("native adaptive decoding is reviewed only for EAGLE/top-k 1")
+                    require_flags("--speculative-adaptive", "--speculative-num-steps", "--speculative-eagle-topk")
+                    # The locked source's default tiers are 1/3/7 steps. Do not
+                    # accept a free-form adaptive config or hide its maximum.
+                    args += ["--speculative-num-steps", "3", "--speculative-eagle-topk", "1",
+                             "--speculative-num-draft-tokens", "4", "--speculative-adaptive"]
+                else:
+                    if value not in ("1", "2", "3", "4", "7", "8") or (algorithm != "NGRAM" and value == "8"):
+                        raise ValueError("unsupported bounded speculative depth")
+                    if algorithm == "NGRAM":
+                        args += ["--speculative-num-draft-tokens", value]
+                    else:
+                        require_flags("--speculative-num-steps", "--speculative-eagle-topk")
+                        args += ["--speculative-num-steps", value, "--speculative-eagle-topk", "1",
+                                 "--speculative-num-draft-tokens", str(int(value) + 1)]
+            cases[f"speculation-{value}"] = {"requested": value, "patch": [
+                {"op": "test", "path": "/spec/template/spec", "value": copy.deepcopy(spec)},
+                {"op": "replace", "path": root + "/args", "value": args}]}
+    elif axis == "hybrid-state":
+        if algorithm is not None or runtime.get("model_contract", {}).get("architectures") != ["Qwen3_5ForConditionalGeneration"]:
+            raise ValueError("hybrid-state plans require the observed Qwen3.5-family architecture")
+        require_flags("--mamba-ssm-dtype")
+        _, controls = _without_arguments(base_args, {"--mamba-ssm-dtype"})
+        if controls != {key: value for key, value in launch.items() if key == "--mamba-ssm-dtype"}:
+            raise ValueError("manifest experiment controls differ from observed launch; require explicit matching values")
+        for value in values:
+            if value not in ("float32", "float16", "bfloat16"):
+                raise ValueError("unsupported recurrent-state dtype")
+            args = _replace_argument(base_args, "--mamba-ssm-dtype", value)
+            cases[f"hybrid-state-{value}"] = {"requested": value, "patch": [
+                {"op": "test", "path": "/spec/template/spec", "value": copy.deepcopy(spec)},
+                {"op": "replace", "path": root + "/args", "value": args}]}
+    elif axis == "weight-kernel":
+        if algorithm is not None or values != ["petit_nvfp4"]:
+            raise ValueError("the weight-kernel option accepts only petit_nvfp4, without a speculative algorithm")
+        require_flags("--quantization")
+        _, controls = _without_arguments(base_args, {"--quantization"})
+        if controls != {key: value for key, value in launch.items() if key == "--quantization"}:
+            raise ValueError("manifest experiment controls differ from observed launch; require explicit matching values")
+        # SGLang exposes the adapter, but the reviewed Petit matrix path uses
+        # CDNA MFMA and wave64 layouts. CLI/package presence cannot authorize
+        # gfx1201 execution. Keep this a refusal, not an unusable apply patch.
+        return {"schema": 1, "kind": "sglang-inference-experiment-plan", "status": "blocked",
+                "qualification": "unqualified", "axis": axis, "algorithm": None,
+                "identity": runtime_key(pod, runtime, compiler), "deployment_sha256": identity(deployment),
+                "requested": {"--quantization": "petit_nvfp4"},
+                "observed_quantization": launch.get("--quantization"), "cases": {},
+                "reason": "Petit NVFP4 is blocked on gfx1201: reviewed kernels use CDNA MFMA and wave64; no verified RDNA4 matrix implementation is supplied.",
+                "requirements": ["No patch, package installation, model conversion, deployment or profile selection is performed.",
+                                 "A separately reviewed runtime implementation and build provenance must establish gfx1201 support before this gate can change.",
+                                 "The selected SGLang Petit adapter requires prequantized NVFP4/group-16 weights; this is not an MXFP4 or KV-cache switch.",
+                                 "Retain baseline weights and evidence; qualify actual dispatch, numerical/coding quality, per-GPU memory and cancellation before owner selection."]}
+    else:
+        raise ValueError("experiment axis must be speculation, hybrid-state or weight-kernel")
+    return {"schema": 1, "kind": "sglang-inference-experiment-plan", "status": "plan-only-unqualified",
+            "qualification": "unqualified", "axis": axis, "algorithm": algorithm,
+            "identity": runtime_key(pod, runtime, compiler), "deployment_sha256": identity(deployment), "cases": cases,
+            "support": "CLI/source planning only; not proof of model, HIP kernel or effective runtime support",
+            "unsupported": {
+                "mxfp4_online": {"status": "unsupported", "reason": "locked SGLang requires gfx95 for online Quark MXFP4; no gate override"},
+                "mxfp4_prequantized": {"status": "unqualified", "reason": "requires separately identified weights and verified gfx1201 GEMM execution"},
+                "paroquant": {"status": "unsupported", "reason": "no reviewed SGLang ParoQuant implementation in the selected runtime"},
+                "lazy_hybrid_cache": {"status": "unsupported", "reason": "locked extra_buffer_lazy path excludes HIP and speculative decoding"}},
+            "requirements": ["Nothing is applied, downloaded, warmed, deployed or selected by this command.",
+                             "Use fresh processes and cache namespaces; retain the unchanged baseline and all evidence.",
+                             "Keep target weights, tokenizer, request corpus, GPU assignment and resource reserves fixed.",
+                             "Retain draft checkpoint/revision/file hashes before any EAGLE/NEXTN measurement; CLI paths are not artifact identity.",
+                             "Adaptive EAGLE allocates tier-dependent state up to 7 steps/8 token slots; measure all temporary and graph allocations.",
+                             "Observe effective settings, actual dispatch and fallback; requested flags do not establish adaptive execution.",
+                             "Measure per-device memory and hybrid state separately from full-attention KV; do not convert state slots into tokens.",
+                             "Check numerical/coding quality, long recurrence, chunk/prefix boundaries, cancellation and speculative rollback before owner selection."]}
+
+
 def _warm_identity(observed):
     """Return a fresh runtime identity only when model/device evidence is usable."""
     try:
@@ -398,6 +551,11 @@ def main():
     p = sub.add_parser("queue-plan")
     p.add_argument("deployment"); p.add_argument("evidence"); p.add_argument("output")
     p.add_argument("--maximum-queued", type=int, required=True)
+    p = sub.add_parser("experiment-plan")
+    p.add_argument("deployment"); p.add_argument("evidence"); p.add_argument("output")
+    p.add_argument("--axis", choices=("speculation", "hybrid-state", "weight-kernel"), required=True)
+    p.add_argument("--values", required=True)
+    p.add_argument("--algorithm", choices=("NGRAM", "EAGLE", "NEXTN"))
     p = sub.add_parser("warm-status")
     p.add_argument("evidence"); p.add_argument("warmup"); p.add_argument("output")
     p = sub.add_parser("pod-status")
@@ -410,6 +568,10 @@ def main():
     elif args.mode == "queue-plan":
         observed = evidence(args.evidence)
         result = queue_plan(json.loads(Path(args.deployment).read_text()), observed, args.maximum_queued)
+    elif args.mode == "experiment-plan":
+        observed = evidence(args.evidence)
+        result = experiment_plan(json.loads(Path(args.deployment).read_text()), observed,
+                                 args.axis, args.values.split(","), args.algorithm)
     elif args.mode == "warm-status":
         observed = evidence(args.evidence)
         warmup = None if args.warmup == "-" else json.loads(Path(args.warmup).read_text())
@@ -426,6 +588,8 @@ def main():
             write(output / "patch.json", result["patch"])
     else:
         write(output, result)
+    if result.get("status") == "blocked":
+        parser.exit(2, "blocked: " + result["reason"] + "\n")
 
 
 if __name__ == "__main__":

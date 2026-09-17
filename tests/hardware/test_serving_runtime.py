@@ -8,6 +8,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -78,6 +79,172 @@ def fixtures():
 class ServingRuntimeTests(unittest.TestCase):
     def setUp(self):
         self.deployment, self.observed = fixtures()
+
+    def test_petit_option_records_request_but_never_emits_a_gfx1201_patch(self):
+        self.observed[2]["flags"].append("--quantization")
+        before = copy.deepcopy((self.deployment, self.observed))
+        result = serving_runtime.experiment_plan(self.deployment, self.observed, "weight-kernel", ["petit_nvfp4"])
+        self.assertEqual((self.deployment, self.observed), before)
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["qualification"], "unqualified")
+        self.assertEqual(result["requested"], {"--quantization": "petit_nvfp4"})
+        self.assertIsNone(result["observed_quantization"])
+        self.assertEqual(result["cases"], {})
+        self.assertNotIn("patch", result)
+        self.assertIn("gfx1201", result["reason"])
+        self.assertIn("MFMA", result["reason"])
+        self.assertEqual(result["identity"], serving_runtime.runtime_key(*self.observed))
+
+    def test_petit_option_does_not_accept_cli_presence_as_hardware_support(self):
+        self.observed[2]["flags"].append("--quantization")
+        self.observed[2]["runtime_capabilities"]["petit_nvfp4"] = {"status": "supported-source-contract"}
+        self.observed[2]["packages"]["petit-kernel"] = "synthetic"
+        self.observed[1]["launch"][0]["--quantization"] = "petit_nvfp4"
+        self.deployment["spec"]["template"]["spec"]["containers"][0]["args"] += ["--quantization=petit_nvfp4"]
+        result = serving_runtime.experiment_plan(self.deployment, self.observed, "weight-kernel", ["petit_nvfp4"])
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["observed_quantization"], "petit_nvfp4")
+        self.assertEqual(result["cases"], {})
+
+    def test_petit_option_refuses_missing_help_ambiguous_inputs_and_other_experiments(self):
+        with self.assertRaisesRegex(ValueError, "exact-image help"):
+            serving_runtime.experiment_plan(self.deployment, self.observed, "weight-kernel", ["petit_nvfp4"])
+        self.observed[2]["flags"].append("--quantization")
+        for values, algorithm in ((["petit_mxfp4"], None), (["auto", "petit_nvfp4"], None),
+                                  (["petit_nvfp4"], "NGRAM")):
+            with self.subTest(values=values, algorithm=algorithm), self.assertRaises(ValueError):
+                serving_runtime.experiment_plan(self.deployment, self.observed, "weight-kernel", values, algorithm)
+        args = self.deployment["spec"]["template"]["spec"]["containers"][0]["args"]
+        for added in (["--quantization", "modelopt_fp4"], ["--quantization"],
+                      ["--quantization=petit_nvfp4", "--quantization=petit_nvfp4"]):
+            with self.subTest(added=added):
+                args[2:] = added
+                with self.assertRaises(ValueError):
+                    serving_runtime.experiment_plan(self.deployment, self.observed, "weight-kernel", ["petit_nvfp4"])
+        args[2:] = []
+        self.observed[1]["experimental_kv"] = {"qualification": "unqualified"}
+        with self.assertRaisesRegex(ValueError, "separate experimental KV"):
+            serving_runtime.experiment_plan(self.deployment, self.observed, "weight-kernel", ["petit_nvfp4"])
+
+    def test_actual_petit_cli_retains_private_blocked_evidence_and_failure_status(self):
+        self.observed[2]["flags"].append("--quantization")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name, value in zip(("pod", "runtime", "compiler"), self.observed):
+                (root / (name + ".json")).write_text(json.dumps(value))
+            deployment = root / "deployment.json"
+            deployment.write_text(json.dumps(self.deployment))
+            output = root / "petit"
+            command = ["bash", str(ROOT / "bin/workstationctl"), "--config", str(ROOT / "config/workstation.conf.example"),
+                       "rocm", "serving-experiment-plan", str(deployment), str(root), str(output),
+                       "--axis", "weight-kernel", "--values", "petit_nvfp4"]
+            environment = dict(os.environ, WORKSTATION_PYTHON=sys.executable, KUBECONFIG="/dev/null")
+            completed = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=10)
+            self.assertEqual(completed.returncode, 2, completed.stderr)
+            self.assertIn("gfx1201", completed.stderr)
+            self.assertEqual(output.stat().st_mode & 0o777, 0o700)
+            self.assertEqual(sorted(path.name for path in output.iterdir()), ["plan.json"])
+            report = output / "plan.json"
+            self.assertEqual(report.stat().st_mode & 0o777, 0o600)
+            original = report.read_bytes()
+            self.assertEqual(json.loads(original)["status"], "blocked")
+            self.assertNotEqual(subprocess.run(command, env=environment, capture_output=True, timeout=10).returncode, 0)
+            self.assertEqual(report.read_bytes(), original)
+            # Do not broaden the workstation's hardware policy for this option.
+            self.observed[1]["devices"][0]["gfx"] = "gfx942"
+            (root / "runtime.json").write_text(json.dumps(self.observed[1]))
+            command[8] = str(root / "foreign")
+            refused = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=10)
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertIn("distinct observed gfx1201", refused.stderr)
+            self.assertFalse((root / "foreign").exists())
+
+    def test_speculation_candidates_preserve_model_resources_and_do_not_apply(self):
+        self.observed[2]["flags"] += ["--speculative-algorithm", "--speculative-num-draft-tokens"]
+        before = copy.deepcopy(self.deployment)
+        result = serving_runtime.experiment_plan(self.deployment, self.observed, "speculation", ["off", "2", "4"], "NGRAM")
+        self.assertEqual(self.deployment, before)
+        self.assertEqual(result["status"], "plan-only-unqualified")
+        self.assertEqual(result["cases"]["speculation-off"]["patch"][1]["value"], before["spec"]["template"]["spec"]["containers"][0]["args"])
+        self.assertEqual(result["cases"]["speculation-4"]["patch"][1]["value"][-4:],
+                         ["--speculative-algorithm", "NGRAM", "--speculative-num-draft-tokens", "4"])
+        for row in result["cases"].values():
+            self.assertEqual(row["patch"][0]["value"], before["spec"]["template"]["spec"])
+        self.assertEqual(result["unsupported"]["paroquant"]["status"], "unsupported")
+
+    def test_experiments_refuse_missing_help_unsupported_adaptation_and_kv_combinations(self):
+        for axis, values, algorithm in (("speculation", ["2"], "NGRAM"),
+                                         ("speculation", ["adaptive"], "NGRAM"),
+                                         ("hybrid-state", ["fp8"], None)):
+            with self.subTest(axis=axis, values=values), self.assertRaises(ValueError):
+                serving_runtime.experiment_plan(self.deployment, self.observed, axis, values, algorithm)
+        self.observed[2]["flags"] += ["--mamba-ssm-dtype"]
+        self.observed[1]["experimental_kv"] = {"qualification": "unqualified"}
+        with self.assertRaises(ValueError):
+            serving_runtime.experiment_plan(self.deployment, self.observed, "hybrid-state", ["float32"], None)
+
+    def test_hybrid_precision_changes_only_its_explicit_argument(self):
+        self.observed[2]["flags"] += ["--mamba-ssm-dtype"]
+        result = serving_runtime.experiment_plan(self.deployment, self.observed, "hybrid-state", ["float32", "float16"], None)
+        args = result["cases"]["hybrid-state-float16"]["patch"][1]["value"]
+        self.assertEqual(args, self.deployment["spec"]["template"]["spec"]["containers"][0]["args"] + ["--mamba-ssm-dtype", "float16"])
+        self.assertEqual(result["qualification"], "unqualified")
+
+    def test_experiments_refuse_manifest_observation_disagreement(self):
+        self.observed[2]["flags"] += ["--speculative-algorithm", "--speculative-num-draft-tokens", "--mamba-ssm-dtype"]
+        args = self.deployment["spec"]["template"]["spec"]["containers"][0]["args"]
+        args.extend(["--speculative-algorithm", "NGRAM"])
+        with self.assertRaisesRegex(ValueError, "observed launch"):
+            serving_runtime.experiment_plan(self.deployment, self.observed, "speculation", ["off", "2"], "NGRAM")
+        args[-2:] = ["--mamba-ssm-dtype", "float16"]
+        with self.assertRaisesRegex(ValueError, "observed launch"):
+            serving_runtime.experiment_plan(self.deployment, self.observed, "hybrid-state", ["float32"])
+
+    def test_adaptive_requires_existing_eagle_topk_one_and_retains_draft_arguments(self):
+        launch = self.observed[1]["launch"][0]
+        launch.update({"--speculative-algorithm": "EAGLE", "--speculative-eagle-topk": "1",
+                       "--speculative-draft-model-path": "/models/staged-draft",
+                       "--speculative-draft-model-revision": "b" * 40})
+        args = self.deployment["spec"]["template"]["spec"]["containers"][0]["args"]
+        for flag, value in list(launch.items())[1:]:
+            args.extend([flag, value])
+        self.observed[2]["flags"] += ["--speculative-algorithm", "--speculative-eagle-topk", "--speculative-num-steps",
+                                       "--speculative-num-draft-tokens", "--speculative-adaptive"]
+        result = serving_runtime.experiment_plan(self.deployment, self.observed, "speculation", ["off", "3", "adaptive"], "EAGLE")
+        adaptive = result["cases"]["speculation-adaptive"]["patch"][1]["value"]
+        self.assertEqual(adaptive.count("--speculative-algorithm"), 1)
+        self.assertIn("/models/staged-draft", adaptive)
+        self.assertIn("--speculative-adaptive", adaptive)
+        off = result["cases"]["speculation-off"]["patch"][1]["value"]
+        self.assertFalse(any(item.startswith("--speculative-") for item in off))
+        launch["--speculative-eagle-topk"] = "2"
+        with self.assertRaises(ValueError):
+            serving_runtime.experiment_plan(self.deployment, self.observed, "speculation", ["adaptive"], "EAGLE")
+
+    def test_actual_cli_writes_private_candidates_without_overwriting_evidence(self):
+        self.observed[2]["flags"] += ["--mamba-ssm-dtype"]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name, value in zip(("pod", "runtime", "compiler"), self.observed):
+                (root / (name + ".json")).write_text(json.dumps(value))
+            deployment = root / "deployment.json"
+            deployment.write_text(json.dumps(self.deployment))
+            output = root / "candidate"
+            command = ["bash", str(ROOT / "bin/workstationctl"), "--config", str(ROOT / "config/workstation.conf.example"),
+                       "rocm", "serving-experiment-plan", str(deployment), str(root), str(output),
+                       "--axis", "hybrid-state", "--values", "float32,float16"]
+            environment = dict(os.environ, WORKSTATION_PYTHON=sys.executable, KUBECONFIG="/dev/null")
+            completed = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=10)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertEqual(output.stat().st_mode & 0o777, 0o700)
+            patch = json.loads((output / "hybrid-state-float16.json").read_text())
+            self.assertEqual(patch[1]["value"][-2:], ["--mamba-ssm-dtype", "float16"])
+            for path in output.iterdir():
+                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            original = (output / "plan.json").read_bytes()
+            self.assertNotEqual(subprocess.run(command, env=environment, capture_output=True, timeout=10).returncode, 0)
+            self.assertEqual((output / "plan.json").read_bytes(), original)
+
 
     def test_loading_plan_is_independent_and_exact_image_gated(self):
         before = copy.deepcopy(self.deployment)

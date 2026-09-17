@@ -202,6 +202,27 @@ def bundle(root, profile_id, throughput=100, status="measured-not-qualified", va
 
 
 class ProfilesTests(unittest.TestCase):
+    def test_draft_bytes_are_required_and_bound_as_launch_conditions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bundle(root, "draft")
+            serving = load(root / "serving/result.json")
+            runtime = serving["runtime"]
+            runtime["launch"][0]["--speculative-draft-model-path"] = "/models/draft"
+            with self.assertRaisesRegex(ValueError, "artifact identities"):
+                profiles.producer_conditions(serving, "a" * 64)
+            runtime["experiment_artifacts"] = {"--speculative-draft-model-path": {
+                "path": "/models/draft", "files": {"model.safetensors": {"bytes": 1, "sha256": "b" * 64}}}}
+            before = profiles.producer_conditions(serving, "a" * 64)
+            runtime["experiment_artifacts"]["--speculative-draft-model-path"]["files"]["model.safetensors"]["sha256"] = "c" * 64
+            after = profiles.producer_conditions(serving, "a" * 64)
+            self.assertNotEqual(before["launch_settings_sha256"], after["launch_settings_sha256"])
+            self.assertEqual(before["model_files_sha256"], after["model_files_sha256"])
+            self.assertEqual(before["observed_launch_sha256"], after["observed_launch_sha256"])
+            runtime["experiment_artifacts"]["--speculative-draft-model-path"]["path"] = "/models/elsewhere"
+            with self.assertRaisesRegex(ValueError, "observed launch"):
+                profiles.producer_conditions(serving, "a" * 64)
+
     def test_experimental_kv_descriptor_is_opt_in_and_stable(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

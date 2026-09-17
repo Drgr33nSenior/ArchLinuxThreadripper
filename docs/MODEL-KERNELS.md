@@ -58,6 +58,10 @@ BLAS library does not prove the hot operation uses that library.
 
 ## Loading, warm state and admission candidates
 
+For native speculative-depth and hybrid-state precision candidates, use the
+[SGLang experiment plan procedure](PERFORMANCE-PROFILES.md#native-sglang-experiment-plans).
+It shares these retained inputs but has separate support and qualification limits.
+
 `serving_runtime.py` produces only independent JSON Patch candidates. It does
 not restart a Pod, send a warmup prompt, delete a cache, or select a profile.
 Before it offers loading threads or a queue cap, `kernel-evidence` runs the

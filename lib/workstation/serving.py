@@ -5,10 +5,12 @@ server configuration mutation or output-text retention occurs here.
 """
 import argparse
 from concurrent.futures import ThreadPoolExecutor
+import hashlib
 import json
 import math
 import os
 from pathlib import Path
+import re
 import statistics
 import time
 import urllib.error
@@ -154,21 +156,71 @@ def stream(base, case):
         return {"ok": False, "error_class": type(error).__name__, "latency_seconds": time.monotonic() - start}
 
 
+METRIC_GAUGES = frozenset((
+    "sglang:num_queue_reqs", "sglang:num_running_reqs",
+    "sglang:spec_accept_length", "sglang:spec_accept_rate", "sglang:spec_num_steps",
+    "sglang:spec_num_draft_tokens", "sglang:full_token_usage", "sglang:mamba_usage",
+    "sglang:kv_available_tokens", "sglang:kv_evictable_tokens", "sglang:kv_used_tokens",
+    "sglang:mamba_available_tokens", "sglang:mamba_evictable_tokens", "sglang:mamba_used_tokens",
+))
+METRIC_NAMES = METRIC_GAUGES | frozenset(
+    "sglang:" + name + suffix
+    for name in ("queue_time_seconds", "time_to_first_token_seconds", "inter_token_latency_seconds")
+    for suffix in ("_sum", "_count", "_bucket"))
+_LABEL = r'([a-zA-Z_][a-zA-Z0-9_]*)="((?:[^"\\\n]|\\[\\"n])*)"'
+_SAMPLE = re.compile(r'([a-zA-Z_:][a-zA-Z0-9_:]*)(?:\{(.*)\})?\s+(\S+)(?:\s+(-?[0-9]+))?')
+
+
+def metric_samples(text):
+    """Parse bounded Prometheus text; never combine rank series or expose labels."""
+    rows, seen = [], set()
+    for line in text.splitlines():
+        if not line or line.startswith("#"):
+            continue
+        name = re.match(r"[a-zA-Z_:][a-zA-Z0-9_:]*", line)
+        if not name or name[0] not in METRIC_NAMES:
+            continue
+        match = _SAMPLE.fullmatch(line)
+        if not match or len(line) > 16384 or len(rows) >= 4096:
+            raise ValueError("malformed or excessive metric samples")
+        name, raw_labels, raw_value, _timestamp = match.groups()
+        labels = {}
+        remaining = raw_labels or ""
+        while remaining:
+            label = re.match(_LABEL, remaining)
+            if not label or label[1] in labels:
+                raise ValueError("malformed or duplicate metric labels")
+            labels[label[1]] = label[2]
+            remaining = remaining[label.end():]
+            if remaining:
+                if not remaining.startswith(","):
+                    raise ValueError("malformed metric labels")
+                remaining = remaining[1:].lstrip()
+        value = float(raw_value)
+        if not finite(value) or value < 0:
+            raise ValueError("invalid metric value")
+        if name in ("sglang:spec_accept_rate", "sglang:full_token_usage", "sglang:mamba_usage") and value > 1:
+            raise ValueError("invalid metric ratio")
+        if (name.endswith(("_tokens", "_steps", "_reqs", "_count", "_bucket")) and not value.is_integer()):
+            raise ValueError("invalid metric count")
+        series = hashlib.sha256(json.dumps(labels, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        if (name, series) in seen:
+            raise ValueError("duplicate metric series")
+        seen.add((name, series))
+        rows.append({"name": name, "value": value, "series_sha256": series})
+    return rows
+
+
 def server_metrics(base):
-    # Only metric names/values, never label values containing request identities.
+    # A timestamp is not a value; a truncated/partially parsed body is not evidence.
     try:
         with request(base, "/metrics", timeout=10) as response:
-            text = response.read(8 * 1024 * 1024).decode()
-        wanted = ("sglang:num_queue_reqs", "sglang:num_running_reqs", "sglang:queue_time_seconds",
-                  "sglang:time_to_first_token_seconds", "sglang:inter_token_latency_seconds")
-        rows = []
-        for line in text.splitlines():
-            if line.startswith(wanted):
-                parts = line.split()
-                value = float(parts[-1])
-                if finite(value):
-                    rows.append({"name": parts[0].split("{")[0], "value": value})
-        return {"metrics": rows, "status": "observed" if rows else "unavailable"}
+            raw = response.read(8 * 1024 * 1024 + 1)
+        if len(raw) > 8 * 1024 * 1024:
+            raise ValueError("metric response exceeds bound")
+        rows = metric_samples(raw.decode())
+        return {"metrics": rows, "status": "observed" if rows else "unavailable",
+                "scope": "point-in-time engine gauges/cumulative histograms; not workload totals or GPU timings"}
     except (OSError, ValueError, urllib.error.URLError):
         return {"metrics": [], "status": "unavailable"}
 
@@ -204,7 +256,9 @@ def run(base, workload_path, evidence_dir, output):
               "limitations": ["Client TTFT includes transport, prefill and queueing; it is not queue latency.",
                               "ITL is chunk-normalized when server SSE batches tokens.",
                               "Cold-prefix labels require zero observed cached tokens; no cache flush occurs.",
-                              "Host samples are not pod peaks; retain matching pod telemetry separately."]}
+                              "Host samples are not pod peaks; retain matching pod telemetry separately.",
+                              "queue_before/queue_after also retain speculative and hybrid-pool metrics when emitted.",
+                              "Acceptance gauges are engine batch observations, not workload-wide acceptance; state slots are not KV tokens or bytes."]}
     try:
         pod_scope = pod_cgroup(pod["uid"])
         def collect():

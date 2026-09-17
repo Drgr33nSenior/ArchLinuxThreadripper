@@ -170,6 +170,7 @@ tests/hardware/test_performance_profiles.py
 tests/hardware/test_performance_bundle.py
 tests/hardware/test_coding_eval.py
 tests/hardware/test_serving_runtime.py
+tests/hardware/test_serving_diagnostics.py
 tests/test_serving_runtime.sh
 tests/hardware/test_serving_orchestration.py
 tests/fixtures/kernel-orchestration.sh

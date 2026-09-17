@@ -76,6 +76,19 @@ def candidate_bundle(path, kind, variant):
         coding_bundle(path)
         if variant == "refused":
             save(path / "responses.json", {})
+        elif variant in ("protocol", "protocol-truncated"):
+            responses = json.loads((path / "responses.json").read_text())
+            row = next(row for row in responses["responses"] if row["task_id"] == "tool-read-status")
+            expected = json.loads(row["response"])
+            call = {"id": "synthetic-call", "type": "function", "function": {
+                "name": expected["tool"], "arguments": json.dumps(expected["arguments"])}}
+            frame = {"choices": [{"index": 0, "finish_reason": "tool_calls", "delta": {"tool_calls": [dict(call, index=0)]}}]}
+            row["protocol"] = {"non_streaming": {"choices": [{"index": 0, "finish_reason": "tool_calls",
+                "message": {"content": None, "tool_calls": [call]}}]},
+                "streaming": "data: " + json.dumps(frame) + "\n\ndata: [DONE]\n\n"}
+            if variant == "protocol-truncated":
+                row["protocol"]["streaming"] = row["protocol"]["streaming"].replace("data: [DONE]\n\n", "")
+            save(path / "responses.json", responses)
         return reserve
     if kind in ("comparison", "profile-selection"):
         bundle(path / "baseline", "baseline")
