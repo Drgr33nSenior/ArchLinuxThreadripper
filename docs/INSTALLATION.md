@@ -39,7 +39,9 @@ $workstation-install verify the installed workstation using config/install.conf
    reassess later releases manually. Do not flash firmware from this repository.
 6. Load firmware defaults. Keep memory at JEDEC/Auto for initial testing.
 7. Disable CSM. Enable Above 4G Decoding, Resizable BAR, SVM, IOMMU, Secure Boot
-   capability, and firmware TPM.
+   capability, and select the physical SPI TPM rather than AMD fTPM. Confirm
+   which TPM Linux selected before enrolment; see
+   [the TPM procedure](HOME-LAB.md#2-secure-boot-tpm2-and-pin).
 8. Leave NUMA/NPS, CPPC, preferred cores, SMT, C-states, and PCIe ASPM at their
    defaults. Do not enable ACS override.
 
@@ -99,6 +101,13 @@ installer preflight, including dry-run and execute mode before erase confirmatio
 Failures stop installation; there is no skip-network flag.
 
 ### Optional Codex authentication
+
+The packaged console configuration selects OpenAI's `gpt-6.1-sol`.
+This is a cloud Codex model, not a local SGLang workload. After login, confirm
+the model in the interactive startup display. Account/workspace access is still
+required; model-access failure does not select another model automatically.
+See the [Sol 6.1 model](https://developers.openai.com/api/docs/models/gpt-6.1-sol)
+and [Codex model configuration](https://learn.chatgpt.com/docs/config-file/config-sample).
 
 Choose **one** launcher command at the local console, outside an agent tool call:
 
@@ -174,11 +183,17 @@ cp /usr/lib/arch-workstation-bootstrap/config/install.conf.example /run/install.
 nano /run/install.conf
 ```
 
-For the home-lab TPM/host policy, use the packaged
+For the home-lab storage and host policy, use the packaged
 `infrastructure/host/install.conf.example` instead. In a full checkout, an
 ignored `config/install.conf` is also supported. Commands below use the custom
 ISO launcher and `/run/install.conf`; from a checkout, use
 `sudo ./bin/bootstrap-arch` with that checkout's config path.
+
+Both new-install examples select `BOOT_UNLOCK=tpm2-pin`. This selects the boot
+configuration; it does not enrol a TPM or prove that TPM unlock works. Keep the
+PIN out of the configuration. Older configurations that omit `BOOT_UNLOCK`
+retain the legacy `fido2` policy, as do those that explicitly select `fido2`.
+There is no automatic conversion of an existing installation.
 
 Replace the disk paths with complete `/dev/disk/by-id/...` values and copy the exact
 serials reported by `udevadm` or `lsblk`. Do not use `/dev/nvme0n1` names.
@@ -231,7 +246,7 @@ its password is not a LUKS unlock credential. Root SSH login remains prohibited.
 Do not record these prompts in a session transcript.
 
 The initial install creates official stable and LTS UKIs. It does not build a
-git kernel, enrol a YubiKey, generate AWS keys, install AUR packages, or create
+git kernel, enrol an unlock token, generate AWS keys, install AUR packages, or create
 the K3s VM.
 
 No swap, zram or resume configuration is generated; hibernation modes are disabled.
@@ -258,15 +273,34 @@ Treat key enrolment as a manual recovery boundary:
 
 Never store Secure Boot private keys in this repository or on the ESPs.
 
-## 6. Enrol the YubiKey
+<a id="6-enrol-the-yubikey"></a>
 
-Complete passphrase-only boot tests first. Verify that the key supports the
-FIDO2 `hmac-secret` extension, then add a native systemd FIDO2 LUKS token with
-PIN and touch. Do not require global user verification. Generate a separate
+## 6. Enrol TPM2 with a PIN
+
+Complete passphrase-only stable, LTS and recovery boot tests first. Verify
+Secure Boot and the selected physical SPI TPM. Generate and test a separate
 recovery key, store it offline, and create a new offline LUKS header backup.
+Do not delete the passphrase slot.
 
-Cold-test passphrase, YubiKey, and recovery-key unlock on stable and LTS. Repeat
-the tests after the git UKI is accepted.
+On the installed host, use a reviewed source checkout or the installed bootstrap
+package's source tree. Follow [HOME-LAB's TPM/PCR procedure](HOME-LAB.md#2-secure-boot-tpm2-and-pin)
+for the existing static PCR **0+7+11** policy, early-unlock PCR 11 prediction,
+dry-run and explicit owner execution. Do not enrol from the ISO or use the
+post-login PCR 11 value. Enter the PIN only in cryptenroll's local prompt.
+The helper refuses existing TPM tokens; it does not replace or wipe slots.
+Back up the LUKS header again after enrolment.
+
+Cold-test TPM+PIN on the exact enrolled UKI. Test passphrase and recovery-key
+unlock on stable, LTS and recovery boot paths. Record which image satisfies the
+TPM policy and which images require recovery; one static PCR 11 value does not
+authorize every different UKI. Repeat the applicable tests after the git UKI is
+accepted. Firmware, Secure Boot policy or UKI changes can invalidate the static
+PCR binding; retain recovery access and plan manual reenrolment using the
+canonical procedure. A signed UKI alone does not prove TPM unlock compatibility.
+
+A YubiKey is not required. Existing FIDO2 tokens remain optional legacy unlock
+paths; this procedure neither enrols nor removes them. TPM PIN requirements do
+not apply to the separate passphrase or recovery-key paths.
 
 Also test authenticated rescue/emergency-console access from a disposable boot
 or recovery drill. Successful LUKS unlock alone does not prove that `sulogin`

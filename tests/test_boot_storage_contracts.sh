@@ -8,6 +8,37 @@ source "$repo_root/lib/bootstrap/config.sh"
 source "$repo_root/lib/bootstrap/install.sh"
 work=$(mktemp -d)
 trap 'rm -rf -- "$work"' EXIT
+BOOTSTRAP_DRY_RUN=1
+
+(
+  # Exercise the real target writer and renderer only inside disposable files.
+  # Dry-run suppresses install, mdadm and genfstab; it never enrolls a token.
+  BOOTSTRAP_ROOT=$repo_root
+  LUKS_UUID=11111111-2222-3333-4444-555555555555
+  ROOT_UUID=22222222-3333-4444-5555-666666666666
+  MD_UUID=33333333:44444444:55555555:66666666
+  sed '/^BOOT_UNLOCK=/d' "$repo_root/config/install.conf.example" >"$work/legacy-unlock.conf"
+  bootstrap_load_config "$work/legacy-unlock.conf"
+  [[ $BOOT_UNLOCK == fido2 ]]
+  printf 'BOOT_UNLOCK=fido2\n' >>"$work/legacy-unlock.conf"
+  for policy in tpm2-pin fido2; do
+    if [[ $policy == tpm2-pin ]]; then
+      bootstrap_load_config "$repo_root/config/install.conf.example"
+    else
+      bootstrap_load_config "$work/legacy-unlock.conf"
+    fi
+    [[ $BOOT_UNLOCK == "$policy" ]]
+    BOOTSTRAP_TARGET="$work/unlock-$policy"
+    mkdir -p "$BOOTSTRAP_TARGET/etc/kernel" "$BOOTSTRAP_TARGET/etc/mkinitcpio.d"
+    bootstrap_write_target_config >/dev/null 2>&1
+    cmp "$BOOTSTRAP_TARGET/etc/crypttab" "$BOOTSTRAP_TARGET/etc/crypttab.initramfs"
+    if [[ $policy == tpm2-pin ]]; then
+      grep -Fqx "$CRYPT_NAME UUID=$LUKS_UUID none tpm2-device=auto,fido2-device=auto,discard,x-initrd.attach" "$BOOTSTRAP_TARGET/etc/crypttab"
+    else
+      grep -Fqx "$CRYPT_NAME UUID=$LUKS_UUID none fido2-device=auto,token-timeout=5s,password-echo=no,discard,x-initrd.attach" "$BOOTSTRAP_TARGET/etc/crypttab"
+    fi
+  done
+)
 
 (
   source "$repo_root/tests/bootstrap/storage-fixtures.sh"
@@ -184,4 +215,4 @@ trap 'rm -rf -- "$work"' EXIT
   done
 )
 
-echo 'ESP, UEFI, fail-closed inspection, headless profile and authenticated recovery contract tests passed'
+echo 'Boot unlock, ESP, UEFI, fail-closed inspection, headless profile and authenticated recovery contract tests passed'

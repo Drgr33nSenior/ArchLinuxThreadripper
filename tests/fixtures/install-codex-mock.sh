@@ -9,6 +9,8 @@ fi
 [[ -z ${OPENAI_API_KEY:-} && -z ${CODEX_API_KEY:-} && -z ${CODEX_ACCESS_TOKEN:-} ]]
 grep -Fqx 'cli_auth_credentials_store = "file"' "$CODEX_HOME/config.toml"
 grep -Fqx 'sandbox_mode = "read-only"' "$CODEX_HOME/config.toml"
+# Retain only the nonsecret configuration consumed by this isolated client.
+install -m 0600 "$CODEX_HOME/config.toml" "$fixture/effective-config.toml"
 printf '%s\n' "$CODEX_HOME" >>"$fixture/paths"
 printf '%s\n' "$*" >>"$fixture/commands"
 if [[ ${1:-} == login ]]; then

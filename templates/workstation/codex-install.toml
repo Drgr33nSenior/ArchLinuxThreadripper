@@ -1,4 +1,5 @@
 # Dedicated console session; never merge with the desktop keyring configuration.
+model = "gpt-6.1-sol"
 cli_auth_credentials_store = "file"
 mcp_oauth_credentials_store = "file"
 approval_policy = "on-request"

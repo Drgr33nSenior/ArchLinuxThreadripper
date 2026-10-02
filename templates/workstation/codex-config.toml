@@ -1,5 +1,6 @@
 # Copy to ~/.codex/config.toml after interactive Codex authentication.
 # Credentials remain in GNOME Keyring/libsecret, not in this file.
+model = "gpt-6.1-sol"
 cli_auth_credentials_store = "keyring"
 mcp_oauth_credentials_store = "keyring"
 check_for_update_on_startup = false

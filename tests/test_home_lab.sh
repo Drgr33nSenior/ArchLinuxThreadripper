@@ -9,7 +9,7 @@ trap 'rm -rf -- "$work"' EXIT
 bootstrap_load_config "$root/infrastructure/host/install.conf.example"
 [[ $RAID_DEVICE == /dev/md0 && $CRYPT_NAME == crypt_root && $LUKS_MEMORY_KIB == 4194304 && $BOOT_UNLOCK == tpm2-pin ]]
 bootstrap_load_config "$root/config/install.conf.example"
-[[ $RAID_DEVICE == /dev/md/archroot && $BOOT_UNLOCK == fido2 ]]
+[[ $RAID_DEVICE == /dev/md/archroot && $BOOT_UNLOCK == tpm2-pin ]]
 sed 's|RAID_DEVICE=/dev/md0|RAID_DEVICE=/dev/nvme0n1|' "$root/infrastructure/host/install.conf.example" >"$work/invalid.conf"
 if bootstrap_load_config "$work/invalid.conf" >/dev/null 2>&1; then exit 1; fi
 

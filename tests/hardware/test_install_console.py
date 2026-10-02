@@ -6,8 +6,10 @@ import pty
 import select
 import shutil
 import signal
+import subprocess
 import tempfile
 import time
+import tomllib
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -67,6 +69,15 @@ class ConsoleTests(unittest.TestCase):
                 self.assertNotIn(SENTINEL.decode(), commands)
                 paths = (fixture / "paths").read_text().splitlines() if (fixture / "paths").exists() else []
                 self.assertLessEqual(len(set(paths)), 1, "login and client must share isolated configuration")
+                if paths:
+                    with (fixture / "effective-config.toml").open("rb") as source:
+                        config = tomllib.load(source)
+                    self.assertEqual(config.get("model"), "gpt-6.1-sol")
+                    self.assertEqual(config["cli_auth_credentials_store"], "file")
+                    self.assertEqual(config["mcp_oauth_credentials_store"], "file")
+                    self.assertEqual(config["sandbox_mode"], "read-only")
+                    self.assertEqual(config["approval_policy"], "on-request")
+                    self.assertEqual(config["shell_environment_policy"]["inherit"], "none")
                 return code, commands
             finally:
                 if not finished:
@@ -104,6 +115,28 @@ class ConsoleTests(unittest.TestCase):
                 code, commands = self.run_console(condition=condition)
                 self.assertNotEqual(code, 0)
                 self.assertEqual(commands, "")
+
+    def test_desktop_configuration(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "codex/config.toml"
+            command = ["bash", "-c", '''
+                source "$1/lib/workstation/runtime.sh"
+                ws_require_arch() { :; }
+                ws_require_user() { :; }
+                ws_codex_configure "$2"
+            ''', "fixture", str(ROOT), str(output)]
+            subprocess.run(command, check=True, capture_output=True)
+            with output.open("rb") as source:
+                config = tomllib.load(source)
+            self.assertEqual(config.get("model"), "gpt-6.1-sol")
+            self.assertEqual(config["cli_auth_credentials_store"], "keyring")
+            self.assertEqual(config["mcp_oauth_credentials_store"], "keyring")
+            self.assertEqual(output.stat().st_mode & 0o777, 0o600)
+            original = output.read_bytes()
+            refused = subprocess.run(command, capture_output=True)
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertIn(b"refusing to overwrite", refused.stderr)
+            self.assertEqual(output.read_bytes(), original)
 
 
 if __name__ == "__main__":

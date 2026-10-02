@@ -162,7 +162,8 @@ UKI can still fail TPM unlock. Retain the recovery passphrase, back up headers,
 and plan reenrollment after firmware/UKI changes. Signed PCR policies are a more
 maintainable alternative, but are not silently substituted for the requested
 static policy. The helper refuses existing TPM tokens rather than wiping slots.
-FIDO2/recovery fallback remains available; PIN requirements apply to the TPM path,
+Passphrase and recovery-key fallback remain available. Existing FIDO2 tokens are
+optional legacy paths, not a prerequisite. PIN requirements apply to the TPM path,
 not to every emergency recovery method.
 
 ## 3. Package and configure bare-metal K3s

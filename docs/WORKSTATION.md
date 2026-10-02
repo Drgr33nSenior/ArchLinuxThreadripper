@@ -131,6 +131,12 @@ autostart. JetBrains and Codex authentication are interactive. Codex stores CLI
 and MCP OAuth credentials in the desktop keyring. Do not run that configuration
 step on a headless host without an available, unlocked Secret Service keyring.
 This profile does not silently fall back to plaintext credential storage.
+New configurations select `gpt-6.1-sol`, as does the
+[separate installation-console profile](INSTALLATION.md#optional-codex-authentication).
+The configure command refuses to overwrite an existing file. To migrate an
+existing desktop configuration, have the owner set `model = "gpt-6.1-sol"` at
+the top level of `~/.codex/config.toml`, before any table headers. Preserve its
+credential-store settings and confirm the selected model at interactive startup.
 AWS administration begins
 with `aws configure sso`; do not create static administrator keys. The Arch
 packages supply Git, Git LFS, AWS CLI v2, Codex, kubectl, Kustomize, Helm, k9s,

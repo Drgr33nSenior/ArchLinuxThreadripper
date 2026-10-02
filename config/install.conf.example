@@ -26,6 +26,10 @@ SECONDARY_DISK_SERIAL=REPLACE_SECONDARY_SERIAL
 # LUKS_NAME must differ. RAID_DEVICE is omitted here and defaults to /dev/md/RAID_NAME.
 RAID_NAME=archroot
 LUKS_NAME=cryptroot
+# New installations select TPM2 with a PIN. Enrol manually on the installed host
+# after passphrase-only boot tests; keep passphrase and offline recovery access.
+# See docs/HOME-LAB.md, Secure Boot, TPM2 and PIN. Never put the PIN here.
+BOOT_UNLOCK=tpm2-pin
 # Fixed, approved geometry: ESP_SIZE_MIB must be 2048 and RAID_CHUNK_KIB must be 512.
 ESP_SIZE_MIB=2048
 RAID_CHUNK_KIB=512

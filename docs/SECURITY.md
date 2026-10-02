@@ -6,7 +6,7 @@ Never commit or print:
 
 - LUKS passphrases, recovery keys, or header backups.
 - Secure Boot private keys.
-- SSH private keys or YubiKey credential material.
+- SSH private keys, TPM PINs, or FIDO2 credential material.
 - AWS access-key secrets, SSO caches, or Restic passwords.
 - K3s tokens, kubeconfigs, service-account tokens, or Kubernetes Secret data.
 - ACME account keys or Route53 DNS credentials.
@@ -37,9 +37,12 @@ firmware databases, retains required vendor certificates, and verifies each UKI
 before promotion. Private keys stay on the encrypted root filesystem or
 offline, never on an ESP.
 
-The human Argon2id slot remains available after FIDO2 enrolment. FIDO2 and the
-recovery key are additional paths, not replacements. Back up the LUKS header
-after every token or keyslot change.
+New-install examples select owner-enrolled TPM2 with a PIN. The human Argon2id
+passphrase slot and separate recovery key remain available; TPM unlock is an
+additional path, not a replacement. Existing FIDO2 tokens remain optional legacy
+paths. Back up the LUKS header after every token or keyslot change. Follow
+[the TPM/PCR procedure](HOME-LAB.md#2-secure-boot-tpm2-and-pin) for enrolment and
+update-sensitive recovery planning; configuration alone is not enrolment evidence.
 
 Discard is enabled by explicit policy. This leaks which encrypted blocks are
 unused but does not reveal their plaintext.

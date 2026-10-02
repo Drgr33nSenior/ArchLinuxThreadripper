@@ -164,9 +164,10 @@ LUKS/user/root-recovery prompts. Do not add automatic answers or record that
 terminal session. Before reboot, complete the runbook's protected offline LUKS
 header backup and separate owner-key backup. Follow INSTALLATION's manual
 firmware-key export, UKI signature checks, key enrolment and first-boot order.
-Keep passphrase recovery; qualify stable/LTS/recovery boots before optional
-FIDO2 enrolment. For `BOOT_UNLOCK=tpm2-pin`, use HOME-LAB's explicit owner-run
-TPM/PCR procedure; do not infer enrolment from configuration or enrol from the ISO.
+Keep passphrase recovery; qualify stable/LTS/recovery boots before TPM enrolment.
+New-install examples select `BOOT_UNLOCK=tpm2-pin`; use HOME-LAB's explicit
+owner-run TPM/PCR procedure. Do not infer enrolment from configuration or enrol
+from the ISO. Existing FIDO2 tokens remain optional legacy paths.
 Firmware, key changes and reboots are owner handoffs, never automatic steps.
 
 ## Reconnect, diagnose and verify

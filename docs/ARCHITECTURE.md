@@ -21,13 +21,17 @@ UEFI firmware
           ↓
 mdadm RAID0 (two equal NVMe member partitions)
           ↓
-LUKS2 (Argon2id passphrase + optional FIDO2 + recovery key)
+LUKS2 (Argon2id passphrase + owner-enrolled TPM2/PIN + recovery key)
           ↓
 XFS root
 ```
 
 The ESPs are independent. They protect against an ESP or firmware-entry
 failure, but they cannot make RAID0 survive an NVMe failure.
+
+TPM enrolment is manual, after passphrase-only boot tests. New-install examples
+select `BOOT_UNLOCK=tpm2-pin`; legacy FIDO2 configurations and tokens remain
+supported. See [the TPM/PCR procedure](HOME-LAB.md#2-secure-boot-tpm2-and-pin).
 
 The first installed boot paths are official Arch stable and LTS kernels. A
 reviewed, commit-pinned `linux-git` package is built later in a clean chroot.
