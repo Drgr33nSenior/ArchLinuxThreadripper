@@ -66,17 +66,24 @@ require_check(locked_image.match?(/\Adocker\.io\/rocm\/sgl-dev:v0\.5\.15\.post1-
   require_check(spec.dig('securityContext', 'runAsNonRoot') == true && spec.dig('securityContext', 'runAsUser') == 1000 &&
                 spec.dig('securityContext', 'seccompProfile', 'type') == 'RuntimeDefault', 'Do not inherit the vendor image root user or unconfined seccomp')
   candidate = spec['containers'][0]
+  mode = %w[default dual-gpu].include?(overlay) ? 'DUAL' : 'SINGLE'
+  rocm101 = %w[single-gpu family].include?(overlay)
+  selected_image = rocm101 ? lock.fetch('SGLANG_SINGLE_ROCM_IMAGE') : locked_image
   require_check(deployment.dig('spec', 'progressDeadlineSeconds') == 2100 &&
                 candidate.dig('startupProbe', 'periodSeconds') * candidate.dig('startupProbe', 'failureThreshold') == 1800 &&
                 spec['terminationGracePeriodSeconds'] == 120,
                 'AI startup allowance must stay separate from unchanged termination grace')
-  require_check(candidate['image'] == locked_image, 'Rendered SGLang image differs from versions.lock')
+  require_check(candidate['image'] == selected_image, 'Rendered SGLang image differs from its profile lock')
+  require_check(candidate['imagePullPolicy'] == (rocm101 ? 'Never' : 'IfNotPresent'),
+                'Local image requires verified import; dual must retain its vendor pull policy')
   require_check(candidate['workingDir'] == '/tmp' && candidate.dig('securityContext', 'allowPrivilegeEscalation') == false &&
                 candidate.dig('securityContext', 'capabilities', 'drop') == ['ALL'] &&
                 candidate.dig('securityContext', 'capabilities', 'add').nil?, 'SGLang must retain a writable working directory without elevated capabilities')
   require_check(candidate['args'].each_cons(2).include?(['--attention-backend', '$(ATTENTION_BACKEND)']), 'Attention backend must use the existing profile ConfigMap')
+  require_check(candidate['args'].each_cons(2).count { |pair| pair == ['--mamba-radix-cache-strategy', 'no_buffer'] } == 1 &&
+                candidate['args'].count('--disable-overlap-schedule') == 1,
+                'Pinned ROCm Qwen hybrid cache requires no_buffer and disabled overlap scheduling')
   settings = rendered.find { |d| d['kind'] == 'ConfigMap' && d.dig('metadata', 'name').start_with?('sglang-profile-') }
-  mode = %w[default dual-gpu].include?(overlay) ? 'DUAL' : 'SINGLE'
   model = lock.fetch("SGLANG_#{mode}_MODEL_REPOSITORY")
   revision = lock.fetch("SGLANG_#{mode}_MODEL_REVISION")
   model_name = model.split('/').last
@@ -106,7 +113,17 @@ require_check(locked_image.match?(/\Adocker\.io\/rocm\/sgl-dev:v0\.5\.15\.post1-
     require_check(candidate.fetch('env', []).none? { |e| e['name'] == key }, "Inline environment shadows Radeon profile setting #{key}")
   end
   {'XDG_CACHE_HOME' => '/cache/xdg', 'TRITON_CACHE_DIR' => '/cache/triton', 'TORCHINDUCTOR_CACHE_DIR' => '/cache/torchinductor'}.each do |key, value|
+    value += '/c9e4d0e0ea88' if rocm101
     require_check(candidate.fetch('env').include?({'name' => key, 'value' => value}), "JIT cache #{key} must stay on the existing persistent cache volume")
+  end
+  {'ROCM_HOME' => '/usr/local/lib/python3.14/dist-packages/_rocm_sdk_devel',
+   'SGLANG_JIT_CACHE_DIR' => '/cache/sglang-jit/c9e4d0e0ea88',
+   'OMP_NUM_THREADS' => '4', 'MAX_JOBS' => '4'}.each do |key, value|
+    if rocm101
+      require_check(candidate.fetch('env').include?({'name' => key, 'value' => value}), "Missing tested single-image setting #{key}")
+    else
+      require_check(candidate.fetch('env').none? { |entry| entry['name'] == key }, "10.1 setting leaked into legacy profile: #{key}")
+    end
   end
 end
 sglang = named(dual, 'Deployment', 'sglang')
@@ -181,6 +198,14 @@ if File.file?(File.join(directory, 'operator.yaml'))
   controllers = operator.select { |d| %w[Deployment DaemonSet].include?(d['kind']) }
   require_check(controllers.none? { |d| d.dig('metadata', 'name').match?(/kmm|module-management/) }, 'Host driver must not be managed by KMM')
   require_check(controllers.any? { |d| d.dig('metadata', 'name').end_with?('node-feature-discovery-worker') }, 'NFD worker is missing')
+  values = YAML.load_file(File.expand_path('../../infrastructure/gpu-operator/values.yaml', __dir__))
+  nfd_image = values.dig('node-feature-discovery', 'image')
+  require_check(nfd_image && nfd_image['tag'].match?(/\Av[^@]+@sha256:[a-f0-9]{64}\z/), 'NFD needs a version and an immutable image digest')
+  nfd_containers = controllers.select { |d| d.dig('metadata', 'name').include?('node-feature-discovery-') }
+                              .flat_map { |d| d.dig('spec', 'template', 'spec', 'containers') }
+  require_check(nfd_containers.length == 3, 'Expected NFD worker, master and garbage collector')
+  require_check(nfd_containers.all? { |c| c['image'] == "#{nfd_image.fetch('repository')}:#{nfd_image.fetch('tag')}" },
+                'Rendered NFD images differ from the pinned values')
   manager = controllers.find { |d| d.dig('metadata', 'name').end_with?('controller-manager') }
   require_check(!manager.nil?, 'GPU operator controller is missing')
   containers = manager.dig('spec', 'template', 'spec', 'containers')

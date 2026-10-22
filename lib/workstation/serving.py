@@ -89,8 +89,10 @@ def validate(workload, evidence):
         ids = case["input_ids"]
         if not ids or any(type(t) is not int or t < 0 for t in ids):
             raise ValueError("input_ids must be tokenizer-produced nonnegative integers")
-        if (type(case["output_tokens"]) is not int or not 1 <= case["output_tokens"] <= 2048
-                or len(ids) + case["output_tokens"] != case["context_tokens"]):
+        reserve = case.get("context_reserve_tokens", 0)
+        if (type(reserve) is not int or reserve not in (0, 2)
+                or type(case["output_tokens"]) is not int or not 1 <= case["output_tokens"] <= 2048
+                or len(ids) + case["output_tokens"] + reserve != case["context_tokens"]):
             raise ValueError("input plus output budget must match the requested context")
         if len(case["source_sha256"]) != 64 or any(c not in "0123456789abcdef" for c in case["source_sha256"]):
             raise ValueError("coding corpus SHA256 required")

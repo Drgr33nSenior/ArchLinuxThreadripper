@@ -16,8 +16,10 @@ For subsequent full updates:
    where those optional layers are installed.
 6. Roll back the selected UKI or cached package transaction on failure.
 
-Build `linux-git` in a clean chroot from the reviewed AUR commit and record the
-exact upstream kernel commit, config hash, compiler, and package hashes. Promote
+Capture a fresh reviewed hardware profile, then build `linux-git` in a clean
+chroot from the reviewed AUR commit. Record the exact upstream kernel tag/commit,
+hardware policy/profile, effective config, module inventory, compiler and package
+hashes. Promote
 it only after the stable/LTS paths have been tested on the current firmware.
 The exact commands and clean-chroot boundary are in
 [workstation setup](WORKSTATION.md).

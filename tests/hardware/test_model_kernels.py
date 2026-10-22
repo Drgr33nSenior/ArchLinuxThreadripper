@@ -1,5 +1,6 @@
 """Synthetic SGLang contracts; no model, compiler cache or GPU is qualified."""
 import copy
+from datetime import datetime, timezone
 import gzip
 import importlib.util
 import io
@@ -90,6 +91,70 @@ def experimental_observed():
 
 
 class KernelTests(unittest.TestCase):
+    def test_scoped_image_contract_and_cross_stack_sources(self):
+        lock = dict(line.split("=", 1) for line in (ROOT / "versions.lock").read_text().splitlines()
+                    if line and not line.startswith("#"))
+        _, _, (pod, runtime, compiler) = fixtures()
+        old_sources = dict(compiler["sources"])
+        contract = kernels.image_contract(lock, lock["SGLANG_SINGLE_ROCM_IMAGE"])
+        self.assertEqual(contract["scope"], "single-bf16")
+        pod["image"] = contract["image"]
+        pod["image_id"] = "containerd://" + contract["config_digest"]
+        runtime["settings"].update(MODEL_REPOSITORY=lock["SGLANG_SINGLE_MODEL_REPOSITORY"],
+            MODEL_REVISION=lock["SGLANG_SINGLE_MODEL_REVISION"], MODEL_DTYPE="bfloat16",
+            TENSOR_PARALLEL="1", ATTENTION_BACKEND="triton", SGLANG_USE_AITER="false",
+            CONTEXT_LENGTH="4096", MEM_FRACTION_STATIC="0.80", MAX_RUNNING_REQUESTS="2")
+        runtime["devices"] = runtime["devices"][:1]
+        runtime["model_contract"]["quant_method"] = "unquantized"
+        runtime["launch"] = [{"--tp": "1", "--dtype": "bfloat16", "--attention-backend": "triton",
+            "--context-length": "4096", "--revision": lock["SGLANG_SINGLE_MODEL_REVISION"],
+            "--mem-fraction-static": "0.80", "--max-running-requests": "2",
+            "--mamba-radix-cache-strategy": "no_buffer", "--disable-overlap-schedule": True}]
+        compiler["sources"] = dict(contract["sources"])
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            def record():
+                for name, value in zip(("pod.json", "runtime.json", "compiler.json"), (pod, runtime, compiler)):
+                    (path / name).write_text(json.dumps(value))
+            record()
+            self.assertEqual(kernels.evidence(path)[0]["image"], contract["image"])
+            for key in contract["sources"]:
+                with self.subTest(source=key):
+                    compiler["sources"][key] = old_sources[key]
+                    record()
+                    with self.assertRaises(ValueError):
+                        kernels.evidence(path)
+                    compiler["sources"][key] = contract["sources"][key]
+            for key, wrong in (("MODEL_REPOSITORY", "Qwen/Qwen3.8-27B-FP8"),
+                               ("MODEL_REVISION", "0" * 40), ("TENSOR_PARALLEL", "2"),
+                               ("MODEL_DTYPE", "float16"), ("CONTEXT_LENGTH", "32768"),
+                               ("ATTENTION_BACKEND", "aiter"), ("SGLANG_USE_AITER", "true")):
+                with self.subTest(setting=key):
+                    original = runtime["settings"][key]
+                    runtime["settings"][key] = wrong
+                    record()
+                    with self.assertRaises(ValueError):
+                        kernels.evidence(path)
+                    runtime["settings"][key] = original
+            for field, wrong in (("--tp", "2"), ("--dtype", "float16"),
+                                 ("--mem-fraction-static", "0.95"), ("--max-running-requests", "8"),
+                                 ("--mamba-radix-cache-strategy", "extra_buffer"),
+                                 ("--disable-overlap-schedule", False)):
+                with self.subTest(argument=field):
+                    original = runtime["launch"][0][field]
+                    runtime["launch"][0][field] = wrong
+                    record()
+                    with self.assertRaises(ValueError):
+                        kernels.evidence(path)
+                    runtime["launch"][0][field] = original
+            runtime["model_contract"]["quant_method"] = "fp8"
+            record()
+            with self.assertRaises(ValueError):
+                kernels.evidence(path)
+        with self.assertRaises(ValueError):
+            kernels.image_contract(lock, "localhost/workstation/sglang@sha256:" + "0" * 64)
+        self.assertEqual(kernels.image_contract(lock, lock["SGLANG_ROCM_IMAGE"])["scope"], "legacy")
+
     def setUp(self):
         self.deployment, self.workload, self.observed = fixtures()
 
@@ -503,6 +568,47 @@ class KernelTests(unittest.TestCase):
             (path/"compiler.json").write_text(json.dumps(compiler))
             with self.assertRaises(ValueError):
                 kernels.evidence(path)
+
+    def test_named_bf16_graph_cli_bypasses_only_the_unrelated_legacy_contract(self):
+        from test_graph_profile import fixtures as graph_fixtures
+        deployment, workload, observed = graph_fixtures(datetime.now(timezone.utc))
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            for name, data in (("deployment.json", deployment), ("workload.json", workload),
+                               ("graph-observation.json", observed)):
+                kernels.write(path / name, data)
+            arguments = ["model_kernels.py", "plan", str(path / "deployment.json"), str(path / "workload.json"),
+                         str(path), str(path / "graph-plan"), "--profile", "bf16-full-b4", "--experimental"]
+            with patch.object(sys, "argv", arguments):
+                kernels.main()
+            result = kernels.load(path / "graph-plan/plan.json")
+            self.assertEqual(result["selected"], "bf16-full-b4")
+            self.assertEqual(result["cache_admission"]["status"], "NOT RUN")
+            self.assertTrue((path / "graph-plan/incumbent-rollback.json").is_file())
+            with self.assertRaises(ValueError):
+                kernels.image_contract({}, deployment["spec"]["template"]["spec"]["containers"][0]["image"])
+
+    def test_named_bf16_graph_cli_missing_observation_and_unsupported_controls(self):
+        from test_graph_profile import fixtures as graph_fixtures
+        deployment, workload, _observed = graph_fixtures(datetime.now(timezone.utc))
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            kernels.write(path / "deployment.json", deployment)
+            kernels.write(path / "workload.json", workload)
+            arguments = ["model_kernels.py", "plan", str(path / "deployment.json"), str(path / "workload.json"),
+                         str(path), str(path / "missing"), "--profile", "bf16-full-b4", "--experimental"]
+            with patch.object(sys, "argv", arguments):
+                kernels.main()
+            result = kernels.load(path / "missing/plan.json")
+            self.assertEqual(result["selected"], "incumbent")
+            self.assertTrue(result["fallback_reasons"])
+            for suffix in (["--reserve-mib", "1"], ["--workers", "4"], ["--gemm-image", "unused.json"]):
+                rejected = list(arguments)
+                rejected[5] = str(path / "rejected")
+                with patch.object(sys, "argv", rejected + suffix):
+                    with self.assertRaises(SystemExit):
+                        kernels.main()
+                self.assertFalse((path / "rejected").exists())
 
 
 if __name__ == "__main__":

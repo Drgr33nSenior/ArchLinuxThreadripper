@@ -55,7 +55,7 @@ bootstrap_require_root() {
 
 bootstrap_require_tty() {
   [[ -t 0 && -t 1 ]] || {
-    bootstrap_die 'a controlling terminal is required for passphrase and serial confirmation'
+    bootstrap_die 'a controlling terminal is required for passphrase and erase confirmation'
     return 1
   }
 }
@@ -128,10 +128,14 @@ bootstrap_validate_by_id_path() {
 bootstrap_disk_realpath() { readlink -f -- "$1"; }
 
 bootstrap_disk_serial() {
-  local disk=$1 serial
-  serial=$(udevadm info --query=property --name="$disk" 2>/dev/null | awk -F= '$1 == "ID_SERIAL_SHORT" { print substr($0, index($0,"=") + 1); exit }')
+  local disk=$1 properties serial
+  properties=$(udevadm info --query=property --name="$disk" 2>/dev/null) || {
+    bootstrap_die "serial inspection failed for $disk"
+    return 1
+  }
+  serial=$(awk -F= '$1 == "ID_SERIAL_SHORT" { print substr($0, index($0,"=") + 1); exit }' <<<"$properties") || return 1
   if [[ -z $serial ]]; then
-    serial=$(udevadm info --query=property --name="$disk" 2>/dev/null | awk -F= '$1 == "ID_SERIAL" { print substr($0, index($0,"=") + 1); exit }')
+    serial=$(awk -F= '$1 == "ID_SERIAL" { print substr($0, index($0,"=") + 1); exit }' <<<"$properties") || return 1
   fi
   [[ -n $serial ]] || {
     bootstrap_die "cannot determine serial for $disk"

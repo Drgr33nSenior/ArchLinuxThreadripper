@@ -29,6 +29,57 @@ and automatic installation workflow remains pending. See the
 
 ## Reviewed ROCm 10 SDK provider
 
+### Owner-selected SGLang 10.1 single-GPU baseline
+
+The `single-gpu` and dependent `family` overlays now select the locally built
+SGLang 0.5.18 / ROCm 10.1 image in `SGLANG_SINGLE_ROCM_IMAGE`. This selection
+covers Qwen3.5-9B at the locked revision, BF16, TP=1, Triton attention, context
+4096, `no_buffer` hybrid cache and disabled overlap scheduling. It does not
+qualify other models, FP8, TP=2, trace collection or a performance improvement.
+All rendered workloads remain disabled pending deployment qualification.
+
+The image uses matched PyTorch 2.13 / ROCm 10.1 userspace and a bounded gfx1201
+AOT/optional-AITER source patch. It does not replace host ROCm or `amdgpu`.
+The `default`, `dual-gpu`, RAG and legacy `rdna4-compat` profiles retain the
+exact 10.0 vendor image and their previous cache locations. The legacy
+architecture-override diagnostic is not promoted or recommended for performance.
+Arch remains outside AMD's listed Radeon host-support matrix.
+
+The 10.1 image is unpublished. Before activating a reviewed single-GPU render,
+import the digest-verified OCI archive into that node's K3s image store. Its
+`imagePullPolicy: Never` deliberately refuses an absent image. The selected
+digest is
+`sha256:c9e4d0e0ea8818de29ccef4249119fc1c096d7a924b86c63567a6b9f9d5c3c8b`.
+The retained build handoff is
+`test-results/rocm101-build.y5SSv7OO/HANDOFF.md`; the exact OCI archive SHA256 is
+`aeabfaf0d805e4bf32f5b9ae7aa52e223cdde73aff0e93e4ef85589e7f3747b6`.
+Do not publish, retag a different image, or weaken missing-image refusal.
+
+Render without cluster contact:
+
+```sh
+kubectl kustomize apps/overlays/single-gpu > single-gpu-reviewed.yaml
+kubectl kustomize apps/overlays/dual-gpu > dual-gpu-reviewed.yaml
+```
+
+Keep the original 10.0 image and source contract in `versions.lock`. To roll
+back a single-GPU deployment, prepare a reviewed patch selecting that exact
+`SGLANG_ROCM_IMAGE`, restore `IfNotPresent`, restore `/cache/xdg`,
+`/cache/triton` and `/cache/torchinductor`, and remove the 10.1-specific
+`ROCM_HOME`, `SGLANG_JIT_CACHE_DIR`, `OMP_NUM_THREADS` and `MAX_JOBS` overrides.
+Retain the single-GPU model and resource envelope; do not use the TP2 overlay
+as a single-GPU rollback. Recheck the rendered image/source contract and use
+the existing owner/session lifecycle. No cache deletion or host change is
+needed. New 10.1 caches remain in their own digest-keyed subdirectories.
+
+### Host SDK selection remains separate
+
+The additional [accepted M=1 GEMM profile](MODEL-KERNELS.md#accepted-qwen3-coder-m1-gemm-profile)
+packages the measured Qwen3-Coder FP8 tables over the exact ROCm 10.1 sampler
+image. It is an explicit kernel-profile selection; the application overlays
+retain their existing defaults. The owner accepted its historical 4.9653%
+performance margin, while model qualification remains incomplete.
+
 The default `ROCM_SDK_PROVIDER=arch` keeps official Arch ROCm package checks.
 The opt-in `aur-gfx120x-bin` provider supports only the reviewed
 `rocm-gfx120x-bin` 10.0.0-2 package. It repackages AMD's RDNA4 release binaries;
@@ -113,6 +164,18 @@ legacy ROCm SMI inventory, installed packages,
 PCI topology and boot ID. Missing tools remain visible in `commands.json`.
 On another OS/architecture, `hardware.json` says `pending` and has no GPU target.
 Inspect `gpu-monitor.json` for the selected provider and command/schema status.
+The official Arch AI-only package selection does not install the host Clang
+compiler. Ensure `clang --version` and `rocminfo` work in the collector's PATH;
+Arch installs `rocminfo` under `/opt/rocm/bin`.
+For ROCm SMI, collection requests `rocm-smi --showbus --json` and requires
+distinct valid PCI addresses. A low-power warning is retained in
+`gpu-monitor.stderr`; it does not by itself invalidate successful inventory.
+This query does not qualify GPU workloads or measure power consumption.
+The no-swap check requires successful, nonempty systemd unit-file discovery
+before selecting swap units. Any swap unit, including a disabled or masked
+unit, fails the check. Failed or malformed discovery is not evidence of no swap.
+After correcting a collection failure, use a new output directory and require
+`hardware.json` to report `observed`; keep the failed report for comparison.
 Use sealed runtime-library manifests and matching benchmark/quality configuration.
 Older llama builds without sealed runtime manifests need rebuilding in new
 directories.

@@ -8,6 +8,10 @@ remediation:
 node-feature-discovery:
   enabled: true
   postDeleteCleanup: false
+  # Same bundled NFD version; Linux/amd64 manifest for this bare-metal profile.
+  image:
+    repository: registry.k8s.io/nfd/node-feature-discovery
+    tag: v0.18.3@sha256:7a9c4d658013e250d166704b81122e53a6b139f83de36be15a96884e8bcf7977
 installdefaultNFDRule: true
 # CRD upgrades are a reviewed lifecycle operation, never a chart side effect.
 upgradeCRD: false

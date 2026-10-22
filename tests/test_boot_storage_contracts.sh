@@ -67,6 +67,18 @@ BOOTSTRAP_DRY_RUN=1
   efibootmgr() { printf '%s\n' "$efi_fixture_output"; }
   efi_fixture_output=$(printf '%s\n' "$efi_fixture_output" | sed 's/Boot0001\* /Boot0001  /')
   [[ $(common::bootnum_for_label 'Arch Linux (stable)' "$COMMON_ESP_A_PARTUUID" "$loader") == 0001 ]]
+  # efibootmgr 18 / efivar 39 print a bare file path, not File(...).
+  wrapped_inventory=$efi_fixture_output
+  efi_fixture_output=$(printf '%s\n' "$wrapped_inventory" | sed 's|/File(\([^)]*\))$|/\1|')
+  [[ $(common::bootnum_for_label 'Arch Linux (stable)' "$COMMON_ESP_A_PARTUUID" "$loader") == 0001 ]]
+  for suffix in .bad /extra; do
+    status=0
+    efi_fixture_output=${efi_fixture_output//arch-linux.efi/arch-linux.efi$suffix}
+    common::bootnum_for_label 'Arch Linux (stable)' "$COMMON_ESP_A_PARTUUID" "$loader" >/dev/null 2>&1 || status=$?
+    [[ $status == 2 ]]
+    efi_fixture_output=$(printf '%s\n' "$wrapped_inventory" | sed 's|/File(\([^)]*\))$|/\1|')
+  done
+  efi_fixture_output=$wrapped_inventory
   status=0
   common::bootnum_for_label absent >/dev/null 2>&1 || status=$?
   [[ $status == 1 ]]

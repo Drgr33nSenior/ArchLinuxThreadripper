@@ -37,12 +37,50 @@ jq -e '.status == "unsupported-or-invalid-json" and .exit_code == 65' "$work/bad
 if SMI_FAIL=1 ws_gpu_monitor_capture "$work/failed"; then exit 1; fi
 jq -e '.status == "command-failed" and .exit_code == 9' "$work/failed/gpu-monitor.json" >/dev/null
 # shellcheck disable=SC2329
-rocm-smi() { printf '{"card0":{"GPU use (%%)":"0"},"card1":{"GPU use (%%)":"0"}}\n'; }
+rocm-smi() {
+  printf '%s\n' "$*" >>"$work/rocm-arguments"
+  [[ $# == 2 && $1 == --showbus && $2 == --json ]] || {
+    printf 'NOT_SUPPORTED: Cannot print JSON/CSV output for concise output\n'
+    return 1
+  }
+  printf 'WARNING: AMD GPU device(s) is/are in a low-power state.\n' >&2
+  printf '%s\n' "$ROCM_LIST"
+  return "${ROCM_STATUS:-0}"
+}
+ROCM_LIST='{"card0":{"PCI Bus":"0000:23:00.0"},"card1":{"PCI Bus":"0000:C3:00.0"}}'
 ROCM_SDK_PROVIDER=arch
 [[ $(ws_gpu_monitor_provider) == rocm-smi ]]
 mkdir "$work/legacy"
 ws_gpu_monitor_capture "$work/legacy"
 jq -e '.provider == "rocm-smi" and .status == "observed"' "$work/legacy/gpu-monitor.json" >/dev/null
+[[ $(<"$work/rocm-arguments") == '--showbus --json' ]]
+[[ $(<"$work/legacy/gpu-monitor-raw.json") == "$ROCM_LIST" ]]
+[[ $(<"$work/legacy/gpu-monitor.stderr") == *'low-power state'* ]]
+for bad in '' '{}' '[]' '{invalid' \
+  '{"card0":{"PCI Bus":"N/A"}}' \
+  '{"card0":{"GPU use (%)":"0"}}' \
+  '{"card0":{"PCI Bus":"0000:23:00.0","error":"unavailable"}}' \
+  '{"card0":{"PCI Bus":"0000:C3:00.0"},"card1":{"PCI Bus":"0000:c3:00.0"}}'; do
+  if ws_gpu_monitor_json rocm-smi <(printf '%s\n' "$bad") 2>/dev/null; then exit 1; fi
+done
+mkdir "$work/legacy-failed" "$work/legacy-invalid" "$work/legacy-timeout"
+status=0
+ROCM_STATUS=9 ws_gpu_monitor_capture "$work/legacy-failed" || status=$?
+[[ $status == 9 ]]
+jq -e '.status == "command-failed" and .exit_code == 9' "$work/legacy-failed/gpu-monitor.json" >/dev/null
+jq -e '.command == "gpu-monitor" and .exit_code == 9' "$work/legacy-failed/commands.jsonl" >/dev/null
+status=0
+ROCM_LIST='{}' ws_gpu_monitor_capture "$work/legacy-invalid" || status=$?
+[[ $status == 65 ]]
+jq -e '.status == "unsupported-or-invalid-json" and .exit_code == 65' "$work/legacy-invalid/gpu-monitor.json" >/dev/null
+timeout() {
+  [[ $* == '30 rocm-smi --showbus --json' ]] || return 99
+  return 124
+}
+status=0
+ws_gpu_monitor_capture "$work/legacy-timeout" || status=$?
+[[ $status == 124 ]]
+jq -e '.status == "command-failed" and .exit_code == 124' "$work/legacy-timeout/gpu-monitor.json" >/dev/null
 unset -f amd-smi rocm-smi
 # Mask only tool discovery to make this unavailable case portable to AMD hosts.
 command() {

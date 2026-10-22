@@ -52,6 +52,7 @@ docs/ROCM.md
 docs/AI-PERFORMANCE.md
 docs/MODEL-KERNELS.md
 docs/WORKSTATION.md
+docs/KERNEL-REQUIREMENTS.md
 docs/OPERATIONS.md
 docs/ARCHITECTURE.md
 docs/SOURCES.md
@@ -113,16 +114,31 @@ infrastructure/gaming/sunshine-wrapper.sh
 infrastructure/gaming/trixie-backports.sources
 infrastructure/gaming/wayland-apps.json
 infrastructure/gaming/wayland-session.sh
+infrastructure/kernel/threadripper-9960x-dual-r9700.json
 lib/k3s/common.sh
 lib/k3s/lifecycle.sh
 lib/workstation/agents.sh
 lib/workstation/build.sh
 lib/workstation/frame_metrics.py
 lib/workstation/hardware.sh
+lib/workstation/kernel_profile.py
 lib/workstation/kernel_run.py
 lib/workstation/llama_runtime.py
 lib/workstation/measurement.py
 lib/workstation/model_kernels.py
+lib/workstation/gemm_profile.py
+lib/workstation/graph_profile.py
+infrastructure/sglang/bf16-full-b4/profile.json
+infrastructure/sglang/gemm-m1/profile.json
+infrastructure/sglang/moe-m1/profile.json
+infrastructure/sglang/moe-m1/normal.json
+infrastructure/sglang/moe-m1/down.json
+infrastructure/sglang/rmsnorm-no-residual/profile.json
+infrastructure/sglang/rmsnorm-no-residual/guard.py
+infrastructure/sglang/rmsnorm-epilogue/profile.json
+infrastructure/sglang/rmsnorm-epilogue/kernel.py
+infrastructure/sglang/gemm-m1/N=2048,K=2048,device_name=AMD_Radeon_AI_PRO_R9700,dtype=fp8_w8a8,block_shape=[128, 128].json
+infrastructure/sglang/gemm-m1/N=2560,K=2048,device_name=AMD_Radeon_AI_PRO_R9700,dtype=fp8_w8a8,block_shape=[128, 128].json
 lib/workstation/packages.sh
 lib/workstation/performance.sh
 lib/workstation/quality_metrics.py
@@ -147,6 +163,7 @@ templates/sunshine/compare.jq
 templates/sunshine/measurement.example.json
 templates/workstation/codex-config.toml
 templates/workstation/linux-git.config
+templates/workstation/linux-git-packaging.patch
 templates/workstation/packages-desktop.pacman
 templates/workstation/packages-intel.pacman
 templates/workstation/packages.pacman
@@ -164,6 +181,11 @@ tests/hardware/sglang-evidence.py
 tests/hardware/sglang-kernel-evidence.py
 tests/hardware/sglang-profile-evidence.py
 tests/hardware/test_model_kernels.py
+tests/hardware/test_gemm_profile.py
+tests/hardware/test_graph_profile.py
+tests/hardware/test_graph_history.py
+tests/hardware/test_moe_table_package.py
+tests/hardware/test_rmsnorm_package.py
 tests/hardware/test_sglang_evidence.py
 tests/hardware/test_serving_memory.py
 tests/hardware/test_performance_profiles.py
@@ -171,12 +193,15 @@ tests/hardware/test_performance_bundle.py
 tests/hardware/test_coding_eval.py
 tests/hardware/test_serving_runtime.py
 tests/hardware/test_serving_diagnostics.py
+tests/test_kernel_profile.sh
 tests/test_serving_runtime.sh
 tests/hardware/test_serving_orchestration.py
 tests/fixtures/kernel-orchestration.sh
 tests/hardware/test_inference_cache.py
+tests/workstation/test_kernel_profile.py
 tests/workstation/test_telemetry.py
 tests/workstation/test_telemetry_power.py
+tests/workstation/test_monitoring.py
 docs/PERFORMANCE-PROFILES.md
 tests/hardware/torch-rocm.py
 infrastructure/packages/bootstrap/bridge-runtime.files
@@ -208,6 +233,7 @@ infrastructure/observability/workloads.yaml
 lib/workstation/telemetry.py
 lib/workstation/telemetry.sh
 lib/workstation/telemetry_sample.py
+lib/workstation/monitoring.py
 lib/workstation/telemetry_power.py
 templates/workstation/telemetry/workstation-alloy.service
 templates/workstation/telemetry/workstation-telemetry.service

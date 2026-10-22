@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "profile": "rmsnorm-epilogue",
+  "qualification": "experimental-not-model-qualified",
+  "upstream_revision": "71de97b264b04dcd514cf904003028aefe9775c8",
+  "source_sha256": "cca629524c065d0b298167fb21c4da3786b380f0771799e8f3d0a1a4b31084bb",
+  "gemm_dependency_sha256": "19c0abed0d30b526c9f4f04cb2ada6158607c4e6b253edcea7fc52739c27b803",
+  "default_selection": "incumbent",
+  "automatic_apply": false,
+  "environment": {"WORKSTATION_RMSNORM_EPILOGUE": "1"},
+  "scope": "HIP native-fallback inference RMSNorm; BF16 input/weight; widths 128/2048, ranks 2/3, 1..512 rows, eps 1e-6; preserve native FP32 cast/square/mean/add/rsqrt; fuse only two FP32 multiplies and BF16 store with fp fusion disabled",
+  "numerical_gate": "exact BF16 native parity plus independent CPU FP64 relative L2 <=0.001; model IDs and logprobs retain existing gates",
+  "guard_source": "rmsnorm-no-residual/guard.py",
+  "fallback": "unsupported semantics retain original dispatch; stale source/runtime/model/device requires omission of the module override and environment",
+  "rollback": "omit WORKSTATION_RMSNORM_EPILOGUE and the dedicated layernorm module mount; start a fresh native-RMSNorm process with the selected verified GEMM/MoE tables",
+  "cache_reuse": "fresh owner boot/runtime/source/model/device identity; private bounded cache per startup"
+}

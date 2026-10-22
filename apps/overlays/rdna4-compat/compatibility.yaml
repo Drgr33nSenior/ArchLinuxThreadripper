@@ -9,6 +9,17 @@ spec:
     spec:
       containers:
         - name: sglang
+          # Preserve this legacy diagnostic on 10.0; it is not part of the
+          # owner-selected 10.1 baseline or evidence of useful GPU overrides.
+          image: docker.io/rocm/sgl-dev:v0.5.15.post1-ubuntu24.04-py3.14-rocm10.0.0@sha256:51f63a2d201ca944a43b8f1a18ac7da73ed9f6743c45bb82bbc40b44e6cf18d2
+          imagePullPolicy: IfNotPresent
           env:
+            - {name: XDG_CACHE_HOME, value: /cache/xdg}
+            - {name: TRITON_CACHE_DIR, value: /cache/triton}
+            - {name: TORCHINDUCTOR_CACHE_DIR, value: /cache/torchinductor}
+            - {name: SGLANG_JIT_CACHE_DIR, $patch: delete}
+            - {name: ROCM_HOME, $patch: delete}
+            - {name: OMP_NUM_THREADS, $patch: delete}
+            - {name: MAX_JOBS, $patch: delete}
             - {name: HSA_OVERRIDE_GFX_VERSION, value: 12.0.1}
             - {name: HSA_ENABLE_SDMA, value: '0'}

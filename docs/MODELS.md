@@ -77,6 +77,14 @@ or enable remote model code. General framework support is not a tested
 Qwen3.8/R9700/Arch result. A matching architecture does not prove all FP8/GDN
 kernel paths, model outputs or tool-call parsing work correctly.
 
+The pinned image rejects its automatically selected `extra_buffer` hybrid-state
+cache on ROCm. Both Qwen profiles therefore explicitly use
+`--mamba-radix-cache-strategy no_buffer --disable-overlap-schedule`, as required
+by that image's `server_args.py` validation. This is a compatibility setting,
+not a tuning result. Do not enable `extra_buffer` or overlap scheduling from
+instructions for another image or GPU platform. Requalify startup, prefix-cache
+behavior, numerical outputs and request latency after a reviewed image change.
+
 `MODEL_REVISION` and the revision directory identify intended inputs. SGLang's
 `--revision` does not checksum an arbitrary local directory. Verify transferred
 files independently; never qualify a workload from its path or model name alone.

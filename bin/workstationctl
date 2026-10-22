@@ -15,8 +15,12 @@ Commands:
   status
   boot-benchmark [output-directory]
   profile <server|desktop|build|ai|game|vm>
-  build environment <normal|memory-heavy>
+  build environment <normal|memory-heavy|kernel>
   build cmake-ninja-args [normal|memory-heavy]
+  build sglang-gemm-package <new-output-directory> <--parent-record FILE|--parent-layer FILE>
+  build sglang-moe-tables <new-output-directory>  # experimental; no deployment
+  build sglang-rmsnorm-package <new-output-directory> --source <pinned-layernorm.py>
+      [--profile rmsnorm-no-residual|rmsnorm-epilogue]  # opt-in experiments
   makepkg configure [output-file]
   ccache configure|stats|cleanup|test
   hardware collect <new-output-directory>
@@ -24,6 +28,7 @@ Commands:
   telemetry render <new-output-directory> [apps/overlays/profile]
   telemetry verify <rendered-directory>
   telemetry plan <resource-plan.json> <rendered-directory> <new-output-directory>
+  telemetry status                      (read-only local monitoring readiness)
   session plan <ai|gaming|maintenance>
   session switch <ai|gaming|maintenance> <hardware.json> <state-directory> --execute
   session restore <hardware.json> <state-directory> --execute
@@ -59,6 +64,8 @@ Commands:
   rocm serving-memory-plan <deployment.json> <workload.json> <resource-plan.json> <new-output-directory> --observation <startup-dir> <serving-dir> [--observation ...] --other-mib N [--memory-mib N] [--telemetry-evidence evidence.json]
   rocm kernel-evidence <pod-name> <new-output-directory>
   rocm kernel-plan <deployment.json> <workload.json> <evidence-directory> <new-output-directory> --profile <cache|capture|legacy-compile> --reserve-mib N --worker-mib N [--workers 1,2] [--experimental]
+  rocm kernel-plan <deployment.json> <workload.json> <evidence-directory> <new-output-directory> --profile gemm-m1 --gemm-image <built-image.json> [--gemm-observation <runtime.json>]
+  rocm kernel-plan <deployment.json> <workload.json> <evidence-directory> <new-output-directory> --profile bf16-full-b4 --experimental [--graph-observation <owner-receipts.json>]
   rocm kernel-warmup <workload.json> <evidence-directory> <new-output-directory>
   rocm kernel-profile <workload.json> <evidence-directory> <new-output-directory>
   rocm kernel-compare <cold-run> <warm-run> <cold-startup.json> <warm-startup.json> <new-result.json> --rank-log FILE [--rank-log FILE] --atol N --rtol N
@@ -79,7 +86,8 @@ Commands:
   rocm inference <llama-cli> <GGUF-model> <new-output-directory>
   packages snapshot <stable|experimental> <new-directory> <signing-fingerprint> <signed-packages...>
   packages restore-plan <snapshot-directory> <signing-fingerprint>
-  kernel build <AUR-checkout> <clean-chroot-dir> <output-dir> [versions.lock]
+  kernel profile <new-output-directory>
+  kernel build <AUR-checkout> <clean-chroot-dir> <observed-profile-dir> <output-dir> [versions.lock]
   kernel build-uki [db-cert]
   kernel promote <linux-git|stable|lts> <uki.efi> <esp-a> <esp-b> [db-cert]
   kernel rollback <stable|lts>
@@ -100,7 +108,7 @@ Commands:
   virtualization validate
   aur checkout <paru|linux-git|aws-ssm> <directory> [versions.lock]
   aur bootstrap-paru <AUR-checkout> <clean-chroot-dir> <output-dir> [versions.lock]
-  dev setup <server|workstation|gpu|ai|gaming|shell|cloud|virtualization|backup> <packages.pacman>
+  dev setup <server|workstation|gpu|ai|gaming|shell|cloud|virtualization|backup|monitoring> <packages.pacman>
 EOF
 }
 
@@ -124,6 +132,19 @@ main() {
       ws_boot_benchmark "$@"
       ;;
     profile:*) ws_profile "${2:-}" ;;
+    build:sglang-gemm-package)
+      shift 2
+      ws_sglang_gemm_package "$@"
+      ;;
+    build:sglang-moe-tables)
+      (($# == 3)) || return 2
+      shift 2
+      ws_sglang_moe_tables "$@"
+      ;;
+    build:sglang-rmsnorm-package)
+      shift 2
+      ws_sglang_rmsnorm_package "$@"
+      ;;
     build:environment)
       shift 2
       ws_build_environment "$@"
@@ -158,6 +179,11 @@ main() {
       (($# == 3 || $# == 4)) || return 2
       shift
       ws_telemetry "$@"
+      ;;
+    telemetry:status)
+      (($# == 2)) || return 2
+      ws_require_arch
+      "$(ws_measure_python)" "$repo_root/lib/workstation/monitoring.py"
       ;;
     telemetry:verify)
       (($# == 3)) || return 2
@@ -403,8 +429,12 @@ main() {
       (($# == 4)) || return 2
       ws_package_restore_plan "$3" "$4"
       ;;
+    kernel:profile)
+      (($# == 3)) || return 2
+      ws_kernel_profile "$3"
+      ;;
     kernel:build)
-      (($# == 5 || $# == 6)) || return 2
+      (($# == 6 || $# == 7)) || return 2
       shift 2
       ws_kernel_build "$@"
       ;;

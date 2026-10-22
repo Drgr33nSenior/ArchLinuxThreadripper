@@ -15,6 +15,8 @@ import tempfile
 
 import yaml
 
+from model_kernels import image_contract, validate_profile_contract
+
 
 FILES = ("stack.yaml", "workloads.yaml", "evidence.json")
 PROFILES = ("full", "metrics")
@@ -235,7 +237,17 @@ def render(args):
                     if line and not line.startswith("#"))
         require(args.profile == "full" or args.trace == "false",
                 "metrics telemetry profile does not collect traces")
-        workloads = configure_workloads(kustomize(selected), args.trace == "true", lock["SGLANG_ROCM_IMAGE"])
+        workloads = kustomize(selected)
+        deployment = next(o for o in workloads if o["kind"] == "Deployment" and o["metadata"]["name"] == "sglang")
+        container = next(c for c in pod_spec(deployment)["containers"] if c["name"] == "sglang")
+        contract = image_contract(lock, container["image"])
+        if contract["scope"] == "single-bf16":
+            config_name = container["envFrom"][0]["configMapRef"]["name"]
+            settings = next(o["data"] for o in workloads if o["kind"] == "ConfigMap" and o["metadata"]["name"] == config_name)
+            validate_profile_contract(contract, settings)
+            require(all(str(container["resources"][kind]["amd.com/gpu"]) == "1" for kind in ("requests", "limits")),
+                    "ROCm 10.1 telemetry render requires the single-GPU profile")
+        workloads = configure_workloads(workloads, args.trace == "true", contract["image"])
     else:
         stack, workloads = [], []
     total = sum(pod_budget(o)["memory_mib"] for o in stack if pod_spec(o))

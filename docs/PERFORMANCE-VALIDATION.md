@@ -98,9 +98,18 @@ Use `--contexts 4096` for the existing one-card 9B profile. Do not silently redu
 context, change quantization or substitute 9B for 27B when comparing devices.
 The raw-completion workload is not a chat/tool-call quality evaluation. Keep a
 separate fixed coding task suite and review correctness before promotion.
+For tool-call streams, explicit null fields mean no new fragment, not a reset
+of the call identity. The evaluator still requires one complete function call,
+matching arguments, `finish_reason: tool_calls` and the final SSE `[DONE]`.
 
 Interactive requests generate 128 tokens at concurrency 1/2; batch requests
 generate 512 at 1/2/4. Each uses three repetitions and two requests per worker.
+The tokenizer helper records `context_reserve_tokens: 2` for the pinned
+SGLang scheduler. Input tokens plus output tokens plus this reserve equal the
+selected context limit; a 4096-token interactive case uses 3966 input tokens.
+Regenerate older workloads before testing this runtime: without the reserve,
+the server clips the output budget and the strict response check fails.
+Keep workload hashes separate when comparing old and regenerated inputs.
 Concurrency is capped at eight, repetitions at twenty. Warm-up is excluded;
 concurrency execution order alternates each repetition. Results retain request
 failures, percentiles, repeat spread and aggregate output throughput. Server
@@ -306,6 +315,32 @@ ten repetitions after warm-up per size/rank, verifies every reduction and
 records algorithm bandwidth, latency and transport debug output. Inspect P2P,
 SHM/network selection and profile traffic: peer capability alone proves neither
 IPC nor efficient TP.
+
+### Synthetic matrix baseline before model staging
+
+In an explicitly approved, GPU-allocated diagnostic environment with the pinned
+ROCm PyTorch runtime, run the canonical probe with `--matmul-benchmark`:
+
+```sh
+/path/to/pinned/runtime/python -I -B tests/hardware/torch-rocm.py \
+  --count 2 --model R9700 --matmul-benchmark
+```
+
+This uses fixed 1024 and 2048 square matrices, seed 42, FP32/FP16/BF16, two
+warmups and ten measured samples per case. Every result is compared with a CPU
+reference from the same precision-rounded inputs. GPU event times exclude
+allocation, transfers and reference checks. Unsupported BF16 or invalid timings
+fail the benchmark. Retain raw samples, the script hash, Pod/image identity,
+boot ID, physical GPU mapping, resource limits and telemetry. Repeat into new
+evidence directories; do not infer inference throughput or a tuning benefit.
+
+Keep compiler scratch and captured-output limits separate. The pinned runtime
+can compile matrix kernels on first use. A 16 MiB scratch volume or per-file cap
+is insufficient for the observed compilation path. Use the reviewed 128 MiB
+scratch allowance within the Pod's memory budget, while retaining independent
+bounded stdout/stderr capture and cancellation. A full scratch volume, timeout
+or output-limit failure is not successful numerical evidence. Preserve failed
+Pods and logs; do not prune caches or increase limits merely to obtain a pass.
 
 For serving scaling, keep the **same fitting model** for TP=1, TP=2 and two
 independent one-GPU workers. The last topology requires an owner-reviewed

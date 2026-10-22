@@ -2,6 +2,7 @@
 import json
 import io
 import os
+import runpy
 import signal
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -11,6 +12,7 @@ import tempfile
 import threading
 import time
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "lib/workstation"))
@@ -53,6 +55,41 @@ class Handler(BaseHTTPRequestHandler):
 
 
 class Tests(unittest.TestCase):
+    def test_tokenized_workload_reserves_pinned_scheduler_headroom(self):
+        helper = Path(__file__).with_name("serving-workload.py")
+        for profile, output_tokens in (("interactive", 128), ("batch", 512)):
+            with self.subTest(profile=profile), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                corpus = root / "corpus.py"
+                corpus.write_text("# synthetic tokenizer fixture\n")
+                output = root / "workload.json"
+                tokenizer = SimpleNamespace(encode=lambda _text, **_kwargs: list(range(4096)))
+                loader = SimpleNamespace(from_pretrained=lambda *_args, **_kwargs: tokenizer)
+                argv = [str(helper), str(root / "model"), "a" * 40, str(corpus), str(output), profile,
+                        "--contexts", "4096"]
+                with patch.dict(sys.modules, transformers=SimpleNamespace(AutoTokenizer=loader)), patch.object(sys, "argv", argv):
+                    runpy.run_path(str(helper), run_name="__main__")
+                workload = json.loads(output.read_text())
+                case = workload["cases"][0]
+                self.assertEqual(case["context_reserve_tokens"], 2)
+                self.assertEqual(case["output_tokens"], output_tokens)
+                self.assertEqual(case["input_ids"], list(range(4096 - output_tokens - 2)))
+                # The exact pinned worker reserves one context position; the
+                # scheduler reserves another before admitting output tokens.
+                admitted = min(output_tokens, (4096 - 1) - len(case["input_ids"]) - 1)
+                self.assertEqual(admitted, output_tokens)
+                runtime = {"settings": {"MODEL_REVISION": "a" * 40, "CONTEXT_LENGTH": "4096"},
+                           "model_files": {"fixture": "hash"}, "launch": ["fixture"]}
+                serving.validate(workload, runtime)
+                for bad in (-1, True, 1.5, 3, "2"):
+                    case["context_reserve_tokens"] = bad
+                    with self.assertRaises(ValueError):
+                        serving.validate(workload, runtime)
+                case["context_reserve_tokens"] = 2
+                case["input_ids"].append(1)
+                with self.assertRaises(ValueError):
+                    serving.validate(workload, runtime)
+
     def test_hwmon_snapshot_enumerates_each_device_once(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -61,10 +98,12 @@ class Tests(unittest.TestCase):
             (device / "name").write_text("fixture")
             fields = {"temp1_input": "31000", "power1_average": "1000000",
                       "power1_input": "2000000", "energy1_input": "3000000",
-                      "freq1_input": "4000000"}
+                      "freq1_input": "4000000", "fan1_input": "0",
+                      "in0_input": "12000", "curr1_input": "6000"}
             for name, value in fields.items():
                 (device / name).write_text(value)
-            (device / "temp1_label").write_text("ignored label")
+            (device / "temp1_label").write_text("Tctl")
+            (device / "pwm1").write_text("do not read control settings")
             (device / "power2_input").symlink_to("missing")
             (device / "temp2_input").mkdir()
             scandir = os.scandir
@@ -78,7 +117,8 @@ class Tests(unittest.TestCase):
             with patch.object(os, "scandir", side_effect=counted):
                 sample = measurement.snapshot(sys=root, proc=root, cgroup=root)
             self.assertEqual(sample["hwmon"], {str(device.resolve()): {
-                "name": "fixture", "values": {**fields, "power2_input": None, "temp2_input": None}}})
+                "name": "fixture", "labels": {"temp1": "Tctl"},
+                "values": {**fields, "power2_input": None, "temp2_input": None}}})
             self.assertEqual(len(scans), 1)
 
     def test_pod_cgroup_identity_and_unknown_layout(self):

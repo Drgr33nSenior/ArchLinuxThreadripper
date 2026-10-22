@@ -1,0 +1,35 @@
+--- a/PKGBUILD
++++ b/PKGBUILD
+@@ -7,7 +7,7 @@
+ 
+ pkgbase=linux-git
+-pkgver=7.0.r11782.c1f49dea2b8f
++pkgver=7.3.rc6.r0.a90ee4305c4a.torvalds.linux
+-pkgrel=1
++pkgrel=3
+ pkgdesc="Linus Torvalds' Mainline Linux"
+ url="https://www.kernel.org"
+ arch=(x86_64)
+@@ -214,14 +214,22 @@
+ }
+ 
+ _package-headers() {
++  # These files belong only to the kernel split package.
++  backup=()
+   pkgdesc="Headers and scripts for building modules for the $pkgdesc kernel"
+   depends=(
+     binutils
++    gawk
+     glibc
+     libelf
+     libgcc
+     openssl
+     pahole
++    make
++    perl
++    python
++    python-cryptography
++    sed
+     xxhash
+     zlib
+     zstd

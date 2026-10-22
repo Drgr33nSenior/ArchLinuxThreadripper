@@ -25,6 +25,10 @@ elif sys.argv[1] == "workload":
         time.sleep(.02)
     (root / "workload-ready").write_text(json.dumps([os.getpid(), child.pid]))
     child.wait()
+    # Group-signal delivery order must not let the leader exit successfully
+    # when its descendant dies first; the leader must need its own SIGKILL.
+    while True:
+        time.sleep(60)
 else:
     sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "lib/workstation"))
     import storage_benchmark

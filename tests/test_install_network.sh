@@ -66,4 +66,50 @@ if grep -Eq 'iwd|/home/|sshd.service' "$work/commands"; then exit 1; fi
 ENABLE_SSH=true
 bootstrap_configure_system
 grep -Fqx 'systemctl enable sshd.service' "$work/commands"
+# Exercise production plan/completion messages without running install stages.
+# The package arguments are the actual installer's pacstrap construction.
+(
+  BOOTSTRAP_DISK_A_REAL=/dev/synthetic-a
+  BOOTSTRAP_DISK_B_REAL=/dev/synthetic-b
+  RAID_CHUNK_KIB=512
+  bootstrap_install_plan >"$work/plan" 2>&1
+  grep -Fq 'network: NetworkManager; live-ISO Wi-Fi credentials are not copied' "$work/plan"
+  grep -Fq 'Alloy and telemetry activation are separate owner stages' "$work/plan"
+  bootstrap_assert_boot_labels_absent() { :; }
+  bootstrap_verify_boot_package() { :; }
+  # Only command discovery is exercised; stages never execute this command.
+  # shellcheck disable=SC2329
+  efibootmgr() { :; }
+  fail_stage=none
+  bootstrap_stage() {
+    printf '%s\n' "$*" >>"$work/stages"
+    if [[ $1 == base-packages ]]; then
+      printf '%s\n' "$@" >"$work/package-argv"
+    fi
+    [[ $1 != "$fail_stage" ]]
+  }
+  bootstrap_install >"$work/complete" 2>&1
+  grep -Fq 'first boot: use NetworkManager, not iwctl. At the installed console run: sudo nmtui' "$work/complete"
+  grep -Fq 'Wi-Fi credentials are not copied from the live ISO; reconnect before remote access.' "$work/complete"
+  grep -Fq 'Monitoring tools are installed; telemetry is not activated.' "$work/complete"
+  grep -Fq 'base-packages bootstrap_run pacstrap -K /mnt' "$work/stages"
+  grep -Eq '^base-packages .* networkmanager( |$)' "$work/stages"
+  for package in lm_sensors dmidecode nvme-cli smartmontools; do
+    [[ $(grep -Fxc "$package" "$work/package-argv") == 1 ]]
+  done
+  if grep -Exq 'grafana-alloy|prometheus-node-exporter|i2c-tools|it87' "$work/package-argv"; then exit 1; fi
+  # Desktop selection still carries each diagnostic exactly once.
+  HOST_PROFILE=desktop
+  bootstrap_select_host_profile
+  bootstrap_install >"$work/desktop-complete" 2>&1
+  grep -Fxq gnome "$work/package-argv"
+  for package in lm_sensors dmidecode nvme-cli smartmontools; do
+    [[ $(grep -Fxc "$package" "$work/package-argv") == 1 ]]
+  done
+  if grep -Eq '(^| )(iwd|nmcli|nmtui)( |$)' "$work/stages"; then exit 1; fi
+  fail_stage=firmware-entries
+  if bootstrap_install >"$work/incomplete" 2>&1; then exit 1; fi
+  if grep -Fq 'first boot:' "$work/incomplete"; then exit 1; fi
+  if grep -Fq 'Monitoring tools are installed' "$work/incomplete"; then exit 1; fi
+)
 printf 'Network refusal, unauthenticated endpoint and first-boot policy fixtures passed\n'

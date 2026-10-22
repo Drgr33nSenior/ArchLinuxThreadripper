@@ -38,8 +38,10 @@ $workstation-install verify the installed workstation using config/install.conf
    9960X. F11 was the current suffix-free choice when this lock was prepared;
    reassess later releases manually. Do not flash firmware from this repository.
 6. Load firmware defaults. Keep memory at JEDEC/Auto for initial testing.
-7. Disable CSM. Enable Above 4G Decoding, Resizable BAR, SVM, IOMMU, Secure Boot
-   capability, and select the physical SPI TPM rather than AMD fTPM. Confirm
+7. Disable CSM. Enable Above 4G Decoding, Resizable BAR, SVM and IOMMU. Keep
+   Secure Boot enforcement disabled while booting the unqualified live USB;
+   do not clear its firmware key databases or reset the TPM for this step.
+   Select the physical SPI TPM rather than AMD fTPM. Confirm
    which TPM Linux selected before enrolment; see
    [the TPM procedure](HOME-LAB.md#2-secure-boot-tpm2-and-pin).
 8. Leave NUMA/NPS, CPPC, preferred cores, SMT, C-states, and PCIe ASPM at their
@@ -66,7 +68,13 @@ matching Bridge bundle too, or explicitly set `INSTALL_BRIDGE=false`.
 Never disable signature checks. Do not enrol keys or erase disks until the
 preflight report matches the recorded hardware.
 
-### Connect without Codex
+<a id="connect-without-codex"></a>
+
+### Connect on the live ISO (iwd)
+
+These commands apply only to the live ISO. The installed system uses
+NetworkManager, not `iwctl`. After reboot, follow
+[First-boot connectivity](#first-boot-connectivity); no Wi-Fi password is copied.
 
 Boot the custom ISO in UEFI mode. At its local console, inspect interfaces and
 connect with iwd. Substitute the discovered station and your SSID:
@@ -236,9 +244,14 @@ the live ISO with the explicit execution flag:
 bootstrap-arch --config /run/install.conf --execute install
 ```
 
-The command requires both fully resolved device paths and serials in its confirmation immediately before
-the first destructive command. Enter the LUKS passphrase only through
-cryptsetup's terminal prompt. The repository does not capture it.
+Immediately before the first destructive command, the installer displays both
+persistent by-id paths, resolved whole disks and serials. Check them against
+your recorded hardware. To approve erasing **both** disks, type exactly `ERASE`.
+Any other response or end of input cancels installation. The installer rechecks
+both paths and serials before writing; changed identities or failed probes stop
+installation. Root access, a local terminal and `--execute` are still required.
+Enter the LUKS passphrase only through cryptsetup's terminal prompt. The
+repository does not capture it.
 
 Set both the named user's password and the root recovery-console password at
 the interactive prompts. Root must have an authenticated console recovery path;
@@ -256,39 +269,373 @@ media, record a checksum, unmount that media, and remove it. A header copy left
 only inside this RAID0-encrypted root cannot recover a damaged LUKS header or a
 failed NVMe member.
 
+### First-boot connectivity
+
+After reboot, sign in at the **installed workstation's local console**. The
+installer installs and enables NetworkManager, including `nmcli` and `nmtui`.
+`iwctl` is a live-ISO tool and is not installed on the target. Wi-Fi credentials
+are **not** migrated from iwd; reconnect before expecting remote access.
+
+For the text menu, run:
+
+```sh
+sudo nmtui
+```
+
+Choose **Activate a connection**, select your Wi-Fi network and enter its
+password locally. No desktop is required. Alternatively, inspect the interface
+and available networks, then connect from the command line:
+
+<a id="installed-wifi-connect"></a>
+
+```sh
+nmcli device status
+nmcli device wifi list
+sudo nmcli --ask device wifi connect "YOUR SSID" ifname wlan0
+timedatectl status
+```
+
+Use the newly discovered interface, not necessarily the live ISO's name. Expect
+that device to become `connected`. `--ask` keeps the password out of arguments
+and shell history. Do not use `--show-secrets` or record password prompts.
+NetworkManager stores its own protected connection profile; it is not a copy of
+an iwd profile. See the upstream [console tools](https://networkmanager.dev/docs/api/latest/nmtui.html)
+and [nmcli reference](https://networkmanager.dev/docs/api/latest/nmcli.html).
+
+If NetworkManager is not running, check `systemctl is-active NetworkManager.service`
+and `systemctl is-enabled NetworkManager.service`. On this installed host only,
+start the configured service with `sudo systemctl start NetworkManager.service`.
+If `nmcli device status` lists no Wi-Fi device or reports it as unavailable,
+inspect `nmcli radio wifi` and `rfkill list` before diagnosing drivers or firmware.
+Do not install or start a second network manager to conceal a failed service or
+missing device. Captive portals, enterprise Wi-Fi and proxies still require the
+owner's network-specific procedure.
+
+If SSH was selected with `ENABLE_SSH=true`, verify networking,
+`systemctl status sshd`, the named user's access and host-key fingerprint locally
+before connecting remotely. Root SSH remains prohibited. Live SSH remains
+masked regardless of that option.
+
 ## 5. Enrol Secure Boot keys
 
-Treat key enrolment as a manual recovery boundary:
+Run this section at the **installed workstation's local console**, not on the
+Mac, live USB or an installation chroot. First boot stable, LTS and recovery
+with Secure Boot disabled and unlock with your LUKS passphrase. Select the
+installer's named entries in the firmware boot menu; `sudo efibootmgr -v` shows
+their paths. Keep the recovery USB and protected offline LUKS header backup.
 
-1. Export and archive the current firmware key databases.
-2. Confirm the installer-created owner keys are present only on encrypted
-   root, create a separately encrypted offline backup of `/var/lib/sbctl`, and
-   record the public-certificate fingerprints.
-3. Verify those owner keys and each stable, LTS, and
-   recovery UKI signature against `db.pem`.
-4. Enter firmware Setup Mode manually.
-5. Enrol owner keys while preserving required OEM and Microsoft certificates.
-6. Verify signatures and firmware Secure Boot state.
-7. Boot stable and LTS before adding any git kernel.
+Secure Boot authenticates boot code. TPM+PIN unlock in section 6 is separate.
+The ISO's GPG release signature is neither of these. The installer already ran
+`sbctl create-keys` and signed the unified kernel images (UKIs). **Do not generate
+replacement keys.** Key creation is not firmware enrolment.
 
-Never store Secure Boot private keys in this repository or on the ESPs.
+### 5.1. Inspect and back up before changing firmware
+
+Run these read-only checks:
+
+```sh
+sudo sbctl status
+sudo sbctl list-files
+findmnt --mountpoint /efi
+findmnt --mountpoint /efi2
+```
+
+Expect an installed sbctl key set and the three primary UKIs under
+`/efi/EFI/Linux/`. Secure Boot should still be disabled at this stage. Missing
+keys, images or ESP mounts are a stop condition, not a reason to rerun installation.
+Print only the public-certificate fingerprints:
+
+```sh
+for certificate in /var/lib/sbctl/keys/PK/PK.pem /var/lib/sbctl/keys/KEK/KEK.pem /var/lib/sbctl/keys/db/db.pem; do
+  sudo openssl x509 -in "$certificate" -noout -subject -fingerprint -sha256
+done
+```
+
+Choose mounted, separately encrypted offline backup storage **off the RAID0 and
+not the installer USB**. Substitute its real path below. Do not overwrite an
+earlier backup:
+
+```sh
+BACKUP='/path/to/mounted/encrypted-offline-backup'
+sudo test ! -e "$BACKUP/sbctl-before-enrolment" &&
+  sudo cp -a /var/lib/sbctl "$BACKUP/sbctl-before-enrolment"
+```
+
+This copy contains private keys. Verify the protected backup locally, then
+unmount and disconnect that storage. Never copy these keys to an ESP, Git,
+unencrypted media, Docker, Codex or a journal. Record only public fingerprints
+and that the backup was verified.
+
+Use the motherboard's documented firmware export procedure to archive its
+existing **PK, KEK, db and dbx** databases and establish how to restore them.
+These are the platform key, key-exchange keys, allowed signatures and revoked
+signatures. A screenshot or `sbctl list-enrolled-keys` is not a restorable export.
+If the firmware cannot export them, stop and establish a board-specific recovery
+procedure before removing any key. Do not guess menu labels or clear all keys.
+
+### 5.2. Verify both boot copies
+
+The block below checks signatures against your owner's public db certificate
+and compares the independent ESP copies. It stops on the first failure:
+
+<a id="verify-owner-ukis"></a>
+
+```sh
+(
+  set -e
+  for esp in /efi /efi2; do
+    for uki in arch-linux.efi arch-linux-lts.efi arch-recovery.efi; do
+      sudo sbverify --cert /var/lib/sbctl/keys/db/db.pem "$esp/EFI/Linux/$uki"
+    done
+    sudo sbverify --cert /var/lib/sbctl/keys/db/db.pem "$esp/EFI/BOOT/BOOTX64.EFI"
+    sudo cmp /efi/EFI/Linux/arch-recovery.efi "$esp/EFI/BOOT/BOOTX64.EFI"
+  done
+  for uki in arch-linux.efi arch-linux-lts.efi arch-recovery.efi; do
+    sudo cmp "/efi/EFI/Linux/$uki" "/efi2/EFI/Linux/$uki"
+  done
+)
+```
+
+Expect every signature to verify and every `cmp` to exit 0 without output.
+Do not enrol keys or enable enforcement if this block fails. For the broader
+installed storage/boot checks, use [section 7](#boot-and-storage-verification).
+
+### 5.3. Enrol owner keys, then verify enforcement
+
+This is an **owner-run firmware trust change**, not an agent operation:
+
+1. With the backups and boot checks complete, enter firmware setup manually.
+   Use the board's documented procedure to enter **Setup Mode** for custom key
+   enrolment. Disabling Secure Boot alone does not mean Setup Mode is active.
+   Do not reset the TPM or use a generic key-clearing command.
+2. Boot the installed stable UKI with your passphrase. Run `sudo sbctl status`.
+   Expect **Setup Mode: Enabled**. Stop if that state is not present.
+3. Review which Microsoft/OEM certificates the GPU option ROMs and other boot
+   paths need. The following sbctl command includes Microsoft's certificates and
+   the firmware's built-in db/KEK defaults; these defaults do **not** preserve
+   every extra certificate currently installed. If the archived databases have
+   additional required certificates, prepare a reviewed custom-certificate
+   enrolment instead. Do not proceed until their preservation is resolved.
+
+```sh
+sudo sbctl enroll-keys --microsoft --firmware-builtin db,KEK
+```
+
+4. Stop on an error. Do not add `--yolo`, `--yes-this-might-brick-my-machine`,
+   `--ignore-immutable` or disable sbctl's sandbox to bypass a refusal.
+   Inspect the enrolled public certificates and state:
+
+```sh
+sudo sbctl list-enrolled-keys
+sudo sbctl status
+```
+
+5. Confirm the intended owner and required vendor certificates are enrolled.
+   Expect **Setup Mode: Disabled** after the owner PK is enrolled. Firmware may
+   enable enforcement immediately; if it remains disabled, enable Secure Boot
+   manually without restoring factory keys over the owner keys.
+6. Boot the installed stable entry and run `sudo sbctl status` again. Require
+   **Secure Boot: Enabled** and **Setup Mode: Disabled** in the running system.
+   Repeat the signature checks and passphrase boot tests for stable, LTS and
+   recovery, including the second ESP's entries. Do not add a git kernel yet.
+
+If firmware refuses an image, stop. Use the established firmware recovery route
+to return enforcement to its previous disabled state, then boot the tested
+passphrase path and investigate. Do not reset the TPM, replace signing keys or
+erase the installation. The live USB remains unqualified for Secure Boot even
+after the installed host passes these checks.
+
+Command semantics: [sbctl 0.18 manual](https://github.com/Foxboron/sbctl/blob/0.18/docs/sbctl.8.txt).
+Check `pacman -Q sbctl` and the installed `sbctl enroll-keys --help` if versions differ.
 
 <a id="6-enrol-the-yubikey"></a>
 
 ## 6. Enrol TPM2 with a PIN
 
-Complete passphrase-only stable, LTS and recovery boot tests first. Verify
-Secure Boot and the selected physical SPI TPM. Generate and test a separate
-recovery key, store it offline, and create a new offline LUKS header backup.
-Do not delete the passphrase slot.
+Run this section on the **installed host**, after section 5 and passphrase-only
+stable/LTS/recovery tests succeed. `BOOT_UNLOCK=tpm2-pin` configures the boot
+policy; it does not enrol a TPM. Until enrolment, use your LUKS passphrase.
+The helper adds an unlock slot; it does not replace your passphrase or enable
+Secure Boot. Do not run it from the ISO or a chroot.
 
-On the installed host, use a reviewed source checkout or the installed bootstrap
-package's source tree. Follow [HOME-LAB's TPM/PCR procedure](HOME-LAB.md#2-secure-boot-tpm2-and-pin)
-for the existing static PCR **0+7+11** policy, early-unlock PCR 11 prediction,
-dry-run and explicit owner execution. Do not enrol from the ISO or use the
-post-login PCR 11 value. Enter the PIN only in cryptenroll's local prompt.
-The helper refuses existing TPM tokens; it does not replace or wipe slots.
-Back up the LUKS header again after enrolment.
+### 6.1. Confirm the TPM and the encrypted root device
+
+```sh
+sudo sbctl status
+systemd-analyze has-tpm2
+sudo systemd-cryptenroll --tpm2-device=list
+findmnt -no SOURCE /
+sudo cryptsetup status cryptroot
+```
+
+Use `crypt_root` instead of `cryptroot` for the home-lab example, or the mapper
+name in your reviewed configuration. Require enabled Secure Boot, disabled
+Setup Mode and complete TPM2 support. Confirm in firmware **and Linux device
+discovery** that the selected chip is the physical SPI module, not AMD fTPM.
+`auto` cannot establish this identity; stop if it is ambiguous or multiple TPMs
+are available. Never clear/reset the TPM to make these checks pass.
+
+In `cryptsetup status`, identify the underlying **device** for encrypted root.
+The standard example uses `/dev/md/archroot`; home-lab uses `/dev/md0`. Do not
+use an NVMe member, ESP or the decrypted `/dev/mapper/...` device. After matching
+the device to your installed root and reviewed configuration, set:
+
+```sh
+LUKS_DEVICE='/dev/md/archroot'
+LUKS_UUID=$(sudo cryptsetup luksUUID "$LUKS_DEVICE")
+sudo cryptsetup luksDump "$LUKS_DEVICE"
+```
+
+Substitute your verified device. Require a nonempty, matching UUID and LUKS2
+metadata. Inspect slots/tokens locally; do not paste full metadata into an agent.
+If a `systemd-tpm2` token already exists, stop: the helper deliberately refuses
+replacement. This is not a slot-wiping or automatic reenrolment procedure.
+
+### 6.2. Establish recovery before adding a TPM slot
+
+In your own unrecorded local terminal, add a separate recovery key if you do not
+already have a tested one:
+
+```sh
+sudo systemd-cryptenroll --recovery-key "/dev/disk/by-uuid/$LUKS_UUID"
+```
+
+This command **prints a recovery secret**. Store it in your protected offline
+recovery record, not shell variables, arguments, logs, Git, screenshots or Codex.
+Test it by entering that recovery key at this command's local prompt:
+
+```sh
+sudo cryptsetup open --test-passphrase "/dev/disk/by-uuid/$LUKS_UUID"
+```
+
+Require exit 0. This test does not create another mapping; a later recovery boot
+is still required. Keep the original passphrase slot. Reconnect your verified,
+separately encrypted off-array backup storage and substitute its path:
+
+```sh
+BACKUP='/path/to/mounted/encrypted-offline-backup'
+sudo test ! -e "$BACKUP/luks-before-tpm2.header" &&
+  sudo cryptsetup luksHeaderBackup "/dev/disk/by-uuid/$LUKS_UUID" --header-backup-file "$BACKUP/luks-before-tpm2.header"
+```
+
+Verify that protected backup locally, then unmount and disconnect the storage.
+LUKS headers are protected recovery material; do not send them to an agent.
+
+### 6.3. Obtain the correct early-unlock PCR 11 prediction
+
+The goal is to calculate a **boot fingerprint for the moment the encrypted disk
+is unlocked**. It is not your PIN, passphrase, LUKS UUID or the checksum of the
+whole UKI file. The result is one 64-character hexadecimal value, called
+`EARLY_PCR11_SHA256` in the next section.
+
+PCR 11 is a TPM register that changes as the boot image and later boot stages
+are measured. Reading it after login normally gives a later value, not the value
+needed for disk unlock. The policy still checks PCRs **0+7+11**: firmware,
+Secure Boot policy, and the boot image/stage. Do not remove PCR 11 to skip this
+step. Keep using your tested LUKS passphrase until TPM enrolment is qualified.
+
+**Start with inspection, not enrolment.** At the installed host's local console,
+run this read-only block. It selects the stable UKI; substitute the LTS path only
+if that is the exact signed image you intend to cold-boot next:
+
+<a id="tpm2-prediction-inspect"></a>
+
+```sh
+(
+  set -e
+  UKI=/efi/EFI/Linux/arch-linux.efi
+  pacman -Q systemd systemd-ukify mkinitcpio
+  sha256sum "$UKI"
+  sudo journalctl -b -u systemd-pcrphase-initrd.service --no-pager -n 20
+)
+```
+
+Expect three package versions, the selected UKI's checksum and up to 20 messages
+from the current boot's initramfs PCR-phase service. This **does not calculate
+the fingerprint**. A missing package, unreadable image, skipped service or
+`No entries` needs investigation; none proves that this stage is absent from
+the selected image. If you need help, share the version lines and these phase
+messages only. Do not share PINs, passphrases, recovery keys or full boot logs.
+
+The remaining calculation needs two verified inputs:
+
+- The exact sections embedded in that signed UKI, not files from a newer kernel
+  or a separately rebuilt initramfs.
+- The boot stage that runs before root unlock. The upstream
+  [initramfs phase service](https://github.com/systemd/systemd/blob/v261.2/units/systemd-pcrphase-initrd.service.in)
+  records `enter-initrd` before cryptsetup, but its inclusion, activation and
+  ordering must also be confirmed in **your selected image**. Its presence on
+  the installed root filesystem or a journal success alone is insufficient.
+
+Use [HOME-LAB's calculation procedure](HOME-LAB.md#predict-the-early-unlock-pcr-11)
+to extract those sections, establish the phase and run `systemd-measure calculate`.
+That reference includes a conditional six-section example; do not use it
+unchanged if your UKI has additional measured sections. There is currently no
+installer command that discovers and validates all these inputs for you.
+The enrolment helper in 6.4 **accepts a fingerprint; it does not calculate one**.
+If you cannot establish the image and phase, pause here for review. Secure Boot
+can remain enabled and passphrase unlock remains available; do not reset the TPM
+or enrol a guessed value.
+
+After the image/phase checks and recovery-capable rehearsal pass, use the
+calculation's `11:sha256=` result for that verified early phase. Copy **only the
+64 hexadecimal characters after `=`**, not the prefix, UKI checksum or a
+post-login PCR reading, into this variable in the same terminal used for 6.4:
+
+```sh
+EARLY_PCR11_SHA256='REPLACE_WITH_REVIEWED_64_HEX_DIGEST'
+```
+
+Replace the placeholder; it is deliberately not a usable digest. The digest is
+not a secret, but it must belong to your reviewed image and phase. Setting this
+variable makes no TPM or disk change. Continue to the **preview** in 6.4 only
+when the prediction has been verified; accepting its syntax is not qualification.
+
+### 6.4. Preview, then enrol in your local terminal
+
+Use the installed bootstrap package's helper if present:
+
+```sh
+ENROLL_SCRIPT=/usr/lib/arch-workstation-bootstrap/infrastructure/host/tpm2-enroll.sh
+test -r "$ENROLL_SCRIPT"
+```
+
+If it is absent, use `ENROLL_SCRIPT="$PWD/infrastructure/host/tpm2-enroll.sh"`
+from the root of a full reviewed checkout. Do not download an unrelated script
+or assume the narrower Bridge runtime contains it. Preview first:
+
+<a id="tpm2-enrol-preview"></a>
+
+```sh
+bash "$ENROLL_SCRIPT" "$LUKS_UUID" "$EARLY_PCR11_SHA256"
+```
+
+Expect a printed `systemd-cryptenroll` command with `--tpm2-with-pin=yes`,
+`--tpm2-pcrs=0:sha256+7:sha256+11:sha256=YOUR_DIGEST` and your exact LUKS UUID
+path. **Preview performs no discovery or enrolment**; it checks argument syntax
+and prints the plan. It does not validate the prediction, TPM, recovery or device.
+
+Only after all preceding checks pass, run this yourself:
+
+<a id="tpm2-enrol-execute"></a>
+
+```sh
+sudo bash "$ENROLL_SCRIPT" "$LUKS_UUID" "$EARLY_PCR11_SHA256" --execute
+```
+
+The helper checks root/Linux/local-terminal requirements, LUKS identity, existing
+slots/tokens, TPM2 support and firmware Secure Boot/Setup Mode. It then asks for
+`ENROLL RESOLVED_DEVICE LUKS_UUID`; type its exact displayed confirmation only
+after checking the device. Your confirmation also attests the SPI identity,
+tested recovery, header backup and reviewed PCR prediction: the helper cannot
+prove those owner checks. Enter the existing unlock credential and new strong
+alphanumeric PIN only at cryptenroll's local prompts. Do not add wipe flags.
+
+On failure, stop and retain all recovery slots. On success, inspect the added
+token locally and create a **new** protected header backup, using a distinct
+filename such as `luks-after-tpm2.header`. Do not overwrite the earlier backup.
+
+### 6.5. Cold-test and retain fallback access
 
 Cold-test TPM+PIN on the exact enrolled UKI. Test passphrase and recovery-key
 unlock on stable, LTS and recovery boot paths. Record which image satisfies the
@@ -297,6 +644,11 @@ authorize every different UKI. Repeat the applicable tests after the git UKI is
 accepted. Firmware, Secure Boot policy or UKI changes can invalidate the static
 PCR binding; retain recovery access and plan manual reenrolment using the
 canonical procedure. A signed UKI alone does not prove TPM unlock compatibility.
+
+If TPM unlock fails, use the tested passphrase/recovery path. Do not repeatedly
+guess the PIN: TPM dictionary-attack protection can lock it out. Do not wipe
+slots, reset the TPM or rerun installation. Review changed firmware, Secure Boot
+policy, UKI bytes and phase before planning a separate reenrolment.
 
 A YubiKey is not required. Existing FIDO2 tokens remain optional legacy unlock
 paths; this procedure neither enrols nor removes them. TPM PIN requirements do
@@ -308,24 +660,8 @@ can authenticate the root recovery account.
 
 ## 7. Verify before optional layers
 
-### First-boot connectivity
-
-Wi-Fi credentials are **not** migrated from iwd. The installed system enables
-NetworkManager; reconnect locally before expecting remote access:
-
-```sh
-nmcli device status
-nmcli device wifi list
-sudo nmcli --ask device wifi connect "YOUR SSID" ifname wlan0
-timedatectl status
-```
-
-Use the newly discovered interface, not necessarily the live ISO's name. `--ask`
-keeps the password out of arguments/history. NetworkManager stores its own
-protected connection profile. It is not a copy of an iwd profile. If SSH was
-selected with `ENABLE_SSH=true`, verify networking, `systemctl status sshd`, the
-named user's access and host-key fingerprint locally before connecting remotely.
-Root SSH remains prohibited. Live SSH remains masked regardless of that option.
+Complete [First-boot connectivity](#first-boot-connectivity) before checks that
+need the network or remote access.
 
 ### Boot and storage verification
 
@@ -377,7 +713,20 @@ and probe work instead of shortening boot. Add a boot-critical module only
 after `systemd-analyze` and kernel-log evidence shows that discovery is late or
 unreliable; keep the change in both stable and recovery initramfs tests.
 
+The installation media and first boot remain on generic signed stable/LTS
+kernels. After those recovery paths pass, use the
+[reviewed git-kernel procedure](WORKSTATION.md#reviewed-aur-and-git-kernel) to
+capture the exact target hardware contract and build the separately pinned
+experimental kernel. Profiling is an installed-host step; do not specialize the
+ISO for the controller CPU or promote an unbooted candidate during installation.
+
 ## Bridge package and owner handoff
+
+The base installation includes sensor and storage diagnostic tools, but does
+not activate the telemetry stack. Complete the
+[local monitoring readiness check](TELEMETRY.md#check-local-monitoring-readiness)
+after the boot checks. Keep missing drivers, unreadable sensors and inactive
+collectors distinct; package installation alone does not establish monitoring.
 
 After the boot/recovery baseline passes, inspect the default Bridge installation.
 Package-installed, management-configured and workload-qualified are separate

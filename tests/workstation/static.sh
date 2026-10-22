@@ -36,6 +36,13 @@ grep -Fq -- 'iommu=pt' "$repo_root/templates/arch/kernel.cmdline"
 if grep -q 'amd_iommu=on' "$repo_root/templates/arch/kernel.cmdline"; then exit 1; fi
 grep -Fq -- 'status --porcelain=v1 --untracked-files=all' "$runtime"
 grep -Eq '^LINUX_GIT_SOURCE_COMMIT=[a-f0-9]{40}$' "$lock"
+grep -Eq '^LINUX_GIT_SOURCE_TAG=v[0-9]+\.[0-9]+(-rc[1-9][0-9]*)?$' "$lock"
+grep -Eq '^LINUX_GIT_SOURCE_TAG_OBJECT=[a-f0-9]{40}$' "$lock"
+grep -Fxq 'LINUX_GIT_SOURCE_TAG=v7.3-rc6' "$lock"
+grep -Fxq 'LINUX_GIT_SOURCE_TAG_OBJECT=4eeccbed21e50c19f97be9d325511f3de6343f2d' "$lock"
+grep -Fxq 'LINUX_GIT_SOURCE_COMMIT=a90ee4305c4a5df72c11b31dacfdc76e00fcf78a' "$lock"
+grep -Fq -- 'kernel_profile.py" capture' "$runtime"
+grep -Fq -- 'kernel_profile.py" validate-build' "$runtime"
 if rg -n 'curl[^\n]*\|[[:space:]]*(sh|bash)|paru[^\n]*--noconfirm' "$repo_root/bin/workstationctl" "$runtime"; then
   printf '%s\n' 'unsafe bootstrap pattern found' >&2
   exit 1

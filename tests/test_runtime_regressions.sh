@@ -11,6 +11,18 @@ ws_boot_benchmark() { printf '%s\n' "$*"; }
 [[ $(main boot-benchmark "$work/boot") == "$work/boot" ]]
 if main boot-benchmark "$work/boot" unexpected >/dev/null 2>&1; then exit 1; fi
 
+# Exercise the public read-only dispatch, including its nonzero incomplete result.
+(
+  ws_require_arch() { :; }
+  ws_measure_python() { printf 'fixture_monitoring_python\n'; }
+  fixture_monitoring_python() {
+    [[ $# == 1 && $1 == "$root/lib/workstation/monitoring.py" ]] || return 99
+    return 10
+  }
+  if main telemetry status; then exit 1; else [[ $? == 10 ]]; fi
+  if main telemetry status unexpected; then exit 1; else [[ $? == 2 ]]; fi
+)
+
 ws_require_arch() { :; }
 ws_require_root() { :; }
 pacman() { printf '%s\n' "$*" >>"$work/pacman"; }
@@ -26,6 +38,12 @@ ws_dev_setup virtualization "$root/templates/workstation/packages.pacman"
 tail -n 1 "$work/pacman" | grep -Eq '(^| )qemu-base( |$)'
 tail -n 1 "$work/pacman" | grep -Eq '(^| )libxml2( |$)'
 tail -n 1 "$work/pacman" | grep -Eq '(^| )jq( |$)'
+ws_dev_setup monitoring "$root/templates/workstation/packages.pacman"
+[[ $(tail -n 1 "$work/pacman") == '-Syu --needed -- lm_sensors dmidecode nvme-cli smartmontools grafana-alloy' ]]
+# Selecting diagnostic tools must not silently add GPU runtimes or a host
+# node-exporter (the exporter belongs to the owner-deployed Kubernetes stack).
+ws_dev_setup ai "$root/templates/workstation/packages.pacman"
+if tail -n 1 "$work/pacman" | grep -Eq 'grafana-alloy|smartmontools'; then exit 1; fi
 tuned-adm() { printf '%s\n' "$*" >"$work/tuned"; }
 ws_profile server >/dev/null
 [[ $(<"$work/tuned") == 'profile balanced' ]]

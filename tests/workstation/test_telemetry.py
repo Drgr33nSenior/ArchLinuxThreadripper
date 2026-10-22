@@ -16,6 +16,22 @@ import telemetry_sample
 
 
 class TelemetryTests(unittest.TestCase):
+    def test_scoped_single_image_and_retained_dual_image(self):
+        locks = dict(line.split("=", 1) for line in (ROOT / "versions.lock").read_text().splitlines()
+                     if line and not line.startswith("#"))
+        for overlay, key in (("single-gpu", "SGLANG_SINGLE_ROCM_IMAGE"),
+                             ("family", "SGLANG_SINGLE_ROCM_IMAGE"),
+                             ("dual-gpu", "SGLANG_ROCM_IMAGE"), ("default", "SGLANG_ROCM_IMAGE"),
+                             ("rdna4-compat", "SGLANG_ROCM_IMAGE")):
+            with self.subTest(overlay=overlay):
+                args = self.args(overlay, overlay="apps/overlays/" + overlay)
+                telemetry.render(args)
+                objects = telemetry.load_objects((Path(args.output) / "workloads.yaml").read_text())
+                deployment = next(o for o in objects if o["kind"] == "Deployment" and o["metadata"]["name"] == "sglang")
+                self.assertEqual(deployment["spec"]["replicas"], 0)
+                self.assertEqual(deployment["spec"]["template"]["spec"]["containers"][0]["image"], locks[key])
+                self.assertNotEqual(deployment["metadata"].get("annotations", {}).get("workstation.ai/qualification"), "qualified")
+
     def test_runtime_allowlist_closes_both_telemetry_profiles(self):
         # Use only files shipped to the installed runtime, not the larger
         # source export or any imports/assets from the development checkout.
@@ -32,6 +48,9 @@ class TelemetryTests(unittest.TestCase):
             target = runtime / name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
+        status_help = subprocess.run([sys.executable, "-B", str(runtime / "lib/workstation/monitoring.py"), "--help"],
+                                     capture_output=True, text=True, timeout=10)
+        self.assertEqual(status_help.returncode, 0, status_help.stderr)
         for profile, allowance in (("full", 6144), ("metrics", 4352)):
             with self.subTest(profile=profile):
                 args = self.args(profile, root=str(runtime), profile=profile)
@@ -49,6 +68,20 @@ class TelemetryTests(unittest.TestCase):
                 self.assertTrue(host.is_file())
                 self.assertEqual(host.read_bytes(), (ROOT / host.relative_to(runtime)).read_bytes())
                 self.assertIn('prometheus.scrape "self"', host.read_text())
+                stack = telemetry.load_objects((Path(args.output) / "stack.yaml").read_text())
+                exporter = next(o for o in stack if o["kind"] == "DaemonSet" and
+                                o["metadata"]["name"] == "node-exporter")
+                pod = exporter["spec"]["template"]["spec"]
+                self.assertIn("--collector.edac", pod["containers"][0]["args"])
+                self.assertIn("--collector.hwmon", pod["containers"][0]["args"])
+                self.assertIn("--collector.textfile", pod["containers"][0]["args"])
+                self.assertTrue(pod["securityContext"]["runAsNonRoot"])
+                self.assertTrue(all(mount.get("readOnly") for mount in pod["containers"][0]["volumeMounts"]))
+                if profile == "metrics":
+                    self.assertNotIn("loki.source.journal", host.read_text())
+                    self.assertNotIn("traces =", host.read_text())
+                else:
+                    self.assertIn("loki.source.journal", host.read_text())
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

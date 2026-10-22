@@ -6,8 +6,14 @@ if [[ -z ${HOME_LAB_PYTHON:-} ]]; then
   exit 0
 fi
 PYTHONDONTWRITEBYTECODE=1 "$HOME_LAB_PYTHON" "$root/tests/hardware/test_measurement.py"
+PYTHONDONTWRITEBYTECODE=1 "$HOME_LAB_PYTHON" "$root/tests/hardware/test_torch_rocm.py"
 PYTHONDONTWRITEBYTECODE=1 "$HOME_LAB_PYTHON" "$root/tests/hardware/test_llama_runtime.py"
 PYTHONDONTWRITEBYTECODE=1 "$HOME_LAB_PYTHON" "$root/tests/hardware/test_model_kernels.py"
+PYTHONDONTWRITEBYTECODE=1 "$HOME_LAB_PYTHON" "$root/tests/hardware/test_gemm_profile.py"
+PYTHONDONTWRITEBYTECODE=1 "$HOME_LAB_PYTHON" "$root/tests/hardware/test_graph_profile.py"
+PYTHONDONTWRITEBYTECODE=1 "$HOME_LAB_PYTHON" "$root/tests/hardware/test_graph_history.py"
+PYTHONDONTWRITEBYTECODE=1 "$HOME_LAB_PYTHON" "$root/tests/hardware/test_moe_table_package.py"
+PYTHONDONTWRITEBYTECODE=1 "$HOME_LAB_PYTHON" "$root/tests/hardware/test_rmsnorm_package.py"
 PYTHONDONTWRITEBYTECODE=1 "$HOME_LAB_PYTHON" "$root/tests/hardware/test_sglang_evidence.py"
 PYTHONDONTWRITEBYTECODE=1 "$HOME_LAB_PYTHON" "$root/tests/hardware/test_serving_orchestration.py"
 for suite in test_performance_profiles.py test_performance_bundle.py test_coding_eval.py test_serving_runtime.py test_serving_diagnostics.py test_inference_cache.py; do

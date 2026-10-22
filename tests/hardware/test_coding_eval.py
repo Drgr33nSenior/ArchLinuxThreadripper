@@ -33,6 +33,39 @@ class CodingEvalTests(unittest.TestCase):
         self.assertEqual(result["protocol_status"], "passed")
         self.assertNotIn("Paris", json.dumps(result))
 
+    def test_sglang_nullable_stream_fragments_preserve_complete_identity(self):
+        expected = {"tool": "lookup", "arguments": {"city": "Paris"}}
+        protocol = self.protocol()
+        frames = [json.loads(frame[6:]) for frame in protocol["streaming"].split("\n\n")
+                  if frame and frame != "data: [DONE]"]
+        # The pinned image serializes optional fields explicitly as null.
+        frames.insert(0, {"choices": [{"index": 0, "finish_reason": None,
+                                      "delta": {"role": "assistant", "content": "", "tool_calls": None}}]})
+        item = frames[2]["choices"][0]["delta"]["tool_calls"][0]
+        item.update(id=None, type="function")
+        item["function"]["name"] = None
+        for variant in ("valid", "changed-id", "missing-id", "missing-name", "missing-arguments", "bad-null-list"):
+            modified = json.loads(json.dumps(frames))
+            first = modified[1]["choices"][0]["delta"]["tool_calls"][0]
+            later = modified[2]["choices"][0]["delta"]["tool_calls"][0]
+            if variant == "changed-id":
+                later["id"] = "different-call"
+            elif variant == "missing-id":
+                first["id"] = None
+            elif variant == "missing-name":
+                first["function"]["name"] = None
+            elif variant == "missing-arguments":
+                later["function"]["arguments"] = None
+            elif variant == "bad-null-list":
+                modified[0]["choices"][0]["delta"]["tool_calls"] = [None]
+            protocol["streaming"] = "".join("data: " + json.dumps(frame) + "\n\n" for frame in modified) + "data: [DONE]\n\n"
+            with self.subTest(variant=variant):
+                if variant == "valid":
+                    coding_eval.protocol_tool(protocol, expected)
+                else:
+                    with self.assertRaises(ValueError):
+                        coding_eval.protocol_tool(protocol, expected)
+
     def test_truncated_disconnected_or_leaking_protocol_fails(self):
         expected = {"tool": "lookup", "arguments": {"city": "Paris"}}
         task = {"id": "fixture", "kind": "tool", "expected": expected}

@@ -7,6 +7,7 @@ readonly -a BOOTSTRAP_BASE_PACKAGES=(
   zsh-autosuggestions zsh-syntax-highlighting fzf pkgfile git git-lfs git-delta openssh gnupg
   libsecret libfido2 vulkan-tools mesa-utils clinfo libva-utils hwloc numactl perf
   mesa ocl-icd ccache cmake ninja jq tpm2-tss tpm2-tools
+  lm_sensors dmidecode nvme-cli smartmontools
 )
 readonly -a BOOTSTRAP_DESKTOP_PACKAGES=(gnome gdm tuned-ppd)
 readonly -a BOOTSTRAP_MULTILIB_PACKAGES=(
@@ -80,6 +81,8 @@ bootstrap_install_plan() {
   bootstrap_log "  host: ${HOST_PROFILE:-headless}; TuneD ${BOOTSTRAP_TUNED_PROFILE:-balanced}, ${BOOTSTRAP_GPU_DESCRIPTION:-pending GPU discovery}, Zsh and baseline tools"
   [[ ${HOST_PROFILE:-headless} != desktop ]] || bootstrap_log '  desktop opt-in: GNOME/GDM, tuned-ppd and host Steam/multilib'
   bootstrap_log '  recovery: interactive root maintenance password; remote root login forbidden'
+  bootstrap_log '  network: NetworkManager; live-ISO Wi-Fi credentials are not copied'
+  bootstrap_log '  monitoring: lm_sensors, dmidecode, nvme-cli and smartmontools; Alloy and telemetry activation are separate owner stages'
 }
 
 bootstrap_create_partitions() {
@@ -415,4 +418,7 @@ bootstrap_install() {
   bootstrap_stage bridge-package bootstrap_install_bridge || return 1
   bootstrap_stage firmware-entries bootstrap_create_firmware_entries || return 1
   bootstrap_log 'install complete. Do not enable Secure Boot until you have exported firmware keys and manually enrolled the new owner keys.'
+  bootstrap_log 'first boot: use NetworkManager, not iwctl. At the installed console run: sudo nmtui'
+  bootstrap_log 'Wi-Fi credentials are not copied from the live ISO; reconnect before remote access.'
+  bootstrap_log 'Monitoring tools are installed; telemetry is not activated. After boot/recovery checks, follow docs/TELEMETRY.md.'
 }

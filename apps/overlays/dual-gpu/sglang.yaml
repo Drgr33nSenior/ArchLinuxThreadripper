@@ -7,6 +7,18 @@ spec:
       priorityClassName: heavy-ai-priority
       containers:
         - name: sglang
+          # FP8/TP2 is not covered by the single-GPU ROCm 10.1 evidence.
+          # Preserve the exact SGLANG_ROCM_IMAGE and its previous environment.
+          image: docker.io/rocm/sgl-dev:v0.5.15.post1-ubuntu24.04-py3.14-rocm10.0.0@sha256:51f63a2d201ca944a43b8f1a18ac7da73ed9f6743c45bb82bbc40b44e6cf18d2
+          imagePullPolicy: IfNotPresent
+          env:
+            - {name: XDG_CACHE_HOME, value: /cache/xdg}
+            - {name: TRITON_CACHE_DIR, value: /cache/triton}
+            - {name: TORCHINDUCTOR_CACHE_DIR, value: /cache/torchinductor}
+            - {name: SGLANG_JIT_CACHE_DIR, $patch: delete}
+            - {name: ROCM_HOME, $patch: delete}
+            - {name: OMP_NUM_THREADS, $patch: delete}
+            - {name: MAX_JOBS, $patch: delete}
           resources:
             # Unmeasured host-RAM cap, not VRAM or an up-front allocation.
             # Right-size using serving-startup --memory + serving-memory-plan;

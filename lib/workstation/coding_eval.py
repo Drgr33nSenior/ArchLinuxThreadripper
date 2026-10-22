@@ -197,13 +197,15 @@ def protocol_tool(value, expected):
         if finished or not isinstance(delta, dict) or delta.get("content") not in (None, ""):
             raise ValueError("stream leaks content or continues after finish")
         calls = delta.get("tool_calls", [])
+        if calls is None:
+            calls = []
         if not isinstance(calls, list) or len(calls) > 1:
             raise ValueError("unexpected streamed tool count")
         for item in calls:
             if not isinstance(item, dict) or type(item.get("index")) is not int or item["index"] != 0:
                 raise ValueError("unexpected streamed tool index")
             for key in ("id", "type"):
-                if key in item:
+                if key in item and item[key] is not None:
                     if key in call and call[key] != item[key]:
                         raise ValueError("streamed tool identity changed")
                     call[key] = item[key]
@@ -211,6 +213,11 @@ def protocol_tool(value, expected):
             if not isinstance(function, dict) or set(function) - {"name", "arguments"}:
                 raise ValueError("invalid streamed function")
             for key, fragment in function.items():
+                # The pinned SGLang protocol emits null for optional fields
+                # with no new fragment. Never reset an established identity;
+                # checked_call still requires a complete final call.
+                if fragment is None:
+                    continue
                 if not isinstance(fragment, str):
                     raise ValueError("invalid streamed fragment")
                 call["function"][key] += fragment

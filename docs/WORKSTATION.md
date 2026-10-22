@@ -177,24 +177,93 @@ Mesa, or compute-runtime heads ad hoc.
 The git-kernel path is similarly separate:
 
 ```sh
+./bin/workstationctl kernel profile artifacts/kernel-profile
 ./bin/workstationctl aur checkout linux-git build/linux-git
 ./bin/workstationctl kernel build build/linux-git \
-  /var/lib/archbuild/workstation artifacts/linux-git
+  /var/lib/archbuild/workstation artifacts/kernel-profile artifacts/linux-git
 # Review, sign, add, and install the resulting linux-git packages.
 sudo ./bin/workstationctl kernel build-uki
 sudo ./bin/workstationctl kernel promote linux-git \
   /var/lib/workstation/uki/arch-linux-git.efi /efi /efi2
 ```
 
+Run `kernel profile` as the installed named user on the target workstation. It
+collects only the reviewed board/CPU identity, PCI IDs and bound modules, loaded
+module names, running kernel release and kernel configuration. It does not retain
+DMI serials, GPU serials, network addresses, credentials or the kernel command
+line. A profile is accepted only for the 9960X, TRX50 AI TOP F12h and exact dual
+R9700/device inventory in
+`infrastructure/kernel/threadripper-9960x-dual-r9700.json`. A BIOS, card, driver
+or topology change requires a new reviewed policy; do not edit a captured result.
+The current generic kernel does not need to contain the candidate-only native CPU
+setting. The profile records every difference between its configuration and the
+candidate contract. The clean-chroot build, not capture, must close all of those
+differences. Device binding and the captured profile manifest still fail closed.
+
 The AUR packaging commit and the Torvalds-tree commit are independently locked.
 The builder applies the repository's native-CPU Kconfig overlay through the
 locked recipe's `config.user`, then verifies the headers package's effective
-configuration. The build records config hashes/deltas, the headers package's
+configuration and every required module against the captured profile. The build
+records policy/profile/module/config hashes and deltas, the headers package's
 `.BUILDINFO` and toolchain summary, artifact hashes and Namcap output. Its measured
-memory-heavy `MAKEFLAGS` limit is passed into the clean chroot; host
+kernel-specific `MAKEFLAGS` and `NPROC` limit is passed into the clean chroot; host
 makepkg native flags and ccache configuration do not implicitly apply there.
 Run this build on the actual Threadripper. It rejects existing output
 directories and does not change the locked input checkout.
+
+The build applies `templates/workstation/linux-git-packaging.patch` to a
+verified copy of the locked recipe. It pins the recipe's version to the locked
+7.3-rc6 source so makepkg does not reset the package release after configuration.
+Package release 2 added the headers package's required script interpreters,
+cryptography module and tools, and removes its incorrect backup entries.
+Release 3 enables AMD PCIe peer support and omits the four other GPU families
+listed in the target overlay. The source commit remains unchanged.
+It does not change kernel code or disable package audits. The build retains the
+effective recipe and patch hashes. Audit logs and detached signatures are not
+package archives and are excluded from artifact discovery.
+
+The current experimental source records both the annotated `v7.3-rc6` tag object
+and its exact peeled commit. It is not a released 7.3 kernel or a floating branch.
+AMD documents the R9700/gfx1201, but does
+not list Arch or Linux 7.3 in its supported operating-system kernel matrix. Treat
+this as an experimental daily candidate. A passing profile/build closure proves
+only that the required configuration and module files exist. It does not prove
+that either GPU initializes, ROCm works, suspend/resume works or performance is
+better. Keep stable and LTS as recovery kernels and do not make the git kernel
+the default until the boot, GPU, storage, network and sustained-workload gates pass.
+
+Do not generate the production configuration from one `lsmod` snapshot or run
+`localmodconfig` automatically. Unused-at-capture recovery, USB, networking and
+filesystem modules can still be required later. The reviewed policy keeps those
+capabilities and fails the build if the effective configuration or package module
+closure drops one. This is an exact required-capability contract, not a claim that
+removing other Arch defaults produces a measurable gain. The four excluded
+drivers are i915, Xe, Nouveau and legacy Radeon; the installed R9700s use
+amdgpu. USB, storage, network and display recovery remain available. A different
+GPU inventory needs a revised profile or a generic recovery kernel.
+
+The policy now checks AMD peer support explicitly: `CONFIG_PCI_P2PDMA=y`
+alone is insufficient without `CONFIG_HSA_AMD_P2P=y`. It also retains SVM/HMM,
+container isolation and networking, profiling/BTF, TPM/keyboard recovery,
+sensor modules, and Wine/Sunshine input support. Every currently loaded module
+is added to the required package inventory, not used to prune other modules.
+See [the kernel requirements audit](KERNEL-REQUIREMENTS.md) for scope and sources.
+
+Kernel compilation has its own `KERNEL_BUILD_JOBS=48` ceiling and
+`BUILD_KERNEL_JOB_MIB=512` planning estimate. The previous heavy-build estimate
+of 4096 MiB/job unnecessarily restricted this kernel build to eight jobs.
+The CPU/cgroup and available-memory checks still apply. With the default
+16 GiB host and 8 GiB link reserves, 48 jobs require at least 48 GiB available:
+
+```sh
+./bin/workstationctl --config config/workstation.conf build environment kernel
+```
+
+These are planning values, not a hard memory quota or a claim that 48 jobs are
+always faster. Run the first build in a maintenance window; retain memory,
+compiler concurrency and elapsed-time observations. Stop a build if its memory
+pressure threatens the host. Do not lower reserves or enable swap to force a
+job count. Existing normal and memory-heavy C++/HIP build limits are unchanged.
 The UKI is built on encrypted root and verified against the configured Secure
 Boot database before either ESP or BootOrder changes. Roll back without copying
 or deleting files:

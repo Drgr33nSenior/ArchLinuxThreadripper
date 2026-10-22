@@ -108,6 +108,10 @@ package_arch-workstation-bridge-runtime() {
     'python' 'python-yaml' 'iproute2' 'pciutils' 'curl' 'ripgrep' 'systemd')
   optdepends=('kubectl: qualified session operations and offline telemetry rendering' 'rocm-smi-lib: optional legacy GPU telemetry'
     'ccache: compiler cache operations' 'bubblewrap: contained builds'
+    'lm_sensors: read-only monitoring diagnostics'
+    'dmidecode: owner-run hardware inventory'
+    'nvme-cli: owner-run NVMe health diagnostics'
+    'smartmontools: owner-run storage health diagnostics'
     'grafana-alloy: optional filtered host journal and loopback OTLP forwarding')
   local kind path destination
   for kind in runtime reference; do

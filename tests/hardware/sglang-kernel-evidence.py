@@ -11,7 +11,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 import platform
 import re
-import shutil
 import subprocess
 import sys
 
@@ -138,6 +137,26 @@ def runtime_capabilities(source, flags, sources):
     }
 
 
+def sdk_compiler(sdk):
+    """Find LLVM only inside the selected ROCm SDK, including packaged wheels."""
+    sdk = Path(sdk)
+    if not sdk.is_absolute():
+        raise ValueError("ROCm SDK must be an absolute path")
+    roots = [sdk.resolve()]
+    # The matched ROCm wheels expose the devel view through links into the
+    # adjacent core payload. Do not extend this to unrelated PATH compilers.
+    if sdk.name == "_rocm_sdk_devel":
+        core = sdk.with_name("_rocm_sdk_core")
+        if core.is_dir() and not core.is_symlink():
+            roots.append(core.resolve())
+    for relative in ("llvm/bin/amdclang++", "llvm/bin/clang++",
+                     "lib/llvm/bin/amdclang++", "lib/llvm/bin/clang++", "bin/amdclang++"):
+        path = sdk / relative
+        if path.is_file() and os.access(path, os.X_OK) and any(root in path.resolve().parents for root in roots):
+            return str(path)
+    return None
+
+
 def main():
     import sglang
     import torch
@@ -160,9 +179,7 @@ def main():
         if re.search(r"torch|triton|rocm|aiter|sglang|sgl.kernel|transformers", name, re.I):
             packages[name] = dist.version
     sdk = Path(os.environ.get("ROCM_HOME", "/opt/rocm"))
-    compiler = next((str(path) for path in (sdk/"llvm/bin/amdclang++", sdk/"llvm/bin/clang++")
-                     if path.is_absolute() and path.is_file() and os.access(path, os.X_OK)), None)
-    compiler = compiler or shutil.which("amdclang++") or shutil.which("clang++")
+    compiler = sdk_compiler(sdk)
     compiler_record = None
     if compiler:
         version = subprocess.run([compiler, "--version"], capture_output=True, text=True, timeout=15)

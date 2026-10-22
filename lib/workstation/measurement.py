@@ -51,15 +51,27 @@ def cpu_power(sys=Path("/sys")):
             "clock_scope": "sysfs kHz samples; not APERF/MPERF effective clocks"}
 
 
-def snapshot(sys=Path("/sys"), proc=Path("/proc"), cgroup=Path("/sys/fs/cgroup")):
+def hwmon(sys=Path("/sys")):
+    """Read existing channels only; never probe buses or change fan controls."""
     sensors = {}
     for device in sorted((sys / "class/hwmon").glob("hwmon*")):
         values = {}
+        labels = {}
         for sensor in device.glob("*"):
             if any(fnmatchcase(sensor.name, pattern) for pattern in
-                   ("temp*_input", "power*_average", "power*_input", "energy*_input", "freq*_input")):
+                   ("temp*_input", "power*_average", "power*_input", "energy*_input", "freq*_input",
+                    "fan*_input", "in*_input", "curr*_input")):
                 values[sensor.name] = read(sensor)
-        sensors[str(device.resolve())] = {"name": read(device / "name"), "values": values}
+            elif any(fnmatchcase(sensor.name, pattern) for pattern in
+                     ("temp*_label", "power*_label", "energy*_label", "freq*_label",
+                      "fan*_label", "in*_label", "curr*_label")):
+                labels[sensor.name.removesuffix("_label")] = read(sensor)
+        sensors[str(device.resolve())] = {"name": read(device / "name"), "values": values, "labels": labels}
+    return sensors
+
+
+def snapshot(sys=Path("/sys"), proc=Path("/proc"), cgroup=Path("/sys/fs/cgroup")):
+    sensors = hwmon(sys)
     gpus = {}
     for device in sorted((sys / "bus/pci/devices").glob("*")):
         if read(device / "vendor") == "0x1002" and (read(device / "class") or "").startswith("0x03"):
@@ -70,7 +82,7 @@ def snapshot(sys=Path("/sys"), proc=Path("/proc"), cgroup=Path("/sys/fs/cgroup")
             "cpu_power": cpu_power(sys), "gpus_by_bdf": gpus, "hwmon": sensors,
             "host_memory": read(proc / "meminfo"),
             "cgroup": {key: read(cgroup / key) for key in CGROUP_FIELDS},
-            "units": "hwmon ABI: temp millidegrees C, power microwatts, energy microjoules; VRAM bytes",
+            "units": "hwmon ABI: temp millidegrees C, power microwatts, energy microjoules, fan RPM, voltage millivolts, current milliamps; VRAM bytes",
             "limitations": "Sampled peaks can miss spikes; host root cgroup is not a pod measurement."}
 
 

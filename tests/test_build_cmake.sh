@@ -22,6 +22,33 @@ heavy_args=$(ws_cmake_ninja_args memory-heavy)
 expected_heavy=$'-DCMAKE_JOB_POOLS=compile=10;link=1\n-DCMAKE_JOB_POOL_COMPILE=compile\n-DCMAKE_JOB_POOL_LINK=link'
 [[ $heavy_args == "$expected_heavy" ]]
 
+# Kernel jobs are independent of the conservative C++/HIP budget, but retain
+# CPU, memory, explicit ceiling and managed-session admission checks.
+[[ $(ws_build_jobs kernel) == 48 ]]
+MOCK_AVAILABLE_MEMORY_MIB=49152
+[[ $(ws_build_jobs kernel) == 48 ]]
+MOCK_AVAILABLE_MEMORY_MIB=40960
+[[ $(ws_build_jobs kernel) == 32 ]]
+KERNEL_BUILD_JOBS=12
+[[ $(ws_build_jobs kernel) == 12 ]]
+KERNEL_BUILD_JOBS=48
+nproc() { printf '8\n'; }
+[[ $(ws_build_jobs kernel) == 8 ]]
+nproc() { printf '48\n'; }
+BUILD_KERNEL_JOB_MIB=1024
+[[ $(ws_build_jobs kernel) == 16 ]]
+BUILD_KERNEL_JOB_MIB=512
+MOCK_AVAILABLE_MEMORY_MIB=24576
+if (ws_build_jobs kernel) >/dev/null 2>&1; then
+  printf 'kernel build accepted exhausted memory reserve\n' >&2
+  exit 1
+fi
+MOCK_AVAILABLE_MEMORY_MIB=65536
+for invalid in 0 -1 all; do
+  if (KERNEL_BUILD_JOBS=$invalid ws_build_jobs kernel) >/dev/null 2>&1; then exit 1; fi
+  if (BUILD_KERNEL_JOB_MIB=$invalid ws_build_jobs kernel) >/dev/null 2>&1; then exit 1; fi
+done
+
 for kind in unsupported normal; do
   if [[ $kind == normal ]]; then
     MOCK_AVAILABLE_MEMORY_MIB=24000

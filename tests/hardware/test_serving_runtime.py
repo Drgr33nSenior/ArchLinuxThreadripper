@@ -77,6 +77,36 @@ def fixtures():
 
 
 class ServingRuntimeTests(unittest.TestCase):
+    def test_sdk_compiler_uses_only_selected_sdk(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            sdk = root / "sdk"
+            llvm = sdk / "lib/llvm/bin"
+            llvm.mkdir(parents=True)
+            compiler = llvm / "clang++"
+            compiler.write_text("synthetic compiler; never executed")
+            compiler.chmod(0o700)
+            self.assertEqual(kernel_probe.sdk_compiler(sdk), str(compiler))
+            compiler.chmod(0o600)
+            self.assertIsNone(kernel_probe.sdk_compiler(sdk))
+            compiler.unlink()
+            outside = root / "foreign-clang"
+            outside.write_text("synthetic foreign compiler; never executed")
+            outside.chmod(0o700)
+            compiler.symlink_to(outside)
+            self.assertIsNone(kernel_probe.sdk_compiler(sdk))
+            core = root / "_rocm_sdk_core/lib/llvm/bin/clang"
+            core.parent.mkdir(parents=True)
+            core.write_text("synthetic matched wheel compiler; never executed")
+            core.chmod(0o700)
+            devel = root / "_rocm_sdk_devel"
+            exposed = devel / "lib/llvm/bin/clang++"
+            exposed.parent.mkdir(parents=True)
+            exposed.symlink_to(core)
+            self.assertEqual(kernel_probe.sdk_compiler(devel), str(exposed))
+            with self.assertRaises(ValueError):
+                kernel_probe.sdk_compiler("relative-sdk")
+
     def setUp(self):
         self.deployment, self.observed = fixtures()
 

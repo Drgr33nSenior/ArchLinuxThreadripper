@@ -78,6 +78,7 @@ ws_load_config() {
   unset SESSION_AI_STARTUP_TIMEOUT_SECONDS WORKSTATION_PYTHON LLAMA_THREADS LLAMA_SPLIT_MODE LLAMA_KV_K LLAMA_KV_V LLAMA_BENCH_PAIRS GAMING_REFRESH_HZ LLAMA_HIP_EXPORT_METRICS
   unset LLM_DATA_DIR LLM_LISTEN LLM_SHM_SIZE DEFAULT_TUNED_PROFILE MAKE_JOBS MEMORY_HEAVY_JOBS
   unset BUILD_RESERVE_MIB BUILD_JOB_MIB BUILD_HEAVY_JOB_MIB BUILD_LINK_MIB BUILD_LINK_JOBS CCACHE_DIRECTORY CCACHE_MAX_SIZE EXPECTED_GPU_COUNT EXPECTED_GPU_MODEL ROCM_SDK_PROVIDER
+  unset KERNEL_BUILD_JOBS BUILD_KERNEL_JOB_MIB
   unset LLAMA_CONTEXT_SIZE LLAMA_BATCH_SIZE LLAMA_UBATCH_SIZE LLAMA_FLASH_ATTN LLAMA_BENCH_PROMPT_TOKENS LLAMA_BENCH_GENERATION_TOKENS LLAMA_BENCH_REPETITIONS
   unset RESOURCE_RESERVED_CORES RESOURCE_HOST_RESERVE_MIB RESOURCE_KUBE_RESERVE_MIB RESOURCE_EVICTION_MIB
   unset SESSION_CONTEXT SESSION_NODE SESSION_NAMESPACE SESSION_AI_DEPLOYMENT SESSION_GAME_DEPLOYMENT SESSION_ENVIRONMENT SESSION_TIMEOUT_SECONDS SESSION_STREAMING_PATH
@@ -87,6 +88,7 @@ ws_load_config() {
   unset TELEMETRY_KUBELET TELEMETRY_NODE_NAME TELEMETRY_PROFILE TELEMETRY_MARGIN_MIB INFERENCE_CACHE_ROOT INFERENCE_CACHE_FREE_RESERVE_MIB
   common::load_config "$config_file" SESSION_AI_STARTUP_TIMEOUT_SECONDS WORKSTATION_PYTHON LLAMA_THREADS LLAMA_SPLIT_MODE LLAMA_KV_K LLAMA_KV_V LLAMA_BENCH_PAIRS GAMING_REFRESH_HZ LLAMA_HIP_EXPORT_METRICS LLM_DATA_DIR LLM_LISTEN LLM_SHM_SIZE DEFAULT_TUNED_PROFILE \
     MAKE_JOBS MEMORY_HEAVY_JOBS BUILD_RESERVE_MIB BUILD_JOB_MIB BUILD_HEAVY_JOB_MIB \
+    KERNEL_BUILD_JOBS BUILD_KERNEL_JOB_MIB \
     BUILD_LINK_MIB BUILD_LINK_JOBS CCACHE_DIRECTORY CCACHE_MAX_SIZE EXPECTED_GPU_COUNT EXPECTED_GPU_MODEL ROCM_SDK_PROVIDER \
     LLAMA_CONTEXT_SIZE LLAMA_BATCH_SIZE LLAMA_UBATCH_SIZE LLAMA_FLASH_ATTN \
     LLAMA_BENCH_PROMPT_TOKENS LLAMA_BENCH_GENERATION_TOKENS LLAMA_BENCH_REPETITIONS \
@@ -139,16 +141,28 @@ ws_validate_clean_chroot() {
   printf '%s\n' "$resolved"
 }
 
-ws_copy_built_packages() {
-  local build_dir="$1" output_dir="$2" package found=0
-  ws_safe_dir "$output_dir"
+ws_package_archives() (
+  local package
   shopt -s nullglob
-  for package in "$build_dir"/*.pkg.tar.*; do
-    [[ "$package" != *.sig ]] || continue
+  for package in "$1"/*.pkg.tar "$1"/*.pkg.tar.*; do
+    case $package in
+      *.pkg.tar | *.pkg.tar.zst | *.pkg.tar.xz | *.pkg.tar.gz | *.pkg.tar.bz2 | *.pkg.tar.lz | *.pkg.tar.lzo | *.pkg.tar.lrz | *.pkg.tar.lz4 | *.pkg.tar.Z) ;;
+      *) continue ;;
+    esac
+    [[ -f $package && ! -L $package && $package != *$'\n'* ]] || ws_die 'package archive path is unsafe'
+    printf '%s\n' "$package"
+  done
+)
+
+ws_copy_built_packages() {
+  local build_dir="$1" output_dir="$2" package found=0 package_list
+  package_list=$(ws_package_archives "$build_dir") || return 1
+  ws_safe_dir "$output_dir"
+  while IFS= read -r package; do
+    [[ -n $package ]] || continue
     install -m 0644 -- "$package" "$output_dir/"
     found=1
-  done
-  shopt -u nullglob
+  done <<<"$package_list"
   ((found == 1)) || ws_die "build produced no package artifacts in $build_dir"
 }
 
@@ -215,6 +229,28 @@ ws_kernel_stage_native_config() {
   install -m 0644 -- "$template" "$build_dir/config.user"
 }
 
+ws_kernel_profile() {
+  ws_require_arch
+  ws_require_user
+  (($# == 1)) || ws_die 'kernel profile requires one new output directory'
+  local policy
+  policy="$(ws_repo_root)/infrastructure/kernel/threadripper-9960x-dual-r9700.json"
+  [[ -r $policy && ! -L $policy ]] || ws_die 'reviewed kernel hardware policy is unavailable'
+  "$(ws_measure_python)" "$(ws_repo_root)/lib/workstation/kernel_profile.py" capture "$policy" "$1"
+}
+
+ws_kernel_stage_packaging() {
+  local source_dir=$1 commit=$2 build_dir=$3 patch_file=$4 pristine
+  [[ -f $patch_file && ! -L $patch_file ]] || ws_die 'reviewed kernel packaging patch is unavailable'
+  [[ -f $build_dir/PKGBUILD && ! -L $build_dir/PKGBUILD ]] || ws_die 'staged kernel recipe is not regular'
+  pristine=$(mktemp "$build_dir/.PKGBUILD.pristine.XXXXXX")
+  git -C "$source_dir" show "$commit:PKGBUILD" >"$pristine"
+  cmp -s "$pristine" "$build_dir/PKGBUILD" || ws_die 'staged kernel recipe differs from the locked input'
+  rm -- "$pristine"
+  patch --batch --forward --fuzz=0 --dry-run -d "$build_dir" -p1 <"$patch_file" || ws_die 'kernel packaging patch does not match the locked recipe'
+  patch --batch --forward --fuzz=0 -d "$build_dir" -p1 <"$patch_file" || ws_die 'kernel packaging patch failed'
+}
+
 ws_kernel_reject_chroot_overrides() {
   local chroot_dir="$1" relative path
   for relative in etc/linux-git/config etc/linux-git/remote etc/linux-git/patches/patches; do
@@ -247,6 +283,8 @@ ws_kernel_validate_effective_config() {
     CONFIG_SMP=y \
     CONFIG_CPU_MITIGATIONS=y \
     CONFIG_MODULE_SIG=y \
+    CONFIG_PCI_P2PDMA=y \
+    CONFIG_HSA_AMD_P2P=y \
     CONFIG_IOMMU_SUPPORT=y \
     CONFIG_AMD_IOMMU=y; do
     grep -Fxq -- "$option" "$config" ||
@@ -287,11 +325,38 @@ ws_kernel_namcap_audit() {
   fi
 }
 
+ws_kernel_module_inventory() {
+  local destination=$1 package member members builtins
+  shift
+  : >"$destination"
+  for package in "$@"; do
+    members="$(bsdtar -tf "$package")" || ws_die "cannot inspect kernel package module inventory: $package"
+    while IFS= read -r member; do
+      case $member in
+        *.ko | *.ko.gz | *.ko.xz | *.ko.zst)
+          basename -- "$member" | sed -E 's/\.ko(\.(gz|xz|zst))?$//; s/-/_/g' >>"$destination"
+          ;;
+        */modules.builtin)
+          builtins="$(bsdtar -xOf "$package" "$member")" ||
+            ws_die "cannot inspect built-in kernel module inventory: $package:$member"
+          while IFS= read -r member; do
+            [[ -n $member ]] || continue
+            basename -- "$member" | sed -E 's/\.ko$//; s/-/_/g'
+          done <<<"$builtins" >>"$destination"
+          ;;
+      esac
+    done <<<"$members"
+  done
+  LC_ALL=C sort -u -o "$destination" "$destination"
+  [[ -s $destination ]] || ws_die 'kernel packages contain no module inventory'
+}
+
 ws_kernel_build() {
   ws_require_arch
   ws_require_user
-  local source_dir="$1" chroot_dir="$2" output_dir="$3" lock_file="${4:-$(ws_repo_root)/versions.lock}"
-  local expected_repo expected_commit source_repo source_commit build_dir template jobs headers_package effective_config config_delta buildinfo toolchain_metadata namcap_report package package_hashes diff_status
+  (($# == 4 || $# == 5)) || ws_die 'kernel build requires AUR checkout, clean chroot, observed profile, output directory and optional versions.lock'
+  local source_dir="$1" chroot_dir="$2" profile_dir="$3" output_dir="$4" lock_file="${5:-$(ws_repo_root)/versions.lock}"
+  local expected_repo expected_commit source_repo source_commit source_tag source_tag_object build_dir template policy jobs headers_package effective_config config_delta buildinfo toolchain_metadata namcap_report package package_hashes diff_status module_inventory profile_validation packaging_patch package_list
   [[ $(uname -m) == x86_64 ]] || ws_die 'native kernel build is supported only on the x86_64 target host'
   [[ ! -e "$output_dir" && ! -L "$output_dir" ]] || ws_die "kernel output already exists; refusing to replace candidate: $output_dir"
   chroot_dir="$(ws_validate_clean_chroot "$chroot_dir")"
@@ -301,7 +366,10 @@ ws_kernel_build() {
   expected_commit="$(ws_read_lock LINUX_GIT_AUR_COMMIT "$lock_file")"
   source_repo="$(ws_read_lock LINUX_GIT_SOURCE_REPOSITORY "$lock_file")"
   source_commit="$(ws_read_lock LINUX_GIT_SOURCE_COMMIT "$lock_file")"
-  [[ "$source_repo" == torvalds/linux && "$source_commit" =~ ^[a-f0-9]{40}$ ]] || ws_die 'linux-git source lock is invalid'
+  source_tag="$(ws_read_lock LINUX_GIT_SOURCE_TAG "$lock_file")"
+  source_tag_object="$(ws_read_lock LINUX_GIT_SOURCE_TAG_OBJECT "$lock_file")"
+  [[ "$source_repo" == torvalds/linux && "$source_commit" =~ ^[a-f0-9]{40}$ && "$source_tag_object" =~ ^[a-f0-9]{40}$ && "$source_tag" =~ ^v[0-9]+\.[0-9]+(-rc[1-9][0-9]*)?$ ]] ||
+    ws_die 'linux-git source lock is invalid'
   ws_assert_clean_locked_checkout "$source_dir" "$expected_repo" "$expected_commit"
   command -v makechrootpkg >/dev/null || ws_die 'makechrootpkg is required (devtools)'
   command -v namcap >/dev/null || ws_die 'namcap is required for the AUR package audit'
@@ -309,21 +377,27 @@ ws_kernel_build() {
   build_dir="$(mktemp -d "${TMPDIR:-/tmp}/workstationctl-linux-git.XXXXXX")"
   git -C "$source_dir" archive --format=tar "$expected_commit" | tar -xf - -C "$build_dir"
   template="$(ws_repo_root)/templates/workstation/linux-git.config"
+  policy="$(ws_repo_root)/infrastructure/kernel/threadripper-9960x-dual-r9700.json"
+  [[ -r $policy && ! -L $policy ]] || ws_die 'reviewed kernel hardware policy is unavailable'
   ws_kernel_stage_native_config "$source_dir" "$expected_commit" "$build_dir" "$template"
+  packaging_patch="$(ws_repo_root)/templates/workstation/linux-git-packaging.patch"
+  ws_kernel_stage_packaging "$source_dir" "$expected_commit" "$build_dir" "$packaging_patch"
   printf 'REMOTE=%q\nCOMMIT=%q\n' "$source_repo" "$source_commit" >"$build_dir/remote"
   (
     cd -- "$build_dir"
     # User-space flags and its ccache are not shared with the clean chroot.
     # The AUR kernel Kconfig, not these variables, supplies native C/Rust flags.
-    jobs="$(ws_build_jobs memory-heavy)"
+    jobs="$(ws_build_jobs kernel)"
     env -u CFLAGS -u CXXFLAGS -u RUSTFLAGS -u KCFLAGS -u KCPPFLAGS \
-      -u CCACHE_DIR -u CCACHE_CONFIGPATH -u CCACHE_BASEDIR -u CCACHE_NAMESPACE MAKEFLAGS="-j$jobs" \
+      -u CCACHE_DIR -u CCACHE_CONFIGPATH -u CCACHE_BASEDIR -u CCACHE_NAMESPACE MAKEFLAGS="-j$jobs" NPROC="$jobs" \
       makechrootpkg -c -n -r "$chroot_dir" -- --syncdeps
     printf '%s\n' "$jobs" >"$build_dir/linux-git.measured-jobs"
   )
-  shopt -s nullglob
-  local packages=("$build_dir"/*.pkg.tar.*)
-  shopt -u nullglob
+  package_list=$(ws_package_archives "$build_dir") || return 1
+  local packages=()
+  while IFS= read -r package; do
+    [[ -n $package ]] && packages+=("$package")
+  done <<<"$package_list"
   ((${#packages[@]} > 0)) || ws_die "kernel build produced no package artifacts in $build_dir"
   headers_package=''
   for package in "${packages[@]}"; do
@@ -346,27 +420,39 @@ ws_kernel_build() {
   ws_kernel_write_toolchain_metadata "$headers_package" "$buildinfo"
   toolchain_metadata="$build_dir/linux-git.chroot-toolchain.txt"
   ws_kernel_write_toolchain_summary "$buildinfo" "$toolchain_metadata"
+  module_inventory="$build_dir/linux-git.module-inventory.txt"
+  ws_kernel_module_inventory "$module_inventory" "${packages[@]}"
+  profile_validation="$build_dir/linux-git.profile-validation.json"
+  "$(ws_measure_python)" "$(ws_repo_root)/lib/workstation/kernel_profile.py" validate-build \
+    "$policy" "$profile_dir" "$effective_config" "$module_inventory" "$profile_validation" ||
+    ws_die 'built kernel does not satisfy the reviewed hardware profile'
   namcap_report="$build_dir/linux-git.namcap.txt"
   ws_kernel_namcap_audit "$namcap_report" "${packages[@]}"
   mkdir -p -- "$(dirname -- "$output_dir")"
   mkdir -- "$output_dir"
   ws_copy_built_packages "$build_dir" "$output_dir"
-  install -m 0644 -- "$effective_config" "$config_delta" "$buildinfo" "$toolchain_metadata" "$namcap_report" "$output_dir/"
+  install -m 0644 -- "$effective_config" "$config_delta" "$buildinfo" "$toolchain_metadata" "$module_inventory" "$profile_validation" "$namcap_report" "$output_dir/"
+  install -m 0644 -- "$profile_dir/profile.json" "$output_dir/linux-git.hardware-profile.json"
+  install -m 0644 -- "$build_dir/PKGBUILD" "$output_dir/linux-git.PKGBUILD"
+  install -m 0644 -- "$packaging_patch" "$output_dir/linux-git.packaging.patch"
   package_hashes="$output_dir/linux-git.package-sha256"
   : >"$package_hashes"
-  shopt -s nullglob
-  for package in "$output_dir"/*.pkg.tar.*; do
-    [[ $package != *.sig ]] || continue
+  package_list=$(ws_package_archives "$output_dir") || return 1
+  while IFS= read -r package; do
+    [[ -n $package ]] || continue
     printf '%s  %s\n' "$(common::sha256_file "$package")" "$(basename -- "$package")" >>"$package_hashes"
-  done
-  shopt -u nullglob
-  printf 'AUR_REPOSITORY=%s\nAUR_COMMIT=%s\nKERNEL_SOURCE_REPOSITORY=%s\nKERNEL_SOURCE_COMMIT=%s\nNATIVE_CFLAGS=-march=native\nNATIVE_RUSTFLAGS=-Ctarget-cpu=native\nMEASURED_BUILD_JOBS=%s\nMAKEFLAGS=-j%s\nNATIVE_CONFIG_USER_SHA256=%s\nEFFECTIVE_CONFIG_SHA256=%s\nCONFIG_DELTA_SHA256=%s\nHEADERS_BUILDINFO_SHA256=%s\nCHROOT_TOOLCHAIN_SHA256=%s\nNAMCAP_REPORT_SHA256=%s\nPACKAGE_SHA256_FILE=%s\nPACKAGE_SHA256_FILE_SHA256=%s\n' \
-    "$expected_repo" "$expected_commit" "$source_repo" "$source_commit" \
+  done <<<"$package_list"
+  printf 'AUR_REPOSITORY=%s\nAUR_COMMIT=%s\nKERNEL_SOURCE_REPOSITORY=%s\nKERNEL_SOURCE_TAG=%s\nKERNEL_SOURCE_TAG_OBJECT=%s\nKERNEL_SOURCE_COMMIT=%s\nNATIVE_CFLAGS=-march=native\nNATIVE_RUSTFLAGS=-Ctarget-cpu=native\nMEASURED_BUILD_JOBS=%s\nMAKEFLAGS=-j%s\nNATIVE_CONFIG_USER_SHA256=%s\nHARDWARE_POLICY_SHA256=%s\nHARDWARE_PROFILE_SHA256=%s\nEFFECTIVE_CONFIG_SHA256=%s\nCONFIG_DELTA_SHA256=%s\nMODULE_INVENTORY_SHA256=%s\nPROFILE_VALIDATION_SHA256=%s\nHEADERS_BUILDINFO_SHA256=%s\nCHROOT_TOOLCHAIN_SHA256=%s\nNAMCAP_REPORT_SHA256=%s\nPACKAGE_SHA256_FILE=%s\nPACKAGE_SHA256_FILE_SHA256=%s\n' \
+    "$expected_repo" "$expected_commit" "$source_repo" "$source_tag" "$source_tag_object" "$source_commit" \
     "$jobs" "$jobs" \
-    "$(common::sha256_file "$template")" "$(common::sha256_file "$output_dir/linux-git.effective.config")" \
-    "$(common::sha256_file "$output_dir/linux-git.config.delta")" "$(common::sha256_file "$output_dir/linux-git.headers.BUILDINFO")" "$(common::sha256_file "$output_dir/linux-git.chroot-toolchain.txt")" \
+    "$(common::sha256_file "$template")" "$(common::sha256_file "$policy")" "$(common::sha256_file "$output_dir/linux-git.hardware-profile.json")" \
+    "$(common::sha256_file "$output_dir/linux-git.effective.config")" "$(common::sha256_file "$output_dir/linux-git.config.delta")" \
+    "$(common::sha256_file "$output_dir/linux-git.module-inventory.txt")" "$(common::sha256_file "$output_dir/linux-git.profile-validation.json")" \
+    "$(common::sha256_file "$output_dir/linux-git.headers.BUILDINFO")" "$(common::sha256_file "$output_dir/linux-git.chroot-toolchain.txt")" \
     "$(common::sha256_file "$output_dir/linux-git.namcap.txt")" "$(basename -- "$package_hashes")" \
     "$(common::sha256_file "$package_hashes")" >"$output_dir/linux-git.build-lock"
+  printf 'PACKAGING_PATCH_SHA256=%s\nEFFECTIVE_PKGBUILD_SHA256=%s\n' \
+    "$(common::sha256_file "$packaging_patch")" "$(common::sha256_file "$output_dir/linux-git.PKGBUILD")" >>"$output_dir/linux-git.build-lock"
   if grep -Eq '(^|[[:space:]])(W|WARNING|Warning):' "$namcap_report"; then
     ws_note "namcap reported warnings; review $output_dir/linux-git.namcap.txt"
   fi
@@ -879,7 +965,7 @@ ws_dev_setup() {
   ws_require_arch
   ws_require_root
   local profile="$1" manifest="$2" package line packages=()
-  case "$profile" in server | workstation | gpu | ai | gaming | shell | cloud | virtualization | backup) ;; *) ws_die 'unknown package profile' ;; esac
+  case "$profile" in server | workstation | gpu | ai | gaming | shell | cloud | virtualization | backup | monitoring) ;; *) ws_die 'unknown package profile' ;; esac
   [[ -r "$manifest" ]] || ws_die "package manifest is not readable: $manifest"
   while IFS= read -r line || [[ -n "$line" ]]; do
     [[ -z "$line" || "$line" == \#* ]] && continue
@@ -894,6 +980,7 @@ ws_dev_setup() {
       fi
       case "$profile" in
         server | workstation) packages+=("$package") ;;
+        monitoring) [[ "$package" == lm_sensors || "$package" == dmidecode || "$package" == nvme-cli || "$package" == smartmontools || "$package" == grafana-alloy ]] && packages+=("$package") ;;
         gpu) [[ "$package" == *intel* || "$package" == linux-firmware-amdgpu || "$package" == mesa* || "$package" == lib32-mesa || "$package" == vulkan* || "$package" == lib32-vulkan-* || "$package" == level-zero* || "$package" == ocl-* || "$package" == clinfo || "$package" == libva-* || "$package" == hwloc || "$package" == numactl || "$package" == perf ]] && packages+=("$package") ;;
         ai) [[ "$package" == rocm-* || "$package" == rocminfo || "$package" == rccl || "$package" == python-pytorch-opt-rocm || "$package" == python-pytorch-xpu || "$package" == python-pytorch-opt-xpu || "$package" == openvino || "$package" == python-openvino || "$package" == openvino-intel-gpu-plugin || "$package" == ggml-sycl || "$package" == intel-compute-runtime || "$package" == level-zero-loader || "$package" == clinfo || "$package" == hwloc || "$package" == numactl ]] && packages+=("$package") ;;
         gaming) [[ "$package" == steam || "$package" == gamescope || "$package" == gamemode || "$package" == lib32-gamemode || "$package" == mangohud || "$package" == lib32-mangohud || "$package" == mesa || "$package" == lib32-mesa || "$package" == vulkan-radeon || "$package" == lib32-vulkan-radeon || "$package" == vulkan-intel || "$package" == lib32-vulkan-intel ]] && packages+=("$package") ;;

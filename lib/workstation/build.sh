@@ -3,9 +3,26 @@
 
 ws_build_defaults() {
   : "${BUILD_RESERVE_MIB:=16384}" "${BUILD_JOB_MIB:=2048}" "${BUILD_HEAVY_JOB_MIB:=4096}"
+  : "${KERNEL_BUILD_JOBS:=48}" "${BUILD_KERNEL_JOB_MIB:=512}"
   : "${BUILD_LINK_MIB:=8192}" "${BUILD_LINK_JOBS:=1}" "${CCACHE_MAX_SIZE:=100G}"
   : "${CCACHE_DIRECTORY:=${XDG_CACHE_HOME:-$HOME/.cache}/workstation/ccache}"
   : "${EXPECTED_GPU_COUNT:=2}" "${EXPECTED_GPU_MODEL:=R9700}"
+}
+
+# This offline OCI delta uses the same verified parent/layer interface as the
+# retained sampler package. Building/importing the image remains owner-run.
+ws_sglang_gemm_package() {
+  "$(ws_measure_python)" "$(ws_repo_root)/lib/workstation/gemm_profile.py" package "$@"
+}
+
+# Experimental configuration payload only. The incumbent remains selected;
+# fresh owner identity/effective-loading checks precede any bounded selection.
+ws_sglang_moe_tables() {
+  "$(ws_measure_python)" "$(ws_repo_root)/lib/workstation/model_kernels.py" moe-table-package "$@"
+}
+
+ws_sglang_rmsnorm_package() {
+  "$(ws_measure_python)" "$(ws_repo_root)/lib/workstation/model_kernels.py" rmsnorm-package "$@"
 }
 
 ws_positive_integer() { [[ $1 =~ ^[1-9][0-9]{0,8}$ ]]; }
@@ -13,7 +30,7 @@ ws_positive_integer() { [[ $1 =~ ^[1-9][0-9]{0,8}$ ]]; }
 ws_build_config_validate() {
   ws_build_defaults
   local key
-  for key in BUILD_RESERVE_MIB BUILD_JOB_MIB BUILD_HEAVY_JOB_MIB BUILD_LINK_MIB BUILD_LINK_JOBS EXPECTED_GPU_COUNT; do
+  for key in BUILD_RESERVE_MIB BUILD_JOB_MIB BUILD_HEAVY_JOB_MIB BUILD_KERNEL_JOB_MIB KERNEL_BUILD_JOBS BUILD_LINK_MIB BUILD_LINK_JOBS EXPECTED_GPU_COUNT; do
     ws_positive_integer "${!key}" || {
       ws_die "$key must be a positive integer"
       return 1
@@ -115,7 +132,11 @@ ws_build_jobs() {
       cap=${WORKSTATION_MEMORY_HEAVY_JOBS:-16}
       per_job=$BUILD_HEAVY_JOB_MIB
       ;;
-    *) ws_die 'build kind must be normal or memory-heavy' ;;
+    kernel)
+      cap=$KERNEL_BUILD_JOBS
+      per_job=$BUILD_KERNEL_JOB_MIB
+      ;;
+    *) ws_die 'build kind must be normal, memory-heavy or kernel' ;;
   esac
   available=$(ws_available_memory_mib)
   cpus=$(nproc)

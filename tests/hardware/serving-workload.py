@@ -27,12 +27,18 @@ def main():
     raw = Path(args.corpus).read_bytes()
     ids = tokenizer.encode(raw.decode(), add_special_tokens=False)
     output_tokens = 128 if args.profile == "interactive" else 512
+    # The pinned TP worker caps max_req_len at context_len - 1; its scheduler
+    # caps generation at max_req_len - input_len - 1. Keep the output budget
+    # intact instead of submitting a request that the server silently clips.
+    context_reserve_tokens = 2
     cases = []
     for context in map(int, args.contexts.split(",")):
-        if context not in (4096, 8192, 32768) or len(ids) < context - output_tokens:
+        input_tokens = context - output_tokens - context_reserve_tokens
+        if context not in (4096, 8192, 32768) or len(ids) < input_tokens:
             parser.error("corpus must supply enough actual coding tokens; no synthetic padding is added")
         cases.append({"context_tokens": context, "output_tokens": output_tokens,
-                      "input_ids": ids[:context-output_tokens], "source_sha256": hashlib.sha256(raw).hexdigest()})
+                      "context_reserve_tokens": context_reserve_tokens,
+                      "input_ids": ids[:input_tokens], "source_sha256": hashlib.sha256(raw).hexdigest()})
     result = {"schema": 1, "profile": args.profile, "model_revision": args.model_revision,
               "prefix_state": "warm-prefix", "concurrency": [1, 2] if args.profile == "interactive" else [1, 2, 4],
               "repetitions": 3, "requests_per_worker": 2, "cases": cases,

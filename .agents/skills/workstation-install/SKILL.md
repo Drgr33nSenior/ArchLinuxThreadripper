@@ -159,7 +159,8 @@ After prerequisites are satisfied, give the owner the documented command:
 sudo ./bin/bootstrap-arch --config config/install.conf --execute install
 ```
 
-Do not run it as the agent. Preserve the exact-device confirmation and interactive
+Do not run it as the agent. Preserve the displayed disk identities, their
+revalidation, the owner-typed `ERASE` confirmation and interactive
 LUKS/user/root-recovery prompts. Do not add automatic answers or record that
 terminal session. Before reboot, complete the runbook's protected offline LUKS
 header backup and separate owner-key backup. Follow INSTALLATION's manual

@@ -205,7 +205,10 @@ common::bootnum_for_label() {
     path=$(printf '%s' "$path" | tr '[:upper:]' '[:lower:]')
     partuuid=$(printf '%s' "$partuuid" | tr '[:upper:]' '[:lower:]')
     loader=$(printf '%s' "$loader" | tr '[:upper:]' '[:lower:]')
-    [[ $path == *"hd("*",gpt,$partuuid,"* && $path == *"/file($loader)"* ]] ||
+    # efivar's text formatter also emits the file node as /\EFI\... without
+    # File(...). Accept either representation, but require the exact final node.
+    [[ $path == *"hd("*",gpt,$partuuid,"* &&
+      ($path == *"/file($loader)" || $path == *"/$loader") ]] ||
       {
         common::warn "UEFI partition or loader mismatch: $label"
         return 2

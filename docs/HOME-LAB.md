@@ -115,6 +115,9 @@ Direct UEFI boot uses firmware PK/KEK/db trust, not shim's MOK enrollment.
 The existing installer creates sbctl keys and registers/signs the UKIs. Firmware
 enrollment remains manual after exporting the original firmware keys and checking
 GPU option-ROM requirements. Do not blindly replace firmware trust stores.
+Use [INSTALLATION sections 5 and 6](INSTALLATION.md#5-enrol-secure-boot-keys)
+for the owner-run sequence, backups, exact commands and expected states. Those
+steps run on the installed workstation, not the controller or live ISO.
 
 The sbctl package's transaction hook signs registered files. The existing
 `zzz-bootstrap-uki-sync.hook` verifies signatures before synchronizing ESP copies.
@@ -140,18 +143,12 @@ literal `--tpm2-pcrs=0+7+11` normally captures the wrong PCR 11 phase for early
 root unlock. The helper therefore requires the predicted early-unlock SHA256
 value for PCR 11 while sampling current PCRs 0 and 7:
 
-```sh
-bash infrastructure/host/tpm2-enroll.sh LUKS_UUID EARLY_PCR11_SHA256
-```
-
-This only prints the plan. Derive the digest with `systemd-measure calculate`
-from the exact UKI sections and the installed initramfs's unlock phase. Include
-every measured section and check the event log; do not copy the post-login PCR
-value or assume `enter-initrd` without inspecting the boot sequence. Test against
-recovery media first. The execution form adds `--execute` and requires a local
-terminal, enabled Secure Boot, an existing recovery slot, no existing TPM token,
-and an exact resolved-device confirmation. It passes `--tpm2-with-pin=yes` to
-cryptenroll. Enter a strong alphanumeric PIN only in cryptenroll's prompt.
+The [enrolment procedure](INSTALLATION.md#6-enrol-tpm2-with-a-pin) distinguishes
+argument-only preview from the checked execution handoff. Its terminal
+confirmation attests owner-verified hardware identity, recovery and prediction;
+the helper cannot prove them. It requires a local terminal, enabled Secure Boot,
+an existing keyslot and no TPM token, and does not wipe slots. A keyslot count
+does not prove that the owner has a usable recovery credential.
 
 Confirm firmware selects the physical SPI module, not AMD fTPM, before using
 `--tpm2-device=auto`. A motherboard connector description cannot prove which TPM
@@ -165,6 +162,95 @@ static policy. The helper refuses existing TPM tokens rather than wiping slots.
 Passphrase and recovery-key fallback remain available. Existing FIDO2 tokens are
 optional legacy paths, not a prerequisite. PIN requirements apply to the TPM path,
 not to every emergency recovery method.
+
+### Predict the early-unlock PCR 11
+
+This is a **target-specific qualification step**, not an automatic enrollment
+feature. Start with [INSTALLATION 6.3's read-only inspection and expected results](INSTALLATION.md#63-obtain-the-correct-early-unlock-pcr-11-prediction)
+after Secure Boot and passphrase recovery tests. This reference covers the
+subsequent image/phase review and calculation. Keep the image hash and tool
+versions from that inspection. Use the same exact signed UKI selected for the
+next cold boot; the stable example is:
+
+```sh
+UKI=/efi/EFI/Linux/arch-linux.efi
+ukify inspect --all "$UKI"
+sudo lsinitcpio -l "$UKI"
+```
+
+1. Inspect the embedded initramfs's units, enablement links, conditions and
+   ordering. Determine which PCR 11 phase extensions run **before the root
+   cryptsetup service unlocks**. A service installed on the root filesystem is
+   not proof it was included or activated in that initramfs. In the reviewed
+   upstream unit, `systemd-pcrphase-initrd.service` orders before cryptsetup and
+   extends `enter-initrd`, but the actual image must include and activate it.
+2. Review the TPM firmware event log and the boot's PCR-phase journal locally.
+   The firmware log alone need not contain userspace phase extensions. Match the
+   measured UKI sections and phase sequence; do not use the post-login PCR 11
+   value or `systemd-measure --current` as an early-unlock prediction. If the
+   unlock phase cannot be established, stop and keep passphrase-only unlock.
+3. Extract the **embedded bytes**, not `/etc/os-release`, a current command line
+   or a separately rebuilt initrd. Use a private temporary directory and the
+   installed `ukify inspect` extraction syntax. No signing or header mutation
+   is involved. The following example applies only if inspection confirms a
+   single-profile image whose measured inputs are exactly `.linux`, `.osrel`,
+   `.cmdline`, `.initrd`, `.uname` and `.sbat`:
+
+```sh
+umask 077
+UKI_PARTS=$(mktemp -d)
+ukify inspect "$UKI" \
+  --section=".linux:binary@$UKI_PARTS/linux" \
+  --section=".osrel:binary@$UKI_PARTS/osrel" \
+  --section=".cmdline:binary@$UKI_PARTS/cmdline" \
+  --section=".initrd:binary@$UKI_PARTS/initrd" \
+  --section=".uname:binary@$UKI_PARTS/uname" \
+  --section=".sbat:binary@$UKI_PARTS/sbat"
+```
+
+Check that every expected extraction succeeded and matches the inspected section
+size/digest. Missing files or an extractor returning 0 are not sufficient
+evidence. If additional measured sections such as `.ucode`, `.splash`, `.dtb`,
+`.pcrpkey`, `.profile`, `.dtbauto` or `.hwids` are present, include their exact
+bytes and corresponding `systemd-measure` options after review. Multi-profile
+images, duplicate sections or unusual PE virtual/raw sizes require a separate
+review; do not apply this six-input example unchanged.
+
+4. Set `UNLOCK_PHASE` to the verified phase path; there is intentionally no
+   default here. With systemd-measure matching the embedded stub's measurement
+   semantics, calculate for **SHA256** and that one early phase:
+
+```sh
+(
+  set -e
+  : "${UNLOCK_PHASE:?Set the verified early-unlock phase path first}"
+  for component in linux osrel cmdline initrd uname sbat; do
+    test -s "$UKI_PARTS/$component"
+  done
+  /usr/lib/systemd/systemd-measure calculate --bank=sha256 --phase="$UNLOCK_PHASE" \
+    --linux="$UKI_PARTS/linux" --osrel="$UKI_PARTS/osrel" \
+    --cmdline="$UKI_PARTS/cmdline" --initrd="$UKI_PARTS/initrd" \
+    --uname="$UKI_PARTS/uname" --sbat="$UKI_PARTS/sbat"
+)
+```
+
+5. Require a successful calculation with the intended phase and one SHA256
+   PCR 11 digest. Check the prediction against the measured image/phase evidence
+   in a recovery-capable boot rehearsal. Retain the UKI hash, tool versions,
+   measured section inventory, phase and predicted digest privately. Only then
+   use that nonsecret digest as `EARLY_PCR11_SHA256` in
+   [the enrollment preview](INSTALLATION.md#tpm2-enrol-preview). It must be 64
+   hexadecimal characters; syntax acceptance alone does not validate it.
+
+These example interfaces were checked against upstream
+[systemd-measure](https://github.com/systemd/systemd/blob/v261.2/man/systemd-measure.xml),
+[ukify](https://github.com/systemd/systemd/blob/v261.2/man/ukify.xml),
+[systemd-stub](https://github.com/systemd/systemd/blob/v261.2/man/systemd-stub.xml)
+and the [initrd phase unit](https://github.com/systemd/systemd/blob/v261.2/units/systemd-pcrphase-initrd.service.in).
+Use the installed manuals and re-review if your tool/stub versions differ.
+The [cryptenroll reference](https://github.com/systemd/systemd/blob/v261.2/man/systemd-cryptenroll.xml)
+explains explicit PCR digests, PINs and update-sensitive static binding. This
+procedure does not replace the existing static policy with a signed PCR policy.
 
 ## 3. Package and configure bare-metal K3s
 
@@ -272,7 +358,16 @@ creation, DRA DeviceClass creation and automatic remediation. Apply the separate
 DeviceConfig only after its CRD exists. It disables driver management, blacklisting,
 driver upgrades, partition management and DRA; it enables the traditional device
 plugin and node labeller. NFD is enabled. The operator/device-plugin images are
-digest-pinned; audit rendered chart helper/NFD images before release promotion.
+digest-pinned. [The values](../infrastructure/gpu-operator/values.yaml) also pin
+the bundled NFD version to its Linux/amd64 manifest. This bare-metal profile is
+not a multi-architecture deployment. Verify every rendered image before release
+promotion; registry hashes establish identity, not runtime qualification.
+
+Disabling operator features does not remove their upstream RBAC permissions.
+The manager retains cluster-wide Secret read/write, node and workload mutation,
+and CRD deletion permissions. Review and obtain owner approval for these grants
+before installation. Keep NFD's read-only host mounts in its infrastructure
+namespace; do not relax application namespace controls to admit them.
 
 The resource name is `amd.com/gpu`, not `://amd.com`. DRA infrastructure being
 enabled does not make these device-plugin workloads DRA consumers. AMD prohibits

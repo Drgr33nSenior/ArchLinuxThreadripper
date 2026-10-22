@@ -32,6 +32,7 @@ spec:
             - --collector.diskstats
             - --collector.filesystem
             - --collector.hwmon
+            - --collector.edac
             - --collector.mdadm
             - --collector.time
             - --collector.stat

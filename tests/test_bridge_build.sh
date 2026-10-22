@@ -23,7 +23,7 @@ printf 'BRIDGE_GO_VERSION=1.27.1\nBRIDGE_GO_LINUX_AMD64_SHA256=%s\nSOURCE_DATE_E
   "$(common::sha256_file "$work/go.tar.gz")" >"$work/builder/versions.lock"
 printf 'go 2:1.27.0-1\n' >"$work/builder/packages.txt"
 bash "$root/infrastructure/packages/bootstrap/prepare-source.sh" "$work/installer" >/dev/null
-for file in tests/hardware/test_serving_memory.py tests/hardware/test_model_kernels.py tests/hardware/sglang-profile-evidence.py tests/fixtures/telemetry/alerts_test.yaml tests/fixtures/telemetry/otlp_sanitization.json; do
+for file in tests/hardware/test_serving_memory.py tests/hardware/test_model_kernels.py tests/hardware/test_gemm_profile.py tests/hardware/test_moe_table_package.py lib/workstation/gemm_profile.py infrastructure/sglang/gemm-m1/profile.json infrastructure/sglang/moe-m1/profile.json infrastructure/sglang/moe-m1/normal.json infrastructure/sglang/moe-m1/down.json tests/hardware/sglang-profile-evidence.py tests/fixtures/telemetry/alerts_test.yaml tests/fixtures/telemetry/otlp_sanitization.json; do
   grep -Fxq "$file" "$work/installer/project/source.files"
 done
 BUILDER_IMAGE_ID="sha256:$(printf '%064d' 0)"
@@ -213,4 +213,14 @@ printf 'SOURCE_SHA256=%s\n' "$(common::sha256_file "$work/extra-installer/bootst
 mkdir "$work/extra-installer-source"
 if bash "$script" "$revision" v0.0.0 "$work/extra-installer-source" "$work/builder" "$work/extra-installer" >"$work/extra-installer.log" 2>&1; then exit 1; fi
 [[ ! -e $work/extra-installer-source/output ]]
+mkdir "$work/unsafe-installer" "$work/unsafe-tree"
+bsdtar -xzf "$work/installer/bootstrap-source.tar.gz" -C "$work/unsafe-tree"
+printf 'unreviewed punctuated table\n' >"$work/unsafe-tree/project/infrastructure/sglang/gemm-m1/N=4096,K=2048,device_name=AMD_Radeon_AI_PRO_R9700,dtype=fp8_w8a8,block_shape=[128, 128].json"
+(cd "$work/unsafe-tree" && find project -type f -print | sort >"$work/unsafe-files")
+bsdtar -czf "$work/unsafe-installer/bootstrap-source.tar.gz" -C "$work/unsafe-tree" -T "$work/unsafe-files"
+printf 'SOURCE_SHA256=%s\n' "$(common::sha256_file "$work/unsafe-installer/bootstrap-source.tar.gz")" >"$work/unsafe-installer/source.lock"
+mkdir "$work/unsafe-installer-source"
+if bash "$script" "$revision" v0.0.0 "$work/unsafe-installer-source" "$work/builder" "$work/unsafe-installer" >"$work/unsafe-installer.log" 2>&1; then exit 1; fi
+grep -Fq 'Selected installer source archive has an unsafe entry.' "$work/unsafe-installer.log"
+[[ ! -e $work/unsafe-installer-source/output && ! -e $work/unsafe-installer-source/installer ]]
 printf 'Bridge build orchestration, input/toolchain/package identity and failure fixtures passed; no real compilation performed\n'

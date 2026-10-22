@@ -17,12 +17,14 @@ grep -Fq 'does not resolve to a block device' "$work/refusal"
 
 # Only synthetic identities are resolved. No host device is queried.
 bootstrap_require_tty() { :; }
+failed_probe=none
 bootstrap_disk_realpath() {
   case $1 in
     /dev/disk/by-id/nvme-SYNTHETIC_A) printf '%s\n' /dev/synthetic-a ;;
     /dev/disk/by-id/nvme-SYNTHETIC_B) printf '%s\n' /dev/synthetic-b ;;
     *) return 1 ;;
   esac
+  [[ $failed_probe != "path:$1" ]]
 }
 bootstrap_disk_serial() {
   case $1 in
@@ -30,7 +32,37 @@ bootstrap_disk_serial() {
     /dev/synthetic-b) printf '%s\n' SYNTHETIC_B ;;
     *) return 1 ;;
   esac
+  [[ $failed_probe != "serial:$1" ]]
 }
+
+# Probe the canonical serial parser in isolation, not the identity mocks above.
+(
+  source "$repo_root/lib/bootstrap/common.sh"
+  serial_status=0
+  serial_properties=$'ID_SERIAL_SHORT=SYNTHETIC_A\nID_SERIAL=MODEL_SYNTHETIC_A'
+  # Called by the production serial parser; no host device is inspected.
+  # shellcheck disable=SC2329
+  udevadm() {
+    [[ $* == 'info --query=property --name=/dev/synthetic-a' ]] || return 2
+    printf 'query\n' >>"$work/serial-queries"
+    printf '%s\n' "$serial_properties"
+    return "$serial_status"
+  }
+  [[ $(bootstrap_disk_serial /dev/synthetic-a) == SYNTHETIC_A ]]
+  serial_properties='ID_SERIAL=MODEL_SYNTHETIC_A'
+  [[ $(bootstrap_disk_serial /dev/synthetic-a) == MODEL_SYNTHETIC_A ]]
+  [[ $(wc -l <"$work/serial-queries" | tr -d ' ') == 2 ]]
+  serial_status=7
+  if bootstrap_disk_serial /dev/synthetic-a >"$work/failed-serial" 2>"$work/refusal"; then
+    printf 'failed udev query accepted\n' >&2
+    exit 1
+  fi
+  [[ ! -s $work/failed-serial ]]
+  serial_status=0
+  serial_properties=''
+  if bootstrap_disk_serial /dev/synthetic-a >"$work/failed-serial" 2>"$work/refusal"; then exit 1; fi
+)
+
 PRIMARY_DISK=/dev/disk/by-id/nvme-SYNTHETIC_A
 SECONDARY_DISK=/dev/disk/by-id/nvme-SYNTHETIC_B
 PRIMARY_DISK_SERIAL=SYNTHETIC_A
@@ -38,10 +70,26 @@ SECONDARY_DISK_SERIAL=SYNTHETIC_B
 BOOTSTRAP_DISK_A_REAL=/dev/synthetic-a
 BOOTSTRAP_DISK_B_REAL=/dev/synthetic-b
 BOOTSTRAP_DRY_RUN=0
-confirmation='ERASE /dev/synthetic-a (SYNTHETIC_A) AND /dev/synthetic-b (SYNTHETIC_B)'
-bootstrap_confirm_destruction <<<"$confirmation" 2>/dev/null
-if bootstrap_confirm_destruction <<<'SYNTHETIC_A SYNTHETIC_B' 2>/dev/null; then exit 1; fi
+confirmation=ERASE
+bootstrap_confirm_destruction <<<"$confirmation" 2>"$work/prompt"
+grep -Fq "$PRIMARY_DISK -> $BOOTSTRAP_DISK_A_REAL (serial: $PRIMARY_DISK_SERIAL)" "$work/prompt"
+grep -Fq "$SECONDARY_DISK -> $BOOTSTRAP_DISK_B_REAL (serial: $SECONDARY_DISK_SERIAL)" "$work/prompt"
+grep -Fq 'Type exactly: ERASE' "$work/prompt"
+for response in '' erase ' ERASE' 'ERASE ' 'SYNTHETIC_A SYNTHETIC_B' \
+  'ERASE /dev/synthetic-a (SYNTHETIC_A) AND /dev/synthetic-b (SYNTHETIC_B)'; do
+  if bootstrap_confirm_destruction <<<"$response" 2>/dev/null; then exit 1; fi
+done
 if bootstrap_confirm_destruction </dev/null 2>/dev/null; then exit 1; fi
+# Matching partial stdout must not hide a failed identity probe, including
+# conditional callers where errexit is suppressed. Check all four probes.
+for failed_probe in "path:$PRIMARY_DISK" "path:$SECONDARY_DISK" \
+  "serial:$BOOTSTRAP_DISK_A_REAL" "serial:$BOOTSTRAP_DISK_B_REAL"; do
+  if bootstrap_confirm_destruction <<<"$confirmation" 2>/dev/null; then
+    printf 'failed probe accepted: %s\n' "$failed_probe" >&2
+    exit 1
+  fi
+done
+failed_probe=none
 bootstrap_disk_realpath() { printf '%s\n' /dev/synthetic-changed; }
 if bootstrap_confirm_destruction <<<"$confirmation" 2>/dev/null; then exit 1; fi
 bootstrap_disk_realpath() {

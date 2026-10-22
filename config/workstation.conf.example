@@ -65,6 +65,12 @@ DEFAULT_TUNED_PROFILE=ai
 # Actual jobs are limited by available CPUs and RAM on the Linux build host.
 MAKE_JOBS=24
 MEMORY_HEAVY_JOBS=16
+# Kernel-only ceiling and planning estimate; independent of heavy C++/HIP builds.
+# With 48 CPUs, 48 * 512 MiB plus the reserves below needs 48 GiB available.
+# This estimate is not a memory quota. Monitor a first build; increase MiB/job
+# if measured compiler peaks require it. CPU/cgroup/RAM limits still apply.
+KERNEL_BUILD_JOBS=48
+BUILD_KERNEL_JOB_MIB=512
 # RAM for the host and other workloads, in MiB (1024 MiB = 1 GiB).
 # Job budget = available MiB - this reserve - BUILD_LINK_MIB * BUILD_LINK_JOBS.
 # The command refuses compilation if the remaining budget cannot fit one job.

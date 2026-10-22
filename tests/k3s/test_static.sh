@@ -58,13 +58,40 @@ source "$repo_root/lib/k3s/common.sh"
 source "$repo_root/lib/k3s/lifecycle.sh"
 k3s_load_config "$config_file" "$repo_root/versions.lock"
 [ "$KWIN_DEBIAN_VERSION" = '4:6.3.6-1' ]
+# Scoped userspace promotion must not leak through environment overrides or
+# broaden the accepted local image family. The legacy vendor lock stays valid.
+[[ $SGLANG_SINGLE_ROCM_IMAGE == localhost/workstation/sglang@sha256:c9e4d0e0ea8818de29ccef4249119fc1c096d7a924b86c63567a6b9f9d5c3c8b ]]
+[[ $SGLANG_ROCM_IMAGE == docker.io/rocm/sgl-dev:*rocm10.0.0@sha256:* ]]
+for bad_image in localhost/other/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa localhost/workstation/sglang:latest; do
+  if (k3s_validate_value SGLANG_SINGLE_ROCM_IMAGE "$bad_image") >/dev/null 2>&1; then
+    echo 'unreviewed single-GPU image family or mutable reference accepted' >&2
+    exit 1
+  fi
+done
+SGLANG_SINGLE_ROCM_IMAGE=invalid
+SGLANG_SINGLE_SERVER_ARGS_SHA256=invalid
+k3s_load_config "$config_file" "$repo_root/versions.lock"
+[[ $SGLANG_SINGLE_ROCM_IMAGE == localhost/workstation/sglang@sha256:c9e4d0e0ea8818de29ccef4249119fc1c096d7a924b86c63567a6b9f9d5c3c8b ]]
+[[ $SGLANG_SINGLE_SERVER_ARGS_SHA256 == 5ed5badef8dca0ee3dd2b34a1c9c417e172ff1a947d9fe802f7983fb4a2be950 ]]
 # Repeated loads clear the new lock key; environment values cannot shadow it.
 KWIN_DEBIAN_VERSION=invalid
 k3s_load_config "$config_file" "$repo_root/versions.lock"
 [ "$KWIN_DEBIAN_VERSION" = '4:6.3.6-1' ]
 [ "$K3S_VERSION" = 'v1.35.8+k3s1' ]
 [ "$K3S_SELINUX_RPM_VERSION" = '1.6-1.el9' ]
+[ "$LINUX_GIT_SOURCE_TAG" = 'v7.3-rc6' ]
+[ "$LINUX_GIT_SOURCE_TAG_OBJECT" = '4eeccbed21e50c19f97be9d325511f3de6343f2d' ]
 [ "$VM_VCPUS" = 8 ]
+for invalid in latest v7.3-rc0 7.3-rc6; do
+  if (k3s_validate_value LINUX_GIT_SOURCE_TAG "$invalid") >/dev/null 2>&1; then
+    echo 'invalid kernel source tag was accepted' >&2
+    exit 1
+  fi
+done
+if (k3s_validate_value LINUX_GIT_SOURCE_TAG_OBJECT short) >/dev/null 2>&1; then
+  echo 'invalid kernel tag object was accepted' >&2
+  exit 1
+fi
 k3s_require_ansible_access
 saved_known_hosts=$SSH_KNOWN_HOSTS_FILE
 SSH_KNOWN_HOSTS_FILE="$temp_dir/missing-known-hosts"

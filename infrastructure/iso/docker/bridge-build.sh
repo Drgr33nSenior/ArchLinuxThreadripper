@@ -52,6 +52,8 @@ bridge_build() {
   # The archive is source data, never a path authority. Its exact-tree manifest
   # must verify before Bridge uses it as the selected-pair contract input.
   if bsdtar -tzf "$installer_bundle/bootstrap-source.tar.gz" | awk '
+    $0 == "project/infrastructure/sglang/gemm-m1/N=2048,K=2048,device_name=AMD_Radeon_AI_PRO_R9700,dtype=fp8_w8a8,block_shape=[128, 128].json" ||
+    $0 == "project/infrastructure/sglang/gemm-m1/N=2560,K=2048,device_name=AMD_Radeon_AI_PRO_R9700,dtype=fp8_w8a8,block_shape=[128, 128].json" { next }
     /^project\/[A-Za-z0-9_.@\/-]+$/ && $0 !~ /(^|\/)\.\.($|\/)/ { next }
     { exit 1 }
   '; then :; else
@@ -73,7 +75,14 @@ bridge_build() {
   (
     # This subshell is an OR-list condition: errexit is disabled throughout it.
     cd "$installer_root" || exit 1
-    awk '{if ($1 !~ /^[a-f0-9]{64}$/ || $2 !~ /^[A-Za-z0-9_.@\/-]+$/ || $2 ~ /(^|\/)\.\.($|\/)/) exit 1; print $2}' SOURCE-MANIFEST.sha256 | sort >"$work/installer-expected-files" || exit 1
+    awk '
+      function safe(path) {
+        return path == "infrastructure/sglang/gemm-m1/N=2048,K=2048,device_name=AMD_Radeon_AI_PRO_R9700,dtype=fp8_w8a8,block_shape=[128, 128].json" ||
+          path == "infrastructure/sglang/gemm-m1/N=2560,K=2048,device_name=AMD_Radeon_AI_PRO_R9700,dtype=fp8_w8a8,block_shape=[128, 128].json" ||
+          (path ~ /^[A-Za-z0-9_.@\/-]+$/ && path !~ /(^|\/)\.\.($|\/)/)
+      }
+      { if ($0 !~ /^[a-f0-9]{64}  /) exit 1; path = substr($0, 67); if (!safe(path)) exit 1; print path }
+    ' SOURCE-MANIFEST.sha256 | sort >"$work/installer-expected-files" || exit 1
     printf '%s\n' SOURCE-MANIFEST.sha256 source.files >>"$work/installer-expected-files" || exit 1
     sort -u "$work/installer-expected-files" -o "$work/installer-expected-files" || exit 1
     find . -type f -print | sed 's|^\./||' | sort >"$work/installer-actual-files" || exit 1

@@ -102,6 +102,47 @@ class MemoryTests(unittest.TestCase):
         self.assertEqual(spec, original)
         self.assertEqual(self.deployment["spec"]["template"]["spec"], original)
 
+    def test_scoped_new_stack_plan_and_wrong_tp_rejection(self):
+        locks = dict(line.split("=", 1) for line in (ROOT / "versions.lock").read_text().splitlines()
+                     if line and not line.startswith("#"))
+        image = locks["SGLANG_SINGLE_ROCM_IMAGE"]
+        revision = locks["SGLANG_SINGLE_MODEL_REVISION"]
+        container = self.deployment["spec"]["template"]["spec"]["containers"][0]
+        container["image"] = image
+        for limits in container["resources"].values():
+            limits["amd.com/gpu"] = "1"
+        self.runtime["devices"] = self.runtime["devices"][:1]
+        self.runtime["settings"].update(MODEL_REPOSITORY=locks["SGLANG_SINGLE_MODEL_REPOSITORY"],
+            MODEL_REVISION=revision, MODEL_DTYPE="bfloat16", TENSOR_PARALLEL="1",
+            ATTENTION_BACKEND="triton", CONTEXT_LENGTH="4096", MEM_FRACTION_STATIC="0.80",
+            MAX_RUNNING_REQUESTS="2", SGLANG_USE_AITER="false")
+        self.runtime["model_contract"]["quant_method"] = "unquantized"
+        self.runtime["launch"] = [{"--revision": revision, "--tp": "1", "--dtype": "bfloat16",
+            "--attention-backend": "triton", "--context-length": "4096",
+            "--mem-fraction-static": "0.80", "--max-running-requests": "2",
+            "--mamba-radix-cache-strategy": "no_buffer", "--disable-overlap-schedule": True}]
+        self.workload["model_revision"] = revision
+        store(self.root / "deployment.json", self.deployment)
+        store(self.root / "workload.json", self.workload)
+        for start, run in self.observations:
+            startup, result = (json.loads((directory / filename).read_text()) for directory, filename in
+                               ((start, "startup.json"), (run, "result.json")))
+            for pod in (startup["pod"], startup["pod_before"], result["pod"]):
+                pod.update(image=image, image_id="containerd://" + locks["SGLANG_SINGLE_ROCM_CONFIG_DIGEST"],
+                           resources=copy.deepcopy(container["resources"]))
+            store(run / "after/runtime.json", self.runtime)
+            store(run / "after/pod.json", result["pod"])
+            result.update(runtime=self.runtime,
+                runtime_sha256=hashlib.sha256((run / "after/runtime.json").read_bytes()).hexdigest(),
+                workload_sha256=hashlib.sha256((self.root / "workload.json").read_bytes()).hexdigest())
+            store(start / "startup.json", startup)
+            store(run / "result.json", result)
+        self.assertEqual(self.plan()["status"], "plan-only-unqualified")
+        self.change(self.observations[0][1] / "result.json",
+                    lambda r: r["runtime"]["settings"].update(TENSOR_PARALLEL="2"))
+        with self.assertRaisesRegex(ValueError, "BF16/TP1/Triton"):
+            self.plan()
+
     def test_cli_package_and_private_artifacts(self):
         output = self.root/"plan"
         command = ["bash", str(ROOT/"bin/workstationctl"), "rocm", "serving-memory-plan",

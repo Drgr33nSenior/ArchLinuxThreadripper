@@ -141,25 +141,34 @@ bootstrap_no_active_swap() {
 }
 
 bootstrap_confirm_destruction() {
-  local expected response
+  local response disk_a disk_b serial_a serial_b
   ((BOOTSTRAP_DRY_RUN)) && return 0
   bootstrap_require_tty || return 1
-  expected="ERASE ${BOOTSTRAP_DISK_A_REAL} (${PRIMARY_DISK_SERIAL}) AND ${BOOTSTRAP_DISK_B_REAL} (${SECONDARY_DISK_SERIAL})"
-  printf 'This permanently erases both approved disks. Type exactly: %s\n> ' "$expected" >&2
+  printf 'This permanently erases both approved disks:\n  %s -> %s (serial: %s)\n  %s -> %s (serial: %s)\nType exactly: ERASE\n> ' \
+    "$PRIMARY_DISK" "$BOOTSTRAP_DISK_A_REAL" "$PRIMARY_DISK_SERIAL" \
+    "$SECONDARY_DISK" "$BOOTSTRAP_DISK_B_REAL" "$SECONDARY_DISK_SERIAL" >&2
   IFS= read -r response || {
     bootstrap_die 'confirmation input ended; no disks were changed'
     return 1
   }
-  [[ $response == "$expected" ]] || {
-    bootstrap_die 'resolved-path and serial confirmation did not match; no disks were changed'
+  [[ $response == ERASE ]] || {
+    bootstrap_die 'erase confirmation did not match; no disks were changed'
     return 1
   }
-  [[ $(bootstrap_disk_realpath "$PRIMARY_DISK") == "$BOOTSTRAP_DISK_A_REAL" && $(bootstrap_disk_realpath "$SECONDARY_DISK") == "$BOOTSTRAP_DISK_B_REAL" ]] ||
+  if ! disk_a=$(bootstrap_disk_realpath "$PRIMARY_DISK") || ! disk_b=$(bootstrap_disk_realpath "$SECONDARY_DISK"); then
+    bootstrap_die 'disk path inspection failed during confirmation; no disks were changed'
+    return 1
+  fi
+  [[ $disk_a == "$BOOTSTRAP_DISK_A_REAL" && $disk_b == "$BOOTSTRAP_DISK_B_REAL" ]] ||
     {
       bootstrap_die 'device paths changed during confirmation'
       return 1
     }
-  [[ $(bootstrap_disk_serial "$BOOTSTRAP_DISK_A_REAL") == "$PRIMARY_DISK_SERIAL" && $(bootstrap_disk_serial "$BOOTSTRAP_DISK_B_REAL") == "$SECONDARY_DISK_SERIAL" ]] ||
+  if ! serial_a=$(bootstrap_disk_serial "$BOOTSTRAP_DISK_A_REAL") || ! serial_b=$(bootstrap_disk_serial "$BOOTSTRAP_DISK_B_REAL"); then
+    bootstrap_die 'disk serial inspection failed during confirmation; no disks were changed'
+    return 1
+  fi
+  [[ $serial_a == "$PRIMARY_DISK_SERIAL" && $serial_b == "$SECONDARY_DISK_SERIAL" ]] ||
     {
       bootstrap_die 'device identity changed during confirmation'
       return 1

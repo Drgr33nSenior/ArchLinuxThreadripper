@@ -1,8 +1,21 @@
 #!/usr/bin/env bash
 # Read-only hardware evidence and no-swap policy validation.
 
+ws_no_swap_units_check() {
+  local units
+  # systemd 261.2 returns nonzero for zero matches. Query the full inventory
+  # first so an empty swap selection is distinct from failed discovery.
+  units=$(systemctl list-unit-files --no-legend --no-pager) || ws_die 'cannot inspect configured swap units'
+  units=$(awk '
+    NF < 2 || NF > 3 || $1 !~ /\.(automount|device|mount|path|scope|service|slice|socket|swap|target|timer)$/ {invalid=1}
+    $1 ~ /\.swap$/ {print}
+    END {if (NR == 0 || invalid) exit 1}
+  ' <<<"$units") || ws_die 'unit-file inventory is empty or malformed'
+  [[ -z $units ]] || ws_die 'configured swap unit found; inspect systemctl list-unit-files --type=swap'
+}
+
 ws_no_swap_check() {
-  local proc=${1:-/proc} etc=${2:-/etc} sys=${3:-/sys} usr=${4:-/usr} units
+  local proc=${1:-/proc} etc=${2:-/etc} sys=${3:-/sys} usr=${4:-/usr}
   [[ -r $proc/swaps && -r $proc/cmdline && -r $etc/fstab ]] || ws_die 'swap policy evidence is unavailable'
   [[ $(awk 'NR > 1 {n++} END {print n+0}' "$proc/swaps") == 0 ]] || ws_die 'active swap violates the workstation policy'
   if awk '$0 !~ /^[[:space:]]*#/ && $3 == "swap" {found=1} END {exit !found}' "$etc/fstab"; then
@@ -21,8 +34,7 @@ ws_no_swap_check() {
   done
   # Target-only service checks supplement the fixture-testable file checks.
   if [[ $proc == /proc ]]; then
-    units=$(systemctl list-unit-files --type=swap --no-legend --no-pager) || ws_die 'cannot inspect configured swap units'
-    [[ -z $units ]] || ws_die 'configured swap unit found; inspect systemctl list-unit-files --type=swap'
+    ws_no_swap_units_check
   fi
 }
 
@@ -87,7 +99,9 @@ ws_gpu_monitor_json() {
       ;;
     rocm-smi)
       jq -es 'length == 1 and (.[0] | type == "object" and length > 0 and
-        all(to_entries[]; (.key|test("^card[0-9]+$")) and (.value|type == "object" and length > 0) and .value.error == null))' "$file" >/dev/null
+        all(to_entries[]; (.key|test("^card[0-9]+$")) and (.value|type == "object") and .value.error == null and
+          (.value["PCI Bus"]|type == "string" and test("^[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\\.[0-7]$"))) and
+        ([.[]["PCI Bus"]|ascii_downcase]|unique|length) == length)' "$file" >/dev/null
       ;;
     *) return 1 ;;
   esac
@@ -100,7 +114,7 @@ ws_gpu_monitor_capture() {
     if [[ $provider == amd-smi ]]; then
       timeout 30 amd-smi list --json >"$output/gpu-monitor-raw.json" 2>"$output/gpu-monitor.stderr" || status=$?
     else
-      timeout 30 rocm-smi --json >"$output/gpu-monitor-raw.json" 2>"$output/gpu-monitor.stderr" || status=$?
+      timeout 30 rocm-smi --showbus --json >"$output/gpu-monitor-raw.json" 2>"$output/gpu-monitor.stderr" || status=$?
     fi
     validation=command-failed
     if ((status == 0)); then

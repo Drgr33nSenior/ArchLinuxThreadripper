@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "profile": "gemm-moe-m1-candidate3",
+  "qualification": "experimental-single-startup-serving-screen-not-model-qualified",
+  "license": "Apache-2.0",
+  "gemm_dependency_sha256": "19c0abed0d30b526c9f4f04cb2ada6158607c4e6b253edcea7fc52739c27b803",
+  "parent_image": "localhost/workstation/sglang@sha256:7627df4882498d013f20d72405ab52d5f9b1af814d09f64c341d03d26c018763",
+  "upstream_revision": "71de97b264b04dcd514cf904003028aefe9775c8",
+  "model": {"repository": "Qwen/Qwen3-Coder-30B-A3B-Instruct-FP8", "revision": "dcaee4d4dfc5ee71ad501f01f530e5652438fde0", "file_identities": "gemm-dependency.json/model_files"},
+  "runtime": {"python_minor": "3.14", "sglang": "0.5.18", "torch": "2.13.0+rocm10.1.0", "hip": "7.16.26385", "imported_triton": "3.8.0", "triton_distribution_name": "triton", "triton_distribution": "3.8.0+git669b31ac.rocm10.1.0", "rccl": [2, 30, 7]},
+  "devices": [
+    {"uuid": "39373864-6465-3038-6163-303837666533", "bdf": "0000:c3:00.0", "gfx": "gfx1201", "name": "AMD Radeon AI PRO R9700"},
+    {"uuid": "34663466-6561-3362-3832-346261366439", "bdf": "0000:23:00.0", "gfx": "gfx1201", "name": "AMD Radeon AI PRO R9700"}
+  ],
+  "installed_sources": {
+    "sglang.kernels.ops.quantization.fp8_kernel": "bf4d819c35f35e58be94085c081425284de4d1efd640ff4b000219e1bfef1169",
+    "sglang.kernels.ops.moe.fused_moe_triton_kernels": "9c3342d3147e7d60a78a2c934111f0fc1becbb8df1d2d32aafc82e6c8a0b2e70",
+    "sglang.srt.layers.moe.moe_runner.triton_utils.fused_moe": "2d330f6be45c379badcedf6904639fba831db11aecf621b7444ee952c4d714e7",
+    "sglang.srt.layers.moe.moe_runner.triton_utils.fused_moe_triton_config": "022c8aa47972dd975ebf7be9c6d04ac4c60604cf705cf80c9b38e45973193d09",
+    "sglang.srt.runtime_context": "999ff7aec7370a4764d0bf0f4c4fc1ccd9af68228314fc1bdf854cf601578156",
+    "sglang.srt.server_args": "5ed5badef8dca0ee3dd2b34a1c9c417e172ff1a947d9fe802f7983fb4a2be950",
+    "sglang.srt.arg_groups.arg_utils": "6abaa9be570c10b0d9e17ab1a324a07902aadffad5cb9c9b737ee885132b1eb0"
+  },
+  "shape": {"experts": 128, "top_k": 8, "hidden": 2048, "local_intermediate": 384, "tensor_parallel": 2, "block_shape": [128, 128]},
+  "precision": {"activation": "bfloat16", "weights": "float8_e4m3fn", "accumulator": "float32", "kv": "bfloat16", "kv_evidence": "auto on BF16 model; source/config-derived, not independently inspected buffer dtype"},
+  "scope": {"concurrency": 1, "context_tokens": 4096, "workloads": [[512, 128], [2048, 128]], "server_settings": "gemm-dependency.json/settings", "deterministic_inference": false, "moe_runner_backend": "triton"},
+  "single_token": {"BLOCK_SIZE_M": 32, "BLOCK_SIZE_N": 64, "BLOCK_SIZE_K": 128, "GROUP_SIZE_M": 32, "num_warps": 4, "num_stages": 2},
+  "incumbent": {"BLOCK_SIZE_M": 64, "BLOCK_SIZE_N": 128, "BLOCK_SIZE_K": 128, "GROUP_SIZE_M": 32, "num_warps": 4, "num_stages": 2},
+  "m_grid": [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096],
+  "tables_sha256": "c59324d8bd2254b7171c8a74187a90f13776958ce02e620757be04acd0a5afbf",
+  "table_sources": {"normal": "normal.json", "down": "down.json"},
+  "communication": {},
+  "quantization": "unchanged",
+  "provenance": {"date": "2026-10-07", "serving_study": "test-results/gemm-moe-serving-recovery.qxmA1zod", "candidate": 3, "reference_archive_sha256": "b6b1331d65077ddfc9a0770aed766d26b7f6035d351518b73c63d82cc6479653", "verifier": "probe-2-source/verify_moe.py", "larger_batches": "actual-installed-incumbent", "model_quality": "checkpoint-sorting-failure-remains"},
+  "rollback": "Remove SGLANG_MOE_CONFIG_DIR and the dedicated read-only MoE table mount, then start a fresh GEMM-only owner process; additionally omit GEMM tables for the original incumbent. Preserve the sampler, model and parent image."
+}

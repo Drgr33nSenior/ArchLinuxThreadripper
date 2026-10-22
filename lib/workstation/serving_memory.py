@@ -12,7 +12,7 @@ import os
 from pathlib import Path
 import re
 
-from model_kernels import identity, mib, write
+from model_kernels import identity, image_contract, mib, validate_runtime_contract, write
 from serving import finite, validate
 from telemetry import validate_evidence
 
@@ -211,8 +211,7 @@ def plan(deployment_path, workload_path, resource_path, observations, other_mib,
     inputs.hashes[str(lock_path)] = hashlib.sha256(lock_data).hexdigest()
     locks = dict(line.split("=", 1) for line in lock_data.decode().splitlines()
                  if line and not line.startswith("#"))
-    if container["image"] != locks["SGLANG_ROCM_IMAGE"]:
-        raise ValueError("preserve the locked SGLang image")
+    contract = image_contract(locks, container["image"])
     phases, processes, records = {"cold": 0, "warm": 0}, set(), []
     runtime_key = None
     for startup_dir, run_dir in observations:
@@ -236,9 +235,10 @@ def plan(deployment_path, workload_path, resource_path, observations, other_mib,
             raise ValueError("each observation needs a distinct fresh pod, not relabelled evidence")
         processes.add(pod["uid"])
         if pod["image"] != container["image"] or not pod["image_id"].endswith(tuple(
-                (locks["SGLANG_ROCM_IMAGE"].split("@")[-1], locks["SGLANG_ROCM_CONFIG_DIGEST"]))):
+                (contract["image"].split("@")[-1], contract["config_digest"]))):
             raise ValueError("observed runtime image differs from the pinned image")
         validate(workload, runtime)
+        validate_runtime_contract(contract, runtime)
         devices = runtime["devices"]
         if (len(devices) != integer(resources["limits"]["amd.com/gpu"]) or len(devices) not in (1, 2)
                 or int(runtime["settings"]["TENSOR_PARALLEL"]) != len(devices)

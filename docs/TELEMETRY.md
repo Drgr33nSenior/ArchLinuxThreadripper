@@ -333,6 +333,104 @@ Prometheus; no Alertmanager/external notification route is provisioned.
 
 ## Host sampling, journal forwarding and Bridge
 
+### Check local monitoring readiness
+
+Installation has separate package and activation stages:
+
+| Path | Supplies | Still requires owner action |
+| --- | --- | --- |
+| Base installation, headless or desktop | `lm_sensors`, `dmidecode`, `nvme-cli`, `smartmontools` | Select Alloy and activate telemetry after boot/recovery qualification |
+| Signed bootstrap package | Installer source and recovery commands | It does not install the target package list merely by being installed on the live ISO or host |
+| Bridge runtime package | Monitoring helper, inactive host units and both profiles' render assets | Optional diagnostic/Alloy packages, reviewed configuration and activation |
+| `dev setup monitoring` | The four diagnostic packages plus `grafana-alloy` in a full upgrade transaction | Host collector setup and cluster deployment |
+| `telemetry render`, `full` or `metrics` | Local configuration artifacts | Applying a reviewed render and activating host collectors; rendering starts nothing |
+
+An older base install that omitted the four diagnostic packages needs the
+package correction. Missing Alloy, inactive units or an absent cluster stack
+can instead mean the optional stage was never selected or applied. Check each
+stage separately; a package list or successful render is not activation evidence.
+
+On the installed Arch host, run this read-only check from the installed runtime
+or a reviewed checkout:
+
+```sh
+./bin/workstationctl telemetry status
+```
+
+Exit `0` means the local diagnostic packages, active collector units and a fresh
+hardware textfile were observed. Exit `10` means local setup is incomplete;
+exit `1` means discovery is unavailable or failed. This is not a cluster scrape,
+sensor-accuracy or complete hardware-coverage check. An inactive sampler service
+is normal between timer invocations; its last result must still be successful.
+The timestamp comes from the producer, not file modification time. Samples older
+than 90 seconds or more than 10 seconds in the future are not fresh.
+
+The report separates packages, unit states, textfile freshness and existing
+hwmon channels. It also reads exposed CPU energy and ECC counters without
+changing their permissions. Empty inventories and null values mean unavailable,
+not zero. A runtime-suspended GPU can expose channel files that currently refuse
+reads. Do not disable runtime power management to make a monitoring check pass.
+Run without `sudo` first to see the current user's actual read access.
+
+The installer explicitly includes `lm_sensors`, `dmidecode`, `nvme-cli` and
+`smartmontools`. These tools do not automatically probe buses, run drive
+self-tests or enable monitoring services. For an older installation, the
+`monitoring` package profile selects those tools and `grafana-alloy` without
+selecting the unrelated AI, desktop or virtualization packages:
+
+```sh
+# Installed runtime; use the root of the matching checkout if Bridge was omitted.
+cd /usr/lib/bridge/workstation-runtime
+# Read-only preview using the current cached package databases; no refresh or download.
+pacman --sync --sysupgrade --print --needed --print-format '%n %v' -- \
+  lm_sensors dmidecode nvme-cli smartmontools grafana-alloy
+# Owner action after reviewing the full update and recovery prerequisites:
+sudo ./bin/workstationctl dev setup monitoring templates/workstation/packages.pacman
+```
+
+The `sudo` command is an owner-run **full package transaction**. The cached
+preview is not a future package lock; review the actual transaction too. Complete
+the [update prerequisites](OPERATIONS.md#host-updates), retain the selected
+repository snapshot and review the transaction first. Do not run it during a
+model experiment. It does not enable the packaged telemetry units or deploy the
+cluster stack. Continue with the host setup below and the reviewed stack
+deployment; do not install a second host node-exporter service.
+
+### Sensor drivers and unavailable channels
+
+Read existing hwmon channels with `sensors`. Do not run `sensors-detect`, scan
+I2C buses or force-load candidate drivers during workloads. A kernel module
+being installed or loaded does not prove that it has bound to a device.
+
+| Source | Driver/interface | Collection boundary |
+| --- | --- | --- |
+| CPU temperature | `k10temp` hwmon | Use the exposed label, such as `Tctl`; do not invent per-core temperatures |
+| Radeon GPUs | `amdgpu` hwmon and BDF-keyed sysfs | Preserve unavailable readings and each GPU's identity |
+| NVMe temperature/health | `nvme` hwmon; `nvme-cli` and `smartmontools` | Temperature alone is not a complete drive-health report |
+| Corsair PSU | `corsair_psu` USB hwmon | DC output is not measured wall-input power; see below |
+| ECC memory errors | `amd64_edac` sysfs | Both profiles enable node-exporter's `edac` collector; absent counters do not prove error-free memory |
+| CPU package/core energy | Powercap, including `intel_rapl_msr` on supported AMD hosts | Energy counters can wrap; core and package domains overlap. The unprivileged sampler does not collect root-only counters |
+| Board fan headers and DDR5 temperatures | Exact Super I/O chip driver and supported SPD hub, for example `spd5118` | Availability depends on chip support, firmware resource ownership and bus access |
+
+The existing node-exporter `hwmon` collector carries readable temperatures,
+fans, voltages, current and power. Benchmark snapshots retain those channels
+and labels too. The ECC collector uses the existing read-only sysfs mount;
+it does not install a driver, persist a RAS event history or require root.
+Do not change sysfs permissions or run the exporter as root to obtain CPU energy.
+That needs a separately reviewed narrow privileged reader.
+
+If the SMBus device is unbound, inspect its PCI identity, module alias and boot
+log. An ACPI `SystemIO`/`OpRegion` conflict means firmware owns an overlapping
+resource. Do not use `acpi_enforce_resources=lax`, `force_addr`, `force_id` or a
+forced bind as an installation workaround. Retain the exact board/BIOS/kernel
+identity and conflict range for firmware or upstream-driver review. An iTE
+controller family name alone does not justify an out-of-tree `it87` package.
+The [kernel SPD5118 documentation](https://docs.kernel.org/hwmon/spd5118.html)
+describes supported DDR5 temperature hubs; it does not establish that a
+particular DIMM or inaccessible SMBus is supported.
+
+### Configure the host collectors
+
 The signed `arch-workstation-bridge-runtime` package owns telemetry helpers,
 units, sysusers, source manifests and this runbook. Units remain inactive. The
 server package profile includes `grafana-alloy`; a minimal runtime install

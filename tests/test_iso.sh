@@ -24,7 +24,7 @@ if command -v bsdtar >/dev/null; then
     startdir="$work/source-a"
     srcdir=$startdir
     pkgdir="$work/installer-package"
-    source=() sha256sums=() backup=() depends=()
+    source=() sha256sums=() backup=() depends=() optdepends=()
     export startdir srcdir pkgdir
     install() {
       local mode=${1#-Dm}
@@ -85,6 +85,10 @@ if command -v bsdtar >/dev/null; then
     grep -Fqx 'ExecStart=/usr/lib/arch-workstation-backup/run %i' "$pkgdir/usr/lib/systemd/system/workstation-restic@.service"
     pkgdir="$work/bridge-runtime-package"
     package_arch-workstation-bridge-runtime
+    for optional in lm_sensors dmidecode nvme-cli smartmontools grafana-alloy; do
+      [[ $(printf '%s\n' "${optdepends[@]}" | cut -d: -f1 | grep -Fxc "$optional") == 1 ]]
+      [[ " ${depends[*]} " != *" $optional "* ]]
+    done
     for kind in runtime reference; do
       payload="$pkgdir/usr/lib/bridge/workstation-$kind"
       (cd "$payload" && sha256sum --check --strict SOURCE-MANIFEST.sha256 >/dev/null)
@@ -94,6 +98,27 @@ if command -v bsdtar >/dev/null; then
     [[ -f $pkgdir/usr/lib/bridge/workstation-runtime/lib/workstation/session.sh && -f $pkgdir/usr/lib/bridge/workstation-reference/apps/overlays/rag/SHA256SUMS ]]
     payload="$pkgdir/usr/lib/bridge/workstation-runtime"
     [[ -f $payload/lib/workstation/telemetry.py && -f $payload/lib/workstation/telemetry_sample.py ]]
+    [[ -f $payload/lib/workstation/monitoring.py && -f $payload/lib/workstation/measurement.py ]]
+    [[ -f $payload/lib/workstation/kernel_profile.py ]]
+    [[ -f $payload/lib/workstation/gemm_profile.py && -f $payload/infrastructure/sglang/gemm-m1/profile.json ]]
+    for file in profile.json normal.json down.json; do
+      cmp "$root/infrastructure/sglang/moe-m1/$file" "$payload/infrastructure/sglang/moe-m1/$file"
+    done
+    for n in 2048 2560; do
+      table="infrastructure/sglang/gemm-m1/N=$n,K=2048,device_name=AMD_Radeon_AI_PRO_R9700,dtype=fp8_w8a8,block_shape=[128, 128].json"
+      cmp "$root/$table" "$payload/$table"
+    done
+    [[ -f $payload/infrastructure/kernel/threadripper-9960x-dual-r9700.json ]]
+    # Execute the installed package selector with synthetic pacman, never a transaction.
+    (
+      # The path is the generated package fixture, not the checkout.
+      # shellcheck source=/dev/null
+      source "$payload/bin/workstationctl" --help >/dev/null
+      ws_require_arch() { :; }
+      ws_require_root() { :; }
+      pacman() { printf '%s\n' "$*"; }
+      [[ $(ws_dev_setup monitoring "$payload/templates/workstation/packages.pacman") == '-Syu --needed -- lm_sensors dmidecode nvme-cli smartmontools grafana-alloy' ]]
+    )
     [[ -f $payload/docs/TELEMETRY.md && -f $payload/infrastructure/observability/host/config.alloy ]]
     [[ -f $pkgdir/usr/lib/systemd/system/workstation-telemetry.timer && -f $pkgdir/usr/lib/systemd/system/workstation-alloy.service ]]
     [[ -f $pkgdir/usr/lib/sysusers.d/workstation-telemetry.conf && " ${depends[*]} " == *' systemd '* ]]
@@ -160,6 +185,16 @@ if command -v bsdtar >/dev/null; then
   printf 'bin/unsafe\n' >"$work/synthetic/infrastructure/packages/bootstrap/source.files"
   ln -s "$root/bin" "$work/synthetic/bin"
   if bash "$work/synthetic/infrastructure/packages/bootstrap/prepare-source.sh" "$work/refused" >/dev/null 2>&1; then exit 1; fi
+  for unsafe in '../escape' '/absolute' 'infrastructure/sglang/gemm-m1/N=9999,K=2048,block_shape=[128, 128].json' 'bin/name;echo'; do
+    printf '%s\n' "$unsafe" >"$work/synthetic/infrastructure/packages/bootstrap/source.files"
+    if bash "$work/synthetic/infrastructure/packages/bootstrap/prepare-source.sh" "$work/refused-path" >/dev/null 2>&1; then exit 1; fi
+    [[ ! -e $work/refused-path/project/$unsafe ]]
+    # Each rejection can leave its private output directory, so use another
+    # fresh location without removing the recorded refusal.
+    work_refusal_suffix=${work_refusal_suffix:-0}
+    work_refusal_suffix=$((work_refusal_suffix + 1))
+    mv "$work/refused-path" "$work/refused-path-$work_refusal_suffix"
+  done
 else
   echo 'SKIP: ISO source archive and package staging tests require libarchive bsdtar'
 fi

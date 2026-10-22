@@ -1,0 +1,118 @@
+{
+  "schema": 1,
+  "profile": "gemm-m1",
+  "qualification": "owner-accepted-performance-margin-model-unqualified",
+  "parent_image": "localhost/workstation/sglang@sha256:7627df4882498d013f20d72405ab52d5f9b1af814d09f64c341d03d26c018763",
+  "parent_config_digest": "sha256:942b88cf00edf4072d17843545347d56183a824614b8c4b9b3ba15b0b4278c72",
+  "parent_record_sha256": "be4596f16b53b103eb1930b04dbe5726d3890ef519471df4bfe04de1bb800151",
+  "upstream_revision": "71de97b264b04dcd514cf904003028aefe9775c8",
+  "sources": {
+    "kernels/ops/quantization/fp8_kernel.py": "bf4d819c35f35e58be94085c081425284de4d1efd640ff4b000219e1bfef1169",
+    "srt/layers/sampler.py": "52a11be2df847332f61a492accf6c3d65af99137907eb691c162db6c1ef31e6b"
+  },
+  "runtime": {
+    "python_minor": "3.14",
+    "sglang": "0.5.18",
+    "torch": "2.13.0+rocm10.1.0",
+    "hip": "7.16.26385",
+    "triton": "3.8.0",
+    "triton_distribution_name": "triton",
+    "triton_distribution": "3.8.0+git669b31ac.rocm10.1.0"
+  },
+  "devices": [
+    {"uuid": "39373864-6465-3038-6163-303837666533", "bdf": "0000:c3:00.0", "gfx": "gfx1201", "name": "AMD Radeon AI PRO R9700"},
+    {"uuid": "34663466-6561-3362-3832-346261366439", "bdf": "0000:23:00.0", "gfx": "gfx1201", "name": "AMD Radeon AI PRO R9700"}
+  ],
+  "model": {"repository": "Qwen/Qwen3-Coder-30B-A3B-Instruct-FP8", "revision": "dcaee4d4dfc5ee71ad501f01f530e5652438fde0", "license": "Apache-2.0"},
+  "settings": {
+    "--model-path": "/models/dcaee4d4dfc5ee71ad501f01f530e5652438fde0",
+    "--served-model-name": "Qwen3-Coder-30B-A3B-Instruct-FP8",
+    "--revision": "dcaee4d4dfc5ee71ad501f01f530e5652438fde0",
+    "--dtype": "bfloat16", "--quantization": "fp8", "--tp": "2",
+    "--context-length": "4096", "--max-total-tokens": "4096",
+    "--mem-fraction-static": "0.80", "--max-running-requests": "1",
+    "--attention-backend": "triton", "--fp8-gemm-backend": "triton",
+    "--moe-runner-backend": "triton", "--chunked-prefill-size": "512",
+    "--cuda-graph-max-bs-decode": "1", "--disable-overlap-schedule": true,
+    "--disable-custom-all-reduce": true, "--random-seed": "42",
+    "--tool-call-parser": "qwen3_coder", "--grammar-backend": "xgrammar",
+    "--host": "127.0.0.1", "--port": "30000"
+  },
+  "precision": {"weights": "float8_e4m3fn", "activation": "bfloat16", "accumulator": "float32", "kv": "bfloat16", "block_shape": [128, 128]},
+  "environment": {"SGLANG_USE_AITER": "0", "HF_HUB_OFFLINE": "1"},
+  "single_token": {"BLOCK_SIZE_M": 16, "BLOCK_SIZE_N": 64, "BLOCK_SIZE_K": 128, "GROUP_SIZE_M": 32, "num_warps": 4, "num_stages": 1},
+  "incumbent": {"BLOCK_SIZE_M": 64, "BLOCK_SIZE_N": 128, "BLOCK_SIZE_K": 128, "GROUP_SIZE_M": 32, "num_warps": 4, "num_stages": 3},
+  "m_grid": [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096],
+  "tables": [
+    {"n": 2048, "k": 2048, "name": "N=2048,K=2048,device_name=AMD_Radeon_AI_PRO_R9700,dtype=fp8_w8a8,block_shape=[128, 128].json", "sha256": "69afcbfc5bc1d362ea32ded30f25b373718b670c2a7e7b60720d2431f011eee6"},
+    {"n": 2560, "k": 2048, "name": "N=2560,K=2048,device_name=AMD_Radeon_AI_PRO_R9700,dtype=fp8_w8a8,block_shape=[128, 128].json", "sha256": "69afcbfc5bc1d362ea32ded30f25b373718b670c2a7e7b60720d2431f011eee6"}
+  ],
+  "model_files": {
+    "LICENSE": {
+      "bytes": 11343,
+      "sha256": "832dd9e00a68dd83b3c3fb9f5588dad7dcf337a0db50f7d9483f310cd292e92e"
+    },
+    "README.md": {
+      "bytes": 6104,
+      "sha256": "fbc064b8e9e3e3874896b8b25225bd2e7540638f42f69bf4a0612ed3a8184630"
+    },
+    "chat_template.jinja": {
+      "bytes": 6211,
+      "sha256": "5a38bfa05833266240066aedc497decc9b00cc0d3e3b8cceea98cf530196ab06"
+    },
+    "config.json": {
+      "bytes": 7156,
+      "sha256": "2705ed03bb322c864470bc282738b4713daca31b54ee4a639fe198bd7b9523f4"
+    },
+    "generation_config.json": {
+      "bytes": 180,
+      "sha256": "c99723ab3ba28630d26ae23def77603b540a46924895af5cf234740d3b27b51d"
+    },
+    "merges.txt": {
+      "bytes": 1671853,
+      "sha256": "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5"
+    },
+    "model-00001-of-00004.safetensors": {
+      "bytes": 10001462368,
+      "sha256": "04665458e2332cc10409cd51298c95627000ed44cf29134663203e3f15c3c053"
+    },
+    "model-00002-of-00004.safetensors": {
+      "bytes": 10000577408,
+      "sha256": "3d2228cdb569b07b2eb18b342c98ffb4c425264a5324446014046d402c80c1a2"
+    },
+    "model-00003-of-00004.safetensors": {
+      "bytes": 10000577448,
+      "sha256": "7a6b5fd146a07c319f475589d08dd8d583b1e0919905c73a1e5af745244fc1db"
+    },
+    "model-00004-of-00004.safetensors": {
+      "bytes": 1173001360,
+      "sha256": "6438b5403255c6fbf02bd20f9c75985e8a98ebc46f9f45899283ea374c25383a"
+    },
+    "model.safetensors.index.json": {
+      "bytes": 3565670,
+      "sha256": "270f54aead2ae634567310218340069621fd8dfa2ad80001b69888ea5cc03477"
+    },
+    "tokenizer.json": {
+      "bytes": 11422654,
+      "sha256": "aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4"
+    },
+    "tokenizer_config.json": {
+      "bytes": 13055,
+      "sha256": "60f6e8cb15c98dd07300a3cc465ea662de245d2095e4245616af21b2324db3fc"
+    },
+    "vocab.json": {
+      "bytes": 2776833,
+      "sha256": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910"
+    }
+  },
+  "communication": {},
+  "moe": "incumbent",
+  "provenance": {
+    "study": "test-results/fp8-rccl-screen.XjtE1iJ1",
+    "historical_manifest_sha256": "e43e0b58cae342bdfaee5e6219e2f6f0e256567852cdf414a5dc450e983d0503",
+    "historical_primary_gain_percent": 4.9653,
+    "historical_five_percent_gate": "failed-preserved",
+    "owner_decision_date": "2026-10-07",
+    "owner_decision": "Accept the 4.9653 percent performance margin; retain and independently repeat. Numerical, lifecycle, stability and model-quality gates remain required."
+  }
+}

@@ -18,7 +18,13 @@ output=$(cd -- "$1" && pwd -P)
 mkdir "$output/project"
 # Only exact, reviewed paths. Reject symlinks, including symlinked ancestors.
 while IFS= read -r path; do
-  [[ $path =~ ^[A-Za-z0-9_./@-]+$ && $path != /* && $path != *..* ]] || common::die 'unsafe source allowlist entry'
+  # These two literal upstream table filenames require punctuation. Do not
+  # broaden the normal path alphabet or accept arbitrary shell metacharacters.
+  case $path in
+    'infrastructure/sglang/gemm-m1/N=2048,K=2048,device_name=AMD_Radeon_AI_PRO_R9700,dtype=fp8_w8a8,block_shape=[128, 128].json' | \
+      'infrastructure/sglang/gemm-m1/N=2560,K=2048,device_name=AMD_Radeon_AI_PRO_R9700,dtype=fp8_w8a8,block_shape=[128, 128].json') ;;
+    *) [[ $path =~ ^[A-Za-z0-9_./@-]+$ && $path != /* && $path != *..* ]] || common::die 'unsafe source allowlist entry' ;;
+  esac
   component=$path
   while [[ $component != . ]]; do
     [[ ! -L $root/$component ]] || common::die "symlink in source allowlist: $path"

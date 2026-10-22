@@ -3,13 +3,51 @@
 import argparse
 import datetime
 import json
+import math
 import os
+import statistics
 import tempfile
 import time
 
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
+
+
+def matmul_benchmark(count):
+    """Fixed synthetic baseline; transfers and reference checks are not timed."""
+    records = []
+    torch.manual_seed(42)
+    for index in range(count):
+        torch.cuda.set_device(index)
+        for dimension in (1024, 2048):
+            a, b = torch.randn(dimension, dimension), torch.randn(dimension, dimension)
+            for dtype, tolerance in ((torch.float32, 1e-3), (torch.float16, 0.03), (torch.bfloat16, 0.3)):
+                if dtype == torch.bfloat16 and not torch.cuda.is_bf16_supported(including_emulation=False):
+                    raise RuntimeError("Benchmark requires native BF16 support")
+                left, right = a.to(dtype), b.to(dtype)
+                reference = left.float() @ right.float()
+                left, right = left.to(f"cuda:{index}"), right.to(f"cuda:{index}")
+                # Reuse the output allocation. No download or cache tuning.
+                actual = torch.empty_like(left)
+                elapsed = []
+                for repeat in range(12):
+                    start, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+                    start.record()
+                    torch.mm(left, right, out=actual)
+                    end.record()
+                    end.synchronize()
+                    seconds = start.elapsed_time(end) / 1000
+                    if not math.isfinite(seconds) or seconds <= 0:
+                        raise RuntimeError("Invalid GPU event duration")
+                    # Validate every warmup and measured result outside the event interval.
+                    torch.testing.assert_close(actual.float().cpu(), reference, rtol=tolerance, atol=tolerance)
+                    if repeat >= 2:
+                        elapsed.append(seconds)
+                records.append({"device": index, "dtype": str(dtype), "dimension": dimension,
+                                "seconds": elapsed, "median_seconds": statistics.median(elapsed),
+                                "warmups": 2, "correctness": "passed"})
+    return records
 
 
 def collective(rank, count, rendezvous):
@@ -47,7 +85,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--count", type=int, required=True)
     parser.add_argument("--model", required=True)
-    parser.add_argument("--collective", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--collective", action="store_true")
+    mode.add_argument("--matmul-benchmark", action="store_true")
     args = parser.parse_args()
     if not torch.version.hip or not torch.cuda.is_available():
         raise RuntimeError("This interpreter is not a working ROCm PyTorch environment")
@@ -57,7 +97,12 @@ def main():
     if any(args.model not in name for name in names):
         raise RuntimeError(f"Unexpected GPU model: {names}")
     report = {"torch": torch.__version__, "hip": torch.version.hip, "devices": names, "tests": []}
-    if args.collective:
+    if args.matmul_benchmark:
+        report["matmul"] = matmul_benchmark(args.count)
+        report["scope"] = "synthetic per-GPU matmul baseline; not inference, peer-transfer or performance qualification"
+        report["timing"] = "GPU events; excludes transfers, allocation and reference checks"
+        report["seed"] = 42
+    elif args.collective:
         if not dist.is_nccl_available():
             raise RuntimeError("The ROCm build lacks its RCCL (NCCL API) backend")
         with tempfile.TemporaryDirectory(prefix="workstation-rccl-") as directory:

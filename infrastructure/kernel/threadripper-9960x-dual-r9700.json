@@ -1,0 +1,841 @@
+{
+  "schema": 1,
+  "profile": "threadripper-9960x-dual-r9700",
+  "platform": {
+    "board_vendor": "Gigabyte Technology Co., Ltd.",
+    "board_name": "TRX50 AI TOP",
+    "board_version": "Default string",
+    "bios_version": "F12h"
+  },
+  "cpu": {
+    "vendor_id": "AuthenticAMD",
+    "family": 26,
+    "model": 8,
+    "stepping": 1,
+    "logical_cpus": 48,
+    "model_name": "AMD Ryzen Threadripper 9960X 24-Cores"
+  },
+  "pci": [
+    {
+      "name": "r9700",
+      "vendor": "0x1002",
+      "device": "0x7551",
+      "class_prefix": "0x0300",
+      "count": 2,
+      "drivers": [
+        "amdgpu"
+      ],
+      "modules": [
+        "amdgpu"
+      ]
+    },
+    {
+      "name": "r9700-audio",
+      "vendor": "0x1002",
+      "device": "0xab40",
+      "class_prefix": "0x0403",
+      "count": 2,
+      "drivers": [
+        "snd_hda_intel"
+      ],
+      "modules": [
+        "snd_hda_intel"
+      ]
+    },
+    {
+      "name": "nvme",
+      "vendor": "0x144d",
+      "device": "0xa810",
+      "class_prefix": "0x0108",
+      "count": 2,
+      "drivers": [
+        "nvme"
+      ],
+      "modules": [
+        "nvme"
+      ]
+    },
+    {
+      "name": "ethernet",
+      "vendor": "0x1d6a",
+      "device": "0x14c0",
+      "class_prefix": "0x0200",
+      "count": 2,
+      "drivers": [
+        "atlantic"
+      ],
+      "modules": [
+        "atlantic"
+      ]
+    },
+    {
+      "name": "wifi",
+      "vendor": "0x17cb",
+      "device": "0x1107",
+      "class_prefix": "0x0280",
+      "count": 1,
+      "drivers": [
+        "ath12k_wifi7_pci"
+      ],
+      "modules": [
+        "ath12k"
+      ]
+    },
+    {
+      "name": "asmedia-sata",
+      "vendor": "0x1b21",
+      "device": "0x1062",
+      "class_prefix": "0x0106",
+      "count": 1,
+      "drivers": [
+        "ahci"
+      ],
+      "modules": [
+        null,
+        "ahci"
+      ]
+    },
+    {
+      "name": "chipset-sata",
+      "vendor": "0x1022",
+      "device": "0x43f6",
+      "class_prefix": "0x0106",
+      "count": 1,
+      "drivers": [
+        "ahci"
+      ],
+      "modules": [
+        null,
+        "ahci"
+      ]
+    },
+    {
+      "name": "thunderbolt",
+      "vendor": "0x8086",
+      "device": "0x1137",
+      "class_prefix": "0x0c03",
+      "count": 1,
+      "drivers": [
+        "thunderbolt"
+      ],
+      "modules": [
+        "thunderbolt"
+      ]
+    },
+    {
+      "name": "thunderbolt-usb",
+      "vendor": "0x8086",
+      "device": "0x1138",
+      "class_prefix": "0x0c03",
+      "count": 1,
+      "drivers": [
+        "xhci_hcd"
+      ],
+      "modules": [
+        null,
+        "xhci_pci"
+      ]
+    },
+    {
+      "name": "turin-usb",
+      "vendor": "0x1022",
+      "device": "0x1557",
+      "class_prefix": "0x0c03",
+      "count": 2,
+      "drivers": [
+        "xhci_hcd"
+      ],
+      "modules": [
+        null,
+        "xhci_pci"
+      ]
+    },
+    {
+      "name": "chipset-usb",
+      "vendor": "0x1022",
+      "device": "0x43f7",
+      "class_prefix": "0x0c03",
+      "count": 1,
+      "drivers": [
+        "xhci_hcd"
+      ],
+      "modules": [
+        null,
+        "xhci_pci"
+      ]
+    },
+    {
+      "name": "ccp",
+      "vendor": "0x1022",
+      "device": "0x156e",
+      "class_prefix": "0x1080",
+      "count": 1,
+      "drivers": [
+        "ccp"
+      ],
+      "modules": [
+        "ccp"
+      ]
+    },
+    {
+      "name": "fch-smbus",
+      "vendor": "0x1022",
+      "device": "0x790b",
+      "class_prefix": "0x0c05",
+      "count": 1,
+      "drivers": [],
+      "modules": [],
+      "allow_unbound": true
+    }
+  ],
+  "required_config": {
+    "CONFIG_X86_64": [
+      "y"
+    ],
+    "CONFIG_X86_NATIVE_CPU": [
+      "y"
+    ],
+    "CONFIG_SMP": [
+      "y"
+    ],
+    "CONFIG_CPU_MITIGATIONS": [
+      "y"
+    ],
+    "CONFIG_X86_AMD_PSTATE": [
+      "y"
+    ],
+    "CONFIG_ACPI_CPPC_LIB": [
+      "y"
+    ],
+    "CONFIG_MODULES": [
+      "y"
+    ],
+    "CONFIG_MODULE_SIG": [
+      "y"
+    ],
+    "CONFIG_EFI": [
+      "y"
+    ],
+    "CONFIG_EFI_STUB": [
+      "y"
+    ],
+    "CONFIG_PCIEPORTBUS": [
+      "y"
+    ],
+    "CONFIG_IOMMU_SUPPORT": [
+      "y"
+    ],
+    "CONFIG_AMD_IOMMU": [
+      "y"
+    ],
+    "CONFIG_DRM_AMDGPU": [
+      "m"
+    ],
+    "CONFIG_DRM_AMD_DC": [
+      "y"
+    ],
+    "CONFIG_HSA_AMD": [
+      "y"
+    ],
+    "CONFIG_SND_HDA_INTEL": [
+      "m"
+    ],
+    "CONFIG_BLK_DEV_NVME": [
+      "m"
+    ],
+    "CONFIG_MD": [
+      "y"
+    ],
+    "CONFIG_BLK_DEV_MD": [
+      "m"
+    ],
+    "CONFIG_MD_RAID0": [
+      "m"
+    ],
+    "CONFIG_DM_CRYPT": [
+      "m"
+    ],
+    "CONFIG_XFS_FS": [
+      "m"
+    ],
+    "CONFIG_FAT_FS": [
+      "m"
+    ],
+    "CONFIG_VFAT_FS": [
+      "m"
+    ],
+    "CONFIG_SATA_AHCI": [
+      "y"
+    ],
+    "CONFIG_USB_XHCI_HCD": [
+      "y"
+    ],
+    "CONFIG_USB_XHCI_PCI": [
+      "y"
+    ],
+    "CONFIG_USB_HID": [
+      "y"
+    ],
+    "CONFIG_HID_GENERIC": [
+      "y"
+    ],
+    "CONFIG_USB4": [
+      "m"
+    ],
+    "CONFIG_AQTION": [
+      "m"
+    ],
+    "CONFIG_ATH12K": [
+      "m"
+    ],
+    "CONFIG_CRYPTO_DEV_CCP_DD": [
+      "m"
+    ],
+    "CONFIG_CRYPTO_AES_NI_INTEL": [
+      "m"
+    ],
+    "CONFIG_I2C_PIIX4": [
+      "m"
+    ],
+    "CONFIG_SENSORS_K10TEMP": [
+      "m"
+    ],
+    "CONFIG_SENSORS_CORSAIR_PSU": [
+      "m"
+    ],
+    "CONFIG_EDAC_AMD64": [
+      "m"
+    ],
+    "CONFIG_KVM": [
+      "m"
+    ],
+    "CONFIG_KVM_AMD": [
+      "m"
+    ],
+    "CONFIG_VFIO": [
+      "m"
+    ],
+    "CONFIG_VFIO_PCI": [
+      "m"
+    ],
+    "CONFIG_BPF_SYSCALL": [
+      "y"
+    ],
+    "CONFIG_CGROUPS": [
+      "y"
+    ],
+    "CONFIG_MEMCG": [
+      "y"
+    ],
+    "CONFIG_CPUSETS": [
+      "y"
+    ],
+    "CONFIG_NAMESPACES": [
+      "y"
+    ],
+    "CONFIG_USER_NS": [
+      "y"
+    ],
+    "CONFIG_PID_NS": [
+      "y"
+    ],
+    "CONFIG_NET_NS": [
+      "y"
+    ],
+    "CONFIG_OVERLAY_FS": [
+      "m"
+    ],
+    "CONFIG_BRIDGE": [
+      "m"
+    ],
+    "CONFIG_BRIDGE_NETFILTER": [
+      "m"
+    ],
+    "CONFIG_NF_TABLES": [
+      "m"
+    ],
+    "CONFIG_VETH": [
+      "m"
+    ],
+    "CONFIG_TUN": [
+      "m"
+    ],
+    "CONFIG_WIREGUARD": [
+      "m"
+    ],
+    "CONFIG_PCI_P2PDMA": [
+      "y"
+    ],
+    "CONFIG_PCI_ATS": [
+      "y"
+    ],
+    "CONFIG_PCI_PRI": [
+      "y"
+    ],
+    "CONFIG_PCI_PASID": [
+      "y"
+    ],
+    "CONFIG_HSA_AMD_SVM": [
+      "y"
+    ],
+    "CONFIG_HSA_AMD_P2P": [
+      "y"
+    ],
+    "CONFIG_HMM_MIRROR": [
+      "y"
+    ],
+    "CONFIG_DEVICE_PRIVATE": [
+      "y"
+    ],
+    "CONFIG_ZONE_DEVICE": [
+      "y"
+    ],
+    "CONFIG_MIGRATION": [
+      "y"
+    ],
+    "CONFIG_MMU_NOTIFIER": [
+      "y"
+    ],
+    "CONFIG_DMA_SHARED_BUFFER": [
+      "y"
+    ],
+    "CONFIG_DMABUF_HEAPS": [
+      "y"
+    ],
+    "CONFIG_PCIEAER": [
+      "y"
+    ],
+    "CONFIG_PCIE_DPC": [
+      "y"
+    ],
+    "CONFIG_HOTPLUG_PCI": [
+      "y"
+    ],
+    "CONFIG_CPU_FREQ": [
+      "y"
+    ],
+    "CONFIG_CPU_FREQ_GOV_SCHEDUTIL": [
+      "y"
+    ],
+    "CONFIG_SCHED_SMT": [
+      "y"
+    ],
+    "CONFIG_SCHED_MC": [
+      "y"
+    ],
+    "CONFIG_NUMA": [
+      "y"
+    ],
+    "CONFIG_PREEMPT_DYNAMIC": [
+      "y"
+    ],
+    "CONFIG_PERF_EVENTS": [
+      "y"
+    ],
+    "CONFIG_PERF_EVENTS_AMD_UNCORE": [
+      "m"
+    ],
+    "CONFIG_PERF_EVENTS_AMD_POWER": [
+      "m"
+    ],
+    "CONFIG_KPROBES": [
+      "y"
+    ],
+    "CONFIG_UPROBES": [
+      "y"
+    ],
+    "CONFIG_KPROBE_EVENTS": [
+      "y"
+    ],
+    "CONFIG_UPROBE_EVENTS": [
+      "y"
+    ],
+    "CONFIG_FTRACE": [
+      "y"
+    ],
+    "CONFIG_FUNCTION_TRACER": [
+      "y"
+    ],
+    "CONFIG_FUNCTION_GRAPH_TRACER": [
+      "y"
+    ],
+    "CONFIG_DEBUG_INFO_BTF": [
+      "y"
+    ],
+    "CONFIG_DEBUG_INFO_BTF_MODULES": [
+      "y"
+    ],
+    "CONFIG_BPF_JIT": [
+      "y"
+    ],
+    "CONFIG_BPF_UNPRIV_DEFAULT_OFF": [
+      "y"
+    ],
+    "CONFIG_PSI": [
+      "y"
+    ],
+    "CONFIG_IO_URING": [
+      "y"
+    ],
+    "CONFIG_AIO": [
+      "y"
+    ],
+    "CONFIG_SECCOMP": [
+      "y"
+    ],
+    "CONFIG_SECCOMP_FILTER": [
+      "y"
+    ],
+    "CONFIG_CGROUP_SCHED": [
+      "y"
+    ],
+    "CONFIG_CFS_BANDWIDTH": [
+      "y"
+    ],
+    "CONFIG_CGROUP_PIDS": [
+      "y"
+    ],
+    "CONFIG_CGROUP_HUGETLB": [
+      "y"
+    ],
+    "CONFIG_CGROUP_DEVICE": [
+      "y"
+    ],
+    "CONFIG_CGROUP_CPUACCT": [
+      "y"
+    ],
+    "CONFIG_CGROUP_BPF": [
+      "y"
+    ],
+    "CONFIG_CGROUP_PERF": [
+      "y"
+    ],
+    "CONFIG_UTS_NS": [
+      "y"
+    ],
+    "CONFIG_IPC_NS": [
+      "y"
+    ],
+    "CONFIG_TIME_NS": [
+      "y"
+    ],
+    "CONFIG_POSIX_MQUEUE": [
+      "y"
+    ],
+    "CONFIG_NETFILTER_XTABLES": [
+      "m"
+    ],
+    "CONFIG_NF_CONNTRACK": [
+      "m"
+    ],
+    "CONFIG_NF_NAT": [
+      "m"
+    ],
+    "CONFIG_NF_NAT_MASQUERADE": [
+      "y"
+    ],
+    "CONFIG_NFT_MASQ": [
+      "m"
+    ],
+    "CONFIG_NFT_CT": [
+      "m"
+    ],
+    "CONFIG_NFT_COMPAT": [
+      "m"
+    ],
+    "CONFIG_NETFILTER_XT_MATCH_CONNTRACK": [
+      "m"
+    ],
+    "CONFIG_NETFILTER_XT_MATCH_COMMENT": [
+      "m"
+    ],
+    "CONFIG_NETFILTER_XT_MATCH_MULTIPORT": [
+      "m"
+    ],
+    "CONFIG_NETFILTER_XT_TARGET_MASQUERADE": [
+      "m"
+    ],
+    "CONFIG_IP_NF_IPTABLES": [
+      "m"
+    ],
+    "CONFIG_IP_NF_FILTER": [
+      "m"
+    ],
+    "CONFIG_IP_NF_NAT": [
+      "m"
+    ],
+    "CONFIG_IP6_NF_IPTABLES": [
+      "m"
+    ],
+    "CONFIG_IP6_NF_FILTER": [
+      "m"
+    ],
+    "CONFIG_IP6_NF_NAT": [
+      "m"
+    ],
+    "CONFIG_IP_SET": [
+      "m"
+    ],
+    "CONFIG_VXLAN": [
+      "m"
+    ],
+    "CONFIG_FUSE_FS": [
+      "y"
+    ],
+    "CONFIG_TMPFS": [
+      "y"
+    ],
+    "CONFIG_TMPFS_POSIX_ACL": [
+      "y"
+    ],
+    "CONFIG_TMPFS_XATTR": [
+      "y"
+    ],
+    "CONFIG_DEVTMPFS": [
+      "y"
+    ],
+    "CONFIG_BLK_DEV_INITRD": [
+      "y"
+    ],
+    "CONFIG_RD_ZSTD": [
+      "y"
+    ],
+    "CONFIG_RD_GZIP": [
+      "y"
+    ],
+    "CONFIG_EFIVAR_FS": [
+      "y"
+    ],
+    "CONFIG_EFI_PARTITION": [
+      "y"
+    ],
+    "CONFIG_BLK_DEV_DM": [
+      "m"
+    ],
+    "CONFIG_DM_BUFIO": [
+      "m"
+    ],
+    "CONFIG_CRYPTO_XTS": [
+      "y"
+    ],
+    "CONFIG_CRYPTO_SHA256": [
+      "y"
+    ],
+    "CONFIG_TCG_TPM": [
+      "y"
+    ],
+    "CONFIG_TCG_CRB": [
+      "y"
+    ],
+    "CONFIG_TCG_TIS": [
+      "y"
+    ],
+    "CONFIG_TCG_TIS_SPI": [
+      "m"
+    ],
+    "CONFIG_KEYBOARD_ATKBD": [
+      "y"
+    ],
+    "CONFIG_INPUT_EVDEV": [
+      "y"
+    ],
+    "CONFIG_INPUT_UINPUT": [
+      "m"
+    ],
+    "CONFIG_UHID": [
+      "m"
+    ],
+    "CONFIG_HIDRAW": [
+      "y"
+    ],
+    "CONFIG_NTSYNC": [
+      "m"
+    ],
+    "CONFIG_IA32_EMULATION": [
+      "y"
+    ],
+    "CONFIG_DRM_VKMS": [
+      "m"
+    ],
+    "CONFIG_DRM_SIMPLEDRM": [
+      "y"
+    ],
+    "CONFIG_FRAMEBUFFER_CONSOLE": [
+      "y"
+    ],
+    "CONFIG_SND_USB_AUDIO": [
+      "m"
+    ],
+    "CONFIG_USB_STORAGE": [
+      "m"
+    ],
+    "CONFIG_USB_UAS": [
+      "m"
+    ],
+    "CONFIG_NVMEM": [
+      "y"
+    ],
+    "CONFIG_HWMON": [
+      "y"
+    ],
+    "CONFIG_EDAC": [
+      "y"
+    ],
+    "CONFIG_X86_MCE_AMD": [
+      "y"
+    ],
+    "CONFIG_X86_MSR": [
+      "y"
+    ],
+    "CONFIG_MEMORY_FAILURE": [
+      "y"
+    ],
+    "CONFIG_RAS": [
+      "y"
+    ],
+    "CONFIG_ACPI_APEI": [
+      "y"
+    ],
+    "CONFIG_ACPI_APEI_GHES": [
+      "y"
+    ],
+    "CONFIG_SECURITY_LOCKDOWN_LSM": [
+      "y"
+    ],
+    "CONFIG_INTEGRITY": [
+      "y"
+    ],
+    "CONFIG_SECURITY_APPARMOR": [
+      "y"
+    ],
+    "CONFIG_SECURITY_SELINUX": [
+      "y"
+    ],
+    "CONFIG_DRM_I915": [
+      "n"
+    ],
+    "CONFIG_DRM_XE": [
+      "n"
+    ],
+    "CONFIG_DRM_NOUVEAU": [
+      "n"
+    ],
+    "CONFIG_DRM_RADEON": [
+      "n"
+    ],
+    "CONFIG_INTEL_RAPL_CORE": [
+      "m"
+    ],
+    "CONFIG_INTEL_RAPL": [
+      "m"
+    ],
+    "CONFIG_SENSORS_SPD5118": [
+      "m"
+    ],
+    "CONFIG_SENSORS_NCT6775": [
+      "m"
+    ],
+    "CONFIG_GIGABYTE_WMI": [
+      "m"
+    ],
+    "CONFIG_NETFILTER_XT_MATCH_PHYSDEV": [
+      "m"
+    ],
+    "CONFIG_IP_SET_HASH_IP": [
+      "m"
+    ],
+    "CONFIG_NETFILTER_XT_TARGET_MARK": [
+      "m"
+    ],
+    "CONFIG_IP_NF_TARGET_REJECT": [
+      "m"
+    ],
+    "CONFIG_IP6_NF_TARGET_REJECT": [
+      "m"
+    ],
+    "CONFIG_BINFMT_MISC": [
+      "y"
+    ],
+    "CONFIG_PCI_IOV": [
+      "y"
+    ],
+    "CONFIG_HUGETLBFS": [
+      "y"
+    ],
+    "CONFIG_TRANSPARENT_HUGEPAGE": [
+      "y"
+    ],
+    "CONFIG_SYSVIPC": [
+      "y"
+    ],
+    "CONFIG_CGROUP_FREEZER": [
+      "y"
+    ],
+    "CONFIG_CGROUP_RDMA": [
+      "y"
+    ]
+  },
+  "required_modules": [
+    "aesni_intel",
+    "ahci",
+    "amd64_edac",
+    "amdgpu",
+    "ath12k",
+    "ath12k_wifi7",
+    "atlantic",
+    "br_netfilter",
+    "bridge",
+    "ccp",
+    "corsair_psu",
+    "dm_bufio",
+    "dm_crypt",
+    "gigabyte_wmi",
+    "i2c_piix4",
+    "intel_rapl_common",
+    "intel_rapl_msr",
+    "ip6table_filter",
+    "ip6table_nat",
+    "ip_set",
+    "ip_set_hash_ip",
+    "iptable_filter",
+    "iptable_nat",
+    "k10temp",
+    "kvm_amd",
+    "md_mod",
+    "nct6775",
+    "nf_conntrack",
+    "nf_nat",
+    "nf_tables",
+    "nft_compat",
+    "nft_ct",
+    "nft_masq",
+    "ntsync",
+    "nvme",
+    "overlay",
+    "raid0",
+    "snd_hda_intel",
+    "snd_usb_audio",
+    "spd5118",
+    "thunderbolt",
+    "tpm_tis_spi",
+    "tun",
+    "uas",
+    "uhid",
+    "uinput",
+    "usb_storage",
+    "veth",
+    "vfat",
+    "vfio_pci",
+    "vkms",
+    "vxlan",
+    "wireguard",
+    "xfs",
+    "xhci_pci",
+    "xt_MASQUERADE",
+    "xt_comment",
+    "xt_conntrack",
+    "xt_mark",
+    "xt_multiport",
+    "xt_physdev"
+  ]
+}
