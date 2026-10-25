@@ -21,7 +21,9 @@ jobs:
       - name: Distribution prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y jq ripgrep ruby libarchive-tools build-essential unzip nftables python-is-python3
+          sudo apt-get install --no-install-recommends -y jq ripgrep ruby libarchive-tools build-essential unzip nftables python-is-python3 libxml2-utils restic man-db
+          xmllint --version
+          man --where restic
           mkdir -p test-results/ci
           dpkg-query -W > test-results/ci/distribution-packages.txt
       - name: Pinned validation environment
@@ -39,7 +41,9 @@ jobs:
           sudo install -Dm755 templates/workstation/restic/workstation-restic /usr/lib/arch-workstation-backup/run
           sudo install -Dm755 "$RUNNER_TEMP/workstation-tools/bin/grafana-alloy" /usr/bin/grafana-alloy
       - name: Required strict checks
-        run: make check-strict
+        # setup-python exports both variables on Linux. The ROCm fixtures require
+        # an unmodified compiler search environment; their rejection guard stays on.
+        run: env -u LD_LIBRARY_PATH -u PKG_CONFIG_PATH make check-strict
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:

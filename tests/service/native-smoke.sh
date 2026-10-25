@@ -34,9 +34,35 @@ run_stage() {
   fi
 }
 cleanup() {
-  local status=$? service identifier metadata cleanup_status
+  local status=$? service identifier metadata cleanup_status mode name value extra rows
   trap - EXIT
   set +e
+  # The caller-UID client owns these 0600 files. Validate every exported field;
+  # never copy its key store, raw responses, exception text or private logs.
+  for mode in initial restart; do
+    [[ -f $SMOKE_DIRECTORY/state/checkpoints-$mode.tsv && ! -L $SMOKE_DIRECTORY/state/checkpoints-$mode.tsv ]] || continue
+    rows=0
+    while IFS=$'\t' read -r name value extra; do
+      ((++rows <= 512)) || break
+      [[ -z $extra ]] || continue
+      case $name in
+        startup | activate | restart-load | restart-valid | restart-revoked | restart-chat | \
+          user-create | valid-key | revoked-key | self-primary | self-secondary | cross-user | expired-key | expired-model | \
+          invalid-key | chat | model-list | stream | tool-call | tool-usage | tool-result | \
+          switch-model | wrong-model | reset-model | rpm-key | rpm-first | rpm-limit | \
+          tpm-key | tpm-first | tpm-limit | concurrency-slow | concurrency-overlap | \
+          concurrency-complete | disconnect-stream | cancel-backend | cancel-admission | \
+          cancel-complete | backend-unavailable | backend-no-retry | revoke-key | \
+          revoked-model | draining | maintenance | save-keys | result) ;;
+        *) continue ;;
+      esac
+      case $value in
+        start | pass | fail | transport | [1-5][0-9][0-9])
+          printf 'client-%s-%s\t%s\n' "$mode" "$name" "$value" >>"$evidence/summary.tsv"
+          ;;
+      esac
+    done <"$SMOKE_DIRECTORY/state/checkpoints-$mode.tsv"
+  done
   if ((cleanup_needed)); then
     for service in gateway-postgres sglang gateway; do
       identifier=$(timeout --kill-after=1s 5s "${compose[@]}" ps --all --quiet "$service" 2>/dev/null)
