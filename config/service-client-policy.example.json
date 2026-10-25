@@ -1,0 +1,9 @@
+{
+  "user_id": "replace-with-exact-webui-user-id",
+  "client": "ide",
+  "models": ["Qwen3.8-27B-FP8"],
+  "rpm": 20,
+  "tpm": 65536,
+  "concurrency": 1,
+  "days": 30
+}

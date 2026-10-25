@@ -46,3 +46,18 @@ The source export selects Qwen Code 0.23.2 /
 compares complete native bundles and rejects stale pins. This does not authorize
 changes to root-owned installed runtime manifests or owner-reviewed executable
 hashes.
+
+## Shared-service admission extension
+
+`SESSION_SERVICE_ENABLED=true` adds the image Deployment UID and private gateway
+admission updates to the same session lock. `split` requires the qualified
+one-GPU Qwen3.5-9B template plus a qualified one-GPU image template and combined
+capacity. The requested model never changes automatically. Requests during
+starting/draining/unavailable return a bounded refusal. An image request in the
+dual-GPU large-model mode is unavailable; it never waits for an implicit switch.
+
+The external Bridge v1 operation catalog has not been changed in this repository.
+Its existing mode allowlist must continue rejecting `split` until the Bridge
+owner separately qualifies that catalog/template combination. The explicit host
+CLI supports the extension under the existing canonical policy; ordinary API
+keys cannot invoke it. Do not repurpose the Bridge as an inference proxy.

@@ -1,0 +1,57 @@
+groups:
+  - name: workstation-service
+    rules:
+      - alert: WorkstationServiceMaintenance
+        expr: workstation_service_phase{phase="maintenance"} == 1
+        labels: {severity: info}
+        annotations: {summary: 'Inference intentionally stopped by the session owner'}
+      - alert: WorkstationModelUnavailable
+        expr: 'workstation_service_phase{phase="unavailable"} == 1 or workstation_service_phase{phase="starting"} == 1'
+        for: 40m
+        labels: {severity: warning}
+        annotations: {summary: 'Model remains unavailable beyond the qualified startup window'}
+      - alert: WorkstationModelErrors
+        expr: 'sum(rate(workstation_service_requests_total{result="backend_error"}[5m])) > 0.1'
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: 'Sustained model request failures; inspect backend readiness'}
+      - alert: WorkstationGatewayMissing
+        expr: 'up{job="workstation-service"} == 0 or absent(up{job="workstation-service"})'
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: 'Shared gateway is unreachable; this is independent of model maintenance'}
+      - alert: WorkstationDatabaseUnavailable
+        expr: 'kube_deployment_status_replicas_available{namespace="ai-home-lab",deployment="gateway-postgres"} < 1'
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: 'Persistent gateway database has no available replica'}
+      - alert: WorkstationBackupStale
+        expr: 'time() - workstation_service_backup_last_success_seconds > 172800 or absent(workstation_service_backup_last_success_seconds)'
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: 'No successful encrypted off-site service backup within 48 hours'}
+      - alert: WorkstationBackupFailed
+        expr: workstation_service_backup_last_attempt_failed == 1
+        for: 1m
+        labels: {severity: warning}
+        annotations: {summary: 'Off-site backup failed; inspect replication journal independently of local backup'}
+      - alert: WorkstationLocalBackupStale
+        expr: 'workstation_service_backup_local_enabled == 1 and (time() - workstation_service_backup_local_last_success_seconds > 172800)'
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: 'Local SSD backup is older than 48 hours; S3 success does not qualify the local copy'}
+      - alert: WorkstationLocalBackupFailed
+        expr: 'workstation_service_backup_local_enabled == 1 and workstation_service_backup_local_last_attempt_failed == 1'
+        for: 1m
+        labels: {severity: warning}
+        annotations: {summary: 'Local SSD backup failed; inspect mount identity, capture journal and explicit resume procedure'}
+      - alert: WorkstationServiceSaturated
+        expr: 'sum(rate(workstation_service_requests_total{result="limited"}[5m])) > 0.1'
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: 'Requests exceed bounded service admission; no unbounded queue is enabled'}
+      - alert: WorkstationRequestStuck
+        expr: workstation_service_oldest_request_seconds > 185
+        for: 1m
+        labels: {severity: warning}
+        annotations: {summary: 'A request exceeded the gateway deadline; inspect cancellation cleanup'}

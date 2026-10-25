@@ -1,0 +1,32 @@
+# Install through the existing K3s HelmChartConfig mechanism after site review.
+# ServiceLB remains disabled; one private NodePort is the exposure method.
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    service:
+      type: NodePort
+      spec:
+        externalTrafficPolicy: Local
+    ports:
+      web:
+        expose:
+          default: false
+      websecure:
+        nodePort: 32443
+        transport:
+          respondingTimeouts:
+            readTimeout: 30s
+            writeTimeout: 240s
+            idleTimeout: 240s
+    logs:
+      access:
+        enabled: false
+    ingressRoute:
+      dashboard:
+        enabled: false
+    additionalArguments:
+      - --entryPoints.websecure.forwardedHeaders.insecure=false

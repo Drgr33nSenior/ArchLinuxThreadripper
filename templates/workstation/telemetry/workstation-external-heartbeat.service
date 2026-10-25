@@ -1,0 +1,16 @@
+[Unit]
+Description=Independent workstation HTTPS availability check (install on another device)
+
+[Service]
+Type=oneshot
+DynamicUser=yes
+LoadCredential=observer-config:/etc/workstation-observer/config.json
+LoadCredential=observer-webhook:/etc/workstation-observer/webhook
+# config webhook_file must name /run/credentials/workstation-external-heartbeat.service/observer-webhook
+ExecStart=/usr/bin/python /usr/lib/arch-workstation-bootstrap/lib/workstation/service_heartbeat.py %d/observer-config --notify
+TimeoutStartSec=25
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+RestrictAddressFamilies=AF_INET AF_INET6

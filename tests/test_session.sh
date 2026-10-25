@@ -186,3 +186,34 @@ grep -q 'canonical session policy' "$work/failure.log"
 WORKSTATION_SESSION_LOCK_FD=4 expect_failure ws_session_switch maintenance "$work/fixture.json" "$work/state" --execute
 grep -q 'canonical lock' "$work/failure.log"
 printf 'session fixture tests passed (no cluster or hardware execution)\n'
+
+# Optional shared service uses the same lock, UID checks and failure journal.
+set_document "$work/api/sglang.json" '.metadata.uid="sglang-uid"'
+SESSION_SERVICE_ENABLED=true
+SESSION_IMAGE_DEPLOYMENT=swarmui
+SESSION_SERVICE_CONTROL_FILE=/fixture/gateway-control-key
+cp "$work/api/parent-steam-headless.json" "$work/api/swarmui.json"
+set_document "$work/api/swarmui.json" '.metadata.name="swarmui" | .metadata.uid="swarmui-uid" | .spec.replicas=0 | .spec.template.spec.containers[0].resources={requests:{cpu:"12",memory:"12Gi","amd.com/gpu":1},limits:{cpu:"12",memory:"12Gi","amd.com/gpu":1}}'
+ws_session_service_model() { printf 'Qwen3.5-9B\n'; }
+ws_session_service() { printf '%s\n' "$*" >>"$work/service-phases"; }
+ws_session_switch split "$work/fixture.json" "$work/state" --execute
+[[ $(jq -r .spec.replicas "$work/api/sglang.json") == 1 && $(jq -r .spec.replicas "$work/api/swarmui.json") == 1 ]]
+grep -Fxq 'ready Qwen3.5-9B true' "$work/service-phases"
+touch "$work/locked"
+count=$(wc -l <"$work/scale.log")
+expect_failure ws_session_switch maintenance "$work/fixture.json" "$work/state" --execute
+[[ $(wc -l <"$work/scale.log") == "$count" ]]
+rm "$work/locked"
+touch "$work/fail-rollout"
+expect_failure ws_session_switch split "$work/fixture.json" "$work/state" --execute
+jq -e '.phase=="failed" and .image_uid=="swarmui-uid"' "$work/state/state.json" >/dev/null
+[[ $(jq -r .spec.replicas "$work/api/swarmui.json") == 0 ]]
+grep -Fxq unavailable "$work/service-phases"
+rm "$work/fail-rollout"
+ws_session_switch maintenance "$work/fixture.json" "$work/state" --execute
+[[ $(jq -r .spec.replicas "$work/api/sglang.json") == 0 && $(jq -r .spec.replicas "$work/api/swarmui.json") == 0 ]]
+ws_session_service_model() { printf 'Qwen3.8-27B-FP8\n'; }
+count=$(wc -l <"$work/scale.log")
+expect_failure ws_session_switch split "$work/fixture.json" "$work/state" --execute
+[[ $(wc -l <"$work/scale.log") == "$count" ]]
+printf 'shared service split/drain/failure fixture tests passed\n'

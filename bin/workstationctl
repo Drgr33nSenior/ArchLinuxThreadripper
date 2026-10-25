@@ -25,12 +25,22 @@ Commands:
   ccache configure|stats|cleanup|test
   hardware collect <new-output-directory>
   resources plan <hardware.json> <new-output-directory> [versions.lock]
+  service render <site.json> <new-output-directory> [--mode large|split] [--existing-claims <pvc.json>]
+  service plan <resource-plan.json> <service-render> <telemetry-render> <new-output-directory> [--build-mib N --build-cpus N --vm-mib N --vm-cpus N]
+  service credentials <new-directory-outside-checkout>
+  service provision|revoke|browser-bind <options; see docs/AI-SERVICE.md>
+  service notifications <telemetry-render> <new-output-directory> --receiver-cidr <IP/CIDR> --receiver-port <port>
+  service-backup capture <policy.json> --execute [--baseline] [--local-first]
+  service-backup replicate <policy.json> <capture-directory> --execute
+  service-backup verify <capture-directory>
+  service-backup restore-stage <capture-directory> <new-isolated-directory>
+  service-backup inventory-model <model-id> <materialized-model-directory> <new-inventory.json>
   telemetry render <new-output-directory> [apps/overlays/profile]
   telemetry verify <rendered-directory>
   telemetry plan <resource-plan.json> <rendered-directory> <new-output-directory>
   telemetry status                      (read-only local monitoring readiness)
-  session plan <ai|gaming|maintenance>
-  session switch <ai|gaming|maintenance> <hardware.json> <state-directory> --execute
+  session plan <ai|split|gaming|maintenance>
+  session switch <ai|split|gaming|maintenance> <hardware.json> <state-directory> --execute
   session restore <hardware.json> <state-directory> --execute
   session status <state-directory>
   sunshine profile <new-output-directory>
@@ -174,6 +184,14 @@ main() {
       (($# == 4 || $# == 5)) || return 2
       shift 2
       ws_resources_plan "$@"
+      ;;
+    service:render | service:plan | service:credentials | service:provision | service:revoke | service:browser-bind | service:notifications)
+      shift
+      "$(ws_measure_python)" "$repo_root/lib/workstation/service.py" "$@"
+      ;;
+    service-backup:capture | service-backup:replicate | service-backup:verify | service-backup:restore-stage | service-backup:inventory-model)
+      shift
+      "$(ws_measure_python)" "$repo_root/lib/workstation/service_backup.py" "$@"
       ;;
     telemetry:render)
       (($# == 3 || $# == 4)) || return 2

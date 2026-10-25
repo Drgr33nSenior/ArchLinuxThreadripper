@@ -1,0 +1,28 @@
+[Unit]
+Description=Copy the exact committed local service snapshot off-site (%i)
+Documentation=file:/usr/lib/arch-workstation-bootstrap/docs/SERVICE-RECOVERY.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+LoadCredentialEncrypted=restic_repository:/etc/credstore.encrypted/workstation-restic-repository.cred
+LoadCredentialEncrypted=restic_password:/etc/credstore.encrypted/workstation-restic-password.cred
+LoadCredentialEncrypted=aws_credentials:/etc/credstore.encrypted/workstation-restic-aws.cred
+LoadCredentialEncrypted=restic_local_password:/etc/credstore.encrypted/workstation-restic-local-password.cred
+ExecStart=/usr/bin/python /usr/lib/arch-workstation-bootstrap/lib/workstation/service_backup.py replicate /etc/workstation/service-backup.json /var/lib/workstation-service-backup/%i --execute
+ExecStopPost=/usr/bin/python /usr/lib/arch-workstation-bootstrap/lib/workstation/service_backup.py record-result --stage offsite
+TimeoutStartSec=3h
+Nice=10
+CPUWeight=20
+IOWeight=20
+NoNewPrivileges=yes
+ProtectClock=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+RestrictSUIDSGID=yes
+# After explicit verified owner resume, start with the capture directory's safe
+# basename as the instance. This unit never takes the host session lock or
+# changes workloads. Restic copy uses repository locks and retries the same ID.

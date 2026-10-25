@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "status": "candidate-not-built-or-qualified",
+  "swarm": {"version": "0.9.8-Beta", "repository": "https://github.com/mcmonkeyprojects/SwarmUI", "commit": "ec823c3f750ce9b5103e623f3ad9918d02b8ddde"},
+  "comfy": {"version": "v0.42.1", "repository": "https://github.com/Comfy-Org/ComfyUI", "commit": "63be2f9b82ad0dac88a7ceaa28a9cf3154125a18"},
+  "rocm_image": "docker.io/rocm/sgl-dev:v0.5.15.post1-ubuntu24.04-py3.14-rocm10.0.0@sha256:51f63a2d201ca944a43b8f1a18ac7da73ed9f6743c45bb82bbc40b44e6cf18d2",
+  "dotnet_sdk_image": "mcr.microsoft.com/dotnet/sdk:8.0.426-bookworm-slim@sha256:d344d0c2551d7ebab37feeaf88fa170bc5f343241a5271fdbc06abde515e9290",
+  "model": {"repository": "stabilityai/stable-diffusion-xl-base-1.0", "revision": "462165984030d82259a11f4367a4eed129e94a7b", "file": "sd_xl_base_1.0.safetensors", "sha256": "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b", "license": "openrail++", "mount": "/SwarmUI/Models/Stable-Diffusion/OfficialStableDiffusion/sd_xl_base_1.0.safetensors"},
+  "custom_nodes": [{"source": "SwarmUI/src/BuiltinExtensions/ComfyUIBackend/ExtraNodes", "commit": "ec823c3f750ce9b5103e623f3ad9918d02b8ddde", "required_class": "SwarmSaveImageWS"}],
+  "workflow": "apps/base/shared-api/sdxl-workflow.json",
+  "node_mapping": {"prompt": "2.inputs.text", "width": "4.inputs.width", "height": "4.inputs.height", "seed": "5.inputs.seed"},
+  "required_staging": ["clean pinned SwarmUI and ComfyUI trees", "SwarmUI locked NuGet package closure", "ROCm-image-compatible Python wheelhouse and hash-pinned full requirements.lock"],
+  "qualification": ["offline build", "no runtime installs", "one self-started backend", "fixed workflow generation and cancellation", "artifact ownership after restart", "one R9700 peak VRAM/RAM and image quality"]
+}

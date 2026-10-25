@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: open-webui}
+spec:
+  template:
+    spec:
+      containers:
+        - name: open-webui
+          env:
+            - {name: OPENAI_API_BASE_URL, value: 'http://litellm:4000/webui/v1'}
+            - name: OPENAI_API_KEY
+              value: null
+              valueFrom:
+                secretKeyRef: {name: webui-gateway-connection, key: service-key}
+            - {name: ENABLE_FORWARD_USER_INFO_HEADERS, value: 'true'}
+            - {name: ENABLE_DIRECT_CONNECTIONS, value: 'false'}
+            - {name: ENABLE_API_KEYS, value: 'true'}
+            - {name: ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS, value: 'true'}
+            - {name: API_KEYS_ALLOWED_ENDPOINTS, value: '/api/v1/auths/,/api/v1/retrieval/query/collection,/api/v1/files'}
+            - {name: ENABLE_IMAGE_GENERATION, value: 'true'}
+            - {name: IMAGE_GENERATION_ENGINE, value: openai}
+            - {name: IMAGES_OPENAI_API_BASE_URL, value: 'http://service-tools:8000/webui'}
+            - name: IMAGES_OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef: {name: webui-gateway-connection, key: service-key}
+            - {name: IMAGE_GENERATION_MODEL, value: workstation-sdxl}
+            - {name: IMAGE_SIZE, value: 1024x1024}
+            - {name: ENABLE_IMAGE_EDIT, value: 'false'}
+            - {name: ENABLE_COMMUNITY_SHARING, value: 'false'}
+            - {name: ENABLE_EVALUATION_ARENA_MODELS, value: 'false'}

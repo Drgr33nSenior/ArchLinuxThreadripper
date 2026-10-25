@@ -202,6 +202,28 @@ reject ws_agent_launch "$work/https-bundle" qwen cli
 grep -Fxq 'KEY_LENGTH=14' "$work/client-env"
 if grep -Rq 'fixture-secret' "$work/https-bundle"; then exit 1; fi
 
+# Read-only retrieval uses the normal HTTPS endpoint and a separate user key.
+sed 's|^AGENT_RETRIEVAL_ENABLED=.*|AGENT_RETRIEVAL_ENABLED=true|' "$work/https.conf" >"$work/retrieval.conf"
+"$root/bin/workstationctl" --config "$work/retrieval.conf" agent configure "$work/retrieval-bundle" >/dev/null
+# shellcheck disable=SC2016 # Preserve the native environment expansion syntax.
+jq -e '.mcpServers.workstationKnowledge.httpUrl == "https://agents.example.test/mcp" and
+  .mcpServers.workstationKnowledge.headers.Authorization == "Bearer ${WORKSTATION_RETRIEVAL_API_KEY}" and
+  .mcpServers.workstationKnowledge.trust == false and
+  .mcpServers.workstationKnowledge.includeTools == ["retrieve_project_passage"]' \
+  "$work/retrieval-bundle/qwen/settings.json" >/dev/null
+(
+  WORKSTATION_AGENT_API_KEY=fixture-secret
+  export WORKSTATION_AGENT_API_KEY
+  unset WORKSTATION_RETRIEVAL_API_KEY
+  reject ws_agent_launch "$work/retrieval-bundle" qwen cli
+  WORKSTATION_RETRIEVAL_API_KEY=fixture-retrieval-secret
+  export WORKSTATION_RETRIEVAL_API_KEY
+  ws_agent_launch "$work/retrieval-bundle" qwen cli
+) >/dev/null
+if grep -Rq 'fixture-retrieval-secret' "$work/retrieval-bundle"; then exit 1; fi
+sed 's|^AGENT_RETRIEVAL_ENABLED=.*|AGENT_RETRIEVAL_ENABLED=true|' "$work/agent.conf" >"$work/loopback-retrieval.conf"
+reject "$root/bin/workstationctl" --config "$work/loopback-retrieval.conf" agent configure "$work/unsafe-retrieval"
+
 # Client failure is returned as-is, never retried through a second harness.
 ws_agent_exec() {
   printf '%s\n' "$1" >>"$work/failed-client-calls"

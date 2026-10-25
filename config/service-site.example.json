@@ -1,0 +1,11 @@
+{
+  "environment": "",
+  "context": "",
+  "node": "",
+  "node_address": "",
+  "management_cidr": "",
+  "client_cidrs": [],
+  "webui_host": "",
+  "api_host": "",
+  "tls_secret": "ai-home-lab-tls"
+}

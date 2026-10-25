@@ -1,0 +1,27 @@
+[Unit]
+Description=Quiesce and capture bare-metal K3s and shared AI application state
+Documentation=file:/usr/lib/arch-workstation-bootstrap/docs/SERVICE-RECOVERY.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+LoadCredentialEncrypted=restic_repository:/etc/credstore.encrypted/workstation-restic-repository.cred
+LoadCredentialEncrypted=restic_password:/etc/credstore.encrypted/workstation-restic-password.cred
+LoadCredentialEncrypted=aws_credentials:/etc/credstore.encrypted/workstation-restic-aws.cred
+ExecStart=/usr/bin/python /usr/lib/arch-workstation-bootstrap/lib/workstation/service_backup.py capture /etc/workstation/service-backup.json --execute
+ExecStopPost=/usr/bin/python /usr/lib/arch-workstation-bootstrap/lib/workstation/service_backup.py record-result
+TimeoutStartSec=3h
+Nice=10
+CPUWeight=20
+IOWeight=20
+# This owner-started unit deliberately stops workloads and K3s. It is separate
+# from the existing read-only host Restic unit, whose sandbox is unchanged.
+NoNewPrivileges=yes
+ProtectClock=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+RestrictSUIDSGID=yes
+# No timer: capture leaves services stopped for explicit, verified resume.

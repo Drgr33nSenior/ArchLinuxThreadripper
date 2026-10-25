@@ -109,7 +109,7 @@ class KernelProfileTests(unittest.TestCase):
         output, _ = self.capture("workload-features")
         good = kernel_profile.parse_config((output / "current.config").read_text())
         # Independent regression list: generic HSA/P2PDMA is not sufficient.
-        required = ("CONFIG_HSA_AMD_P2P", "CONFIG_PCI_P2PDMA", "CONFIG_HSA_AMD_SVM",
+        required = ("CONFIG_HSA_AMD_P2P", "CONFIG_PCI_P2PDMA", "CONFIG_DMA_SHARED_BUFFER", "CONFIG_HSA_AMD_SVM",
                     "CONFIG_VXLAN", "CONFIG_NF_CONNTRACK", "CONFIG_CFS_BANDWIDTH",
                     "CONFIG_SECCOMP_FILTER", "CONFIG_DEBUG_INFO_BTF", "CONFIG_TCG_TPM",
                     "CONFIG_INPUT_UINPUT", "CONFIG_IA32_EMULATION", "CONFIG_NTSYNC")

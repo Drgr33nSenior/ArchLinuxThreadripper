@@ -19,7 +19,13 @@ qualification in [MODELS.md](MODELS.md). The checked-in SGLang Deployment starts
 at zero replicas and remains pending qualification. This guide does not make an
 endpoint available.
 
-The normal client path is a temporary, owner-operated loopback tunnel. It is not
+The shared-service client path is `https://<actual-api-host>:32443/v1`, using a
+revocable per-client virtual key from [AI-SERVICE.md](AI-SERVICE.md). The IDE
+agent runs beside its project files; it needs no kubeconfig or desktop proxy.
+Copy `service render`'s client values into the existing workstation config, then
+regenerate the client bundle below.
+
+The retained operator diagnostic path is a temporary loopback tunnel. It is not
 an Ingress, NodePort, or broad cluster credential. On the client Mac, after the
 workload is qualified and a reviewed Kubernetes context has been selected, run:
 
@@ -37,9 +43,9 @@ make the tunnel work. An owner may instead use a reviewed SSH local tunnel to a
 separately operated port-forward process. Do not expose either tunnel on a LAN
 interface.
 
-An HTTPS endpoint is a separate reviewed design. It requires real authentication
-and an owner-supplied credential. This repository does not add an SGLang Ingress,
-an API token, a Secret, or a credential distribution path.
+The service overlay supplies authenticated HTTPS routes to LiteLLM; SGLang stays
+internal. Master/admin keys never enter a client bundle. Browser conversations,
+IDE sessions and gateway usage records have separate owners and are not synced.
 
 ## Generate a client bundle
 

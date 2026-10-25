@@ -1,0 +1,10 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: [workloads.yaml, storage.yaml, network-policy.yaml]
+configMapGenerator:
+  - name: gateway-runtime
+    files: [boundary.py, gateway_entry.py, service_tools.py, migrate.py, health.py, sdxl-workflow.json]
+  - name: gateway-config
+    files: [litellm.yaml]
+  - name: gateway-postgres-init
+    files: [init-db.sh]

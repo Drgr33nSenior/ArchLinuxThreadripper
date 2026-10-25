@@ -122,7 +122,7 @@ hashes that input into the unqualified candidate. This adds a conservative floor
 only. Omitting the input remains compatible, but does not prove that telemetry
 is absent or make the corresponding capacity available to a model.
 
-On the nominal 64 GiB machine, existing 12 GiB host, 4 GiB K3s and 2 GiB eviction
+Historical lower-memory example: on a nominal 64 GiB machine, existing 12 GiB host, 4 GiB K3s and 2 GiB eviction
 reserves leave 46 GiB. A 38 GiB SGLang pod, 2 GiB WebUI and 6 GiB telemetry
 allowance consume all of that. Firmware-reserved RAM can lower Linux MemTotal:
 a real 64 GiB inventory can correctly fail this plan. Do not round it up or
@@ -133,7 +133,7 @@ SGLang's 16 GiB `/dev/shm` ceiling is inside its 38 GiB pod limit, not extra RAM
 The 38 GiB value is not measured consumption. Use
 [startup and serving evidence](PERFORMANCE-VALIDATION.md#right-size-sglang-host-ram)
 to propose a smaller cap; Grafana averages alone cannot establish a safe limit.
-The RAG overlay's larger WebUI envelope does not fit the same combination.
+The RAG overlay's larger WebUI envelope does not fit that historical combination.
 VMs, builds, games and other deployments are additional demand. The planner
 counts each selected workload at one intended replica even when gated at zero.
 It checks limits, not requests; it does not silently lower model context,
@@ -797,3 +797,30 @@ uncommitted changes. Build a reviewed installer/Bridge pair, test compatibility,
 then use [ISO](ISO.md) for owner signing and assembly. No release pin, signing
 key or runtime executable approval is silently changed. NAS backup/restore,
 signed ISO/UEFI acceptance, gaming input and GPU handover remain separate.
+
+## Shared-service notification extension
+
+The owner now reports 128 GB RAM. Recollect actual memory/topology; a nominal
+128 GiB less the existing 18 GiB reserves gives 110 GiB before firmware reserves.
+`service plan` adds gateway, database, tools and Alertmanager and counts builds
+and VMs explicitly. Existing limits and the telemetry reserve are retained.
+
+`service notifications` composes the verified telemetry render with the pinned
+Alertmanager, rules and exact receiver egress. The destination URL is a separate
+Secret file, never a command-line value. The gateway exports only fixed phase,
+result, active-request and oldest-request metrics. User/request IDs and content
+are excluded. Existing Alloy redaction remains in place. Model-maintenance
+alerts inhibit only model-outage/error notifications; backup failures still alert.
+
+Local SSD capture and off-site replication export separate freshness/failure
+metrics. Legacy backup success remains off-site success; a local snapshot never
+clears an S3 failure. Local freshness alerts require the local-enabled signal,
+so a remote-only configuration does not report a missing SSD. Both backup failure
+routes remain active during model maintenance. Real Prometheus rule fixtures and
+the local Alertmanager receiver test cover that distinction.
+
+Run the HTTPS heartbeat on another device. Before intentionally stopping the
+whole workstation, set its bounded `maintenance_until` (at most four hours);
+a local Alertmanager cannot report total host failure. See
+[rollout and notification acceptance](AI-SERVICE.md) and
+[backup/resume maintenance](SERVICE-RECOVERY.md).

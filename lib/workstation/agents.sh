@@ -7,6 +7,9 @@ ws_agent_config_validate() {
   : "${AGENT_MODEL:=Qwen3.8-27B-FP8}"
   : "${AGENT_CONTEXT_TOKENS:=32768}"
   : "${AGENT_MAX_OUTPUT_TOKENS:=4096}"
+  : "${AGENT_RETRIEVAL_ENABLED:=false}"
+  case $AGENT_RETRIEVAL_ENABLED in true | false) ;; *) ws_die 'AGENT_RETRIEVAL_ENABLED must be true or false' ;; esac
+  [[ $AGENT_RETRIEVAL_ENABLED != true || $AGENT_BASE_URL == https://* ]] || ws_die 'shared retrieval requires the HTTPS service endpoint'
   case $AGENT_HARNESS in qwen | dsh | hermes) ;; *) ws_die 'AGENT_HARNESS must be qwen, dsh or hermes' ;; esac
   # Deliberately narrow API URLs: no credentials, query strings or redirects.
   # Plain HTTP is only for an owner-established loopback tunnel.
@@ -49,9 +52,10 @@ ws_agent_hermes_config() {
 ws_agent_configure() (
   set -euo pipefail
   umask 077
-  local output=$1 qwen_commit dsh_commit hermes_commit qwen_version
+  local output=$1 qwen_commit dsh_commit hermes_commit qwen_version retrieval=''
   common::require_command jq
   ws_agent_config_validate
+  [[ $AGENT_RETRIEVAL_ENABLED != true ]] || retrieval="${AGENT_BASE_URL%/v1}/mcp"
   [[ -n $output && ! -e $output && ! -L $output ]] || ws_die 'agent output directory must not already exist'
   qwen_commit=$(ws_read_lock QWEN_CODE_COMMIT)
   qwen_version=$(ws_read_lock QWEN_CODE_VERSION)
@@ -65,14 +69,18 @@ ws_agent_configure() (
   # JSON is also valid YAML. No evaluation, interpolation of credential values,
   # writes to existing dotfiles, or secondary model services are involved.
   jq -n --arg url "$AGENT_BASE_URL" --arg model "$AGENT_MODEL" \
+    --arg retrieval "$retrieval" \
     --argjson context "$AGENT_CONTEXT_TOKENS" --argjson output "$AGENT_MAX_OUTPUT_TOKENS" \
     '{general:{enableAutoUpdate:false},privacy:{usageStatisticsEnabled:false},telemetry:{enabled:false},
       security:{auth:{selectedType:"openai"},folderTrust:{enabled:true}},
       tools:{approvalMode:"default"},context:{fileName:["AGENTS.md","QWEN.md"]},
       model:{name:$model},modelProviders:{openai:[{id:$model,name:"Workstation local Qwen",
         baseUrl:$url,envKey:"WORKSTATION_AGENT_API_KEY",generationConfig:{contextWindowSize:$context,
-          timeout:120000,streamIdleTimeoutMs:180000,maxRetries:1,
-          samplingParams:{max_tokens:$output}}}]}}' >"$output/qwen/settings.json"
+          timeout:180000,streamIdleTimeoutMs:180000,maxRetries:0,
+          samplingParams:{max_tokens:$output}}}]} } +
+      (if $retrieval=="" then {} else {mcpServers:{workstationKnowledge:{httpUrl:$retrieval,
+        headers:{Authorization:"Bearer ${WORKSTATION_RETRIEVAL_API_KEY}"},trust:false,timeout:35000,
+        includeTools:["retrieve_project_passage"]}}} end)' >"$output/qwen/settings.json"
   jq -n --arg url "$AGENT_BASE_URL" --arg model "$AGENT_MODEL" \
     --argjson context "$AGENT_CONTEXT_TOKENS" --argjson output "$AGENT_MAX_OUTPUT_TOKENS" \
     '{"agent-default-model":{provider:"workstation",model:$model},
@@ -82,13 +90,13 @@ ws_agent_configure() (
   ws_agent_hermes_config "$output/hermes/config.yaml"
   jq -n --arg selected "$AGENT_HARNESS" --arg url "$AGENT_BASE_URL" --arg model "$AGENT_MODEL" \
     --argjson context "$AGENT_CONTEXT_TOKENS" --argjson output "$AGENT_MAX_OUTPUT_TOKENS" \
-    --arg qwen "$qwen_commit" --arg version "$qwen_version" --arg dsh "$dsh_commit" --arg hermes "$hermes_commit" \
+    --arg qwen "$qwen_commit" --arg version "$qwen_version" --arg dsh "$dsh_commit" --arg hermes "$hermes_commit" --arg retrieval "$retrieval" \
     --arg qwen_config "$(common::sha256_file "$output/qwen/settings.json")" \
     --arg dsh_config "$(common::sha256_file "$output/dsh/settings.yaml")" \
     --arg hermes_config "$(common::sha256_file "$output/hermes/config.yaml")" \
     '{schema:1,status:"configured-not-qualified",default_harness:$selected,
       preference_order:["qwen","dsh","hermes"],automatic_fallback:false,
-      base_url:$url,model:$model,context_tokens:$context,max_output_tokens:$output,
+      base_url:$url,model:$model,context_tokens:$context,max_output_tokens:$output,retrieval_url:$retrieval,
       output_limit_support:{qwen:"request",dsh:"request-default",hermes:"unsupported-provider-owned"},
       config_sha256:{qwen:$qwen_config,dsh:$dsh_config,hermes:$hermes_config},
       sources:{qwen:{repository:"https://github.com/QwenLM/qwen-code",commit:$qwen,version:$version},
@@ -155,6 +163,10 @@ ws_agent_launch() {
       .model.base_url == $b.base_url and .model.context_length == $b.context_tokens
     end' "$bundle/$native_file" >/dev/null || ws_die 'native agent route or budget differs from bundle metadata; regenerate the bundle'
   if [[ $AGENT_HARNESS == qwen ]]; then
+    if [[ $(jq -r '.retrieval_url // ""' "$bundle/bundle.json") != '' ]]; then
+      [[ -n ${WORKSTATION_RETRIEVAL_API_KEY:-} ]] || ws_die 'retrieval requires the caller WebUI API key from the credential store'
+      export WORKSTATION_RETRIEVAL_API_KEY
+    fi
     # The pinned client supports a process-local system settings path. Use it
     # to prevent project settings from replacing the reviewed model route, but
     # NEVER override an existing managed/system policy to do so.

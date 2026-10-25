@@ -1,4 +1,7 @@
 # Immutable external-input lock. Refresh values only through a reviewed change.
+# Shared-service image pins live in apps/base/shared-api/workloads.yaml and
+# infrastructure/service/alertmanager.yaml; creative source/assets in
+# infrastructure/creative/runtime.json. See docs/AI-SERVICE.md for feature gates.
 LOCK_FORMAT=1
 LOCK_DATE=2026-10-06
 ALMALINUX_IMAGE_NAME=AlmaLinux-9-GenericCloud-9.8-20260810.x86_64.qcow2

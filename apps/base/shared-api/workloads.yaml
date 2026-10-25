@@ -1,0 +1,181 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway-postgres
+  annotations: {workstation.ai/qualification: pending-service-integration}
+spec:
+  replicas: 0
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app.kubernetes.io/name: gateway-postgres}}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: gateway-postgres}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 120
+      nodeSelector: {kubernetes.io/arch: amd64, kubernetes.io/os: linux}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: postgres
+          image: docker.io/library/postgres:18.6-bookworm@sha256:6b38fe68f2c02cafffbbce7496f76d110d8a947c039bd22c067e9a43c2250240
+          args: [postgres, -c, max_connections=30, -c, shared_buffers=256MB, -c, log_statement=none, -c, log_min_error_statement=panic]
+          env:
+            - {name: POSTGRES_PASSWORD_FILE, value: /run/postgres/admin-password}
+            - {name: POSTGRES_INITDB_ARGS, value: '--auth-host=scram-sha-256 --auth-local=peer'}
+            - {name: PGDATA, value: /var/lib/postgresql/18/docker}
+          ports: [{name: postgres, containerPort: 5432}]
+          resources:
+            requests: {cpu: 250m, memory: 512Mi}
+            limits: {cpu: '1', memory: 2Gi}
+          securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+          startupProbe:
+            exec: {command: [pg_isready, -U, postgres, -d, postgres]}
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            exec: {command: [pg_isready, -U, postgres, -d, postgres]}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/postgresql}
+            - {name: credentials, mountPath: /run/postgres, readOnly: true}
+            - {name: init, mountPath: /docker-entrypoint-initdb.d, readOnly: true}
+            - {name: socket, mountPath: /var/run/postgresql}
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: gateway-postgres}
+        - name: credentials
+          secret: {secretName: gateway-postgres, defaultMode: 0440}
+        - name: init
+          configMap: {name: gateway-postgres-init, defaultMode: 0555}
+        - name: socket
+          emptyDir: {sizeLimit: 16Mi}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: gateway-postgres}
+spec:
+  selector: {app.kubernetes.io/name: gateway-postgres}
+  ports: [{name: postgres, port: 5432, targetPort: postgres}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: litellm
+  annotations: {workstation.ai/qualification: pending-service-integration}
+spec:
+  replicas: 0
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app.kubernetes.io/name: litellm}}
+  template:
+    metadata: {labels: {app.kubernetes.io/name: litellm}}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 200
+      nodeSelector: {kubernetes.io/arch: amd64, kubernetes.io/os: linux}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: gateway
+          image: ghcr.io/berriai/litellm:v1.106.2@sha256:d1da6edc025e6a59be6faa50b4e8e42c115e1c99644aa3fc2ac416dd353f41da
+          command: [python, -m, uvicorn, 'gateway_entry:app', --app-dir, /runtime, --host, 0.0.0.0, --port, '4000', --workers, '1', --no-access-log, --log-level, error, --timeout-graceful-shutdown, '185']
+          env:
+            - {name: HOME, value: /tmp}
+            - {name: PYTHONDONTWRITEBYTECODE, value: '1'}
+            - {name: DISABLE_SCHEMA_UPDATE, value: 'true'}
+          ports: [{name: http, containerPort: 4000}]
+          resources:
+            requests: {cpu: 250m, memory: 512Mi}
+            limits: {cpu: '1', memory: 2Gi}
+          securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+          startupProbe:
+            httpGet: {path: /health/liveliness, port: http}
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            exec: {command: [python, /runtime/health.py]}
+            timeoutSeconds: 3
+          volumeMounts:
+            - {name: runtime, mountPath: /runtime, readOnly: true}
+            - {name: config, mountPath: /config, readOnly: true}
+            - {name: credentials, mountPath: /run/gateway, readOnly: true}
+            - {name: browser, mountPath: /run/browser, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: runtime
+          configMap: {name: gateway-runtime}
+        - name: config
+          configMap: {name: gateway-config}
+        - name: credentials
+          secret: {secretName: gateway-credentials, defaultMode: 0440}
+        - name: browser
+          secret: {secretName: gateway-browser-keys, defaultMode: 0440}
+        - name: tmp
+          emptyDir: {sizeLimit: 256Mi}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: litellm}
+spec:
+  selector: {app.kubernetes.io/name: litellm}
+  ports: [{name: http, port: 4000, targetPort: http}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: service-tools
+  annotations: {workstation.ai/qualification: pending-service-integration}
+spec:
+  replicas: 0
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app.kubernetes.io/name: service-tools}}
+  template:
+    metadata: {labels: {app.kubernetes.io/name: service-tools}}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 165
+      nodeSelector: {kubernetes.io/arch: amd64, kubernetes.io/os: linux}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: tools
+          # Reuse the reviewed Python/FastAPI/httpx runtime, without DB/admin keys.
+          image: ghcr.io/berriai/litellm:v1.106.2@sha256:d1da6edc025e6a59be6faa50b4e8e42c115e1c99644aa3fc2ac416dd353f41da
+          command: [python, -m, uvicorn, 'service_tools:create_app', --factory, --app-dir, /runtime, --host, 0.0.0.0, --port, '8000', --workers, '1', --no-access-log, --log-level, error, --timeout-graceful-shutdown, '150']
+          env: [{name: PYTHONDONTWRITEBYTECODE, value: '1'}]
+          ports: [{name: http, containerPort: 8000}]
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 512Mi}
+          securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+          readinessProbe: {httpGet: {path: /health, port: http}}
+          volumeMounts:
+            - {name: runtime, mountPath: /runtime, readOnly: true}
+            - {name: browser, mountPath: /run/browser, readOnly: true}
+            - {name: state, mountPath: /state}
+      volumes:
+        - name: runtime
+          configMap: {name: gateway-runtime}
+        - name: browser
+          secret: {secretName: gateway-image-permissions, defaultMode: 0440, items: [{key: image-users.json, path: mapping.json}]}
+        - name: state
+          persistentVolumeClaim: {claimName: service-tools-state}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: service-tools}
+spec:
+  selector: {app.kubernetes.io/name: service-tools}
+  ports: [{name: http, port: 8000, targetPort: http}]

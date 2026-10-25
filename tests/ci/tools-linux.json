@@ -1,0 +1,68 @@
+[
+  {
+    "name": "alloy",
+    "version": "v1.13.2",
+    "url": "https://github.com/grafana/alloy/releases/download/v1.13.2/alloy-linux-amd64.zip",
+    "sha256": "6f256a84d80005d2e31a6ef93015d6e17404c79f5185f12d8692ad6611b670e0"
+  },
+  {
+    "name": "shfmt",
+    "version": "v3.14.1",
+    "url": "https://github.com/mvdan/sh/releases/download/v3.14.1/shfmt_v3.14.1_linux_amd64",
+    "sha256": "76e77641faa025814b77f153b29796b8e6fa2fca03e0c76a691608b86c7ea7bf"
+  },
+  {
+    "name": "shellcheck",
+    "version": "v0.11.0",
+    "url": "https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz",
+    "sha256": "8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198"
+  },
+  {
+    "name": "cmake",
+    "version": "v4.4.4",
+    "url": "https://github.com/Kitware/CMake/releases/download/v4.4.4/cmake-4.4.4-linux-x86_64.tar.gz",
+    "sha256": "e5bb807f7728cb60cd8b27ebc97a2edb469b68655f21e844a600c3575b76f5bb"
+  },
+  {
+    "name": "ninja",
+    "version": "v1.13.2",
+    "url": "https://github.com/ninja-build/ninja/releases/download/v1.13.2/ninja-linux.zip",
+    "sha256": "5749cbc4e668273514150a80e387a957f933c6ed3f5f11e03fb30955e2bbead6"
+  },
+  {
+    "name": "ccache",
+    "version": "v4.14.2",
+    "url": "https://github.com/ccache/ccache/releases/download/v4.14.2/ccache-4.14.2-linux-x86_64-glibc.tar.gz",
+    "sha256": "b1f7fbb60ee24b80a6abae09ec4fcc6554fbf98c933c9bd25a3f53ab685fc00b"
+  },
+  {
+    "name": "kubectl",
+    "version": "v1.35.8",
+    "url": "https://dl.k8s.io/release/v1.35.8/bin/linux/amd64/kubectl",
+    "sha256": "874d5e72dbb819f43cff16bcd1e4f8bac5b7f2361fe1e55049b0a6c676fb0cbf"
+  },
+  {
+    "name": "helm",
+    "version": "v4.2.4",
+    "url": "https://get.helm.sh/helm-v4.2.4-linux-amd64.tar.gz",
+    "sha256": "c306b46f719b0a4da32d0f78ee21bf90ce8d602f15b22ab753f0674d1670a7f3"
+  },
+  {
+    "name": "bats",
+    "version": "v1.14.0",
+    "url": "https://codeload.github.com/bats-core/bats-core/tar.gz/eb7f42f8d608ac693d7a4b67474f6714ea68cfc5",
+    "sha256": "845574549f4c9777bf02fcdf307f1bf347d40c66920fb6b47dcc8fdfa065ac39"
+  },
+  {
+    "name": "alertmanager",
+    "version": "v0.34.1",
+    "url": "https://github.com/prometheus/alertmanager/releases/download/v0.34.1/alertmanager-0.34.1.linux-amd64.tar.gz",
+    "sha256": "265b9d1e55ef0d5306a436018af6d2b686c2ce051f03d968f7464ecb1372a7e8"
+  },
+  {
+    "name": "prometheus",
+    "version": "v3.14.0",
+    "url": "https://github.com/prometheus/prometheus/releases/download/v3.14.0/prometheus-3.14.0.linux-amd64.tar.gz",
+    "sha256": "f665c6da19eb7ba399c915d30c7d9793c9b417bf8a749b504bc470678631478d"
+  }
+]

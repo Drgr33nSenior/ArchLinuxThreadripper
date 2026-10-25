@@ -3,9 +3,15 @@
 This repository contains a hardware-specific, guarded bootstrap for an Arch
 Linux workstation built around a Gigabyte TRX50 AI TOP, AMD Threadripper 9960X,
 two NVMe RAID0 members, and two Radeon AI PRO R9700 AI TOP GPUs with 32 GiB each.
-The current memory configuration is 64 GiB DDR5-5600 ECC RDIMM. It also provisions an
+The owner reports an upgrade to 128 GB RAM; current DIMM population, trained speed
+and Linux-visible memory require a fresh hardware collection. It also provisions an
 on-demand AlmaLinux K3s lab under KVM. New installations are headless by default;
 a host desktop and local gaming packages are explicit options.
+
+The [shared AI service](docs/AI-SERVICE.md) adds private HTTPS chat/API access,
+per-client keys, read-only retrieval, a bounded image adapter and
+[application-consistent recovery](docs/SERVICE-RECOVERY.md). Source, software
+integration, target qualification and deployment are reported separately.
 
 The repository is executable infrastructure. Review every configuration and
 lock-file change before use. `bootstrap-arch --execute install` permanently erases both
@@ -58,6 +64,7 @@ and versions in the locks; do not infer target identity from a diagram or exampl
 | Local metrics/logs/traces, Bridge telemetry and installation events | [Telemetry](docs/TELEMETRY.md) |
 | Model selection/staging, retrieval and client agents | [Models](docs/MODELS.md), [RAG](docs/RAG.md), [agent harnesses](docs/AGENT-HARNESSES.md) |
 | Gaming image, capture, encoding and input acceptance | [Sunshine](docs/SUNSHINE.md) |
+| Final installation, shared-service and recovery gates | [Installation readiness](docs/INSTALL-READINESS.md) |
 | Design, stack view, secret boundaries and source register | [Architecture](docs/ARCHITECTURE.md), [stack view](docs/STACK.md), [security](docs/SECURITY.md), [sources](docs/SOURCES.md) |
 | Optional management integration contract | [Bridge contract](docs/BRIDGE-CONTRACT.md) |
 

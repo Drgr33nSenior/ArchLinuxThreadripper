@@ -41,3 +41,10 @@ apps/overlays/single-gpu/ingress.yaml
 apps/overlays/single-gpu/kustomization.yaml
 config/workstation.conf.example
 versions.lock
+config/service-backup.example.json
+config/service-client-policy.example.json
+config/service-site.example.json
+docs/AI-SERVICE-RECONCILIATION.md
+docs/AI-SERVICE.md
+docs/SERVICE-RECOVERY.md
+docs/INSTALL-READINESS.md

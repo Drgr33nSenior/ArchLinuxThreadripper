@@ -1,0 +1,51 @@
+# LiteLLM OSS v1.106.2. One process/replica: limits are not distributed.
+model_list:
+  - model_name: Qwen3.8-27B-FP8
+    litellm_params:
+      model: openai/Qwen3.8-27B-FP8
+      api_base: http://sglang:30000/v1
+      api_key: local-internal-route
+      timeout: 170
+      max_retries: 0
+    model_info:
+      mode: chat
+      max_input_tokens: 28670
+      max_output_tokens: 4096
+      max_tokens: 32768
+      input_cost_per_token: 0
+      output_cost_per_token: 0
+  - model_name: Qwen3.5-9B
+    litellm_params:
+      model: openai/Qwen3.5-9B
+      api_base: http://sglang:30000/v1
+      api_key: local-internal-route
+      timeout: 170
+      max_retries: 0
+    model_info:
+      mode: chat
+      max_input_tokens: 3070
+      max_output_tokens: 1024
+      max_tokens: 4096
+      input_cost_per_token: 0
+      output_cost_per_token: 0
+router_settings:
+  num_retries: 0
+  timeout: 170
+  fallbacks: []
+  context_window_fallbacks: []
+  allowed_fails: 1
+  cooldown_time: 5
+litellm_settings:
+  set_verbose: false
+  turn_off_message_logging: true
+  request_timeout: 170
+  num_retries: 0
+  drop_params: false
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL
+  store_prompts_in_spend_logs: false
+  store_model_in_db: false
+  disable_spend_logs: false
+  disable_error_logs: true
+  disable_reset_budget: false

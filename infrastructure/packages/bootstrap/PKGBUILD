@@ -89,10 +89,14 @@ package_arch-workstation-boot() {
 package_arch-workstation-backup() {
   pkgdesc='Opt-in workstation Restic helper, policy and systemd units'
   depends=('bash' 'coreutils' 'util-linux' 'restic')
+  optdepends=('arch-workstation-bootstrap: reviewed source CLI for service capture'
+    'python: explicit shared-service capture and integrity checks'
+    'kubectl: quiesce application writers with the dedicated operator identity')
   backup=('etc/restic/workstation.include' 'etc/restic/workstation.exclude')
   local file
   install -Dm755 "$srcdir/project/templates/workstation/restic/workstation-restic" "$pkgdir/usr/lib/arch-workstation-backup/run"
-  for file in workstation-restic@.service workstation-restic-backup.timer workstation-restic-retention.timer; do
+  for file in workstation-restic@.service workstation-restic-backup.timer workstation-restic-retention.timer \
+    workstation-service-backup.service workstation-service-backup-local.service workstation-service-backup-replicate@.service; do
     install -Dm644 "$srcdir/project/templates/workstation/restic/$file" "$pkgdir/usr/lib/systemd/system/$file"
   done
   for file in include exclude; do

@@ -1,0 +1,23 @@
+[Unit]
+Description=Capture host, gaming and K3s state to the independent encrypted backup SSD
+Documentation=file:/usr/lib/arch-workstation-bootstrap/docs/SERVICE-RECOVERY.md
+
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+LoadCredentialEncrypted=restic_local_password:/etc/credstore.encrypted/workstation-restic-local-password.cred
+ExecStart=/usr/bin/python /usr/lib/arch-workstation-bootstrap/lib/workstation/service_backup.py capture /etc/workstation/service-backup.json --local-first --execute
+ExecStopPost=/usr/bin/python /usr/lib/arch-workstation-bootstrap/lib/workstation/service_backup.py record-result --stage local
+TimeoutStartSec=3h
+Nice=10
+CPUWeight=20
+IOWeight=20
+NoNewPrivileges=yes
+ProtectClock=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+RestrictSUIDSGID=yes
+# Owner-started only. Validate local_repository before maintenance, retain the
+# original deployment identities, and leave explicit owner resume to the runbook.
+# No remote credential or network dependency is needed for this local capture.

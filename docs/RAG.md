@@ -87,16 +87,21 @@ including instructions, citations, history and answer allowance. Use a fresh
 chat per evaluation question. Do not claim that the chunk settings enforce a
 hard end-to-end context budget.
 
-On the 64 GiB/two-DIMM host, stop compilation and unneeded AI workloads during
+Historical 64 GiB admission example: stop compilation and unneeded AI workloads during
 bulk ingestion. Budget RAG's 6 GiB limit alongside host/K3s reserves and model
 allocations. The reviewed dual-GPU serving limit is 38 GiB, so its 38 GiB plus
 RAG's 6 GiB uses the 44 GiB workload budget, preserving 2 GiB for other pods
 inside the planner's 46 GiB allocatable budget after the 18 GiB host reserve.
 This is an admission cap, not evidence that the CPU embedding load fits every
 concurrent workload. Do not enable every scaffold at once. No swap, RAM-backed
-corpus, GPU sharing or new ROCm dependency is introduced. Rediscover trained
-speed and topology after the four-DIMM upgrade, then repeat the worker/batch
-sweep.
+corpus, GPU sharing or new ROCm dependency is introduced.
+
+The current owner-reported capacity is 128 GB. Recollect DIMM population, trained
+speed, topology and MemTotal; do not infer a four-DIMM layout. Keep the 6 GiB cap
+and current ingestion concurrency until a separate worker/batch sweep measures
+pressure alongside the service budget. The authenticated read-only MCP path in
+[AI-SERVICE.md](AI-SERVICE.md) reuses this store and its access checks; no second
+vector database or automatic project-memory writer is introduced.
 
 ## Prepare without installing or deploying
 

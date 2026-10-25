@@ -1,0 +1,15 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: [../service]
+configMapGenerator:
+  - name: sglang-profile
+    behavior: merge
+    literals:
+      - MODEL_PATH=/models/Qwen3.5-9B/c202236235762e1c871ad0ccb60c8ee5ba337b9a
+      - MODEL_REPOSITORY=Qwen/Qwen3.5-9B
+      - MODEL_REVISION=c202236235762e1c871ad0ccb60c8ee5ba337b9a
+      - SERVED_MODEL_NAME=Qwen3.5-9B
+      - TENSOR_PARALLEL=1
+      - CONTEXT_LENGTH=4096
+patches:
+  - path: sglang.yaml

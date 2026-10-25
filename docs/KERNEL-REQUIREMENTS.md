@@ -26,6 +26,17 @@ The other listed capabilities were already enabled in the observed kernel;
 they are now explicit requirements rather than incidental Arch defaults.
 Every loaded module is also required by the fresh profile's package closure.
 
+AMD also lists `CONFIG_DMABUF_MOVE_NOTIFY`. That historical switch does not
+exist in the pinned Linux 7.3-rc6 source. The
+[DMA-buffer Kconfig](https://github.com/torvalds/linux/blob/a90ee4305c4a5df72c11b31dacfdc76e00fcf78a/drivers/dma-buf/Kconfig)
+has no such option, and amdgpu registers
+[`amdgpu_dma_buf_move_notify` as its `invalidate_mappings` callback](https://github.com/torvalds/linux/blob/a90ee4305c4a5df72c11b31dacfdc76e00fcf78a/drivers/gpu/drm/amd/amdgpu/amdgpu_dma_buf.c)
+without that conditional. Require `CONFIG_DMA_SHARED_BUFFER=y`,
+`CONFIG_PCI_P2PDMA=y` and `CONFIG_HSA_AMD_P2P=y` in the effective configuration.
+The policy, build overlay and package gate enforce these available symbols.
+Adding an unknown option would not enable additional functionality. This is
+source evidence; the running kernel and GPU handover still need target checks.
+
 The overlay disables only i915, Xe, Nouveau and legacy Radeon, which are not
 drivers for the two installed R9700s. This reduces build/package scope; it is
 not a demonstrated runtime speedup. It does not remove Intel-named RAPL or

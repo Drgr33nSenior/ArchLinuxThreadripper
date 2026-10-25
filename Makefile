@@ -39,7 +39,7 @@ yaml:
 	@set -euo pipefail; if command -v ruby >/dev/null 2>&1; then \
 		files=$$(find ansible cloud-init kubernetes -type f \( -name '*.yml' -o -name '*.yaml' -o -name '*.tmpl' \) ! -name '*.j2' | sort); \
 		[[ -n $$files ]] || { echo 'FAIL: YAML discovery returned no files' >&2; exit 1; }; \
-		extra=$$(rg --files infrastructure apps -g '*.yml' -g '*.yaml'); \
+		extra=$$(rg --files infrastructure apps .github -g '*.yml' -g '*.yaml'); \
 		[[ -n $$extra ]] || { echo 'FAIL: workload YAML discovery returned no files' >&2; exit 1; }; \
 		args=(); while IFS= read -r file; do args+=("$$file"); done <<<"$$files"; \
 		while IFS= read -r file; do args+=("$$file"); done <<<"$$extra"; \
@@ -76,6 +76,11 @@ systemd:
 		systemd-analyze verify templates/workstation/restic/workstation-restic@.service \
 			templates/workstation/restic/workstation-restic-backup.timer \
 			templates/workstation/restic/workstation-restic-retention.timer \
+			templates/workstation/restic/workstation-service-backup.service \
+			templates/workstation/restic/workstation-service-backup-local.service \
+			templates/workstation/restic/workstation-service-backup-replicate@.service \
+			templates/workstation/telemetry/workstation-external-heartbeat.service \
+			templates/workstation/telemetry/workstation-external-heartbeat.timer \
 			templates/workstation/telemetry/workstation-telemetry.service \
 			templates/workstation/telemetry/workstation-telemetry.timer \
 			templates/workstation/telemetry/workstation-alloy.service \

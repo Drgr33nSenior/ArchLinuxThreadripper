@@ -7,6 +7,10 @@ It does not describe a discovered running installation.
 The Bridge repository contains the management-plane view. Keep the source
 revision and qualification boundaries of each repository distinct.
 
+The diagram below records the earlier infrastructure baseline. The authoritative
+shared-service endpoint and state map is now [AI-SERVICE.md](AI-SERVICE.md); no
+arrow in either view establishes deployment.
+
 ![Workstation stack overview](diagrams/workstation-stack.svg)
 
 [Open the PNG preview](diagrams/workstation-stack.png) or edit the authoritative
@@ -20,11 +24,10 @@ outputs. Edit the source and regenerate both previews; do not edit them separate
 - Application replicas default to zero. AI images and the non-root Wayland gaming
   candidate remain unqualified. Use [SUNSHINE.md](SUNSHINE.md) for
   current capture/admission and input acceptance. No diagram arrow qualifies it.
-- Open WebUI calls the internal SGLang OpenAI-compatible API. SwarmUI expects
-  an in-pod ROCm ComfyUI backend; its ClusterIP service remains internal and
-  default-deny NetworkPolicy blocks ingress. A private access path is not yet
-  configured. Sunshine serves Moonlight; Steam Remote Play is an alternative
-  streaming path. External access still needs qualification.
+- The service overlay routes Open WebUI and HTTPS clients through LiteLLM to
+  internal SGLang. Traefik uses one private NodePort, 32443. SwarmUI retains
+  ownership of its packaged ComfyUI; a narrow adapter serves browser images.
+  Site DNS/TLS, backend packaging and target qualification remain prerequisites.
 - Arch owns `amdgpu`. The AMD operator manages the traditional device plugin
   and labels, not host driver installation. `amd.com/gpu` requests allocate
   exclusive device counts; they do not select a known physical R9700. The two
@@ -33,15 +36,14 @@ outputs. Edit the source and regenerate both previews; do not edit them separate
   before starting the selected workload. It does not implement simultaneous
   one-GPU AI and one-GPU gaming. New managed builds are inhibited during gaming;
   already-running or unrelated builds are not stopped automatically.
-- The expected two-DIMM population is not a measured channel or trained-speed
-  result. Recollect hardware and regenerate resource budgets after an upgrade.
+- The owner reports 128 GB RAM. DIMM population, trained speed and Linux-visible
+  capacity remain unmeasured in this checkout; collect and regenerate budgets.
 - Node-local PVCs, native caches and files use the encrypted NVMe-backed root.
   PVC size requests are not filesystem quotas. RAID0 has no data redundancy;
   the second ESP provides another boot copy, not another copy of root data.
-- The repository documents a host Restic/S3 backup workflow. It does not yet
-  include bare-metal K3s database/token and PVC paths in that host backup scope.
-  The intended NAS destination is not shown as implemented: confirm and
-  configure the chosen off-array destination separately.
+- Host Restic is supplemented by [service capture and isolated recovery](SERVICE-RECOVERY.md).
+  Application writers are quiesced before SQLite/token/PVC capture. Off-array
+  credentials and a real restore acceptance remain required.
 
 The view omits the retained Intel-only legacy commands, detailed port rules,
 individual PVC sizes, family account overlays and the [telemetry composition](TELEMETRY.md).

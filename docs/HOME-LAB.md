@@ -2,8 +2,9 @@
 
 This is an additive profile for the existing Arch repository. It does not replace
 the EL9/KVM lab, install a second operating system, or run a cluster during tests.
-The target remains the Threadripper 9960X, 64 GiB ECC RDIMM, two Samsung 9100 PRO
-NVMes, and two R9700s. `gfx1201` is an expected input that must match `rocminfo`.
+The target is the Threadripper 9960X with owner-reported 128 GB system RAM,
+two Samsung 9100 PRO NVMes, and two R9700s. Actual DIMM population, trained
+speed and Linux MemTotal must be recollected; capacity alone does not establish them. `gfx1201` is an expected input that must match `rocminfo`.
 
 The host profile defaults to headless. Neither AI nor remote gaming requires a
 host-wide GNOME/GDM session. The gaming workload still needs its own qualified
@@ -28,6 +29,10 @@ apps/
 ├── base/{sglang,swarmui,steam-headless,open-webui}/
 └── overlays/{single-gpu,dual-gpu,rdna4-compat,parent,kids,family,rag,rag-dense}/
 ```
+
+The next shared-service composition is [AI-SERVICE.md](AI-SERVICE.md): retained
+Open WebUI, LiteLLM/PostgreSQL, private Traefik HTTPS, MCP retrieval and a bounded
+Swarm image adapter. It remains gated at zero until the stated acceptance checks.
 
 ## Deployment status and boundaries
 

@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: sglang}
+spec:
+  template:
+    spec:
+      priorityClassName: interactive-ai-priority
+      containers:
+        - name: sglang
+          image: localhost/workstation/sglang@sha256:c9e4d0e0ea8818de29ccef4249119fc1c096d7a924b86c63567a6b9f9d5c3c8b
+          imagePullPolicy: Never
+          env:
+            - {name: XDG_CACHE_HOME, value: /cache/xdg/c9e4d0e0ea88}
+            - {name: TRITON_CACHE_DIR, value: /cache/triton/c9e4d0e0ea88}
+            - {name: TORCHINDUCTOR_CACHE_DIR, value: /cache/torchinductor/c9e4d0e0ea88}
+            - {name: SGLANG_JIT_CACHE_DIR, value: /cache/sglang-jit/c9e4d0e0ea88}
+            - {name: ROCM_HOME, value: /usr/local/lib/python3.14/dist-packages/_rocm_sdk_devel}
+            - {name: OMP_NUM_THREADS, value: '4'}
+            - {name: MAX_JOBS, value: '4'}
+          resources:
+            requests: {cpu: '20', memory: 32Gi, amd.com/gpu: '1'}
+            limits: {cpu: '20', memory: 32Gi, amd.com/gpu: '1'}

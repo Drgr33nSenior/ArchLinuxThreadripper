@@ -1,0 +1,27 @@
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: workstation-retain
+provisioner: rancher.io/local-path
+reclaimPolicy: Retain
+volumeBindingMode: WaitForFirstConsumer
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gateway-postgres
+  labels: {workstation.ai/backup: irreplaceable}
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: workstation-retain
+  resources: {requests: {storage: 10Gi}}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: service-tools-state
+  labels: {workstation.ai/backup: irreplaceable}
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: workstation-retain
+  resources: {requests: {storage: 1Gi}}

@@ -257,6 +257,11 @@ if (ws_kernel_validate_effective_config "$work/missing-p2p.config") >/dev/null 2
   printf 'generic HSA and PCI P2PDMA incorrectly qualified AMD peer access\n' >&2
   exit 1
 fi
+sed '/^CONFIG_DMA_SHARED_BUFFER=/d' "$fixture_config" >"$work/missing-dmabuf.config"
+if (ws_kernel_validate_effective_config "$work/missing-dmabuf.config") >/dev/null 2>&1; then
+  printf 'kernel without DMA buffer sharing passed the effective configuration gate\n' >&2
+  exit 1
+fi
 grep -Eq '^[a-f0-9]{64}  linux-git-headers-synthetic-x86_64\.pkg\.tar\.zst$' "$output_dir/linux-git.package-sha256"
 
 if (KERNEL_NAMCAP_MODE=error ws_kernel_namcap_audit "$work/namcap-error.txt" "$output_dir/linux-git-synthetic-x86_64.pkg.tar.zst") >/dev/null 2>&1; then

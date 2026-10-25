@@ -1,0 +1,38 @@
+rule_files: [../../infrastructure/service/alerts.yaml]
+evaluation_interval: 1m
+tests:
+  - name: local-success-does-not-hide-stale-offsite
+    interval: 1m
+    input_series:
+      - {series: workstation_service_backup_last_success_seconds, values: '0+0x2940'}
+      - {series: workstation_service_backup_local_enabled, values: '1+0x2940'}
+      - {series: workstation_service_backup_local_last_success_seconds, values: '176400+0x2940'}
+    alert_rule_test:
+      - eval_time: 49h
+        alertname: WorkstationBackupStale
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations: {summary: 'No successful encrypted off-site service backup within 48 hours'}
+      - {eval_time: 49h, alertname: WorkstationLocalBackupStale, exp_alerts: []}
+  - name: offsite-success-does-not-hide-stale-local
+    interval: 1m
+    input_series:
+      - {series: workstation_service_backup_last_success_seconds, values: '176400+0x2940'}
+      - {series: workstation_service_backup_local_enabled, values: '1+0x2940'}
+      - {series: workstation_service_backup_local_last_success_seconds, values: '0+0x2940'}
+    alert_rule_test:
+      - {eval_time: 49h, alertname: WorkstationBackupStale, exp_alerts: []}
+      - eval_time: 49h
+        alertname: WorkstationLocalBackupStale
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations: {summary: 'Local SSD backup is older than 48 hours; S3 success does not qualify the local copy'}
+  - name: remote-only-does-not-require-local-ssd
+    interval: 1m
+    input_series:
+      - {series: workstation_service_backup_local_enabled, values: '0+0x2940'}
+      - {series: workstation_service_backup_local_last_success_seconds, values: '0+0x2940'}
+      - {series: workstation_service_backup_local_last_attempt_failed, values: '1+0x2940'}
+    alert_rule_test:
+      - {eval_time: 49h, alertname: WorkstationLocalBackupStale, exp_alerts: []}
+      - {eval_time: 49h, alertname: WorkstationLocalBackupFailed, exp_alerts: []}

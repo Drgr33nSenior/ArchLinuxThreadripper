@@ -12,7 +12,31 @@ ws_session_config_validate() {
   [[ "$SESSION_AI_DEPLOYMENT" != "$SESSION_GAME_DEPLOYMENT" ]] || ws_die 'AI and gaming deployments must differ'
   [[ "${SESSION_TIMEOUT_SECONDS:-300}" =~ ^[1-9][0-9]*$ ]] || ws_die 'SESSION_TIMEOUT_SECONDS must be positive'
   [[ "${SESSION_AI_STARTUP_TIMEOUT_SECONDS:-2100}" =~ ^[1-9][0-9]{0,4}$ ]] || ws_die 'SESSION_AI_STARTUP_TIMEOUT_SECONDS must be a bounded positive integer'
+  case "${SESSION_SERVICE_ENABLED:-false}" in true | false) ;; *) ws_die 'SESSION_SERVICE_ENABLED must be true or false' ;; esac
+  if [[ ${SESSION_SERVICE_ENABLED:-false} == true ]]; then
+    [[ ${SESSION_IMAGE_DEPLOYMENT:-} =~ ^[a-z0-9][a-z0-9-]*$ && "$SESSION_IMAGE_DEPLOYMENT" != "$SESSION_AI_DEPLOYMENT" && "$SESSION_IMAGE_DEPLOYMENT" != "$SESSION_GAME_DEPLOYMENT" ]] || ws_die 'distinct image Deployment required'
+    [[ ${SESSION_SERVICE_CONTROL_FILE:-} == /* ]] || ws_die 'explicit protected gateway control file required'
+  fi
   case "${SESSION_STREAMING_PATH:-sunshine}" in sunshine | steam) ;; *) ws_die 'SESSION_STREAMING_PATH must be sunshine or steam' ;; esac
+}
+
+# Optional service integration reuses this command's lock and qualification.
+ws_session_service() {
+  [[ ${SESSION_SERVICE_ENABLED:-false} == true ]] || return 0
+  local phase="$1" model="${2:-none}" address
+  address="$(ws_session_kubectl -n "$SESSION_NAMESPACE" get service litellm -o json | jq -er .spec.clusterIP)" || ws_die 'cannot resolve internal gateway'
+  local -a extra=()
+  [[ ${3:-false} != true ]] || extra=(--images)
+  "$(ws_measure_python)" "$(ws_repo_root)/lib/workstation/service_session.py" "$address" "$SESSION_SERVICE_CONTROL_FILE" "$phase" "$model" "${extra[@]}"
+}
+
+ws_session_service_model() {
+  local document config model
+  document="$(ws_session_deployment "$SESSION_AI_DEPLOYMENT")"
+  config="$(jq -er '[.spec.template.spec.containers[].envFrom[]?.configMapRef.name | select(startswith("sglang-profile"))] | unique | select(length==1) | .[0]' <<<"$document")" || ws_die 'one authoritative model ConfigMap required'
+  model="$(ws_session_kubectl -n "$SESSION_NAMESPACE" get configmap "$config" -o json | jq -er .data.SERVED_MODEL_NAME)" || ws_die 'cannot read served model identity'
+  case "$model" in Qwen3.8-27B-FP8 | Qwen3.5-9B) ;; *) ws_die 'unqualified service model identity' ;; esac
+  printf '%s\n' "$model"
 }
 
 ws_session_rollout_timeout() {
@@ -49,7 +73,7 @@ ws_session_installed_policy() {
 ws_session_plan() {
   local mode="$1"
   ws_session_config_validate
-  case "$mode" in ai | gaming | maintenance) ;; *) ws_die 'session mode must be ai, gaming or maintenance' ;; esac
+  case "$mode" in ai | split | gaming | maintenance) ;; *) ws_die 'session mode must be ai, split, gaming or maintenance' ;; esac
   jq -n --arg mode "$mode" --arg context "$SESSION_CONTEXT" --arg node "$SESSION_NODE" \
     --arg namespace "$SESSION_NAMESPACE" --arg ai "$SESSION_AI_DEPLOYMENT" --arg game "$SESSION_GAME_DEPLOYMENT" \
     '{status:"plan-only-no-cluster-contact",mode:$mode,context:$context,node:$node,namespace:$namespace,
@@ -187,10 +211,11 @@ ws_session_capacity_check() {
 }
 
 ws_session_managed_uids() {
-  local ai game
+  local ai game images='[]'
+  [[ ${SESSION_SERVICE_ENABLED:-false} != true ]] || images="$(ws_session_managed_pods "$SESSION_IMAGE_DEPLOYMENT")" || return 1
   ai="$(ws_session_managed_pods "$SESSION_AI_DEPLOYMENT")" || return 1
   game="$(ws_session_managed_pods "$SESSION_GAME_DEPLOYMENT")" || return 1
-  jq -n --argjson ai "$ai" --argjson game "$game" '($ai+$game)|map(.metadata.uid)'
+  jq -n --argjson ai "$ai" --argjson game "$game" --argjson images "$images" '($ai+$game+$images)|map(.metadata.uid)'
 }
 
 ws_session_other_gpu_check() {
@@ -293,6 +318,7 @@ ws_session_checked_deployment() {
   ws_session_template_check "$deployment" "$document"
   expected="$SESSION_AI_UID"
   [[ "$deployment" != "$SESSION_GAME_DEPLOYMENT" ]] || expected="$SESSION_GAME_UID"
+  [[ ${SESSION_SERVICE_ENABLED:-false} != true || "$deployment" != "$SESSION_IMAGE_DEPLOYMENT" ]] || expected="$SESSION_IMAGE_UID"
   [[ "$(jq -r .metadata.uid <<<"$document")" == "$expected" ]] || ws_die 'deployment was replaced; refuse to mutate a different UID'
   printf '%s\n' "$document"
 }
@@ -326,13 +352,14 @@ ws_session_state_write() {
 }
 
 ws_session_switch() (
-  local mode="$1" hardware="$2" dir="$3" execute="$4" node state ai game desired previous_phase
+  local mode="$1" hardware="$2" dir="$3" execute="$4" node state ai game desired previous_phase image=0 want_image=false service_model=none
   ws_require_arch
   ws_require_root
   ws_session_config_validate
   ws_build_config_validate
   [[ "$execute" == --execute ]] || ws_die 'session changes require the explicit --execute argument'
-  case "$mode" in ai | gaming | maintenance | restore) ;; *) ws_die 'invalid session mode' ;; esac
+  case "$mode" in ai | split | gaming | maintenance | restore) ;; *) ws_die 'invalid session mode' ;; esac
+  [[ "$mode" != split || ${SESSION_SERVICE_ENABLED:-false} == true ]] || ws_die 'split requires the explicit shared service configuration'
   ws_session_installed_policy
   [[ -z ${SESSION_STATE_DIRECTORY:-} || "$dir" == "$SESSION_STATE_DIRECTORY" ]] ||
     ws_die 'state directory differs from the installed canonical session policy'
@@ -376,14 +403,34 @@ ws_session_switch() (
   fi
   SESSION_AI_UID="$(jq -r .ai_uid <<<"$state")"
   SESSION_GAME_UID="$(jq -r .game_uid <<<"$state")"
+  if [[ ${SESSION_SERVICE_ENABLED:-false} == true ]]; then
+    image="$(ws_session_deployment "$SESSION_IMAGE_DEPLOYMENT" | jq -er .spec.replicas)"
+    [[ "$image" == 0 || "$image" == 1 ]] || ws_die 'unexpected image replica count'
+    if [[ "$(jq -r '.image // empty' <<<"$state")" == "" ]]; then
+      [[ "$image" == 0 ]] || ws_die 'adopt service ownership only with images stopped'
+      state="$(jq --arg image "$SESSION_IMAGE_DEPLOYMENT" --arg uid "$(ws_session_deployment "$SESSION_IMAGE_DEPLOYMENT" | jq -er .metadata.uid)" '.image=$image | .image_uid=$uid | .previous.image=0' <<<"$state")"
+    fi
+    jq -e --arg image "$SESSION_IMAGE_DEPLOYMENT" '.image==$image and (.image_uid|type=="string") and (.previous.image==0 or .previous.image==1) and (if .previous.image==1 then .previous.ai==1 and .previous.game==0 else true end)' <<<"$state" >/dev/null || ws_die 'image state differs from selected target'
+    SESSION_IMAGE_UID="$(jq -r .image_uid <<<"$state")"
+    ws_session_checked_deployment "$SESSION_IMAGE_DEPLOYMENT" >/dev/null
+  elif [[ "$(jq -r '.image // empty' <<<"$state")" != '' || "$mode" == split ]]; then
+    ws_die 'service image ownership cannot be dropped during a split session'
+  fi
+  SESSION_AI_UID="$(jq -r .ai_uid <<<"$state")"
+  SESSION_GAME_UID="$(jq -r .game_uid <<<"$state")"
   ws_session_checked_deployment "$SESSION_AI_DEPLOYMENT" >/dev/null
   ws_session_checked_deployment "$SESSION_GAME_DEPLOYMENT" >/dev/null
   ws_session_other_gpu_check
   desired=''
   case "$mode" in
     ai) desired="$SESSION_AI_DEPLOYMENT" ;;
+    split)
+      desired="$SESSION_AI_DEPLOYMENT"
+      want_image=true
+      ;;
     gaming) desired="$SESSION_GAME_DEPLOYMENT" ;;
     restore)
+      [[ "$(jq -r '.previous.image // 0' <<<"$state")" != 1 ]] || want_image=true
       if [[ "$(jq -r .previous.ai <<<"$state")" == 1 ]]; then
         desired="$SESSION_AI_DEPLOYMENT"
       elif [[ "$(jq -r .previous.game <<<"$state")" == 1 ]]; then desired="$SESSION_GAME_DEPLOYMENT"; fi
@@ -394,8 +441,22 @@ ws_session_switch() (
     [[ "$desired" != "$SESSION_GAME_DEPLOYMENT" ]] || qualification_mode=gaming
     ws_session_qualify "$desired" "$node" "$qualification_mode"
   fi
+  if [[ ${SESSION_SERVICE_ENABLED:-false} == true && "$desired" == "$SESSION_AI_DEPLOYMENT" ]]; then
+    service_model="$(ws_session_service_model)"
+  fi
+  if [[ "$want_image" == true ]]; then
+    [[ "$service_model" == Qwen3.5-9B ]] || ws_die 'split requires the separately qualified one-GPU Qwen3.5-9B overlay'
+    ws_session_qualify "$SESSION_IMAGE_DEPLOYMENT" "$node" ai
+    local combined
+    combined="$(jq -n --argjson ai "$(ws_session_deployment "$SESSION_AI_DEPLOYMENT")" --argjson image "$(ws_session_deployment "$SESSION_IMAGE_DEPLOYMENT")" '
+      [$ai,$image] | if all(.[]; ([.spec.template.spec.containers[].resources.requests["amd.com/gpu"]|tonumber]|add)==1) then
+        $ai | .spec.template.spec.containers += $image.spec.template.spec.containers |
+        .spec.template.spec.initContainers=((.spec.template.spec.initContainers // [])+($image.spec.template.spec.initContainers // []))
+      else error("split requires one device each") end')" || ws_die 'invalid split device allocation'
+    ws_session_capacity_check "$combined" "$node"
+  fi
   previous_phase="$(jq -r .phase <<<"$state")"
-  if [[ "$previous_phase" == ready && "$(jq -r .mode <<<"$state")" == "$mode" ]]; then
+  if [[ "$previous_phase" == ready && "$(jq -r .mode <<<"$state")" == "$mode" && ${SESSION_SERVICE_ENABLED:-false} == false ]]; then
     local actual_ai actual_game
     actual_ai="$(ws_session_deployment "$SESSION_AI_DEPLOYMENT" | jq -r .spec.replicas)"
     actual_game="$(ws_session_deployment "$SESSION_GAME_DEPLOYMENT" | jq -r .spec.replicas)"
@@ -415,13 +476,16 @@ ws_session_switch() (
   ws_session_state_write "$dir" "$state"
   # On failure/cancellation retain the original snapshot and inhibit new
   # managed builds. Recovery is explicit; never restart AI over an uncertain GPU.
-  trap 'ws_session_state_write "$dir" "$(jq '\''.phase="failed"'\'' <<< "$state")"' EXIT
+  trap 'ws_session_service unavailable || :; ws_session_state_write "$dir" "$(jq '\''.phase="failed"'\'' <<< "$state")"' EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
+  ws_session_service draining
   ws_session_stop "$SESSION_AI_DEPLOYMENT"
   ws_session_stop "$SESSION_GAME_DEPLOYMENT"
+  [[ ${SESSION_SERVICE_ENABLED:-false} != true ]] || ws_session_stop "$SESSION_IMAGE_DEPLOYMENT"
   ws_session_gpu_free "$hardware"
   if [[ -n "$desired" ]]; then
+    [[ "$service_model" == none ]] || ws_session_service starting "$service_model"
     ws_session_qualify "$desired" "$node" "$qualification_mode"
     local candidate
     candidate="$(ws_session_checked_deployment "$desired")"
@@ -431,6 +495,13 @@ ws_session_switch() (
     ws_session_kubectl -n "$SESSION_NAMESPACE" rollout status "deployment/$desired" --timeout="$(ws_session_rollout_timeout "$desired")" >/dev/null ||
       ws_die 'selected deployment did not become ready; session remains failed until explicit restore or retry'
   fi
+  if [[ "$want_image" == true ]]; then
+    ws_session_qualify "$SESSION_IMAGE_DEPLOYMENT" "$node" ai
+    candidate="$(ws_session_checked_deployment "$SESSION_IMAGE_DEPLOYMENT")"
+    ws_session_kubectl -n "$SESSION_NAMESPACE" scale "deployment/$SESSION_IMAGE_DEPLOYMENT" --resource-version="$(jq -r .metadata.resourceVersion <<<"$candidate")" --current-replicas=0 --replicas=1 >/dev/null || ws_die 'image Deployment changed concurrently'
+    ws_session_kubectl -n "$SESSION_NAMESPACE" rollout status "deployment/$SESSION_IMAGE_DEPLOYMENT" --timeout="$(ws_session_rollout_timeout "$SESSION_IMAGE_DEPLOYMENT")" >/dev/null || ws_die 'image backend did not become ready'
+  fi
+  if [[ "$service_model" != none ]]; then ws_session_service ready "$service_model" "$want_image"; else ws_session_service maintenance; fi
   state="$(jq '.phase="ready"' <<<"$state")"
   ws_session_state_write "$dir" "$state"
   [[ "$desired" == "$SESSION_GAME_DEPLOYMENT" ]] || ws_session_build_gate release

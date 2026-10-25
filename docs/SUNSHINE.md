@@ -136,10 +136,20 @@ It never inherits an upstream `DISPLAY`, host D-Bus or host Pulse socket.
 The maintained image uses `/home/default`, not the old placeholder's `/home/user`.
 The PVC itself is unchanged. Existing relative files remain on it, but inspect
 UID/GID ownership and any absolute paths in app definitions before migrating.
-Take a NAS backup first; no automatic chown, copy, pairing reset or deletion is
+Take an independent backup first; no automatic chown, copy, pairing reset or deletion is
 performed on existing state. New homes receive minimal default app definitions.
 Inspect old app definitions for Xrandr commands and Xorg connector names; remove
 or replace those commands explicitly. The migration does not rewrite user apps.
+
+Include every bound `gaming-home`, `parent-gaming-home` and `kids-gaming-home`
+claim in the [application-consistent backup](SERVICE-RECOVERY.md). Container
+`/home/default` is a PVC mount, not the host's `/home`; the host Restic include
+list does not capture it. Stop games gracefully and verify gaming writers have
+exited before capture. Preserve pairing/configuration/app definitions, Steam
+user data, local saves, Proton compatibility prefixes and optional portal state.
+The initial capture includes the complete home to avoid excluding hidden saves.
+Matching account Secrets are recovered with the K3s state. Restore ownership,
+Moonlight pairing and a saved game from both the backup SSD and S3.
 
 Mesa shader caches use the persistent home with a `2G` cache limit per applicable
 architecture/cache implementation. This is not a limit on Steam's separate

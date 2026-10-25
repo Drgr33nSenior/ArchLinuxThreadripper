@@ -152,6 +152,12 @@ cluster. Repository tests render source locally only.
 
 ## Backups
 
+The [local SSD and S3 workflow](SERVICE-RECOVERY.md#independent-backup-ssd-then-s3)
+captures host policy paths and consistent application/gaming state locally before
+separate off-site replication. Verify the mounted SSD identity; keep it outside
+the RAID and installer targets. Test both restores. The older host-only timer
+below does not capture gaming or other Kubernetes PVCs.
+
 - Review the installed include/exclude policy, then create the encrypted
   repository, password, and least-privilege AWS credentials interactively.
 - The host backup includes `/var/lib/sbctl`; retain a separately encrypted,
@@ -211,3 +217,10 @@ Do not change VFIO configuration until the exact card is installed. Record the
 complete IOMMU group and pass every same-card function together. If the group
 contains host storage, a host GPU, a host NIC, or another required controller,
 move the card or abandon passthrough. Never use ACS override.
+
+## Shared AI service state
+
+See [AI-SERVICE.md](AI-SERVICE.md) for endpoint ownership and staged rollout, and
+[SERVICE-RECOVERY.md](SERVICE-RECOVERY.md) for quiesced bare-metal SQLite/PVC
+capture, existing-PV Retain migration and isolated restore. The optional
+AlmaLinux/embedded-etcd VM recovery procedure does not cover this cluster.

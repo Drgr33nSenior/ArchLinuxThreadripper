@@ -83,6 +83,12 @@ if command -v bsdtar >/dev/null; then
     [[ -f $pkgdir/etc/restic/workstation.include && -f $pkgdir/etc/restic/workstation.exclude ]]
     [[ ${backup[*]} == 'etc/restic/workstation.include etc/restic/workstation.exclude' ]]
     grep -Fqx 'ExecStart=/usr/lib/arch-workstation-backup/run %i' "$pkgdir/usr/lib/systemd/system/workstation-restic@.service"
+    for unit in workstation-service-backup.service workstation-service-backup-local.service workstation-service-backup-replicate@.service; do
+      cmp "$srcdir/project/templates/workstation/restic/$unit" "$pkgdir/usr/lib/systemd/system/$unit"
+    done
+    # Exercise the packaged CLI/parser, not the checkout, without credentials,
+    # mounts, a cluster or starting any backup unit.
+    bash "$packaged_root/bin/workstationctl" service-backup replicate --help >/dev/null
     pkgdir="$work/bridge-runtime-package"
     package_arch-workstation-bridge-runtime
     for optional in lm_sensors dmidecode nvme-cli smartmontools grafana-alloy; do
@@ -120,6 +126,7 @@ if command -v bsdtar >/dev/null; then
       [[ $(ws_dev_setup monitoring "$payload/templates/workstation/packages.pacman") == '-Syu --needed -- lm_sensors dmidecode nvme-cli smartmontools grafana-alloy' ]]
     )
     [[ -f $payload/docs/TELEMETRY.md && -f $payload/infrastructure/observability/host/config.alloy ]]
+    [[ -f $pkgdir/usr/lib/bridge/workstation-reference/docs/INSTALL-READINESS.md ]]
     [[ -f $pkgdir/usr/lib/systemd/system/workstation-telemetry.timer && -f $pkgdir/usr/lib/systemd/system/workstation-alloy.service ]]
     [[ -f $pkgdir/usr/lib/sysusers.d/workstation-telemetry.conf && " ${depends[*]} " == *' systemd '* ]]
     # Use the packaged tree without Git; no cluster call or target discovery.

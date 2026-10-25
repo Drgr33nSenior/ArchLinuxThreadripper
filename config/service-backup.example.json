@@ -1,0 +1,13 @@
+{
+  "environment": "",
+  "scope": "service",
+  "context": "",
+  "node": "",
+  "kubeconfig": "",
+  "session_config": "",
+  "hardware": "",
+  "state_directory": "",
+  "staging": "",
+  "model_inventories": [],
+  "local_repository": null
+}
