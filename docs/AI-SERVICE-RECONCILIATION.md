@@ -12,12 +12,12 @@ This is the final reconciliation for the source change. It does not identify a d
 | --- | --- | --- | --- | --- |
 | 128 GB baseline | `hardware.sh`, `resources.sh`, `tests/test_resource_plan.sh`; refreshed HOME-LAB/STACK/RAG/TELEMETRY; `service.py` | Observed-memory planning and 128 GiB fixtures **already satisfied**; stale current-hardware prose corrected; service/build/VM admission **implemented** | **source-validated**: existing 128 GiB topology fixture, firmware-reserved service fixture, CPU/RAM/GPU budget rejection. Limits and 18 GiB reserves retained | **NOT RUN**: current DIMMs, trained speed, MemTotal and pressure measurements |
 | Application recovery | `service_backup.py`, Restic units, `SERVICE-RECOVERY.md` | **Implemented**: baseline/full captures; canonical lock and writer shutdown; PostgreSQL dump; SQLite/token/config; gaming homes; independent-SSD local snapshot and exact-ID off-site copy; protected UID/replica journal | **source-validated**: storage/writer gates, failure/retry/freshness fixtures and isolated restore staging. **integration-tested**: native Restic copy/retry/check/restore using two disposable local repositories. Existing PVs require Retain migration | **NOT RUN**: physical SSD, S3, K3s token/bootstrap, independent recovery credentials, PostgreSQL and application restore. Synthetic restore is not disaster recovery |
-| Shared model API | `apps/base/shared-api/`, `service.py` | **Implemented**: pinned LiteLLM OSS/PostgreSQL, native key policy, private per-person WebUI translation, bounded ASGI admission/status, scoped DB role/migration, content-free operational signals | **source-validated** against selected source; **integration-tested** boundary/adapter with deterministic upstreams, including identity denial, output/model limits and cancellation | **NOT RUN** locally: native LiteLLM virtual-key/expiry/quota/persistence smoke; Docker daemon unavailable. Native hosted job now runs on PR/main/manual events; inspect its revision-specific result |
+| Shared model API | `apps/base/shared-api/`, `service.py` | **Implemented**: pinned LiteLLM OSS/PostgreSQL, native key policy, private per-person WebUI translation, bounded ASGI admission/status, scoped DB role/migration, content-free operational signals | **source-validated** against selected source; **integration-tested** boundary/adapter with deterministic upstreams and native LiteLLM/PostgreSQL on a hosted runner, including identity denial, expiry, quotas, streaming/tools, cancellation and restart persistence | **NOT RUN**: target service acceptance with actual clients and the GPU backend. Native hosted evidence covers commit `3f8fa579ca13aa41800501ce9bc8e9d5e2f674c8`; local Docker remains unavailable |
 | Private ingress and clients | `apps/overlays/service/`, `infrastructure/service/traefik.yaml`, `agents.sh` | **Implemented**: existing Traefik NodePort 32443, actual-site renderer, TLS/consumer routes, exact flows, normal HTTPS client bundles | **source-validated**: Kustomize/site rendering, no public admin route, union of policies admits required flows and denies lateral access; Qwen separate retrieval-key fixture | **NOT RUN**: real LAN/DNS/TLS, Flannel enforcement, browser WebSocket and full proxy streaming/disconnect |
 | GPU service modes | `session.sh`, `service_session.py`, `test_session.sh` | Existing locks, identity and qualification **retained**; large/split admission, bounded drain, restart-unavailable and recoverable failure **implemented**; no automatic image-triggered switch | **source-validated**: session lock, split/failure and zero-device-release fixtures. Conservative split plan correctly fails at 43.25 CPU limits even with metrics-only telemetry versus 42 allocatable CPUs | **NOT RUN**: physical handover. Split activation **blocked** until a measured CPU/profile adjustment is qualified; external Bridge v1 catalog has no new split operation |
 | Browser images | `service_tools.py`, fixed SDXL workflow; `infrastructure/creative/` | Narrow Swarm adapter **implemented**; Swarm remains sole Comfy owner; pinned source/model/runtime contract and offline package preparation added | **integration-tested** with a deterministic job API. Checks cover access permissions, busy/unavailable responses, bounded artifacts and unresolved cancellation across restart | **NOT RUN**: complete NuGet/wheel closure, offline Linux image build, native Swarm/Comfy behavior, real image quality/persistence/GPU use. Image stays UNQUALIFIED |
 | Shared knowledge for IDEs | Existing RAG pilot + `service_tools.py`, `agents.sh` | Pilot/provenance/embedded store **already present**; authenticated read-only MCP **implemented**, using caller WebUI ACLs and bounded cited snippets. No new vector DB | **integration-tested** with deterministic WebUI APIs: allowed/private/deleted/no-evidence results, source instructions remain data, no arbitrary write/URL tool. Existing RAG tests retained | **NOT RUN**: actual Qwen MCP handshake, deployed document retrieval and target quality evaluation |
-| CI and notifications | `.github/workflows/source-checks.yml`, `tests/ci/`, Alertmanager/observer sources | **Implemented**: pinned source checks and automatic bounded native smoke with sanitized artifacts; separate local/off-site backup alerts; chosen webhook route and independent observer | **source-validated** strict checks; **integration-tested** real Alertmanager/local receiver and maintenance inhibition. Prometheus fixtures distinguish local/off-site freshness and remote-only mode | **NOT RUN** locally: hosted execution, Linux systemd, selected-owner delivery and second-device heartbeat. No workstation credentials enter PR jobs |
+| CI and notifications | `.github/workflows/source-checks.yml`, `tests/ci/`, Alertmanager/observer sources | **Implemented**: pinned source checks and automatic bounded native smoke with sanitized artifacts; separate local/off-site backup alerts; chosen webhook route and independent observer | **source-validated** local and hosted strict checks, including Linux systemd verification; **integration-tested** hosted native gateway job and real Alertmanager/local receiver with maintenance inhibition. Prometheus fixtures distinguish local/off-site freshness and remote-only mode | **NOT RUN**: selected-owner delivery and second-device heartbeat. Image qualification gates remain. No workstation credentials enter PR jobs |
 | AMD DMA-buffer recommendation | `linux-git.config`, `runtime.sh`, `KERNEL-REQUIREMENTS.md` | **Implemented** explicit `CONFIG_DMA_SHARED_BUFFER=y` and effective-package refusal. `CONFIG_DMABUF_MOVE_NOTIFY` is absent from pinned 7.3-rc6; move notification is unconditional in that source | **source-validated** against exact Linux source; kernel-profile and missing-symbol negative tests pass | **NOT RUN**: rebuilding/installing/booting a new kernel in this task |
 
 ## Authoritative model inputs
@@ -128,7 +128,8 @@ Observed checks:
 | Native Restic 0.19.1 | **integration-tested**: two disposable local repositories; exact copy, different destination ID, idempotent retry, full read-data integrity checks and matching isolated synthetic restores from both copies |
 | Independent Astra review at maximum reasoning | All material findings resolved; source review covers native WebUI contracts, image cancellation, storage/writer boundaries, snapshot joins and recovery-point metrics |
 | Gitleaks 8.30.1 | Staged publication patch **PASS**. Selected-file scan identifies one existing public `K3S_RPM_GPG_KEY_SHA256`; verified unchanged from HEAD. No scanner rule or suppression changed |
-| Native gateway containers | **NOT RUN** locally: bounded Docker daemon check timed out after 20 seconds. Inspect the hosted job for the published revision before citing native integration success |
+| Native gateway containers | **integration-tested**, hosted run `40221003029` at commit `3f8fa579ca13aa41800501ce9bc8e9d5e2f674c8`: initial requests, restart persistence and cleanup all exit 0. **NOT RUN** locally: bounded Docker daemon check timed out after 20 seconds |
+| Hosted strict source checks | **PASS**, exit 0, in [run `40221003029`](https://github.com/Drgr33nSenior/ArchLinuxThreadripper/actions/runs/40221003029) at commit `3f8fa579ca13aa41800501ce9bc8e9d5e2f674c8`: 66 test files, six Bats cases, Ansible/YAML/manifests and Linux systemd verification; only the two image gates below were skipped |
 | Physical acceptance | **NOT RUN**: actual SSD, S3 transport/recovery credentials, K3s/PostgreSQL/application restore, Sunshine, image backend, LAN/TLS, notification delivery and GPU handover |
 
 The first strict attempt in the original working directory was stopped after
@@ -136,5 +137,34 @@ discovery included unrelated untracked experiment archives. The full unchanged
 gates then passed on a clean source candidate; no research files were removed or
 checks weakened. Receipts are retained under
 `test-results/install-readiness-20261025.lKhZgr/` and the separate private clean
-validation directory's `test-results/strict-check.l1yQoF/`. Only this evidence
-record changed after that strict run; its documentation audit passed.
+validation directory's `test-results/strict-check.l1yQoF/`. This local receipt
+precedes the hosted CI corrections below.
+
+Hosted run `40220171336` failed during the initial client phase. Its phase-only
+artifact did not identify the failing assertion. Source review then identified
+that the pinned native API returns 404 for an unauthorized lookup. The corrected
+fixture first requires both users' self-lookups to return 200 with the matching
+`user_id`, then requires the cross-user lookup to return 401, 403 or 404. The
+subsequent instrumented run confirmed both self-lookups and the 404 denial.
+Hosted source validation also
+exposed missing `xmllint` and Restic manual-page prerequisites and setup-python's
+compiler search environment. Commit `3f8fa579ca13aa41800501ce9bc8e9d5e2f674c8`
+adds those prerequisites and removes `LD_LIBRARY_PATH` and `PKG_CONFIG_PATH` only
+for the strict-check command; the compiler-environment rejection guard remains.
+
+The native gateway job in hosted run `40221003029` **passed** on 2026-10-25.
+Sanitized evidence is retained at
+`test-results/install-readiness-20261025.lKhZgr/native-gateway-second/native-service.IRMTp5/`.
+Its phase/checkpoint and container records confirm native key creation, self-user
+identity and cross-user denial, expiry/revocation, model restrictions, RPM/TPM and
+concurrency limits, streaming/tool round trips, disconnect cancellation, bounded
+backend failure, maintenance refusal and key persistence after gateway/database
+restart. Setup, migration, both client phases and cleanup exited 0. The upstream
+inference service was a deterministic fixture; this does not qualify a GPU model,
+deployed clients or physical recovery. The source job in that run also **passed**.
+Its strict receipt, including `make.exit` = 0, is retained at
+`test-results/install-readiness-20261025.lKhZgr/hosted-source-second/strict-check.lqrJPN/`.
+The only hosted strict skips were:
+
+- `SKIP: set HOME_LAB_GAME_IMAGE to an already-built local image ID for streaming smoke tests`
+- `SKIP: set HOME_LAB_WAYLAND_RUNTIME_IMAGE for isolated Linux process-group tests`
