@@ -94,9 +94,12 @@ check(metrics_host.include?('prometheus.scrape "self"') && metrics_host.include?
 check(File.read("#{root}/config/loki.yaml").include?('retention_period: 168h'), 'missing log retention')
 check(File.read("#{root}/config/tempo.yaml").include?('block_retention: 72h'), 'missing trace retention')
 dashboard = JSON.parse(File.read("#{root}/dashboards/workstation.json"))
-queue = dashboard['panels'].find { |p| p['title'] == 'SGLang queued requests' }
+serving = JSON.parse(File.read("#{root}/dashboards/workloads.json"))
+power = JSON.parse(File.read("#{root}/dashboards/power.json"))
+check(dashboard['uid'] == 'workstation-overview' && dashboard['panels'].length <= 12, 'overview bookmark or compact scope lost')
+queue = serving['panels'].find { |p| p['title'] == 'SGLang queued requests' }
 check(queue['targets'][0]['expr'] == 'sglang:num_queue_reqs{job="sglang",priority=""}', 'queue total double-counts priority breakdowns')
-psu_panels = dashboard['panels'].select { |p| (105..108).include?(p['id']) }
+psu_panels = power['panels'].select { |p| (105..108).include?(p['id']) }
 check(psu_panels.length == 4, 'missing PSU power, rails, energy or coverage panel')
 psu_panels.each do |panel|
   expr = panel.fetch('targets')[0].fetch('expr')

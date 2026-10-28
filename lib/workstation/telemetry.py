@@ -191,6 +191,24 @@ def configure_profile(stage, profile):
                 rule["expr"] = 'sum(increase({__name__=~"otelcol_processor(_memory_limiter)?_refused_metric_points_total"}[5m])) > 0'
     (stage / "config" / "alerts.metrics.yaml").write_text(yaml.safe_dump(alerts, sort_keys=False))
     kustomization.write_text(yaml.safe_dump(data, sort_keys=False))
+    # Dashboard provisioning follows the same profile as its datasources.
+    # Keep the hierarchy usable without querying an absent logs backend.
+    for path in (stage / "dashboards").glob("*.json"):
+        dashboard = json.loads(path.read_text())
+        panels = []
+        for panel in dashboard.get("panels", []):
+            if panel.get("title") == "Investigate logs and traces":
+                continue
+            if panel.get("datasource", {}).get("uid") in {"loki", "tempo"}:
+                panel = {"id": panel["id"], "title": "Logs and traces are disabled",
+                         "type": "text", "gridPos": dict(panel["gridPos"], h=4),
+                         "options": {"mode": "markdown", "content":
+                             "This installation uses the **metrics** profile. "
+                             "Logs and traces are not collected. Other dashboards "
+                             "remain available through the links above."}}
+            panels.append(panel)
+        dashboard["panels"] = panels
+        path.write_text(json.dumps(dashboard, indent=2) + "\n")
 
 
 def render(args):

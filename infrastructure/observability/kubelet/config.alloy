@@ -29,7 +29,7 @@ prometheus.relabel "cgroup" {
   rule {
     source_labels = ["namespace"]
     action = "keep"
-    regex = "(|ai-home-lab|workstation-observability|workstation-observability-host|kube-system|kube-amd-gpu)"
+    regex = "(|default|ai-home-lab|workstation-observability|workstation-observability-host|kube-system|kube-amd-gpu|kube-node-lease|kube-public)"
   }
   rule {
     action = "labelkeep"

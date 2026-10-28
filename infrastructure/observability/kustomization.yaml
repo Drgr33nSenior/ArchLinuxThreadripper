@@ -27,5 +27,13 @@ configMapGenerator:
     files: [dashboards.yaml=config/dashboards.yaml]
   - name: workstation-dashboard
     namespace: workstation-observability
-    files: [workstation.json=dashboards/workstation.json]
+    files:
+      - workstation.json=dashboards/workstation.json
+      - gpus.json=dashboards/gpus.json
+      - host.json=dashboards/host.json
+      - workloads.json=dashboards/workloads.json
+      - power.json=dashboards/power.json
+      - monitoring.json=dashboards/monitoring.json
+      - kubernetes.json=dashboards/kubernetes.json
+      - pods.json=dashboards/pods.json
 

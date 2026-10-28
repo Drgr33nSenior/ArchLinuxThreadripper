@@ -42,7 +42,7 @@ Keep one source for each setting:
 - `infrastructure/observability/versions.json`: image digests, host package
   evidence, primary-source links and limitations.
 - `infrastructure/observability/config/`: retention, scrapes, filtering and queues.
-- `infrastructure/observability/dashboards/workstation.json`: provisioned dashboard.
+- `infrastructure/observability/dashboards/`: provisioned overview and drilldowns.
 - `templates/workstation/telemetry/`: inactive host units and system users.
 - `lib/workstation/telemetry.py`: offline rendering, integrity and capacity checks.
 
@@ -685,11 +685,64 @@ a fresh plan; historical events do not establish safe destructive retries.
 
 ## Tinkering and useful queries
 
-Start with 30-second scrapes, 10% Bridge traces and SGLang tracing disabled. The
-dashboard covers host headroom/PSI, GPU VRAM/thermals/power/sample age, serving
-queue/TTFT/inter-token latency and pod state. Use Explore for throughput and
-optional kubelet throttling series. Empty panels mean
-missing observations or stopped workloads, not measured zero.
+Start with 30-second scrapes, 10% Bridge traces and SGLang tracing disabled. Open
+**Workstation / Overview** in Grafana's **Workstation** folder. Its existing
+`/d/workstation-overview` bookmark remains valid. The links across the top open
+these views and preserve the selected time range and matching filters:
+
+| View | Question it answers | Details and filters |
+| --- | --- | --- |
+| Overview | Does the workstation have headroom? | CPU, available RAM, root filesystem, PSU DC power, serving availability, alerts and separate GPU bars |
+| Kubernetes cluster | Is K3s ready to run work? | Node readiness/pressure, active Pod counts, deployment desired/available replicas, regular-container requests versus node allocatable, GPU requests and PVC state/capacity |
+| Kubernetes Pods | Why is a Pod waiting, restarting or slow? | Namespace, Pod and phase filters; readiness, unschedulable/waiting reasons, last termination, restarts, actual CPU/memory, budgets and throttling |
+| GPUs | What is happening on each card? | PCI-address filter; VRAM capacity, activity, temperature channels, reported power, clocks, link width and sensor availability |
+| Host & storage | Is CPU, RAM or storage limiting work? | CPU and memory trends, pressure stalls, filesystem capacity, block-device I/O filter, CPU/NVMe temperatures, reported CPU frequency and exposed ECC counters |
+| Workloads | Are requests waiting, and what resources do containers use? | Serving queue, KV token-pool usage, generation rate, TTFT/inter-token latency, namespace filter, actual container memory/CPU, budgets, throttling and restarts |
+| Power & energy | How do load and heat change together? | PSU DC total/rail history, separate GPU power/temperature, sample freshness and cumulative estimated energy with coverage |
+| Monitoring health | Can these observations be trusted? | Scrape targets, alerts, sample age, collector failures and filtered installation/kernel logs; Explore links for logs and traces |
+
+Click an overview GPU bar to open that card's drilldown. GPU identity uses its
+PCI address, rather than an index that can change. The dashboards refresh every
+30 seconds. Use the same time range when comparing views.
+
+An empty panel means missing observations or a stopped workload, not measured
+zero. A GPU can expose VRAM and identity while other channels are unavailable;
+check **Available sensor channels** before interpreting an empty chart. An
+idle card can be runtime-suspended: this host's driver then returns EBUSY for
+activity, clock, temperature and power reads while identity and VRAM remain
+readable. The GPU dashboard's **Activity / clock sensor availability** row
+reports channel readability; it does not prove power state or hardware health.
+Missing measurements remain gaps, rather than substituted zero activity.
+An offline SGLang endpoint leaves its latency and throughput panels empty. The
+generation-token counter measures server work and is not the benchmark's
+delivered-output throughput. Container working set is separate from memory
+requests and limits. PSU DC energy is cumulative over covered samples, not wall
+energy or energy consumed within the selected dashboard range.
+
+The `metrics` profile retains all eight dashboards. It replaces the log panel with
+an explanation that logs and traces are disabled, and removes their Explore
+instructions. The `full` profile retains the filtered log panel and Explore
+instructions. Both profiles use the same dashboard sources and navigation.
+
+The Kubernetes views include the explicitly configured namespaces: `default`,
+`ai-home-lab`, `kube-system`, `kube-amd-gpu`, `kube-node-lease`, `kube-public`,
+`workstation-observability` and `workstation-observability-host`. New namespaces
+need an explicit collector update. Both object-state and optional cAdvisor
+collection use this list. Metric families, sample/body limits, resource limits
+and existing read-only RBAC remain bounded; Secret objects and arbitrary Pod
+labels, logs or Kubernetes Events are not collected.
+
+The Pod phase filter defaults to Pending, Running and Unknown. Retained
+Succeeded/Failed diagnostic Pods appear in a separate history panel; select all
+phases in the Pods dashboard to inspect them. Active readiness and allocation
+views exclude those terminal Pods. Container requests exclude init containers,
+Pod-level resource declarations and overhead, so they are not the scheduler's
+effective reservation. GPU resource slots are not measured device ownership.
+PVC requested capacity is not filesystem usage or a hard quota. API-server and
+etcd latency and DaemonSet/StatefulSet desired-state metrics are not collected.
+After a collector restart, removed Pod series can remain briefly visible within
+Prometheus's lookback window. Confirm the settled state before interpreting a
+short-lived extra Pod count as a new workload.
 
 ```promql
 node_memory_MemAvailable_bytes{job="node"} / 1024^3

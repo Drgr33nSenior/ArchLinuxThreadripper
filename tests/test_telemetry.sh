@@ -13,6 +13,7 @@ command -v kubectl >/dev/null || {
 PYTHONDONTWRITEBYTECODE=1 "$HOME_LAB_PYTHON" "$root/tests/workstation/test_telemetry.py"
 PYTHONDONTWRITEBYTECODE=1 "$HOME_LAB_PYTHON" "$root/tests/workstation/test_telemetry_power.py"
 PYTHONDONTWRITEBYTECODE=1 "$HOME_LAB_PYTHON" "$root/tests/workstation/test_monitoring.py"
+PYTHONDONTWRITEBYTECODE=1 "$HOME_LAB_PYTHON" "$root/tests/workstation/test_dashboards.py"
 source "$root/lib/common.sh"
 source "$root/lib/workstation/runtime.sh"
 TELEMETRY_ENABLED=false

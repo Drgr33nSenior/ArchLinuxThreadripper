@@ -202,6 +202,7 @@ tests/workstation/test_kernel_profile.py
 tests/workstation/test_telemetry.py
 tests/workstation/test_telemetry_power.py
 tests/workstation/test_monitoring.py
+tests/workstation/test_dashboards.py
 docs/PERFORMANCE-PROFILES.md
 tests/hardware/torch-rocm.py
 infrastructure/packages/bootstrap/bridge-runtime.files
@@ -217,6 +218,13 @@ infrastructure/observability/config/loki.yaml
 infrastructure/observability/config/prometheus.yaml
 infrastructure/observability/config/tempo.yaml
 infrastructure/observability/dashboards/workstation.json
+infrastructure/observability/dashboards/gpus.json
+infrastructure/observability/dashboards/host.json
+infrastructure/observability/dashboards/workloads.json
+infrastructure/observability/dashboards/power.json
+infrastructure/observability/dashboards/monitoring.json
+infrastructure/observability/dashboards/kubernetes.json
+infrastructure/observability/dashboards/pods.json
 infrastructure/observability/host-metrics.yaml
 infrastructure/observability/host/config.alloy
 infrastructure/observability/host/config.metrics.alloy
