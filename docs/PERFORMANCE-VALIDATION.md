@@ -1,5 +1,9 @@
 # Performance validation
 
+The optional [Hyperloom developer environment](HYPERLOOM.md) provides a pinned
+optimization harness and offline report tools. Installing it does not start a
+GPU campaign or qualify its R9700/SGLang runner.
+
 The [opt-in model-kernel workflow](MODEL-KERNELS.md) adds independent compilation,
 warmup, restart-reuse and numerical/dispatch evidence without promoting defaults.
 

@@ -24,6 +24,13 @@ Commands:
   makepkg configure [output-file]
   ccache configure|stats|cleanup|test
   hardware collect <new-output-directory>
+  performance hyperloom fetch <new-absolute-directory>
+  performance hyperloom install <locked-wheelhouse> <new-prefix>
+  performance hyperloom status|help <prefix>
+  performance hyperloom report <prefix> <session-breakdown.json> <new-report.md>
+  performance hyperloom sglang-import <prefix> <stack-proof.json> <native-summary.json> <new-output> --stack-sha256 <sha256> --summary-sha256 <sha256>
+  performance hyperloom sglang-bind <prefix> <owner-evidence> <new-output> --seal-sha256 <sha256> --arm <bf16|kv4>
+  performance hyperloom sglang-owner <fresh-session> --authorization-sha256 <sha256> --selection <current-selection.json> --boot-id <uuid> [--execute-owner --output <fresh-output> --wheel <release.whl>]
   resources plan <hardware.json> <new-output-directory> [versions.lock]
   service render <site.json> <new-output-directory> [--mode large|split] [--existing-claims <pvc.json>]
   service plan <resource-plan.json> <service-render> <telemetry-render> <new-output-directory> [--build-mib N --build-cpus N --vm-mib N --vm-cpus N]
@@ -375,6 +382,10 @@ main() {
     rocm:validate-pod)
       (($# == 4)) || return 2
       ws_rocm_validate_pod "$3" "$4"
+      ;;
+    performance:hyperloom)
+      shift 2
+      "$(ws_measure_python)" "$repo_root/lib/workstation/hyperloom.py" --root "$repo_root" "$@"
       ;;
     performance:tuned)
       (($# >= 6)) || return 2

@@ -104,6 +104,13 @@ if command -v bsdtar >/dev/null; then
     [[ -f $pkgdir/usr/lib/bridge/workstation-runtime/lib/workstation/session.sh && -f $pkgdir/usr/lib/bridge/workstation-reference/apps/overlays/rag/SHA256SUMS ]]
     payload="$pkgdir/usr/lib/bridge/workstation-runtime"
     [[ -f $payload/lib/workstation/telemetry.py && -f $payload/lib/workstation/telemetry_sample.py ]]
+    [[ -f $payload/lib/workstation/hyperloom.py && -f $payload/infrastructure/hyperloom/runtime-linux-py314.lock ]]
+    [[ -f $payload/lib/workstation/hyperloom_sglang.py && -f $payload/infrastructure/hyperloom/sglang-rocm102.json ]]
+    [[ -f $payload/lib/workstation/hyperloom_owner.py ]]
+    WORKSTATION_PYTHON="${HOME_LAB_PYTHON:-python3}" bash "$payload/bin/workstationctl" performance hyperloom --help >"$work/hyperloom-help.txt"
+    grep -Fq 'isolated' "$work/hyperloom-help.txt"
+    grep -Fq 'sglang-bind' "$work/hyperloom-help.txt"
+    grep -Fq 'sglang-owner' "$work/hyperloom-help.txt"
     [[ -f $payload/lib/workstation/monitoring.py && -f $payload/lib/workstation/measurement.py ]]
     [[ -f $payload/lib/workstation/kernel_profile.py ]]
     [[ -f $payload/lib/workstation/gemm_profile.py && -f $payload/infrastructure/sglang/gemm-m1/profile.json ]]

@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "status": "experimental-offline-bridge",
+  "framework": "sglang",
+  "framework_version": "0.5.21",
+  "gpu_product": "r9700",
+  "gpu_arch": "gfx1201",
+  "runner_type": "gfx12",
+  "sdk_version": "10.2.0.dev20261020+git535d2990",
+  "torch_version": "2.14.0+git2e66fe81.rocm10.2.0",
+  "hip_version": "7.17.26416",
+  "sdk_manifest_sha256": "727716907cc4274f4f4fb3735bfcb9d957a2ca2e55a72dbfb0d6e14a8d3292db",
+  "server_owner": "existing-protected-workflow",
+  "standalone_launch": false,
+  "automatic_optimization": false
+}
