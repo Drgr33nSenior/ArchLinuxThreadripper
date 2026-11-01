@@ -48,9 +48,10 @@ The complete protocol makes 110 HTTP calls: 22 setup/ingestion/access checks,
 two warmups, 60 measured retrievals, 20 restart retrievals and six removal/revocation
 calls. Health probes are separate. Actual indexed dimensions must be 1,024 and
 cgroup OOM kills must be zero. Preserve all failed attempts. At most three fresh
-technical attempts are allowed for this pilot; stop on an access-control failure
-or exhausted budget. A repair changes the executed source identity and must be
-reported separately.
+technical attempts are allowed in the initial diagnosis; stop on an access-control
+failure or exhausted budget. A diagnosed correction requires a new bounded
+protocol and source identity; do not silently reset the budget or repeat quality
+questions to select favorable answers.
 
 ## Resource and evidence bounds
 

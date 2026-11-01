@@ -37,7 +37,7 @@ cleanup() {
       cp "$scratch/state.log" "$evidence/container-state.txt"
     fi
     timeout 10s docker logs --tail 200 "$app" >"$scratch/server.log" 2>&1
-    rg -o 'PermissionError|Read-only file system|Permission denied|ModuleNotFoundError|ImportError|FileNotFoundError|RuntimeError|ValueError|OutOfMemoryError|OfflineModeIsEnabled|LocalEntryNotFoundError|ConnectionError|\[Errno [0-9]{1,3}\]|/app/backend/open_webui/static|/app/backend/data|/rag-models|/root/\.cache|/app/backend/\.webui_secret_key' "$scratch/server.log" | sort | uniq -c >"$evidence/startup-tokens.txt"
+    grep -oE 'PermissionError|Read-only file system|Permission denied|ModuleNotFoundError|ImportError|FileNotFoundError|RuntimeError|ValueError|OutOfMemoryError|OfflineModeIsEnabled|LocalEntryNotFoundError|ConnectionError|\[Errno [0-9]{1,3}\]|/app/backend/open_webui/static|/app/backend/data|/rag-models|/root/\.cache|/app/backend/\.webui_secret_key' "$scratch/server.log" | sort | uniq -c >"$evidence/startup-tokens.txt"
     if ((client_started == 0)); then
       # Before any HTTP client/auth call, this isolated container's only secret
       # is the freshly generated 64-hex signing key. Redact it and bound output.
@@ -97,7 +97,7 @@ app=$(docker create --platform linux/amd64 --label "workstation.rag-fixture=$non
   --mount "type=bind,source=$scratch/models,target=/rag-models,readonly" \
   --mount "type=bind,source=$scratch/data,target=/app/backend/data" \
   --mount "type=bind,source=$scratch/static,target=/app/backend/open_webui/static" \
-  --mount "type=bind,source=$scratch/tiktoken,target=/app/backend/data/cache/tiktoken" \
+  --mount "type=bind,source=$scratch/tiktoken,target=/runtime-tiktoken" \
   --mount "type=bind,source=$scratch/corpus,target=/rag-fixture/corpus,readonly" \
   --mount "type=bind,source=$root/tests/fixtures/rag/questions.json,target=/rag-fixture/questions.json,readonly" \
   --mount "type=bind,source=$root/tests/rag/client.py,target=/rag-fixture/client.py,readonly" \

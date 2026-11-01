@@ -86,7 +86,10 @@ clearance for 0.11.4.
 The application remains Burstable, not CPU-Manager-exclusive. The init container
 validates pilot settings and model hashes before startup. Missing assets stop
 startup rather than causing an online download. The copied tiktoken cache avoids
-hiding the image's preloaded tokenizer behind an empty data PVC. The embedding
+hiding the image's preloaded tokenizer behind an empty data PVC. Its writable
+mount is `/runtime-tiktoken`, selected by `TIKTOKEN_CACHE_DIR`. Keep it outside
+the data mount: a runtime-created nested mount parent can be root-owned and
+prevent UID 1000 from creating other application caches. The embedding
 splitter uses the staged Qwen tokenizer, not tiktoken. Open WebUI's pinned
 retrieval code applies `RAG_EMBEDDING_QUERY_PREFIX` to query embeddings; the
 deployment supplies Qwen's native `Instruct: ...\nQuery:` prefix as an actual

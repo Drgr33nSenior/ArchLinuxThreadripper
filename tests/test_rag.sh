@@ -33,7 +33,7 @@ for invalid in UVICORN_WORKERS=2 VECTOR_DB=pgvector USE_CUDA_DOCKER=true ENABLE_
   RAG_EMBEDDING_CONTENT_PREFIX=unreviewed RAG_EMBEDDING_MODEL=/rag-models/other \
   CHUNK_SIZE=512 CHUNK_OVERLAP=192 RAG_TOP_K=0 RAG_TOP_K=1000 RAG_EMBEDDING_BATCH_SIZE=3 \
   RAG_TOP_K_RERANKER=10 RAG_TEXT_SPLITTER=token OMP_NUM_THREADS=48 RAG_FILE_MAX_SIZE=100 \
-  RAG_ALLOWED_FILE_EXTENSIONS=pdf RAG_TOP_K=4; do
+  RAG_ALLOWED_FILE_EXTENSIONS=pdf RAG_TOP_K=4 TIKTOKEN_CACHE_DIR=/app/backend/data/cache/tiktoken; do
   if profile_check "$invalid" >"$scratch/invalid.log" 2>&1; then
     printf 'Unexpectedly accepted %s\n' "$invalid" >&2
     exit 1
