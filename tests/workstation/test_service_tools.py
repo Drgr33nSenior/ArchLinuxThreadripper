@@ -27,6 +27,7 @@ class ToolsTests(unittest.IsolatedAsyncioTestCase):
         self.available = True
         self.slow = False
         self.cancel_ack = True
+        self.artifact_path = "View/local/raw/fixture.png"
         webui = yaml.safe_load((ROOT / "apps/overlays/service/webui.yaml").read_text())
         environment = {e["name"]: e.get("value") for e in webui["spec"]["template"]["spec"]["containers"][0]["env"]}
         allowed = environment.get("API_KEYS_ALLOWED_ENDPOINTS", "").split(",")
@@ -57,8 +58,8 @@ class ToolsTests(unittest.IsolatedAsyncioTestCase):
             if path == "/API/GenerateText2Image":
                 if self.slow:
                     await asyncio.sleep(10)
-                return httpx.Response(200, json={"images": ["View/local/raw/fixture.png"]})
-            if path == "/View/local/raw/fixture.png":
+                return httpx.Response(200, json={"images": [self.artifact_path]})
+            if path == "/" + self.artifact_path:
                 return httpx.Response(200, content=b"\x89PNG\r\n\x1a\nfixture", headers={"Content-Type": "image/png"})
             if path == "/API/InterruptAll":
                 self.assertFalse(json.loads(req.content)["other_sessions"])
@@ -122,6 +123,13 @@ class ToolsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("fixture landscape", workflow["2"]["inputs"]["text"])
         self.assertEqual(1, workflow["4"]["inputs"]["batch_size"])
         self.assertFalse((self.root / "state/image-inflight.json").exists())
+
+    async def test_swarm_filename_spaces_are_encoded_for_artifact_fetch(self):
+        self.artifact_path = "View/local/raw/a red cabin.png"
+        response = await self.client.post("/webui/images/generations", headers=self.headers, json=self.image)
+        self.assertEqual(200, response.status_code)
+        fetch = next(r for r in self.calls if r.url.path == "/" + self.artifact_path)
+        self.assertEqual(b"/View/local/raw/a%20red%20cabin.png", fetch.url.raw_path)
 
     async def test_failed_cancellation_survives_restart_and_blocks_duplicate_job(self):
         self.slow, self.cancel_ack = True, False

@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh Flexible Octopus rates hourly
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=1h
+RandomizedDelaySec=5min
+Unit=workstation-tariff.service
+
+[Install]
+WantedBy=timers.target

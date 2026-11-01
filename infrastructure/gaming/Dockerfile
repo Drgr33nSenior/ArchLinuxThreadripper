@@ -42,7 +42,7 @@ FROM graphics AS wayland
 ARG KWIN_DEBIAN_VERSION
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-       "kwin-wayland=$KWIN_DEBIAN_VERSION" xwayland wayland-utils \
+       "kwin-wayland=$KWIN_DEBIAN_VERSION" "kwin-common=$KWIN_DEBIAN_VERSION" xwayland wayland-utils \
        pipewire pipewire-pulse wireplumber dbus-user-session \
        xdg-desktop-portal xdg-desktop-portal-kde qt6-wayland \
     && install -d -m 1777 /tmp/.X11-unix \

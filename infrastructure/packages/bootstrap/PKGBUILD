@@ -132,7 +132,7 @@ package_arch-workstation-bridge-runtime() {
       sha256sum BUILD-IDENTITY INSTALLER-SOURCE.sha256
     ) >"$destination/SOURCE-MANIFEST.sha256"
   done
-  for path in workstation-telemetry.service workstation-telemetry.timer workstation-alloy.service; do
+  for path in workstation-telemetry.service workstation-telemetry.timer workstation-alloy.service workstation-tariff.service workstation-tariff.timer; do
     install -Dm644 "$srcdir/project/templates/workstation/telemetry/$path" "$pkgdir/usr/lib/systemd/system/$path"
   done
   install -Dm644 "$srcdir/project/templates/workstation/telemetry/workstation-telemetry.sysusers" \

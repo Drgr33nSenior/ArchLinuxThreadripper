@@ -13,8 +13,12 @@ fi
 }
 docker image inspect "$HOME_LAB_GAME_IMAGE" --format '{{.Os}}/{{.Architecture}}' | grep -Fxq linux/amd64
 docker image inspect "$HOME_LAB_GAME_IMAGE" --format '{{.Config.User}}' | grep -Fxq 1000:1000
-docker image inspect "$HOME_LAB_GAME_IMAGE" --format '{{json .Config.Entrypoint}}' |
-  grep -Fxq '["/usr/bin/dumb-init","--","/usr/lib/workstation/wayland-session"]'
+entrypoint=$(docker image inspect "$HOME_LAB_GAME_IMAGE" --format '{{json .Config.Entrypoint}}')
+case $entrypoint in
+  '["/usr/bin/dumb-init","--","/usr/lib/workstation/wayland-session"]' | \
+    '["/usr/bin/catatonit","--","/usr/lib/workstation/wayland-session"]') ;;
+  *) printf 'Unexpected gaming entrypoint\n' >&2; exit 1 ;;
+esac
 docker run --rm --pull never --platform linux/amd64 --network none --read-only \
   --cap-drop ALL --security-opt no-new-privileges --user 1000:1000 \
   --pids-limit 64 --memory 256m --cpus 1 --tmpfs /tmp:rw,nosuid,nodev,size=16m \
@@ -26,15 +30,30 @@ docker run --rm --pull never --platform linux/amd64 --network none --read-only \
     version=$(sunshine --version)
     [[ $version == *"version: $expected"* ]]
     [[ -z $(getcap /usr/lib/workstation/sunshine.real) ]]
-    mesa=$(ws_read_lock SUNSHINE_MESA_DEBIAN_VERSION)
-    for arch in amd64 i386; do
-      for package in mesa-libgallium mesa-vulkan-drivers libgl1-mesa-dri libegl-mesa0 libglx-mesa0 libgbm1; do
-        [[ $(dpkg-query -W -f="\${Version}" "$package:$arch") == "$mesa" ]]
+    if [[ -e /etc/arch-release ]]; then
+      pacman -Q sunshine mesa lib32-mesa vulkan-radeon lib32-vulkan-radeon kwin xorg-xwayland catatonit
+      [[ $(pacman -Q sunshine) == "sunshine $expected-1" ]]
+      [[ -r /usr/lib/dri/radeonsi_drv_video.so ]]
+      [[ -x /usr/games/steam ]]
+      for plugin in screencast eis; do
+        [[ -r /usr/lib/qt6/plugins/kwin/plugins/$plugin.so ]]
       done
-    done
-    [[ -r /usr/lib/x86_64-linux-gnu/dri/radeonsi_drv_video.so ]]
+    else
+      mesa=$(ws_read_lock SUNSHINE_MESA_DEBIAN_VERSION)
+      for arch in amd64 i386; do
+        for package in mesa-libgallium mesa-vulkan-drivers libgl1-mesa-dri libegl-mesa0 libglx-mesa0 libgbm1; do
+          [[ $(dpkg-query -W -f="\${Version}" "$package:$arch") == "$mesa" ]]
+        done
+      done
+      [[ -r /usr/lib/x86_64-linux-gnu/dri/radeonsi_drv_video.so ]]
+      [[ $(dpkg-query -W -f="\${Version}" kwin-wayland) == "$(ws_read_lock KWIN_DEBIAN_VERSION)" ]]
+      [[ $(dpkg-query -W -f="\${Version}" kwin-common) == "$(ws_read_lock KWIN_DEBIAN_VERSION)" ]]
+      for plugin in screencast eis; do
+        [[ -r /usr/lib/x86_64-linux-gnu/qt6/plugins/kwin/plugins/$plugin.so ]]
+      done
+    fi
     [[ -s /usr/share/workstation/gaming-packages.tsv ]]
-    [[ $(dpkg-query -W -f="\${Version}" kwin-wayland) == "$(ws_read_lock KWIN_DEBIAN_VERSION)" ]]
+    jq -e "(.env | type) == \"object\" and (.apps | type) == \"array\"" /usr/share/workstation/wayland-apps.json >/dev/null
     [[ -z $(getcap /usr/bin/kwin_wayland) ]]
     grep -Fxq "Exec=/usr/lib/workstation/sunshine.real" /usr/share/applications/dev.lizardbyte.app.Sunshine.kwin.desktop
     [[ -x /usr/lib/workstation/wayland-session ]]
@@ -48,6 +67,8 @@ docker run --rm --pull never --platform linux/amd64 --network none --read-only \
     Xwayland -help >/tmp/xwayland-help.txt 2>&1
     grep -Fq -- -enable-ei-portal /tmp/xwayland-help.txt
     /opt/workstation/bin/workstationctl sunshine profile /tmp/profile >/dev/null
+    cmp /opt/workstation/templates/sunshine/kwinrc.input-example /tmp/profile/kwinrc.input-example
+    [[ ! -e /tmp/profile/kwinrc ]]
     # Native argument parser only: --version exits before any server or encoder.
     for encoder in vaapi vulkan; do
       SUNSHINE_ENCODER=$encoder SUNSHINE_CAPTURE=kwin

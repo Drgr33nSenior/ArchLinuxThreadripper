@@ -115,6 +115,12 @@ Neither allowance is a kubelet reservation, an RSS measurement or proof of
 consumption. Cluster CPU limits are summed. Host collector/sampler CPU quotas
 are 50%/10%; observe throttling before increasing collection rates.
 
+The optional tariff refresher adds a separate 64 MiB host limit and 5% CPU
+quota. Include `--tariff true` in a render and set `TELEMETRY_RESERVE_MIB` to
+at least 6208 MiB for full telemetry or 4416 MiB for metrics telemetry before
+activation. These amounts retain the existing 768 MiB margin. A default render
+does not include or activate the optional refresher.
+
 The offline SGLang memory planner can receive the reviewed nonsecret rendered
 `evidence.json` through `--telemetry-evidence`. It verifies the selected
 profile's schema and requires `--other-mib` to be at least `reserve_mib`; it
@@ -606,6 +612,53 @@ non-root. It accepts only the fixed installer event schema and replaces selected
 kernel warnings/errors with subsystem classifications. It does not export raw
 boot/application logs. Local raw diagnosis remains an explicit owner action.
 
+### Native SGLang metrics outside Kubernetes
+
+The cluster collector scrapes `sglang.ai-home-lab.svc:30000`. That address does
+not cover a native or host-network server bound to loopback. The host collector
+can scrape one explicitly configured IPv4 loopback endpoint into the same
+`sglang` job. The default has no native target. Metrics must already be enabled
+on the server; a running process alone does not establish metric availability.
+
+After reviewing the server's actual listener and metric endpoint, configure
+the public target in `/etc/workstation-telemetry/sglang-metrics.env`:
+
+```text
+WORKSTATION_SGLANG_METRICS_ADDRESS=127.0.0.1:18088
+```
+
+Use the actual port, not the example by assumption. Keep this file root-owned,
+mode 0640, group `workstation-alloy`. The canonical service reads it optionally.
+For an older installed unit, use a drop-in containing `[Service]` and
+`EnvironmentFile=-/etc/workstation-telemetry/sglang-metrics.env`, then reload
+systemd and restart only `workstation-alloy.service`. Validate the candidate
+host configuration with the same environment before activation. No model-server
+restart, new listener or Kubernetes network-policy exception is required.
+
+Both host profiles reject empty, non-loopback and invalid-port targets. Scrapes
+run every 30 seconds with a five-second timeout and the existing sample, label
+and body limits. Only SGLang metric families and scrape health are forwarded;
+request/session/user/content labels are dropped. The existing bounded host
+remote-write path and 512-MiB collector limit remain in use. This adds monitoring
+HTTP traffic, so record it for benchmark comparisons; it is not generation work.
+Remove the target setting when the temporary server retires or changes port.
+
+SGLang's negotiated metrics response can use `sglang_` names even when a plain
+`curl /metrics` shows `sglang:` names. Both collector profiles normalize the
+underscore prefix to the dashboard's colon prefix only for `job="sglang"`.
+The host performs this normalization before its metric-family allowlist;
+privacy filters and scrape limits remain in force. Validate nonempty model
+series as well as `up=1`: successful HTTP scraping alone can hide a downstream
+filter that drops every model sample. Compare `scrape_samples_scraped`, the
+collector's relabel counters and the final Prometheus series when diagnosing
+this case. This change does not require a model-server restart.
+
+Serving panels use either source. Kubernetes CPU/memory/Pod panels cover Pods;
+a native model process will not appear there. Use Host and GPU views for its
+system-level resources. A failed Kubernetes scrape can coexist with a healthy
+native scrape; inspect `up{job="sglang"}` by instance before concluding the
+model is stopped. No history can be recovered for periods before scraping began.
+
 Bridge implementation is in the separate `Spry.ai-workstation-bridge` checkout;
 its `docs/TELEMETRY.md` owns the policy/schema details. After building/installing
 that reviewed candidate, merge this section into the existing `server.json`:
@@ -683,6 +736,66 @@ identity and artifact references. After interruption revalidate actual disks,
 config, revision and state through the installation skill. Changed inputs need
 a fresh plan; historical events do not establish safe destructive retries.
 
+## Flexible Octopus prices and electricity estimates
+
+The **Power & energy** dashboard's **Electricity costs** section values measured PSU DC output at the selected
+electricity price. This is an estimate: the sensor excludes PSU conversion losses
+and is not an AC wall meter. The household standing charge is shown separately;
+it is not added per workstation, GPU, request or task. The selected-window value
+uses covered counter differences and the **current** price. It does not reconstruct
+historical billing after a tariff change. The counter endpoints are sampled near
+the requested range boundaries, so the displayed covered hours can differ
+slightly from the nominal range. Missing edge samples, counter resets,
+expired tariff observations and measurement gaps remain visible as unavailable
+or reduced coverage. No energy is extrapolated across unobserved intervals.
+
+The initial public configuration in
+`infrastructure/observability/host/tariff.json` retains the owner's supplied
+28.11 p/kWh and 58.43 p/day, assumed VAT-inclusive. Both identity fields are null,
+so this configuration makes no network requests. Do not infer a tariff from
+rounded prices. Ask the owner for the exact single-rate Flexible electricity
+code (`E-1R-VAR-…-<region>`) and whether payment is `DIRECT_DEBIT` or
+`NON_DIRECT_DEBIT`. Do not request account credentials, meter identifiers or an
+API key. This helper does not support Economy 7, Agile, Tracker or prepayment.
+
+Octopus's [public product and price API](https://developer.oegb-kraken.energy/guides/rest/api-endpoints/)
+provides `value_inc_vat` in pence, effective dates and payment methods. The
+refresher selects one currently effective, unambiguous row per rate. It checks
+both unit and standing prices together. It rejects redirects, foreign pagination
+URLs and oversized responses; TLS verification remains enabled. The API check
+uses at most four 128-KiB pages per rate with an eight-second request timeout.
+The service deadline is 90 seconds. A successful refresh replaces the private
+last-good cache atomically. During an API outage, a matching unexpired cached
+rate can be used for up to 26 hours; otherwise the supplied manual rates apply.
+The dashboard labels API, cached and manual sources. Publication expires after
+two hours or at the API rate's effective end, whichever comes first.
+
+The Bridge Runtime package includes the helper, templates, example configuration
+and inactive units. After reviewing the additional memory allowance above, the
+owner can enable the helper on the mapped test workstation:
+
+```sh
+sudo systemd-sysusers /usr/lib/sysusers.d/workstation-telemetry.conf
+sudo install -d -o root -g root -m 0755 /etc/workstation-tariff
+sudo install -o root -g root -m 0644 \
+  /usr/lib/bridge/workstation-runtime/infrastructure/observability/host/tariff.json \
+  /etc/workstation-tariff/config.json
+# Set the exact tariff_code and payment_method in this nonsecret JSON to enable API refresh.
+sudo systemctl enable --now workstation-tariff.timer
+sudo systemctl start workstation-tariff.service
+sudo systemctl show workstation-tariff.service -p Result -p ExecMainStatus -p MemoryPeak
+```
+
+The `workstation-tariff` user has its own `/var/lib/workstation-tariff` state
+directory. It cannot write the hardware sampler's counters or state. Node
+Exporter reads its public `tariff.prom` through a second textfile directory;
+no inbound listener is added. The timer refreshes hourly with up to five minutes
+of jitter. A configuration change needs a service restart, not an image rebuild.
+Stop and disable only `workstation-tariff.timer` and `workstation-tariff.service`
+to suspend price refresh. Preserve the configuration and cache for rollback.
+Do not stop the hardware sampler. Without fresh tariff publication the cost
+panels become unavailable while hardware dashboards continue to operate.
+
 ## Tinkering and useful queries
 
 Start with 30-second scrapes, 10% Bridge traces and SGLang tracing disabled. Open
@@ -698,7 +811,7 @@ these views and preserve the selected time range and matching filters:
 | GPUs | What is happening on each card? | PCI-address filter; VRAM capacity, activity, temperature channels, reported power, clocks, link width and sensor availability |
 | Host & storage | Is CPU, RAM or storage limiting work? | CPU and memory trends, pressure stalls, filesystem capacity, block-device I/O filter, CPU/NVMe temperatures, reported CPU frequency and exposed ECC counters |
 | Workloads | Are requests waiting, and what resources do containers use? | Serving queue, KV token-pool usage, generation rate, TTFT/inter-token latency, namespace filter, actual container memory/CPU, budgets, throttling and restarts |
-| Power & energy | How do load and heat change together? | PSU DC total/rail history, separate GPU power/temperature, sample freshness and cumulative estimated energy with coverage |
+| Power & energy | How do power, heat, energy and electricity costs change together? | PSU DC power/rail history, GPU power/temperature, cumulative energy and coverage; collapsible Electricity costs section with current cost/hour, projections, selected-window estimates, separate household standing charge and API/cache/manual status |
 | Monitoring health | Can these observations be trusted? | Scrape targets, alerts, sample age, collector failures and filtered installation/kernel logs; Explore links for logs and traces |
 
 Click an overview GPU bar to open that card's drilldown. GPU identity uses its

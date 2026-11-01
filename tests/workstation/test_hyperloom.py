@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 import zipfile
@@ -90,17 +91,83 @@ class HyperloomTests(unittest.TestCase):
         check = '''
 import socket
 blocked = 0
+expected = OSError if sys.argv[1:2] == ["trace-analysis"] else RuntimeError
 for operation in (lambda: socket.create_connection(("127.0.0.1",9)),
                   lambda: __import__("subprocess").run(["/usr/bin/true"]),
                   lambda: open("/dev/kfd")):
     try: operation()
-    except RuntimeError: blocked += 1
+    except expected: blocked += 1
 assert blocked == 3
 print("offline execution boundaries passed")
 '''
-        result = subprocess.run([sys.executable, "-I", "-B", "-c", guard + check],
-                                capture_output=True, text=True, timeout=15, check=True)
-        self.assertIn("boundaries passed", result.stdout)
+        # Trace analysis refuses with PermissionError so upstream best-effort probes degrade.
+        for argv in ([], ["trace-analysis"]):
+            result = subprocess.run([sys.executable, "-I", "-B", "-c", guard + check, *argv],
+                                    capture_output=True, text=True, timeout=15, check=True)
+            self.assertIn("boundaries passed", result.stdout)
+
+    def test_tracelens_is_commit_pinned_and_excludes_unused_requirements(self):
+        contract = integration.read_contract(ROOT)
+        tracelens = integration.read_contract(ROOT, "TRACELENS")
+        self.assertEqual(tracelens["TRACELENS_COMMIT"], "614c597bc0c66cabf6a15152037324acc7386090")
+        self.assertEqual(tracelens["TRACELENS_ARCHIVE_URL"],
+                         "https://codeload.github.com/AMD-AGI/TraceLens/tar.gz/" + tracelens["TRACELENS_COMMIT"])
+        pins = integration.requirements(ROOT / integration.TRACELENS_DEPENDENCIES)
+        self.assertEqual(pins["hyperloom-inference-optimizer"],
+                         (contract["HYPERLOOM_VERSION"], contract["HYPERLOOM_WHEEL_SHA256"]))
+        self.assertEqual(set(pins), {"hyperloom-inference-optimizer", "pandas", "numpy", "python-dateutil", "six",
+                                     "tzdata", "tqdm", "openpyxl", "et-xmlfile", "itanium-demangler"})
+        self.assertNotIn("[runtime]", (ROOT / integration.TRACELENS_DEPENDENCIES).read_text())
+        self.assertFalse({"office365-rest-python-client", "msal", "matplotlib", "torch", "sglang"} & pins.keys())
+
+    def tracelens_archive(self, commit, extra=None):
+        source = self.work / "source"
+        top = source / ("TraceLens-" + commit)
+        (top / "TraceLens/TraceUtils").mkdir(parents=True)
+        (top / "TraceLens/__init__.py").write_text("")
+        (top / "TraceLens/TraceUtils/kernel_source.py").write_text("original = True\n")
+        (top / "tests").mkdir()
+        (top / "tests/fixture.json").write_text("{}")
+        path = self.work / "tracelens.tar.gz"
+        with tarfile.open(path, "w:gz") as archive:
+            archive.add(top, arcname=top.name)
+            if extra:
+                archive.add(top / "tests/fixture.json", arcname=extra)
+        return path
+
+    @unittest.skipUnless(hasattr(tarfile, "data_filter"), "runtime requires CPython 3.14 tarfile filters")
+    def test_tracelens_source_substitution_and_planted_modules_are_rejected(self):
+        commit = "0" * 40
+        archive = self.tracelens_archive(commit)
+        contract = {"TRACELENS_COMMIT": commit, "TRACELENS_ARCHIVE_SHA256": integration.digest(archive)}
+        prefix = self.work / "installed"
+        (prefix / integration.SITE_PACKAGES).mkdir(parents=True)
+        root = integration.unpack_tracelens(archive, prefix, contract)
+        self.addCleanup(lambda: [os.chmod(d, 0o700) for d, _, _ in os.walk(root)])
+        self.assertEqual(integration.tracelens_root(prefix, contract), root)
+        self.assertEqual((prefix / integration.SITE_PACKAGES / integration.TRACELENS_PATH_FILE).read_text(), f"{root}\n")
+        with self.assertRaises(PermissionError):
+            (root / "TraceLens/__pycache__").mkdir()
+        module = root / "TraceLens/TraceUtils/kernel_source.py"
+        module.write_text("original = False\n")
+        with self.assertRaises(ValueError):
+            integration.tracelens_root(prefix, contract)
+        module.write_text("original = True\n")
+        os.chmod(root / "TraceLens", 0o700)
+        (root / "TraceLens/planted.py").write_text("")
+        with self.assertRaises(ValueError):
+            integration.tracelens_root(prefix, contract)
+
+    @unittest.skipUnless(hasattr(tarfile, "data_filter"), "runtime requires CPython 3.14 tarfile filters")
+    def test_tracelens_archive_outside_commit_directory_is_rejected(self):
+        commit = "1" * 40
+        archive = self.tracelens_archive(commit, extra="elsewhere.json")
+        contract = {"TRACELENS_COMMIT": commit, "TRACELENS_ARCHIVE_SHA256": integration.digest(archive)}
+        prefix = self.work / "installed"
+        (prefix / integration.SITE_PACKAGES).mkdir(parents=True)
+        with self.assertRaises(ValueError):
+            integration.unpack_tracelens(archive, prefix, contract)
+        self.assertFalse((prefix / "TraceLens").exists())
 
 
 

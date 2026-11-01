@@ -188,6 +188,31 @@ class DashboardTests(unittest.TestCase):
         self.assertIn('sample_limit = 30000', cgroup)
         self.assertIn('body_size_limit = "16MiB"', cgroup)
 
+    def test_costs_use_live_tariff_and_do_not_bill_standing_per_workstation(self):
+        power = self.dashboards["workstation-power"]
+        self.assertEqual(power["title"], "Workstation / Power & energy")
+        section = next(p for p in power["panels"] if p["id"] == 200)
+        self.assertEqual((section["type"], section["title"]), ("row", "Electricity costs"))
+        panels = {p["id"] - 200: p for p in power["panels"] if p["id"] > 200}
+        self.assertEqual(len(panels), 11)
+        for panel_id in (2, 3, 4, 5, 6, 7, 10, 11):
+            expr = panels[panel_id]["targets"][0]["expr"]
+            self.assertIn("workstation_tariff_valid_until_seconds", expr)
+            self.assertIn("sample_timestamp_seconds", expr)
+        for panel_id in (5, 6, 7, 11):
+            expr = panels[panel_id]["targets"][0]["expr"]
+            self.assertIn("unit_price_gbp_per_kwh", expr)
+            self.assertNotIn("standing_charge", expr)
+            self.assertNotIn("or vector(0)", expr)
+        for panel_id in (7, 8):
+            expr = panels[panel_id]["targets"][0]["expr"]
+            self.assertIn("offset $__range", expr)
+            self.assertIn("resets(", expr)
+            self.assertIn("$__range_s", expr)
+            self.assertNotIn("increase(", expr)
+        self.assertIn("current rate", panels[7]["description"])
+        self.assertIn("not reconstructed historical billing", panels[1]["options"]["content"])
+
 
 if __name__ == "__main__":
     unittest.main()

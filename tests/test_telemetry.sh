@@ -14,6 +14,7 @@ PYTHONDONTWRITEBYTECODE=1 "$HOME_LAB_PYTHON" "$root/tests/workstation/test_telem
 PYTHONDONTWRITEBYTECODE=1 "$HOME_LAB_PYTHON" "$root/tests/workstation/test_telemetry_power.py"
 PYTHONDONTWRITEBYTECODE=1 "$HOME_LAB_PYTHON" "$root/tests/workstation/test_monitoring.py"
 PYTHONDONTWRITEBYTECODE=1 "$HOME_LAB_PYTHON" "$root/tests/workstation/test_dashboards.py"
+PYTHONDONTWRITEBYTECODE=1 "$HOME_LAB_PYTHON" "$root/tests/workstation/test_telemetry_tariff.py"
 source "$root/lib/common.sh"
 source "$root/lib/workstation/runtime.sh"
 TELEMETRY_ENABLED=false

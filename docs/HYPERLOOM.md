@@ -77,6 +77,54 @@ opens in the reporting process. It does not translate workstation benchmark
 results into a fictitious Hyperloom session. The upstream CLI remains available
 for separately reviewed operation; wrapper commands do not start optimization.
 
+## Offline trace analysis with TraceLens
+
+Hyperloom's bypass trace analysis imports `TraceLens.TraceUtils.kernel_source`
+for kernel source mapping. `versions.lock` pins TraceLens commit
+`614c597bc0c66cabf6a15152037324acc7386090`, the one Hyperloom 1.1.5's
+`install_kernel_tools.sh` selects, as a commit-addressed GitHub archive with its
+SHA256. TraceLens is MIT licensed.
+`infrastructure/hyperloom/tracelens-linux-py314.lock` pins ten binary wheels:
+the same Hyperloom release wheel without extras, pandas, NumPy, python-dateutil,
+six, tzdata, tqdm, openpyxl, et-xmlfile and itanium-demangler.
+
+TraceLens declares more requirements than this path uses. The import and a
+complete bypass run never load `office365-rest-python-client`, `msal`,
+matplotlib, tabulate, orjson or PyYAML, so they are not installed. Upstream
+installs TraceLens editable at `TRACELENS_ROOT`. Here a site-packages path
+entry exposes the authenticated source tree instead, so `setup.py`, a build
+backend and the unused requirements never run. `importlib.metadata` therefore
+reports no TraceLens version, which upstream handles as a source checkout.
+
+Use a separate prefix; the existing Hyperloom prefix is unchanged:
+
+```sh
+export WORKSTATION_PYTHON=/usr/bin/python3
+bash bin/workstationctl performance hyperloom tracelens-fetch /home/developer/tracelens-download-01
+bash bin/workstationctl performance hyperloom tracelens-install \
+  /home/developer/tracelens-download-01/wheelhouse \
+  /home/developer/tracelens-download-01/source/TraceLens-614c597bc0c66cabf6a15152037324acc7386090.tar.gz \
+  /home/developer/.local/share/workstation/hyperloom-tracelens/614c597b
+bash bin/workstationctl performance hyperloom trace-analysis \
+  /home/developer/.local/share/workstation/hyperloom-tracelens/614c597b \
+  /absolute/trace.json.gz /absolute/new-analysis
+```
+
+The fetch downloads about 356 MiB, mostly TraceLens test traces and evaluation
+archives. The installed prefix is about 802 MiB, including the retained archive. The installation extracts the complete archive with Python's `data`
+filter, keeps the archive and makes the tree's directories read-only. To delete
+a retired prefix, first restore owner write permission on its `TraceLens` tree.
+
+Before each analysis, the wrapper checks the installed Hyperloom files against
+the release wheel. It also checks every TraceLens package file against the
+retained archive and refuses any added file. It runs `bypass_trace_analysis`
+with `--framework sglang --target-platform r9700` and sets `TRACELENS_ROOT`.
+The run uses the offline guard, the empty private home and caches inside the
+new output. Refused network, process and GPU-device operations raise
+`PermissionError`, so upstream's best-effort `git`/`rocminfo` provenance probes
+record nothing. The output contains Hyperloom's analysis files; it does not
+qualify a kernel, select an optimization or launch a workload.
+
 ## GPU campaign boundary and rollback
 
 ### Delegate a registered owner packet
@@ -258,55 +306,6 @@ read-only reader before reviewing the quality-file digest for a new import.
 
 A launch-capable R9700/SGLang runner, full quality/lifecycle admission and
 physical runner qualification remain unfinished.
-
-## Retained physical benchmark: 30 October 2026
-
-The protected owner completed two fresh starts of the same selected
-Qwen/Qwen3.8-27B-FP8 configuration on two R9700 GPUs, with tensor parallelism 2
-and concurrency 1. Each start used one excluded warmup and three measured
-requests, each with 2,047 input tokens and 1,024 forced output tokens. The
-configuration used DFlash with eight draft tokens, FP8 model weights and BF16
-target/draft attention KV. The historical `bf16` and `kv4` arm labels identify
-the two runs; neither arm used KV4 compression.
-
-| Start | Median output tokens / HTTP second | Median request time |
-| --- | --- | --- |
-| 1 | 120.77456 | 8.47861 s |
-| 2 | 120.97877 | 8.46429 s |
-
-These rates include prefill and the complete non-stream HTTP request. The
-pooled rate was 120.84857 across six measured requests and 6,144 output tokens.
-The 0.16909% difference between start medians measures repeatability of the same
-configuration. It is not an optimization gain. Including both warmups, eight
-external requests delivered 8,192 output tokens. Internal startup work is
-separate. Isolated decode, TTFT, inter-token latency and energy were not measured.
-
-All three corresponding measured output sequences matched exactly (3,072
-aligned output IDs). The warmup sequences first differed at output index 536
-(zero-based). Raw evidence is retained, the cause remains unresolved, and no
-logprobs were checked. Full numerical and model qualification remain open.
-Timing exclusion does not waive the warmup discrepancy. This timing run did
-not repeat task, natural-stop or cancellation/recovery qualification.
-
-Native evidence confirmed graph replay and completed commits on both ranks.
-All four owner stages passed and six diagnostic Hyperloom reports were
-imported. Independent cleanup and a final host check verified owned processes
-gone, no GPU holders or allocations, diagnostic lock released, node Ready and
-unchanged network policy. Graceful server shutdown was not newly qualified.
-
-The model revision was `017b9c7af6b5689d5dd426a76e0bc077eb5ca20a` and both
-arms used selected kernel bytes with SHA256
-`b101e71751ce995b23b327dd3ee87662eb0efd3ef7dc2d35387d1acc58d8e069`.
-The base image manifest was
-`1d3ebef7da1df35f0c103ed038521933ebaeaf6f8c8d710168d8c294efdc59d9`.
-The local evidence root is `test-results/hyperloom-benchmark.7lcBptGy`, whose
-`FINAL-ARTIFACTS.sha256` hashes to
-`7d2b050b2d7f2e9e42fea6012d2e5ca82d4e466fc0d313fad0a3a7c665d227b0`.
-Its `HANDOFF.md`, `ANALYSIS.json` and raw owner evidence give the full identities,
-per-request results and limitations. Raw evidence remains local and is not
-included in the source distribution. Consumed or sealed launchers must not be
-rerun. This result validates the owner/reporting integration; autonomous
-Hyperloom tuning and a new performance gain were not demonstrated.
 The upstream R9700 framework gate remains intact. Do not invoke the upstream
 default launcher as a substitute: it starts a separate server and client and
 does not implement this project's owner lifecycle. Continue through a fresh

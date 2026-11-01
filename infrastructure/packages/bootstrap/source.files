@@ -110,6 +110,7 @@ apps/overlays/single-gpu/kustomization.yaml
 bin/workstationctl
 infrastructure/gaming/60-configure_gpu_driver.sh
 infrastructure/gaming/Dockerfile
+infrastructure/gaming/Dockerfile.arch
 infrastructure/gaming/sunshine-wrapper.sh
 infrastructure/gaming/trixie-backports.sources
 infrastructure/gaming/wayland-apps.json
@@ -160,6 +161,7 @@ lib/workstation/stack_inventory.py
 lib/workstation/storage_benchmark.py
 lib/workstation/sunshine.sh
 templates/sunshine/compare.jq
+templates/sunshine/kwinrc.input-example
 templates/sunshine/measurement.example.json
 templates/workstation/codex-config.toml
 templates/workstation/linux-git.config
@@ -248,6 +250,7 @@ lib/workstation/hyperloom_sglang.py
 lib/workstation/hyperloom_owner.py
 infrastructure/hyperloom/sglang-rocm102.json
 infrastructure/hyperloom/runtime-linux-py314.lock
+infrastructure/hyperloom/tracelens-linux-py314.lock
 infrastructure/hyperloom/versions.lock
 docs/HYPERLOOM.md
 tests/test_hyperloom.sh
@@ -255,6 +258,11 @@ tests/workstation/test_hyperloom.py
 tests/workstation/test_hyperloom_sglang.py
 tests/workstation/test_hyperloom_owner.py
 tests/fixtures/hyperloom/parsed-configuration.json
+lib/workstation/telemetry_tariff.py
+infrastructure/observability/host/tariff.json
+templates/workstation/telemetry/workstation-tariff.service
+templates/workstation/telemetry/workstation-tariff.timer
+tests/workstation/test_telemetry_tariff.py
 templates/workstation/telemetry/workstation-alloy.service
 templates/workstation/telemetry/workstation-telemetry.service
 templates/workstation/telemetry/workstation-telemetry.sysusers
@@ -287,6 +295,7 @@ infrastructure/creative/Dockerfile
 infrastructure/creative/launch.sh
 infrastructure/creative/prepare.py
 infrastructure/creative/runtime.json
+infrastructure/creative/verify_runtime.py
 infrastructure/service/alertmanager.yaml
 infrastructure/service/alerts.yaml
 infrastructure/service/traefik.yaml
@@ -308,6 +317,7 @@ tests/test_service_alerts.sh
 tests/test_shared_service.sh
 tests/validation-service.lock
 tests/workstation/test_service_tools.py
+tests/workstation/test_creative.py
 tests/workstation/test_shared_service.py
 docs/INSTALL-READINESS.md
 templates/workstation/restic/workstation-service-backup-local.service

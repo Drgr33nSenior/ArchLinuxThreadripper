@@ -16,6 +16,50 @@ prometheus.scrape "self" {
   forward_to = [prometheus.relabel.self.receiver]
 }
 
+// Optional native SGLang endpoint, configured by the owner. Empty, non-loopback
+// and invalid-port values produce no targets. Never expose inference to the LAN.
+discovery.relabel "sglang_local" {
+  targets = [{"__address__" = sys.env("WORKSTATION_SGLANG_METRICS_ADDRESS"), "job" = "sglang"}]
+  rule {
+    source_labels = ["__address__"]
+    regex = "127[.]0[.]0[.]1:([1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])"
+    action = "keep"
+  }
+}
+
+prometheus.scrape "sglang_local" {
+  targets = discovery.relabel.sglang_local.output
+  scrape_interval = "30s"
+  scrape_timeout = "5s"
+  sample_limit = 12000
+  label_limit = 32
+  label_value_length_limit = 256
+  body_size_limit = "8MiB"
+  forward_to = [prometheus.relabel.sglang_local.receiver]
+}
+
+prometheus.relabel "sglang_local" {
+  // SGLang's negotiated exposition can escape the colon prefix to an
+  // underscore. Normalize only this job before the family allowlist.
+  rule {
+    action = "replace"
+    source_labels = ["job", "__name__"]
+    regex = "sglang;sglang_(.+)"
+    target_label = "__name__"
+    replacement = "sglang:$1"
+  }
+  rule {
+    action = "keep"
+    source_labels = ["__name__"]
+    regex = "(up|scrape_.*|sglang:.*)"
+  }
+  rule {
+    action = "labeldrop"
+    regex = "(request_id|session_id|turn_id|user_id|prompt|completion|token|authorization|cookie)"
+  }
+  forward_to = [prometheus.remote_write.self.receiver]
+}
+
 prometheus.relabel "self" {
   rule {
     action = "keep"
