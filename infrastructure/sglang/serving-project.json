@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "repository": "https://github.com/Drgr33nSenior/Spry.ai-rdna4-serving",
+  "revision": "d3f0db85997389ebd8836af17a7048659b930770",
+  "checked_at": "2026-11-01T09:21:42+00:00",
+  "release": null,
+  "distribution": "experimental-source-prototype",
+  "records": {
+    "MXFP4-CANDIDATE-PHASE1-20261031.json": "62613bcd57b5266b1b7da5f68c6e1e0df1bca909ff79a736a39b403941234c8a",
+    "MXFP4-CANDIDATE-128K-20261031.json": "f87a500a3d23eab6d3f63728a2b6490a3f8b7107c5c67049c4e8a3bc931135f0"
+  }
+}

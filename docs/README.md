@@ -13,6 +13,7 @@ approval. Versions belong to the linked locks and runtime manifests.
 | Maintain packages, backups and services | [Operations](OPERATIONS.md) | [Application recovery](SERVICE-RECOVERY.md) |
 | Inspect the workstation in Grafana | [Monitoring](TELEMETRY.md) | [Collector and deployment reference](TELEMETRY-REFERENCE.md) |
 | Configure bare-metal K3s and GPU ownership | [Home lab](HOME-LAB.md) | [Resource and session policy](AI-PERFORMANCE.md) |
+| Track the latest serving project and its integration gaps | [Serving integration](SERVING-INTEGRATION.md) | [Models](MODELS.md), [Hyperloom](HYPERLOOM.md) |
 | Select or stage a model | [Models](MODELS.md) | [Retrieval](RAG.md), [IDE agents](AGENT-HARNESSES.md) |
 | Provide private browser/API access | [AI service](AI-SERVICE.md) | [Integration evidence](AI-SERVICE-RECONCILIATION.md) |
 | Use Sunshine with Moonlight | [Sunshine](SUNSHINE.md) | [Acceptance checklist](INSTALL-READINESS.md#sunshine-and-moonlight) |
@@ -29,6 +30,7 @@ It is not the bare-metal AI cluster and its backup does not cover application PV
 | Area | Retained result | Still open |
 | --- | --- | --- |
 | Monitoring | Target-deployed dashboards and collectors; drilldowns cover GPUs, host, Kubernetes, serving and power. Serving metric-name normalization is integrated | Check current scrape health; missing GPU channels remain unavailable. Automatic Octopus prices need an exact supported tariff/payment configuration |
+| Serving candidate | Published MXFP4 128K/stock-endurance/C4 results are [tracked by commit](SERVING-INTEGRATION.md) | C4 endurance, the earlier GPU fault and complete runtime packaging remain open; application defaults are unchanged |
 | Creative / ComfyUI | One R9700 generated and served a 1024² SDXL PNG; first request 10.74 s, backend readiness 6.62 s | Final recipe rebuild, vulnerable/licensed ImageSharp dependency resolution, WebUI delivery, cancellation, persistence and broader quality |
 | Sunshine / Moonlight | Arch candidate captured 1920×1080/60 and started Vulkan encoders; owner confirmed mouse/click/typing in X11 and native Wayland windows on 1 November | Audio, controllers, games, repeat startup, persistent pairing/home recovery, delivered cadence and latency |
 | Hyperloom / TraceLens | Offline tools and the project adapter to an existing SGLang owner workflow were exercised | Upstream R9700 runner remains vLLM-only in the inspected release; no autonomous SGLang optimization or model qualification follows |

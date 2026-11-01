@@ -105,6 +105,10 @@ does not qualify kernels, launch a profiler or select a serving optimization.
 
 ## Use the SGLang owner adapter
 
+The [newer MXFP4/W5 serving direction](SERVING-INTEGRATION.md) is tracked separately.
+This adapter still accepts only the historical 4/30-request schedules; tracking
+the 176-request W5 results does not qualify or enable that workflow here.
+
 Follow the [owner binding reference](HYPERLOOM-REFERENCE.md) for the packet ABI,
 source seals, import commands, compatible controller SDK and explicit execution.
 A historical or consumed packet refuses. Execution must retain the owner's

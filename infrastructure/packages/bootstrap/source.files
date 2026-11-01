@@ -338,3 +338,8 @@ docs/TELEMETRY-REFERENCE.md
 docs/diagrams/workstation-stack.drawio
 docs/diagrams/workstation-stack.png
 docs/diagrams/workstation-stack.svg
+infrastructure/sglang/serving-project.json
+infrastructure/sglang/serving-evidence/MXFP4-CANDIDATE-PHASE1-20261031.json
+infrastructure/sglang/serving-evidence/MXFP4-CANDIDATE-128K-20261031.json
+infrastructure/sglang/serving-evidence/LICENSE
+docs/SERVING-INTEGRATION.md

@@ -222,3 +222,8 @@ lib/workstation/service_heartbeat.py
 lib/workstation/service_session.py
 docs/TELEMETRY-REFERENCE.md
 docs/HYPERLOOM-REFERENCE.md
+infrastructure/sglang/serving-project.json
+infrastructure/sglang/serving-evidence/MXFP4-CANDIDATE-PHASE1-20261031.json
+infrastructure/sglang/serving-evidence/MXFP4-CANDIDATE-128K-20261031.json
+infrastructure/sglang/serving-evidence/LICENSE
+docs/SERVING-INTEGRATION.md

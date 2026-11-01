@@ -14,6 +14,10 @@ See the [runtime map](README.md#keep-the-runtime-layers-distinct) and
 This guide's generic TheRock plan status does not mean that no source-built
 runtime or GPU workload has ever run.
 
+The newer private MXFP4 128K/C4 direction, published source revision and
+remaining package/admission gaps are tracked in [Serving integration](SERVING-INTEGRATION.md).
+It has not replaced these checked-in image/model defaults.
+
 ## Implementation and remaining qualification
 
 | Area | Implemented | Still pending |

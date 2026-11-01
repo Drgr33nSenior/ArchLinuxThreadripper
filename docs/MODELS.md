@@ -4,6 +4,10 @@ Prefer open-weight models that fit the selected
 workload and serving backend. Pin each release; do not use a moving `latest`
 checkpoint or assume that a newer model is faster on this workstation.
 
+The newer private MXFP4 128K/C4 direction, published source revision and
+remaining package/admission gaps are tracked in [Serving integration](SERVING-INTEGRATION.md).
+It has not replaced these checked-in image/model defaults.
+
 ## Selected defaults
 
 | Profile | Chat model | Allocation | Configured context / concurrent requests |
