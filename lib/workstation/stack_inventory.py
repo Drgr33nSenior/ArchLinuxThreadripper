@@ -41,7 +41,10 @@ def serving_project(root):
     phase1 = records["MXFP4-CANDIDATE-PHASE1-20261031.json"]
     current = records["MXFP4-CANDIDATE-128K-20261031.json"]
     c4 = current["c4_serving_ab"]
-    return {**tracking, "status": "reviewed-source-evidence-only",
+    return {"status": "reviewed-source-evidence-only", "schema": tracking["schema"],
+            "repository": tracking["repository"], "revision": tracking["revision"],
+            "checked_at": tracking["checked_at"], "release": tracking["release"],
+            "distribution": tracking["distribution"], "records": tracking["records"],
             "profile": current["profile"], "candidate": current["candidate"]["description"],
             "adoption": c4["owner_adoption"]["status"],
             "historical_adoption_verdict": c4["sealed_adoption_result"]["verdict"],

@@ -255,8 +255,11 @@ class Tests(unittest.TestCase):
             member.unlink()
             member.write_bytes(original)
             tracking["deployment_qualified"] = True
+            tracking["unapproved_metadata"] = "synthetic-unapproved-value"
             manifest.write_text(json.dumps(tracking))
-            self.assertFalse(stack_inventory.serving_project(root)["deployment_qualified"])
+            result = stack_inventory.serving_project(root)
+            self.assertFalse(result["deployment_qualified"])
+            self.assertNotIn("synthetic-unapproved-value", json.dumps(result))
             tracking["records"]["../../outside.json"] = "a" * 64
             manifest.write_text(json.dumps(tracking))
             with self.assertRaisesRegex(ValueError, "invalid serving project"):
