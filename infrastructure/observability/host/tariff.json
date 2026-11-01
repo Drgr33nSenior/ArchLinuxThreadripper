@@ -1,0 +1,7 @@
+{
+  "schema": 1,
+  "tariff_code": null,
+  "payment_method": null,
+  "fallback_unit_pence": 28.11,
+  "fallback_standing_pence": 58.43
+}

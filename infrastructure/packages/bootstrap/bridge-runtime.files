@@ -112,6 +112,7 @@ templates/arch/no-hibernation.conf
 templates/arch/uki-sync
 templates/arch/zzz-bootstrap-uki-sync.hook
 templates/sunshine/compare.jq
+templates/sunshine/kwinrc.input-example
 templates/sunshine/measurement.example.json
 templates/workstation/codex-config.toml
 templates/workstation/codex-install.toml
@@ -180,8 +181,13 @@ lib/workstation/hyperloom_sglang.py
 lib/workstation/hyperloom_owner.py
 infrastructure/hyperloom/sglang-rocm102.json
 infrastructure/hyperloom/runtime-linux-py314.lock
+infrastructure/hyperloom/tracelens-linux-py314.lock
 infrastructure/hyperloom/versions.lock
 docs/HYPERLOOM.md
+lib/workstation/telemetry_tariff.py
+infrastructure/observability/host/tariff.json
+templates/workstation/telemetry/workstation-tariff.service
+templates/workstation/telemetry/workstation-tariff.timer
 templates/workstation/telemetry/workstation-alloy.service
 templates/workstation/telemetry/workstation-telemetry.service
 templates/workstation/telemetry/workstation-telemetry.sysusers

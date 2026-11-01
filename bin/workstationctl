@@ -28,6 +28,9 @@ Commands:
   performance hyperloom install <locked-wheelhouse> <new-prefix>
   performance hyperloom status|help <prefix>
   performance hyperloom report <prefix> <session-breakdown.json> <new-report.md>
+  performance hyperloom tracelens-fetch <new-absolute-directory>
+  performance hyperloom tracelens-install <locked-wheelhouse> <tracelens-archive> <new-prefix>
+  performance hyperloom trace-analysis <tracelens-prefix> <kineto-trace.json[.gz]> <new-absolute-output>
   performance hyperloom sglang-import <prefix> <stack-proof.json> <native-summary.json> <new-output> --stack-sha256 <sha256> --summary-sha256 <sha256>
   performance hyperloom sglang-bind <prefix> <owner-evidence> <new-output> --seal-sha256 <sha256> --arm <bf16|kv4>
   performance hyperloom sglang-owner <fresh-session> --authorization-sha256 <sha256> --selection <current-selection.json> --boot-id <uuid> [--execute-owner --output <fresh-output> --wheel <release.whl>]
@@ -42,7 +45,7 @@ Commands:
   service-backup verify <capture-directory>
   service-backup restore-stage <capture-directory> <new-isolated-directory>
   service-backup inventory-model <model-id> <materialized-model-directory> <new-inventory.json>
-  telemetry render <new-output-directory> [apps/overlays/profile]
+  telemetry render <new-output-directory> [apps/overlays/profile] [--tariff true|false]
   telemetry verify <rendered-directory>
   telemetry plan <resource-plan.json> <rendered-directory> <new-output-directory>
   telemetry status                      (read-only local monitoring readiness)
@@ -51,7 +54,7 @@ Commands:
   session restore <hardware.json> <state-directory> --execute
   session status <state-directory>
   sunshine profile <new-output-directory>
-  sunshine image-build <new-output-directory> [wayland|x11]
+  sunshine image-build <new-output-directory> [wayland|x11|arch-wayland]
   sunshine devices
   sunshine diagnose <new-output-directory>
   sunshine launch <sunshine-binary> <existing-sunshine.conf>
@@ -201,7 +204,7 @@ main() {
       "$(ws_measure_python)" "$repo_root/lib/workstation/service_backup.py" "$@"
       ;;
     telemetry:render)
-      (($# == 3 || $# == 4)) || return 2
+      (($# >= 3 && $# <= 6)) || return 2
       shift
       ws_telemetry "$@"
       ;;

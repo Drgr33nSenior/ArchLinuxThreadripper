@@ -4,3 +4,9 @@ HYPERLOOM_COMMIT=7c0708ec9b75e70c4d9ce5309608f378b7fd8f69
 HYPERLOOM_WHEEL_URL=https://github.com/AMD-AGI/Hyperloom/releases/download/v1.1.5/hyperloom_inference_optimizer-1.1.5-py3-none-any.whl
 HYPERLOOM_WHEEL_SHA256=b6e155758652f5c9e32fdfd4a057a58398988080e89a8240f95e12fb3105ebc2
 HYPERLOOM_RUNTIME_LOCK_SHA256=5bb8a2fa87edadcd26ef0247b8fc6c35884a5812c89cbdbad8aabee27041b37d
+# Optional TraceLens for offline bypass trace analysis; reviewed 2026-10-31.
+# The exact commit Hyperloom 1.1.5's install_kernel_tools.sh pins; MIT.
+TRACELENS_COMMIT=614c597bc0c66cabf6a15152037324acc7386090
+TRACELENS_ARCHIVE_URL=https://codeload.github.com/AMD-AGI/TraceLens/tar.gz/614c597bc0c66cabf6a15152037324acc7386090
+TRACELENS_ARCHIVE_SHA256=58823875944febf820b029f78338b60aefe90aa0ca0c6d04de26d495c3372364
+TRACELENS_RUNTIME_LOCK_SHA256=de355dde5c6386d3a859962ab493120c373f49298e14a9f59abd2df1cb744879

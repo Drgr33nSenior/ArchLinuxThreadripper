@@ -99,6 +99,15 @@ class TelemetryTests(unittest.TestCase):
         values.update(kwargs)
         return argparse.Namespace(**values)
 
+    def test_tariff_allowance_is_additional_and_explicit(self):
+        with self.assertRaises(ValueError):
+            telemetry.render(self.args(tariff="true"))
+        args = self.args(tariff="true", reserve_mib=6208)
+        telemetry.render(args)
+        evidence = telemetry.verify(args.output)
+        self.assertEqual(evidence["component_limits_mib"]["tariff_refresher_mib"], 64)
+        self.assertEqual(evidence["calculated_allowance_mib"], 6208)
+
     def test_real_render_integrity_preserves_baseline(self):
         args = self.args()
         telemetry.render(args)

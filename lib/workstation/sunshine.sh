@@ -52,7 +52,8 @@ ws_sunshine_profile() (
   ws_sunshine_config_validate
   ws_sunshine_new_output "$1"
   ws_sunshine_env >"$1/sunshine.env"
-  ws_note "wrote $1/sunshine.env; generation does not discover hardware or change a session"
+  cp "$(ws_repo_root)/templates/sunshine/kwinrc.input-example" "$1/kwinrc.input-example"
+  ws_note "wrote $1/sunshine.env and an inactive KWin input example; generation does not change a session"
 )
 
 # Opening the node checks device-cgroup access as well as Unix permissions.
@@ -177,17 +178,29 @@ ws_sunshine_diagnose() (
 ws_sunshine_image_build() (
   set -euo pipefail
   umask 077
-  local output=$1 session=${2:-wayland} root base version hash url mesa kwin='' image_id
+  local output=$1 session=${2:-wayland} root base version hash url mesa='' kwin='' image_id snapshot='' recipe=Dockerfile asset=sunshine.deb
   local -a build_args
-  case $session in wayland | x11) ;; *) ws_die 'image-build session must be wayland or x11' ;; esac
+  case $session in wayland | x11 | arch-wayland) ;; *) ws_die 'image-build session must be wayland, x11 or arch-wayland' ;; esac
   root=$(ws_repo_root)
-  base=$(ws_read_lock STEAM_HEADLESS_BASE_IMAGE)
   version=$(ws_read_lock SUNSHINE_VERSION)
-  hash=$(ws_read_lock SUNSHINE_DEBIAN_SHA256)
-  mesa=$(ws_read_lock SUNSHINE_MESA_DEBIAN_VERSION)
-  [[ $base =~ ^docker\.io/josh5/steam-headless@sha256:[a-f0-9]{64}$ && $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && $hash =~ ^[a-f0-9]{64}$ ]] ||
+  if [[ $session == arch-wayland ]]; then
+    base=$(ws_read_lock SUNSHINE_ARCH_BASE_IMAGE)
+    hash=$(ws_read_lock SUNSHINE_ARCH_SHA256)
+    snapshot=$(ws_read_lock SUNSHINE_ARCH_SNAPSHOT)
+    [[ $base =~ ^docker\.io/library/archlinux@sha256:[a-f0-9]{64}$ && $snapshot =~ ^[0-9]{4}/[0-9]{2}/[0-9]{2}$ ]] || ws_die 'invalid Arch gaming image lock'
+    recipe=Dockerfile.arch
+    asset=sunshine.pkg.tar.zst
+    url="https://github.com/LizardByte/Sunshine/releases/download/v$version/sunshine_${version}-1-x86_64.pkg.tar.zst"
+  else
+    base=$(ws_read_lock STEAM_HEADLESS_BASE_IMAGE)
+    hash=$(ws_read_lock SUNSHINE_DEBIAN_SHA256)
+    mesa=$(ws_read_lock SUNSHINE_MESA_DEBIAN_VERSION)
+    [[ $base =~ ^docker\.io/josh5/steam-headless@sha256:[a-f0-9]{64}$ ]] || ws_die 'invalid Debian gaming base lock'
+    url="https://github.com/LizardByte/Sunshine/releases/download/v$version/sunshine_${version}-1%2Bdebiantrixie_amd64.deb"
+  fi
+  [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && $hash =~ ^[a-f0-9]{64}$ ]] ||
     ws_die 'invalid gaming image lock'
-  [[ $mesa =~ ^[0-9][a-zA-Z0-9.+~:-]+$ ]] || ws_die 'invalid Mesa package version'
+  [[ $session == arch-wayland || $mesa =~ ^[0-9][a-zA-Z0-9.+~:-]+$ ]] || ws_die 'invalid Mesa package version'
   if [[ $session == wayland ]]; then
     kwin=$(ws_read_lock KWIN_DEBIAN_VERSION)
     [[ $kwin =~ ^[0-9][a-zA-Z0-9.+~:-]+$ ]] || ws_die 'invalid KWin package version'
@@ -206,20 +219,22 @@ ws_sunshine_image_build() (
   cp -R "$root/templates/sunshine" "$output/context/templates/"
   cp "$root/versions.lock" "$output/context/"
   cp "$root/infrastructure/gaming/"* "$output/context/infrastructure/gaming/"
-  url="https://github.com/LizardByte/Sunshine/releases/download/v$version/sunshine_${version}-1%2Bdebiantrixie_amd64.deb"
-  curl --fail --location --proto '=https' --proto-redir '=https' --max-time 180 --output "$output/context/sunshine.deb" "$url" ||
+  curl --fail --location --proto '=https' --proto-redir '=https' --max-time 180 --output "$output/context/$asset" "$url" ||
     ws_die 'Sunshine download failed; partial output retained'
-  common::verify_sha256 "$output/context/sunshine.deb" "$hash"
-  build_args=(--platform linux/amd64 --build-arg "BASE_IMAGE=$base" --build-arg "SUNSHINE_SHA256=$hash" --build-arg "MESA_VERSION=$mesa")
+  common::verify_sha256 "$output/context/$asset" "$hash"
+  build_args=(--platform linux/amd64 --build-arg "BASE_IMAGE=$base" --build-arg "SUNSHINE_SHA256=$hash")
+  if [[ $session == arch-wayland ]]; then build_args+=(--build-arg "ARCH_SNAPSHOT=$snapshot"); else build_args+=(--build-arg "MESA_VERSION=$mesa"); fi
   [[ -z $kwin ]] || build_args+=(--build-arg "KWIN_DEBIAN_VERSION=$kwin")
   docker build "${build_args[@]}" --target "$session" --iidfile "$output/image.id" \
-    -f "$output/context/infrastructure/gaming/Dockerfile" "$output/context" ||
+    -f "$output/context/infrastructure/gaming/$recipe" "$output/context" ||
     ws_die 'gaming image build failed; partial output retained'
   image_id=$(<"$output/image.id")
   [[ $image_id =~ ^sha256:[a-f0-9]{64}$ ]] || ws_die 'builder did not return a local SHA-256 image ID'
-  jq -n --arg base "$base" --arg sunshine "$version" --arg sha256 "$hash" --arg mesa "$mesa" --arg kwin "$kwin" --arg session "$session" --arg image_id "$image_id" \
-    '{schema:1,status:"built-not-qualified",base:$base,sunshine:$sunshine,sunshine_deb_sha256:$sha256,
-       mesa_debian_version:$mesa,kwin_debian_version:(if $session == "wayland" then $kwin else null end),session:$session,build_target:$session,local_image_id:$image_id,
+  jq -n --arg base "$base" --arg sunshine "$version" --arg sha256 "$hash" --arg mesa "$mesa" --arg kwin "$kwin" --arg session "$session" --arg image_id "$image_id" --arg snapshot "$snapshot" \
+    '{schema:1,status:"built-not-qualified",base:$base,sunshine:$sunshine,sunshine_package_sha256:$sha256,
+       sunshine_deb_sha256:(if $session == "arch-wayland" then null else $sha256 end),
+       mesa_debian_version:(if $session == "arch-wayland" then null else $mesa end),
+       arch_repository_snapshot:(if $session == "arch-wayland" then $snapshot else null end),kwin_debian_version:(if $session == "wayland" then $kwin else null end),session:$session,build_target:$session,local_image_id:$image_id,
        note:"local config ID is NOT a registry manifest digest; dependencies recorded inside image"}' >"$output/build-result.json"
   ws_note "built local candidate; no registry publication or cluster changes. Result: $output/build-result.json"
 )

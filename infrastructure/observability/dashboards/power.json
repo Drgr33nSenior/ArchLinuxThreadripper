@@ -94,7 +94,7 @@
   "version": 1,
   "uid": "workstation-power",
   "title": "Workstation / Power & energy",
-  "description": "Understand PSU DC power, GPU power, thermal channels and the scope of sampled energy.",
+  "description": "Understand PSU DC power, sampled energy, electricity cost estimates and separate household tariff charges.",
   "timezone": "browser",
   "time": {
     "from": "now-1h",
@@ -579,6 +579,579 @@
       "fieldConfig": {
         "defaults": {
           "unit": "s",
+          "noValue": "Unavailable",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "spanNulls": false,
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 200,
+      "title": "Electricity costs",
+      "type": "row",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "x": 0,
+        "y": 31,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "id": 201,
+      "title": "What these costs mean",
+      "type": "text",
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 24,
+        "h": 4
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "**These are tariff-valued PSU DC estimates, not a metered electricity bill.** PSU losses and unobserved intervals are excluded. The standing charge belongs to the household supply and is shown separately; it is not added to workstation usage.\n\nThe cards show the selected VAT-inclusive rates. Exact Flexible tariff code and payment method enable hourly public Octopus API updates. Source shows **API**, **cached** or **manual fallback**. Selected-window energy is valued at the current rate, not reconstructed historical billing. Missing edge history or expired observations stay unavailable."
+      }
+    },
+    {
+      "id": 202,
+      "title": "Electricity unit rate · incl VAT",
+      "type": "stat",
+      "description": "The currently selected live, cached or manually supplied unit price. VAT-inclusive public API prices are used without adding VAT again.",
+      "gridPos": {
+        "x": 0,
+        "y": 36,
+        "w": 8,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(workstation_tariff_unit_price_gbp_per_kwh{job=\"node\"} and on(job,instance) (time() < workstation_tariff_valid_until_seconds{job=\"node\"}) and on(job,instance) (workstation_tariff_sample_timestamp_seconds{job=\"node\"} - time() <= 10)) * 100",
+          "legendFormat": "Electricity unit rate · incl VAT",
+          "range": false,
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix:p/kWh",
+          "noValue": "Unavailable",
+          "decimals": 2,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "value_and_name",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "id": 203,
+      "title": "Household standing charge · incl VAT",
+      "type": "stat",
+      "description": "Whole electricity supply charge, due independently of workstation operation. It is deliberately separate from usage-cost panels.",
+      "gridPos": {
+        "x": 8,
+        "y": 36,
+        "w": 8,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(workstation_tariff_standing_charge_gbp_per_day{job=\"node\"} and on(job,instance) (time() < workstation_tariff_valid_until_seconds{job=\"node\"}) and on(job,instance) (workstation_tariff_sample_timestamp_seconds{job=\"node\"} - time() <= 10)) * 100",
+          "legendFormat": "Household standing charge · incl VAT",
+          "range": false,
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix:p/day",
+          "noValue": "Unavailable",
+          "decimals": 2,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "value_and_name",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "id": 204,
+      "title": "Tariff source",
+      "type": "stat",
+      "description": "API = successful current lookup; cached = refresh failed but a same-config unexpired cached rate is at most 26 hours old; manual = the owner-supplied fallback.",
+      "gridPos": {
+        "x": 16,
+        "y": 36,
+        "w": 8,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "workstation_tariff_mode{job=\"node\"} and on(job,instance) (time() < workstation_tariff_valid_until_seconds{job=\"node\"}) and on(job,instance) (workstation_tariff_sample_timestamp_seconds{job=\"node\"} - time() <= 10)",
+          "legendFormat": "Tariff source",
+          "range": false,
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "Unavailable",
+          "decimals": 2,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Manual fallback",
+                  "color": "text"
+                },
+                "1": {
+                  "text": "Octopus API",
+                  "color": "green"
+                },
+                "2": {
+                  "text": "Cached Octopus rate",
+                  "color": "orange"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "value_and_name",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "id": 205,
+      "title": "Current energy cost rate · DC proxy",
+      "type": "stat",
+      "description": "GBP per hour at the current observed PSU DC watts and unit price. Excludes PSU conversion losses and the household standing charge.",
+      "gridPos": {
+        "x": 0,
+        "y": 40,
+        "w": 8,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "((workstation_psu_output_power_watts{job=\"node\"} and on(job,instance) (workstation_psu_available{job=\"node\"} == 1) and on(job,instance) (time() - workstation_psu_sample_timestamp_seconds{job=\"node\"} <= 90) and on(job,instance) (workstation_psu_sample_timestamp_seconds{job=\"node\"} - time() <= 10)) / 1000) * on(job,instance) (workstation_tariff_unit_price_gbp_per_kwh{job=\"node\"} and on(job,instance) (time() < workstation_tariff_valid_until_seconds{job=\"node\"}) and on(job,instance) (workstation_tariff_sample_timestamp_seconds{job=\"node\"} - time() <= 10))",
+          "legendFormat": "Current energy cost rate · DC proxy",
+          "range": false,
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix:£/h",
+          "noValue": "Unavailable",
+          "decimals": 4,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "value_and_name",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "id": 206,
+      "title": "24 hours at current load · DC proxy",
+      "type": "stat",
+      "description": "A constant-load 24-hour projection, not observed daily expenditure or a forecast. Excludes standing charge and PSU losses.",
+      "gridPos": {
+        "x": 8,
+        "y": 40,
+        "w": 8,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(((workstation_psu_output_power_watts{job=\"node\"} and on(job,instance) (workstation_psu_available{job=\"node\"} == 1) and on(job,instance) (time() - workstation_psu_sample_timestamp_seconds{job=\"node\"} <= 90) and on(job,instance) (workstation_psu_sample_timestamp_seconds{job=\"node\"} - time() <= 10)) / 1000) * on(job,instance) (workstation_tariff_unit_price_gbp_per_kwh{job=\"node\"} and on(job,instance) (time() < workstation_tariff_valid_until_seconds{job=\"node\"}) and on(job,instance) (workstation_tariff_sample_timestamp_seconds{job=\"node\"} - time() <= 10))) * 24",
+          "legendFormat": "24 hours at current load · DC proxy",
+          "range": false,
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyGBP",
+          "noValue": "Unavailable",
+          "decimals": 4,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "value_and_name",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "id": 207,
+      "title": "Selected-window energy · priced now",
+      "type": "stat",
+      "description": "Difference of measured cumulative DC energy counters near both selected-window edges, priced at the current rate. No increase/extrapolation. Missing boundaries or an observed counter reset refuse a value. Tariff changes revalue this estimate; it is not historic billed cost.",
+      "gridPos": {
+        "x": 16,
+        "y": 40,
+        "w": 8,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "((((workstation_psu_output_energy_joules_total{job=\"node\"}) - (workstation_psu_output_energy_joules_total{job=\"node\"} offset $__range)) and on(job,instance) (resets(workstation_psu_output_energy_joules_total{job=\"node\"}[$__range]) == 0) and on(job,instance) (workstation_psu_output_energy_joules_total{job=\"node\"} >= (workstation_psu_output_energy_joules_total{job=\"node\"} offset $__range)) and on(job,instance) (workstation_psu_energy_available{job=\"node\"} == 1) and on(job,instance) (time() - workstation_psu_energy_sample_timestamp_seconds{job=\"node\"} <= 90) and on(job,instance) (workstation_psu_energy_sample_timestamp_seconds{job=\"node\"} - time() <= 10) and on(job,instance) (workstation_psu_energy_available{job=\"node\"} offset $__range == 1) and on(job,instance) ((time() - $__range_s) - (workstation_psu_energy_sample_timestamp_seconds{job=\"node\"} offset $__range) <= 90) and on(job,instance) ((workstation_psu_energy_sample_timestamp_seconds{job=\"node\"} offset $__range) - (time() - $__range_s) <= 10)) / 3600000) * on(job,instance) (workstation_tariff_unit_price_gbp_per_kwh{job=\"node\"} and on(job,instance) (time() < workstation_tariff_valid_until_seconds{job=\"node\"}) and on(job,instance) (workstation_tariff_sample_timestamp_seconds{job=\"node\"} - time() <= 10))",
+          "legendFormat": "Selected-window energy · priced now",
+          "range": false,
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyGBP",
+          "noValue": "Unavailable",
+          "decimals": 4,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "value_and_name",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "id": 208,
+      "title": "Covered sample hours · selected window",
+      "type": "stat",
+      "description": "Observed counter difference at the selected edges. Gaps excluded by the existing energy sampler stay excluded; sampling means edges are approximate.",
+      "gridPos": {
+        "x": 0,
+        "y": 44,
+        "w": 8,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(((workstation_psu_energy_covered_seconds_total{job=\"node\"}) - (workstation_psu_energy_covered_seconds_total{job=\"node\"} offset $__range)) and on(job,instance) (resets(workstation_psu_energy_covered_seconds_total{job=\"node\"}[$__range]) == 0) and on(job,instance) (workstation_psu_energy_covered_seconds_total{job=\"node\"} >= (workstation_psu_energy_covered_seconds_total{job=\"node\"} offset $__range)) and on(job,instance) (workstation_psu_energy_available{job=\"node\"} == 1) and on(job,instance) (time() - workstation_psu_energy_sample_timestamp_seconds{job=\"node\"} <= 90) and on(job,instance) (workstation_psu_energy_sample_timestamp_seconds{job=\"node\"} - time() <= 10) and on(job,instance) (workstation_psu_energy_available{job=\"node\"} offset $__range == 1) and on(job,instance) ((time() - $__range_s) - (workstation_psu_energy_sample_timestamp_seconds{job=\"node\"} offset $__range) <= 90) and on(job,instance) ((workstation_psu_energy_sample_timestamp_seconds{job=\"node\"} offset $__range) - (time() - $__range_s) <= 10)) / 3600",
+          "legendFormat": "Covered sample hours · selected window",
+          "range": false,
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix:h",
+          "noValue": "Unavailable",
+          "decimals": 2,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "value_and_name",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "id": 209,
+      "title": "Age of last successful API lookup",
+      "type": "stat",
+      "description": "No value is expected before an exact tariff has been configured and successfully fetched. A cached source retains its original successful lookup time.",
+      "gridPos": {
+        "x": 8,
+        "y": 44,
+        "w": 8,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "time() - workstation_tariff_last_success_timestamp_seconds{job=\"node\"}",
+          "legendFormat": "Age of last successful API lookup",
+          "range": false,
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "No successful API lookup yet",
+          "decimals": 2,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "value_and_name",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "id": 210,
+      "title": "Automatic lookup configured",
+      "type": "stat",
+      "description": "Requires the exact single-register Flexible tariff code and DIRECT_DEBIT/NON_DIRECT_DEBIT payment method. No account number, API key or meter data is used.",
+      "gridPos": {
+        "x": 16,
+        "y": 44,
+        "w": 8,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "workstation_tariff_auto_configured{job=\"node\"} and on(job,instance) (time() < workstation_tariff_valid_until_seconds{job=\"node\"}) and on(job,instance) (workstation_tariff_sample_timestamp_seconds{job=\"node\"} - time() <= 10)",
+          "legendFormat": "Automatic lookup configured",
+          "range": false,
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "Unavailable",
+          "decimals": 2,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Needs tariff code / payment method",
+                  "color": "text"
+                },
+                "1": {
+                  "text": "Configured",
+                  "color": "green"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "value_and_name",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "id": 211,
+      "title": "Energy cost rate over time · DC proxy",
+      "type": "timeseries",
+      "description": "Each point uses the tariff observed at that time and fresh PSU DC output. This is an hourly cost rate, not an accumulated bill. Missing tariff or power observations remain gaps.",
+      "gridPos": {
+        "x": 0,
+        "y": 48,
+        "w": 24,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "((workstation_psu_output_power_watts{job=\"node\"} and on(job,instance) (workstation_psu_available{job=\"node\"} == 1) and on(job,instance) (time() - workstation_psu_sample_timestamp_seconds{job=\"node\"} <= 90) and on(job,instance) (workstation_psu_sample_timestamp_seconds{job=\"node\"} - time() <= 10)) / 1000) * on(job,instance) (workstation_tariff_unit_price_gbp_per_kwh{job=\"node\"} and on(job,instance) (time() < workstation_tariff_valid_until_seconds{job=\"node\"}) and on(job,instance) (workstation_tariff_sample_timestamp_seconds{job=\"node\"} - time() <= 10))",
+          "legendFormat": "GBP per hour · PSU DC",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix:£/h",
           "noValue": "Unavailable",
           "color": {
             "mode": "palette-classic"

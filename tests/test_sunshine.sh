@@ -5,6 +5,8 @@ repo_root=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 source "$repo_root/lib/common.sh"
 # shellcheck source=lib/workstation/runtime.sh
 source "$repo_root/lib/workstation/runtime.sh"
+# shellcheck source=infrastructure/gaming/wayland-session.sh
+source "$repo_root/infrastructure/gaming/wayland-session.sh"
 work=$(mktemp -d)
 trap 'rm -rf -- "$work"' EXIT
 
@@ -22,6 +24,8 @@ grep -Fxq 'SUNSHINE_ENCODER=vulkan' "$work/profile/sunshine.env"
 grep -Fxq 'SUNSHINE_CAPTURE=kwin' "$work/profile/sunshine.env"
 grep -Fxq 'GAMING_WIDTH=1920' "$work/profile/sunshine.env"
 grep -Fxq 'GAMING_HEIGHT=1080' "$work/profile/sunshine.env"
+cmp "$repo_root/templates/sunshine/kwinrc.input-example" "$work/profile/kwinrc.input-example"
+[[ ! -e $work/profile/kwinrc ]]
 reject ws_sunshine_profile "$work/profile"
 ln -s "$work/nonexistent" "$work/symlink"
 reject ws_sunshine_profile "$work/symlink"
@@ -141,6 +145,22 @@ for change in '.provenance.fps=120' '.provenance.cache="cold"' '.profile.vk_tune
   reject ws_sunshine_compare "$work/baseline.json" "$work/bad.json" "$work/bad-comparison"
 done
 
+# Validate the real default app schema and preserve existing owner app data.
+XDG_CONFIG_HOME=$work/session-config
+mkdir -p "$XDG_CONFIG_HOME/sunshine"
+printf '# existing owner configuration\n' > "$XDG_CONFIG_HOME/sunshine/sunshine.conf"
+jq '.env={"KEEP":"fixture"}' "$repo_root/infrastructure/gaming/wayland-apps.json" > "$XDG_CONFIG_HOME/sunshine/apps.json"
+before_apps=$(common::sha256_file "$XDG_CONFIG_HOME/sunshine/apps.json")
+SUNSHINE_USER='' SUNSHINE_PASS='' gaming_init_sunshine
+[[ $(common::sha256_file "$XDG_CONFIG_HOME/sunshine/apps.json") == "$before_apps" ]]
+jq 'del(.env)' "$repo_root/infrastructure/gaming/wayland-apps.json" > "$XDG_CONFIG_HOME/sunshine/apps.json"
+before_apps=$(common::sha256_file "$XDG_CONFIG_HOME/sunshine/apps.json")
+reject gaming_init_sunshine
+grep -Fq 'requires an env object and apps array' "$work/rejected.txt"
+[[ $(common::sha256_file "$XDG_CONFIG_HOME/sunshine/apps.json") == "$before_apps" ]]
+printf '{invalid-json\n' > "$XDG_CONFIG_HOME/sunshine/apps.json"
+reject gaming_init_sunshine
+
 # Builder failure paths: synthetic download and Docker, no network/build daemon.
 curl() {
   local destination=''
@@ -159,8 +179,10 @@ docker() {
 }
 reject ws_sunshine_image_build "$work/hash-failure"
 [[ ! -e $work/docker-called.txt && ! -e $work/hash-failure/build-result.json ]]
+reject ws_sunshine_image_build "$work/arch-hash-failure" arch-wayland
+[[ ! -e $work/docker-called.txt && ! -e $work/arch-hash-failure/build-result.json ]]
 ws_read_lock() {
-  if [[ $1 == SUNSHINE_DEBIAN_SHA256 ]]; then
+  if [[ $1 == SUNSHINE_DEBIAN_SHA256 || $1 == SUNSHINE_ARCH_SHA256 ]]; then
     common::sha256_file "$work/hash-failure/context/sunshine.deb"
   else
     common::lock_get "$repo_root/versions.lock" "$1"
@@ -191,6 +213,19 @@ grep -Fxq 'wayland' "$work/docker-success-args.txt"
 ws_sunshine_image_build "$work/build-x11" x11 >/dev/null
 jq -e '.session == "x11" and .build_target == "x11"' "$work/build-x11/build-result.json" >/dev/null
 grep -Fxq 'x11' "$work/docker-success-args.txt"
+ws_sunshine_image_build "$work/build-arch" arch-wayland >/dev/null
+jq -e '.session == "arch-wayland" and .build_target == "arch-wayland" and .sunshine_deb_sha256 == null and .mesa_debian_version == null and .arch_repository_snapshot == "2026/10/31" and (.base|startswith("docker.io/library/archlinux@sha256:"))' "$work/build-arch/build-result.json" >/dev/null
+grep -Fxq 'arch-wayland' "$work/docker-success-args.txt"
+grep -Fxq 'ARCH_SNAPSHOT=2026/10/31' "$work/docker-success-args.txt"
+grep -Fxq "$(cd "$work/build-arch" && pwd -P)/context/infrastructure/gaming/Dockerfile.arch" "$work/docker-success-args.txt"
+[[ -s $work/build-arch/context/sunshine.pkg.tar.zst && ! -e $work/build-arch/context/sunshine.deb ]]
 reject ws_sunshine_image_build "$work/build-invalid" legacy
 [[ ! -e $work/build-invalid ]]
+ws_read_lock() {
+  if [[ $1 == "$invalid_arch_key" ]]; then printf '%s\n' latest; else common::lock_get "$repo_root/versions.lock" "$1"; fi
+}
+for invalid_arch_key in SUNSHINE_ARCH_BASE_IMAGE SUNSHINE_ARCH_SNAPSHOT; do
+  reject ws_sunshine_image_build "$work/invalid-$invalid_arch_key" arch-wayland
+  [[ ! -e $work/invalid-$invalid_arch_key ]]
+done
 printf 'Sunshine profile, GPU mapping, launch and comparison fixtures passed (no GPU exercised)\n'

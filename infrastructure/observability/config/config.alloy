@@ -27,6 +27,14 @@ prometheus.scrape "workstation" {
 }
 
 prometheus.relabel "bounded" {
+  // Preserve the dashboard contract across negotiated SGLang expositions.
+  rule {
+    action = "replace"
+    source_labels = ["job", "__name__"]
+    regex = "sglang;sglang_(.+)"
+    target_label = "__name__"
+    replacement = "sglang:$1"
+  }
   // Do not turn request/session/user identities or prompt content into labels.
   rule {
     action = "labeldrop"

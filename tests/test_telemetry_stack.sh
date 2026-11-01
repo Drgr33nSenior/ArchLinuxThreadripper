@@ -122,6 +122,44 @@ check(host.include?('endpoint = "127.0.0.1:4318"'), 'public host receiver')
 check(host.include?('prometheus.scrape "self"') && host.include?('job" = "workstation-host-alloy"'), 'host Alloy does not self-scrape with a stable identity')
 check(host.include?('prometheus.remote_write "self"') && host.include?('http://192.0.2.5:9090/api/v1/write'), 'host Alloy health has no bounded central path')
 check(host.include?('capacity = 64') && host.include?('max_keepalive_time = "30m"'), 'host Alloy self-monitoring is unbounded')
+[host, metrics_host].each do |profile|
+  check(profile.include?('sys.env("WORKSTATION_SGLANG_METRICS_ADDRESS")'), 'native SGLang target must be explicit and opt-in')
+  check(profile.include?('targets = discovery.relabel.sglang_local.output'), 'native scrape bypasses loopback admission')
+  pattern = profile[/discovery\.relabel "sglang_local" \{.*?regex = "([^"]+)"/m, 1] || raise('native loopback guard absent')
+  guard = Regexp.new("\\A(?:#{pattern})\\z")
+  %w[127.0.0.1:1 127.0.0.1:18088 127.0.0.1:65535].each { |target| check(guard.match?(target), 'valid loopback target rejected') }
+  ['', '127.0.0.1:0', '127.0.0.1:65536', '127.0.0.1:018088', '192.168.2.15:18088', 'http://127.0.0.1:18088', 'user:pass@127.0.0.1:18088'].each do |target|
+    check(!guard.match?(target), 'invalid or external native target admitted')
+  end
+  check(profile.include?('regex = "(up|scrape_.*|sglang:.*)"') && profile.include?('regex = "(request_id|session_id|turn_id|user_id|prompt|completion|token|authorization|cookie)"'), 'native scrape lost metric/privacy bounds')
+end
+# The actual SGLang endpoint emits colon names to plain curl but underscore
+# names under Alloy's negotiated Accept header. Exercise both formats and
+# unrelated jobs using the normalizer from each generated collector profile.
+[host, metrics_host, alloy, metrics_alloy].each do |profile|
+  normalizer = profile[/rule \{\s*action = "replace"\s*source_labels = \["job", "__name__"\]\s*regex = "([^"]+)"\s*target_label = "__name__"\s*replacement = "([^"]+)"\s*\}/m]
+  check(normalizer, 'SGLang negotiated metric normalization absent')
+  pattern = normalizer[/regex = "([^"]+)"/, 1]
+  replacement = normalizer[/replacement = "([^"]+)"/, 1]
+  check(replacement == 'sglang:$1', 'unexpected SGLang replacement contract')
+  rename = lambda do |job, name|
+    matched = Regexp.new("\\A(?:#{pattern})\\z").match("#{job};#{name}")
+    matched ? replacement.sub('$1', matched[1]) : name
+  end
+  %w[num_running_reqs num_queue_reqs generation_tokens_total time_to_first_token_seconds_bucket inter_token_latency_seconds_count].each do |suffix|
+    check(rename.call('sglang', "sglang_#{suffix}") == "sglang:#{suffix}", 'negotiated SGLang family lost')
+    check(rename.call('sglang', "sglang:#{suffix}") == "sglang:#{suffix}", 'legacy SGLang family changed')
+    check(rename.call('node', "sglang_#{suffix}") == "sglang_#{suffix}", 'unrelated job renamed')
+  end
+  %w[up scrape_samples_scraped python_info unrelated_metric sglangx_num_queue_reqs].each do |name|
+    check(rename.call('sglang', name) == name, 'unrelated metric renamed')
+  end
+  if profile.include?('prometheus.relabel "sglang_local"')
+    block = profile.split('prometheus.relabel "sglang_local" {', 2).last.split("\n}", 2).first
+    check(block.index(normalizer) < block.index('action = "keep"'), 'normalization occurs after family drop')
+  end
+end
+check(File.read("#{root}/../../templates/workstation/telemetry/workstation-alloy.service").include?('EnvironmentFile=-/etc/workstation-telemetry/sglang-metrics.env'), 'native SGLang opt-in not packaged')
 check(host.include?('loki_(source_journal_.*|process_dropped_lines_total|write_.*)'), 'host journal-drop and write counters are not forwarded')
 alerts = File.read("#{root}/config/alerts.yaml")
 check(alerts.include?('processor(_memory_limiter)?_refused_(spans|log_records|metric_points)_total'), 'refused telemetry alert misses a pinned collector family or metric points')

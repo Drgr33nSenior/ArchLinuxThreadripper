@@ -153,7 +153,7 @@
       },
       "options": {
         "mode": "markdown",
-        "content": "**Serving charts need a running SGLang server launched with metrics enabled.** Empty charts are expected while it is offline. Kubernetes requests/limits are budgets; cAdvisor shows actual use. Select a namespace to investigate. Token counters describe server work and are not a replacement for the benchmark's delivered-token timing."
+        "content": "**Serving charts need metrics from the configured SGLang endpoint.** The Kubernetes Service and an explicitly configured native loopback server can feed these charts. A running process alone does not establish scrape connectivity. Kubernetes resource and Pod panels cover Pods; use Host and GPU views for a native server's system-level resources. Select a namespace to investigate Pods. Token counters describe server work and are not a replacement for the benchmark's delivered-token timing."
       }
     },
     {

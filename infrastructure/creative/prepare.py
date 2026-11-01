@@ -21,6 +21,9 @@ def prepare(swarm, comfy, nuget, wheels, requirements, destination):
     # guessed from a tag, and the build never regenerates it.
     if not (nuget / "packages.lock.json").is_file() or not requirements.is_file():
         raise ValueError("reviewed NuGet and Python locks are required")
+    native = wheels / "runtime-debs"
+    if not (native / "SHA256SUMS").is_file() or not any(native.glob("*.deb")):
+        raise ValueError("reviewed Ubuntu runtime-debs closure and SHA256SUMS are required")
     if not all("==" in line and "--hash=sha256:" in line for line in
                requirements.read_text().replace("\\\n", "").splitlines() if line.strip() and not line.startswith("#")):
         raise ValueError("Python closure must contain exact versions and hashes")
@@ -38,7 +41,7 @@ def prepare(swarm, comfy, nuget, wheels, requirements, destination):
     text = text.replace(old, 'throw new InvalidOperationException("Offline package needs rebuilt dependencies; runtime pip is prohibited.");\n                Process p = null;')
     backend.write_text(text)
     shutil.copyfile(requirements, destination / "requirements.lock")
-    for name in ("Dockerfile", "launch.sh", "runtime.json"):
+    for name in ("Dockerfile", "launch.sh", "runtime.json", "verify_runtime.py"):
         shutil.copyfile(ROOT / "infrastructure/creative" / name, destination / name)
     manifest = {}
     for file in sorted(destination.rglob("*")):

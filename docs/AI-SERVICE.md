@@ -266,20 +266,52 @@ at build time; application source need not become writable. Existing persisted
 
 Prepare clean pinned source trees, a reviewed NuGet `packages.lock.json`/package
 closure, and a ROCm-image-compatible wheelhouse with a complete hash-pinned
-`requirements.lock`. Then run on a reviewed Linux amd64 builder:
+`requirements.lock`. The runtime uses a standalone Python 3.14 environment with
+the pinned ROCm 10.2/Torch 2.14/torchvision closure. The parent image is ROCm
+10.1; inheriting its Python packages or library-path overrides is not supported.
+Include the matching Ubuntu shared-library packages for `libxcb1`, `libgl1` and
+`libglib2.0-0t64` under `wheels/runtime-debs`, with their complete dependency
+closure and `SHA256SUMS`. Resolve these through the base distribution's signed
+APT metadata. The image extracts these files; it does not install host packages.
+Then run on a reviewed Linux amd64 builder:
 
 ```sh
 python infrastructure/creative/prepare.py /staging/SwarmUI /staging/ComfyUI /staging/nuget /staging/wheels /staging/requirements.lock /staging/new-context
 docker build --network=none --platform linux/amd64 -t workstation-creative-candidate /staging/new-context
 ```
 
-The context records staged file hashes; the image records its resolved Python
-inventory. `AutoUpdate=false` does not disable upstream dependency repair, so the
+The context records staged file hashes; the image checks the loaded HIP/RCCL
+library hashes and a native torchvision CPU operator, then records its Python
+inventory. Swarm uses its upstream build command with a self-contained runtime;
+publishing flattens LLamaSharp's CPU variants into conflicting file paths.
+The launcher creates fresh private .NET mutex storage on every start, including
+when the container's numeric UID has no user database entry.
+`AutoUpdate=false` does not disable upstream dependency repair, so the
 candidate fails attempted runtime pip repair explicitly. No third-party custom
-node download is part of this profile. A complete dependency closure and offline
-image build are **NOT RUN** on this Mac; the manifest remains `UNQUALIFIED` until
-that build and the physical resource/quality tests pass. Do not replace its tag
-with a guessed digest or lower security to boot it.
+node download is part of this profile.
+
+The 1 November 2026 smoke built the application offline and assembled a temporary
+OCI candidate on the workstation through the retained `regctl` path. One R9700
+generated a 512² SDXL PNG in a 5.16-second cold generation HTTP request. The test
+client then failed on an unescaped filename space; the existing artifact was
+recovered without another generation. Native generation worked, but that client
+run remains failed. A fresh native-1024 test of the same image/model completed
+one generation and the HTTP PNG fetch: 6.62 seconds to backend readiness and
+10.74 seconds for the first generation request. The cabin/lake image was visibly
+more photographic. This is one prompt, not general model-quality qualification
+or a performance comparison across resolutions. The adapter already defaults
+to 1024²; its accepted sizes and deployment defaults have not changed.
+The complete Docker recipe, WebUI delivery, cancellation/recovery and persistence
+tests remain open.
+See `test-results/comfy-build.mnFNFExJ/HANDOFF.md` for identities and evidence.
+The follow-up is sealed in `test-results/comfy-native1024.MuD59y10/HANDOFF.md`.
+The checked-in deployment remains zero replicas with an `UNQUALIFIED` image.
+
+The pinned Swarm dependency ImageSharp 3.1.12 has known vulnerability warnings.
+A 3.2.0 candidate restored, then refused to build without a Six Labors licence
+key. That attempt is preserved; no licence or audit check was disabled. The smoke
+used only a fixed prompt and generated PNG. Resolve this dependency before
+deployment. Do not promote the smoke digest or lower security to boot it.
 
 The adapter permits one image, 512² or 1024², a 2,000-character prompt, no workflow
 macros, and an 8 MiB PNG result. Generation is bounded to 120 seconds. Cancellation

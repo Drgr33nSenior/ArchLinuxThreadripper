@@ -37,6 +37,8 @@ gaming_init_sunshine() {
   if [[ ! -e $config_dir/apps.json && ! -L $config_dir/apps.json ]]; then
     cp /usr/share/workstation/wayland-apps.json "$config_dir/apps.json"
   fi
+  jq -e '(.env | type) == "object" and (.apps | type) == "array"' "$config_dir/apps.json" >/dev/null ||
+    gaming_fail 'Sunshine apps.json requires an env object and apps array; existing state was preserved'
   [[ -f $config_dir/sunshine.conf && ! -L $config_dir/sunshine.conf ]] || gaming_fail 'Sunshine config must be a regular file'
   # Preserve the existing Secret-backed credential update contract. The native
   # CLI takes arguments; never echo them or its output into container logs.

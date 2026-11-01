@@ -12,6 +12,7 @@ SupplementaryGroups=systemd-journal
 StateDirectory=workstation-alloy
 StateDirectoryMode=0750
 UMask=0077
+EnvironmentFile=-/etc/workstation-telemetry/sglang-metrics.env
 ExecStartPre=/usr/bin/grafana-alloy validate /etc/workstation-telemetry/host.alloy
 ExecStart=/usr/bin/grafana-alloy run --disable-reporting --storage.path=/var/lib/workstation-alloy --server.http.listen-addr=127.0.0.1:12345 --server.http.enable-pprof=false --server.http.disable-support-bundle /etc/workstation-telemetry/host.alloy
 Restart=on-failure

@@ -83,6 +83,8 @@ systemd:
 			templates/workstation/telemetry/workstation-external-heartbeat.timer \
 			templates/workstation/telemetry/workstation-telemetry.service \
 			templates/workstation/telemetry/workstation-telemetry.timer \
+			templates/workstation/telemetry/workstation-tariff.service \
+			templates/workstation/telemetry/workstation-tariff.timer \
 			templates/workstation/telemetry/workstation-alloy.service \
 			ansible/roles/k3s/files/k3s-lab-firewall.service; \
 	else \

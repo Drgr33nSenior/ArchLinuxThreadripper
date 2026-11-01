@@ -1,0 +1,31 @@
+[Unit]
+Description=Refresh public Flexible Octopus electricity rates
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/workstation-tariff/config.json
+
+[Service]
+Type=oneshot
+User=workstation-tariff
+Group=workstation-tariff
+StateDirectory=workstation-tariff
+StateDirectoryMode=0755
+ExecStart=/usr/bin/python3 -B /usr/lib/bridge/workstation-runtime/lib/workstation/telemetry_tariff.py /etc/workstation-tariff/config.json /var/lib/workstation-tariff
+TimeoutStartSec=90
+MemoryMax=64M
+CPUQuota=5%
+TasksMax=8
+LimitFSIZE=1048576
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=yes
+CapabilityBoundingSet=
+UMask=0077

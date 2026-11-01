@@ -103,6 +103,7 @@ if command -v bsdtar >/dev/null; then
     [[ -x $pkgdir/usr/lib/bridge/workstation-runtime/bin/workstationctl && ! -e $pkgdir/etc && ! -e $pkgdir/var ]]
     [[ -f $pkgdir/usr/lib/bridge/workstation-runtime/lib/workstation/session.sh && -f $pkgdir/usr/lib/bridge/workstation-reference/apps/overlays/rag/SHA256SUMS ]]
     payload="$pkgdir/usr/lib/bridge/workstation-runtime"
+    cmp "$root/templates/sunshine/kwinrc.input-example" "$payload/templates/sunshine/kwinrc.input-example"
     [[ -f $payload/lib/workstation/telemetry.py && -f $payload/lib/workstation/telemetry_sample.py ]]
     [[ -f $payload/lib/workstation/hyperloom.py && -f $payload/infrastructure/hyperloom/runtime-linux-py314.lock ]]
     [[ -f $payload/lib/workstation/hyperloom_sglang.py && -f $payload/infrastructure/hyperloom/sglang-rocm102.json ]]
@@ -111,6 +112,12 @@ if command -v bsdtar >/dev/null; then
     grep -Fq 'isolated' "$work/hyperloom-help.txt"
     grep -Fq 'sglang-bind' "$work/hyperloom-help.txt"
     grep -Fq 'sglang-owner' "$work/hyperloom-help.txt"
+    [[ -f $payload/lib/workstation/telemetry_tariff.py && -f $payload/infrastructure/observability/host/tariff.json ]]
+    cmp "$root/infrastructure/observability/dashboards/power.json" "$payload/infrastructure/observability/dashboards/power.json"
+    [[ ! -e $payload/infrastructure/observability/dashboards/costs.json ]]
+    for unit in workstation-tariff.service workstation-tariff.timer; do
+      cmp "$root/templates/workstation/telemetry/$unit" "$pkgdir/usr/lib/systemd/system/$unit"
+    done
     [[ -f $payload/lib/workstation/monitoring.py && -f $payload/lib/workstation/measurement.py ]]
     [[ -f $payload/lib/workstation/kernel_profile.py ]]
     [[ -f $payload/lib/workstation/gemm_profile.py && -f $payload/infrastructure/sglang/gemm-m1/profile.json ]]
@@ -142,6 +149,11 @@ if command -v bsdtar >/dev/null; then
     bash "$payload/bin/workstationctl" telemetry verify "$work/packaged-telemetry" >/dev/null
     jq -e '.source_identity.git_revision == null and .source_identity.build_identity_sha256 != null and .hardware_qualification == "NOT RUN"' \
       "$work/packaged-telemetry/evidence.json" >/dev/null
+    WORKSTATION_PYTHON="${HOME_LAB_PYTHON:-python3}" TELEMETRY_ENABLED=true TELEMETRY_API_ADDRESS=192.168.50.10 \
+      TELEMETRY_WORKSTATION_ADDRESS=192.168.50.10 TELEMETRY_RESERVE_MIB=6208 \
+      bash "$payload/bin/workstationctl" telemetry render "$work/packaged-tariff" --tariff true >/dev/null
+    jq -e '.component_limits_mib.tariff_refresher_mib == 64 and .calculated_allowance_mib == 6208' \
+      "$work/packaged-tariff/evidence.json" >/dev/null
 
     # Incidental edits to the consumed recipe or exported lock must be rejected.
     mkdir "$work/drift"

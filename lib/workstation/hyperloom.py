@@ -16,11 +16,22 @@ import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import types
+import urllib.request
 import zipfile
 
 
 DEPENDENCIES = Path("infrastructure/hyperloom/runtime-linux-py314.lock")
+TRACELENS_DEPENDENCIES = Path("infrastructure/hyperloom/tracelens-linux-py314.lock")
+CONTRACTS = {
+    "HYPERLOOM": ({"HYPERLOOM_VERSION", "HYPERLOOM_COMMIT", "HYPERLOOM_WHEEL_URL",
+                   "HYPERLOOM_WHEEL_SHA256", "HYPERLOOM_RUNTIME_LOCK_SHA256"}, DEPENDENCIES),
+    "TRACELENS": ({"TRACELENS_COMMIT", "TRACELENS_ARCHIVE_URL", "TRACELENS_ARCHIVE_SHA256",
+                   "TRACELENS_RUNTIME_LOCK_SHA256"}, TRACELENS_DEPENDENCIES),
+}
+SITE_PACKAGES = Path("venv/lib/python3.14/site-packages")
+TRACELENS_PATH_FILE = "workstation-tracelens.pth"
 
 
 def require(condition, message):
@@ -33,16 +44,16 @@ def digest(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def read_contract(root):
+def read_contract(root, family="HYPERLOOM"):
+    keys, lock = CONTRACTS[family]
     values = {}
     for line in (root / "infrastructure/hyperloom/versions.lock").read_text().splitlines():
-        if line.startswith("HYPERLOOM_"):
+        if line.startswith(family + "_"):
             key, value = line.split("=", 1)
-            require(key not in values, "duplicate Hyperloom identity")
+            require(key not in values, "duplicate " + family + " identity")
             values[key] = value
-    require(set(values) == {"HYPERLOOM_VERSION", "HYPERLOOM_COMMIT", "HYPERLOOM_WHEEL_URL",
-                            "HYPERLOOM_WHEEL_SHA256", "HYPERLOOM_RUNTIME_LOCK_SHA256"}, "incomplete Hyperloom identity")
-    require(digest(root / DEPENDENCIES) == values["HYPERLOOM_RUNTIME_LOCK_SHA256"], "runtime lock changed")
+    require(set(values) == keys, "incomplete " + family + " identity")
+    require(digest(root / lock) == values[family + "_RUNTIME_LOCK_SHA256"], "runtime lock changed")
     return values
 
 
@@ -128,15 +139,71 @@ def installed_python(prefix, contract):
     return executable
 
 
+def unpack_tracelens(archive, prefix, contract):
+    """Expose the authenticated source tree as upstream's editable TRACELENS_ROOT checkout.
+
+    A path entry replaces ``pip install -e``: setup.py, its build backend and
+    the unused SharePoint/plotting requirements are never executed or installed.
+    """
+    retained = prefix / "tracelens.tar.gz"
+    shutil.copyfile(archive, retained)
+    require(digest(retained) == contract["TRACELENS_ARCHIVE_SHA256"], "TraceLens archive changed")
+    top = "TraceLens-" + contract["TRACELENS_COMMIT"]
+    staging = prefix / "tracelens-staging"
+    staging.mkdir(mode=0o700)
+    with tarfile.open(retained, "r:gz") as source:
+        members = source.getmembers()
+        require(len(members) <= 4096 and sum(member.size for member in members) <= 512 * 1024 * 1024,
+                "TraceLens archive exceeds its bounds")
+        require(all(member.name == top or member.name.startswith(top + "/") for member in members),
+                "TraceLens archive must contain one commit directory")
+        source.extractall(staging, filter="data")
+    root = prefix / "TraceLens"
+    (staging / top).rename(root)
+    staging.rmdir()
+    (prefix / SITE_PACKAGES / TRACELENS_PATH_FILE).write_text(str(root) + "\n")
+    # Read-only directories keep bytecode and planted modules out of the checked tree.
+    for directory, _, _ in os.walk(root, topdown=False):
+        os.chmod(directory, 0o500)
+    return root
+
+
+def tracelens_root(prefix, contract):
+    """Return TRACELENS_ROOT after checking every package file against the retained archive."""
+    archive = prefix / "tracelens.tar.gz"
+    require(archive.is_file() and not archive.is_symlink() and digest(archive) == contract["TRACELENS_ARCHIVE_SHA256"],
+            "installed TraceLens archive identity changed")
+    root = prefix / "TraceLens"
+    path_file = prefix / SITE_PACKAGES / TRACELENS_PATH_FILE
+    require(path_file.is_file() and not path_file.is_symlink() and path_file.read_text() == str(root) + "\n",
+            "TraceLens import path changed")
+    top = "TraceLens-" + contract["TRACELENS_COMMIT"] + "/"
+    expected = {}
+    with tarfile.open(archive, "r|gz") as source:
+        for member in source:
+            if member.name.startswith(top + "TraceLens/") and member.isfile():
+                expected[member.name[len(top):]] = hashlib.file_digest(source.extractfile(member), "sha256").hexdigest()
+    package = root / "TraceLens"
+    require(package.is_dir() and not package.is_symlink(), "TraceLens package missing")
+    found = {path.relative_to(root).as_posix() for path in package.rglob("*") if not path.is_dir() or path.is_symlink()}
+    require(found == set(expected), "TraceLens package files added or removed")
+    for name, sha in expected.items():
+        path = root / name
+        require(path.is_file() and not path.is_symlink() and digest(path) == sha, "installed TraceLens source changed")
+    return root
+
+
 # Offline tools are deliberately denied network access, process spawning and GPU
 # device opens. Hyperloom's provider clients are not invoked by these commands.
 OFFLINE = r'''
 import json, pathlib, runpy, sys
+# Upstream trace provenance probes (git, rocminfo) catch OSError and degrade.
+refused = PermissionError if sys.argv[1:2] == ["trace-analysis"] else RuntimeError
 def guard(event, args):
     if event in {"socket.connect", "socket.getaddrinfo", "subprocess.Popen", "os.system", "os.posix_spawn"}:
-        raise RuntimeError("offline Hyperloom command refused external execution/network")
+        raise refused("offline Hyperloom command refused external execution/network")
     if event == "open" and isinstance(args[0], str) and (args[0] == "/dev/kfd" or args[0].startswith("/dev/dri/")):
-        raise RuntimeError("offline Hyperloom command refused GPU access")
+        raise refused("offline Hyperloom command refused GPU access")
 sys.addaudithook(guard)
 if sys.argv[1] == "status":
     from importlib.metadata import version
@@ -170,20 +237,26 @@ elif sys.argv[1] in {"sglang-import", "sglang-bind"}:
         result = bridge["export"](selected, proof, proof_sha, summary, summary_sha, output, bypass_report)
     print(json.dumps({"status":result["status"], "groups":len(result["groups"]),
                       "output":output, "automatic_optimization":False}))
+elif sys.argv[1] == "trace-analysis":
+    sys.argv = ["bypass_trace_analysis", *sys.argv[2:]]
+    runpy.run_module("hyperloom.orchestrator.trace_analysis.bypass_trace_analysis", run_name="__main__")
 else:
     sys.argv = ["hyperloom", *sys.argv[1:]]
     runpy.run_module("hyperloom", run_name="__main__")
 '''
 
 
-def install(root, wheelhouse, prefix, contract):
+def install(root, wheelhouse, prefix, contract, lock=DEPENDENCIES, archive=None):
     require(os.geteuid() != 0, "install Hyperloom as the ordinary developer user")
     require(sys.platform == "linux" and platform.machine() == "x86_64" and sys.version_info[:2] == (3, 14),
             "runtime lock requires Linux x86_64 CPython 3.14")
-    pins = requirements(root / DEPENDENCIES)
+    pins = requirements(root / lock)
     require(pins["hyperloom-inference-optimizer"] == (contract["HYPERLOOM_VERSION"], contract["HYPERLOOM_WHEEL_SHA256"]),
             "release and dependency identities disagree")
     total = verify_wheels(wheelhouse, pins)
+    if archive is not None:
+        require(archive.is_file() and not archive.is_symlink() and digest(archive) == contract["TRACELENS_ARCHIVE_SHA256"],
+                "TraceLens archive missing or changed")
     require(prefix.is_absolute() and not prefix.exists() and not prefix.is_symlink(), "choose a fresh absolute installation prefix")
     require(prefix.parent.is_dir() and prefix.parent.stat().st_uid == os.geteuid() and not prefix.parent.stat().st_mode & 0o022,
             "installation parent must be caller-owned and not writable by others")
@@ -198,12 +271,14 @@ def install(root, wheelhouse, prefix, contract):
         python = prefix / "venv/bin/python3"
         subprocess.run([str(python), "-I", "-m", "pip", "--isolated", "install", "--no-index", "--no-cache-dir",
                         "--only-binary=:all:", "--require-hashes", "--no-compile", "--find-links", str(wheelhouse),
-                        "-r", str(root / DEPENDENCIES)], check=True, timeout=180, env=env)
+                        "-r", str(root / lock)], check=True, timeout=180, env=env)
         subprocess.run([str(python), "-I", "-m", "pip", "--isolated", "check"], check=True, timeout=30, env=env)
         release = next(p for p in wheelhouse.iterdir() if digest(p) == contract["HYPERLOOM_WHEEL_SHA256"])
         shutil.copyfile(release, prefix / "release.whl")
+        if archive is not None:
+            receipt["tracelens_root"] = str(unpack_tracelens(archive, prefix, contract))
         receipt["status"] = "installed"
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, ValueError, tarfile.TarError, subprocess.SubprocessError):
         receipt["status"] = "failed"
         raise
     finally:
@@ -211,7 +286,27 @@ def install(root, wheelhouse, prefix, contract):
     return {"installed": str(prefix), "version": contract["HYPERLOOM_VERSION"], "optimization_qualified": False}
 
 
-def fetch(root, output, contract):
+def fetch_archive(contract, destination):
+    """Download the commit-addressed TraceLens archive over HTTPS and require its pinned SHA256."""
+    url = contract["TRACELENS_ARCHIVE_URL"]
+    require(url == "https://codeload.github.com/AMD-AGI/TraceLens/tar.gz/" + contract["TRACELENS_COMMIT"],
+            "unexpected TraceLens origin")
+    destination.parent.mkdir(mode=0o700)
+    hasher, total = hashlib.sha256(), 0
+    # No inherited proxy configuration, as for the private pip environment.
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with opener.open(url, timeout=60) as response, destination.open("xb") as stream:
+        require(response.geturl() == url, "TraceLens archive redirected")
+        while chunk := response.read(1024 * 1024):
+            total += len(chunk)
+            require(total <= 400 * 1024 * 1024, "TraceLens archive exceeds 400 MiB")
+            hasher.update(chunk)
+            stream.write(chunk)
+    require(hasher.hexdigest() == contract["TRACELENS_ARCHIVE_SHA256"], "TraceLens archive hash changed")
+    return total
+
+
+def fetch(root, output, contract, lock=DEPENDENCIES, archive=False):
     require(os.geteuid() != 0, "fetch Hyperloom as the ordinary developer user")
     require(sys.platform == "linux" and platform.machine() == "x86_64" and sys.version_info[:2] == (3, 14),
             "runtime lock requires Linux x86_64 CPython 3.14")
@@ -222,21 +317,26 @@ def fetch(root, output, contract):
     subprocess.run([sys.executable, "-I", "-m", "venv", str(bootstrap)], check=True, timeout=60, env=env)
     # pip's normal direct-reference/hash interface selects the authenticated
     # upstream asset while every transitive dependency remains exactly pinned.
-    lock = (root / DEPENDENCIES).read_text()
-    original = "hyperloom-inference-optimizer[runtime]==" + contract["HYPERLOOM_VERSION"]
-    require(lock.count(original) == 1, "release requirement changed")
+    text = (root / lock).read_text()
+    original = re.compile(r"^(hyperloom-inference-optimizer(?:\[runtime\])?)==" + re.escape(contract["HYPERLOOM_VERSION"]) + " ",
+                          re.MULTILINE)
+    require(len(original.findall(text)) == 1, "release requirement changed")
     require(contract["HYPERLOOM_WHEEL_URL"].startswith("https://github.com/AMD-AGI/Hyperloom/releases/download/"),
             "unexpected release origin")
     download_lock = output / "download.lock"
-    download_lock.write_text(lock.replace(original, "hyperloom-inference-optimizer[runtime] @ " + contract["HYPERLOOM_WHEEL_URL"]))
+    download_lock.write_text(original.sub(lambda row: row[1] + " @ " + contract["HYPERLOOM_WHEEL_URL"] + " ", text))
     wheels = output / "wheelhouse"
     wheels.mkdir(mode=0o700)
     subprocess.run([str(bootstrap / "bin/python3"), "-I", "-m", "pip", "--isolated", "download",
                     "--index-url", "https://pypi.org/simple", "--only-binary=:all:", "--no-cache-dir",
                     "--require-hashes", "--dest", str(wheels), "-r", str(download_lock)],
                    check=True, timeout=180, env=env)
-    total = verify_wheels(wheels, requirements(root / DEPENDENCIES))
-    return {"wheelhouse": str(wheels), "bytes": total, "version": contract["HYPERLOOM_VERSION"]}
+    total = verify_wheels(wheels, requirements(root / lock))
+    result = {"wheelhouse": str(wheels), "bytes": total, "version": contract["HYPERLOOM_VERSION"]}
+    if archive:
+        source = output / "source" / ("TraceLens-" + contract["TRACELENS_COMMIT"] + ".tar.gz")
+        result.update(archive=str(source), archive_bytes=fetch_archive(contract, source))
+    return result
 
 
 def main():
@@ -269,6 +369,16 @@ def main():
     bound.add_argument("--arm", choices=("bf16", "kv4"), required=True)
     bound.add_argument("--quality", type=Path, help="reviewed retained native CPU quality join")
     bound.add_argument("--quality-sha256", help="SHA256 of that reviewed quality join")
+    tracelens_fetch = actions.add_parser("tracelens-fetch", help="fetch pinned TraceLens source and exact binary wheels")
+    tracelens_fetch.add_argument("output", type=Path)
+    tracelens_setup = actions.add_parser("tracelens-install", help="offline trace-analysis installation from the exact fetch")
+    tracelens_setup.add_argument("wheelhouse", type=Path)
+    tracelens_setup.add_argument("archive", type=Path)
+    tracelens_setup.add_argument("prefix", type=Path)
+    trace = actions.add_parser("trace-analysis", help="offline bypass analysis of one Kineto trace; never launches or qualifies")
+    trace.add_argument("prefix", type=Path)
+    trace.add_argument("trace", type=Path)
+    trace.add_argument("output", type=Path)
     owner = actions.add_parser("sglang-owner", help="check a fresh native owner packet; launch only with --execute-owner")
     owner.add_argument("session", type=Path)
     owner.add_argument("--authorization-sha256", required=True)
@@ -281,6 +391,8 @@ def main():
     os.umask(0o077)
     try:
         contract = read_contract(args.root)
+        if args.action in {"tracelens-fetch", "tracelens-install", "trace-analysis"}:
+            contract = {**contract, **read_contract(args.root, "TRACELENS")}
         if args.action == "sglang-owner":
             from hyperloom_owner import controller_runtime_ready, prepare, run
             plan = prepare(args.session, args.authorization_sha256, args.selection, args.boot_id)
@@ -301,9 +413,31 @@ def main():
         if args.action == "install":
             print(json.dumps(install(args.root.resolve(), args.wheelhouse.absolute(), args.prefix, contract), indent=2))
             return 0
+        if args.action == "tracelens-fetch":
+            print(json.dumps(fetch(args.root.resolve(), args.output, contract, TRACELENS_DEPENDENCIES, archive=True), indent=2))
+            return 0
+        if args.action == "tracelens-install":
+            print(json.dumps(install(args.root.resolve(), args.wheelhouse.absolute(), args.prefix, contract,
+                                     TRACELENS_DEPENDENCIES, args.archive.absolute()), indent=2))
+            return 0
         python = installed_python(args.prefix, contract)
         forwarded = ["status"] if args.action == "status" else ["--help"]
-        if args.action == "report":
+        env, timeout = private_environment(args.prefix), 60
+        if args.action == "trace-analysis":
+            source = tracelens_root(args.prefix, contract)
+            require(args.trace.is_file() and not args.trace.is_symlink() and args.trace.stat().st_size <= 4 * 1024 ** 3,
+                    "trace input missing, linked or too large")
+            output = args.output
+            require(output.is_absolute() and not output.exists() and not output.is_symlink(), "choose a fresh absolute analysis output")
+            output.mkdir(mode=0o700)
+            for private in ("cache", "tmp"):
+                (output / private).mkdir(mode=0o700)
+            env.update(TRACELENS_ROOT=str(source), TRACELENS_KSI_CACHE_DIR=str(output / "cache"),
+                       TMPDIR=str(output / "tmp"), HYPERLOOM_ROCPROF_ROOFLINE_ENRICH="0")
+            forwarded = ["trace-analysis", "--trace-input", str(args.trace.resolve()), "--workspace-path", str(output),
+                         "--session-id", "offline", "--framework", "sglang", "--target-platform", "r9700"]
+            timeout = 1800
+        elif args.action == "report":
             require(args.input.is_file() and args.input.stat().st_size <= 8 * 1024 * 1024, "report input missing or too large")
             require(not args.output.exists() and not args.output.is_symlink(), "choose a fresh report output")
             content = json.loads(args.input.read_text())
@@ -324,10 +458,9 @@ def main():
                          str(args.root.resolve() / "infrastructure/hyperloom/sglang-rocm102.json"),
                          str(args.owner.absolute()), args.seal_sha256, args.arm, str(args.output.absolute()),
                          str(args.quality.absolute()) if args.quality else "", args.quality_sha256 or ""]
-        subprocess.run([str(python), "-I", "-B", "-c", OFFLINE, *forwarded], check=True, timeout=60,
-                       env=private_environment(args.prefix))
+        subprocess.run([str(python), "-I", "-B", "-c", OFFLINE, *forwarded], check=True, timeout=timeout, env=env)
         return 0
-    except (OSError, ValueError, zipfile.BadZipFile, subprocess.SubprocessError) as error:
+    except (OSError, ValueError, zipfile.BadZipFile, tarfile.TarError, subprocess.SubprocessError) as error:
         if args.action == "sglang-owner":
             print("FAILED: Hyperloom owner handoff: " + str(error), file=sys.stderr)
         else:

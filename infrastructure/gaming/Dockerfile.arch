@@ -1,0 +1,47 @@
+# Explicit candidate through workstationctl sunshine image-build ... arch-wayland.
+ARG BASE_IMAGE=scratch
+FROM ${BASE_IMAGE} AS arch-wayland
+USER root
+ARG SUNSHINE_SHA256
+ARG ARCH_SNAPSHOT
+COPY sunshine.pkg.tar.zst /build/sunshine.pkg.tar.zst
+# Upgrade the entire base against one dated repository set. Keep signature
+# verification enabled; the upstream local Sunshine asset has its own SHA pin.
+RUN test -n "$ARCH_SNAPSHOT" \
+    && printf '%s  %s\n' "$SUNSHINE_SHA256" /build/sunshine.pkg.tar.zst | sha256sum -c - \
+    && printf 'Server = https://archive.archlinux.org/repos/%s/$repo/os/$arch\n' "$ARCH_SNAPSHOT" > /etc/pacman.d/mirrorlist \
+    && printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> /etc/pacman.conf \
+    && pacman -Syu --noconfirm --needed \
+       steam mesa lib32-mesa libglvnd lib32-libglvnd vulkan-radeon lib32-vulkan-radeon \
+       vulkan-tools libva-utils ffmpeg kwin xorg-xwayland wayland-utils \
+       pipewire pipewire-pulse wireplumber dbus xdg-desktop-portal xdg-desktop-portal-kde qt6-wayland \
+       jq glib2 util-linux libcap shadow catatonit desktop-file-utils \
+    && pacman -U --noconfirm /build/sunshine.pkg.tar.zst \
+    && useradd --uid 1000 --user-group --create-home --shell /bin/bash default \
+    && install -d -m 1777 /tmp/.X11-unix \
+    && install -d /usr/lib/workstation /usr/share/workstation /usr/games \
+    && ln -s /usr/bin/steam /usr/games/steam \
+    && mv /usr/bin/sunshine /usr/lib/workstation/sunshine.real \
+    && if getcap /usr/lib/workstation/sunshine.real | grep -q .; then setcap -r /usr/lib/workstation/sunshine.real; fi \
+    && if getcap /usr/bin/kwin_wayland | grep -q .; then setcap -r /usr/bin/kwin_wayland; fi \
+    && sed -i 's|^Exec=.*|Exec=/usr/lib/workstation/sunshine.real|' /usr/share/applications/dev.lizardbyte.app.Sunshine.kwin.desktop \
+    && pacman -Q > /usr/share/workstation/gaming-packages.tsv \
+    && rm /build/sunshine.pkg.tar.zst
+COPY bin /opt/workstation/bin
+COPY lib /opt/workstation/lib
+COPY templates /opt/workstation/templates
+COPY versions.lock /opt/workstation/versions.lock
+RUN chmod -R a+rX /opt/workstation
+COPY --chmod=755 infrastructure/gaming/sunshine-wrapper.sh /usr/bin/sunshine
+COPY --chmod=755 infrastructure/gaming/wayland-session.sh /usr/lib/workstation/wayland-session
+COPY infrastructure/gaming/wayland-apps.json /usr/share/workstation/wayland-apps.json
+ENV HOME=/home/default USER=default USER_HOME=/home/default \
+    XDG_CONFIG_HOME=/home/default/.config XDG_CACHE_HOME=/home/default/.cache \
+    XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=KDE \
+    SUNSHINE_CAPTURE=kwin SUNSHINE_ENCODER=vulkan
+USER 1000:1000
+WORKDIR /home/default
+ENTRYPOINT ["/usr/bin/catatonit", "--", "/usr/lib/workstation/wayland-session"]
+CMD []
+LABEL workstation.ai.session="kwin-wayland" workstation.ai.distribution="arch" \
+      workstation.ai.qualification="pending-wayland-gpu-input-and-stream"

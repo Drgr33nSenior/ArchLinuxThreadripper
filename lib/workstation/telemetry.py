@@ -271,6 +271,9 @@ def render(args):
     total = sum(pod_budget(o)["memory_mib"] for o in stack if pod_spec(o))
     component_limits = {"cluster_stack_mib": total, "host_alloy_mib": 512 if enabled else 0,
                         "hardware_sampler_mib": 128 if enabled else 0}
+    if getattr(args, "tariff", "false") == "true":
+        require(enabled, "tariff collection requires enabled telemetry")
+        component_limits["tariff_refresher_mib"] = 64
     calculated_allowance = sum(component_limits.values()) + args.margin_mib
     require(calculated_allowance <= args.reserve_mib,
             "telemetry component limits plus margin exceed TELEMETRY_RESERVE_MIB")
@@ -320,7 +323,8 @@ def validate_evidence(evidence):
         components = evidence.get("component_limits_mib")
         require(evidence.get("profile") in PROFILES and type(evidence.get("margin_mib")) is int
                 and evidence["margin_mib"] > 0 and isinstance(components, dict)
-                and set(components) == {"cluster_stack_mib", "host_alloy_mib", "hardware_sampler_mib"}
+                and set(components) - {"tariff_refresher_mib"} == {"cluster_stack_mib", "host_alloy_mib", "hardware_sampler_mib"}
+                and components.get("tariff_refresher_mib", 64) == 64
                 and all(type(value) is int and value >= 0 for value in components.values())
                 and evidence["stack_limit_mib"] == components["cluster_stack_mib"]
                 and evidence.get("calculated_allowance_mib") == sum(components.values()) + evidence["margin_mib"]
@@ -397,6 +401,8 @@ def main():
     for name in ("api-address", "host-address", "workloads", "node-name"):
         render_parser.add_argument("--" + name, required=True)
     render_parser.add_argument("--profile", choices=PROFILES, default="full")
+    render_parser.add_argument("--tariff", choices=("true", "false"), default="false",
+                               help="include the optional 64 MiB public tariff refresher allowance")
     render_parser.add_argument("--reserve-mib", type=int, required=True)
     render_parser.add_argument("--margin-mib", type=int, required=True)
     verify_parser = actions.add_parser("verify")
