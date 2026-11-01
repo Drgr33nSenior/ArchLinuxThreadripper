@@ -33,6 +33,8 @@ jobs:
             test-results/native-rag.*/output.json
             test-results/native-rag.*/failure.json
             test-results/native-rag.*/rows.jsonl
+            test-results/native-rag.*/container-state.txt
+            test-results/native-rag.*/startup-tokens.txt
           retention-days: 7
           if-no-files-found: error
   source:

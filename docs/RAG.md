@@ -64,6 +64,14 @@ and [foreign directory disclosure](https://github.com/open-webui/open-webui/secu
 advisories affecting the previous 0.11.3 pin. Keep the pilot private; this patch
 and its regression checks do not constitute a complete security audit.
 
+As of 1 November 2026, upstream's current release is 0.12.5. The retained 0.11.4
+test candidate is also affected by the later
+[channel-message impersonation advisory](https://github.com/open-webui/open-webui/security/advisories/GHSA-3vvh-g22g-jq6r),
+fixed in 0.12.2. This network-isolated fixture has no browser/channel traffic.
+Keep deployment replicas at zero; review and qualify a current release before
+exposing the application. Do not treat this historical-profile test as security
+clearance for 0.11.4.
+
 | Resource or setting | Pilot baseline |
 | --- | --- |
 | Open WebUI resources | Request 2 CPUs / 4 GiB; limit 2 CPUs / 6 GiB; no GPU request |

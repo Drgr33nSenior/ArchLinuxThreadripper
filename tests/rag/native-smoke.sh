@@ -31,12 +31,19 @@ cleanup() {
   trap - EXIT
   set +e
   if [[ -n $app ]]; then
+    # Fixed fields and error tokens only; never export raw server logs.
+    timeout 10s docker inspect --format '{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}} {{.RestartCount}}' "$app" >"$scratch/state.log" 2>/dev/null
+    if [[ $(cat "$scratch/state.log") =~ ^(created|running|paused|restarting|removing|exited|dead)\ [0-9]+\ (true|false)\ [0-9]+$ ]]; then
+      cp "$scratch/state.log" "$evidence/container-state.txt"
+    fi
+    timeout 10s docker logs --tail 200 "$app" >"$scratch/server.log" 2>&1
+    rg -o 'PermissionError|Read-only file system|Permission denied|ModuleNotFoundError|ImportError|FileNotFoundError|RuntimeError|ValueError|OutOfMemoryError|OfflineModeIsEnabled|LocalEntryNotFoundError|ConnectionError|\[Errno [0-9]{1,3}\]|/app/backend/open_webui/static|/app/backend/data|/rag-models|/root/\.cache|/app/backend/\.webui_secret_key' "$scratch/server.log" | sort | uniq -c >"$evidence/startup-tokens.txt"
     # Only fixed JSON receipts are exported; DB/auth/key/raw logs stay private.
     for kind in output failure; do
-      timeout 10s docker exec --user 1000:1000 "$app" cat "/app/backend/data/.rag-smoke-$kind.json" >"$evidence/$kind.json" 2>/dev/null
+      timeout 10s docker cp "$app:/app/backend/data/.rag-smoke-$kind.json" "$evidence/$kind.json" >"$scratch/export-$kind.log" 2>&1
       [[ -s $evidence/$kind.json ]] || rm -f "$evidence/$kind.json"
     done
-    timeout 10s docker exec --user 1000:1000 "$app" cat /app/backend/data/.rag-smoke-rows.jsonl >"$evidence/rows.jsonl" 2>/dev/null
+    timeout 10s docker cp "$app:/app/backend/data/.rag-smoke-rows.jsonl" "$evidence/rows.jsonl" >"$scratch/export-rows.log" 2>&1
     [[ -s $evidence/rows.jsonl ]] || rm -f "$evidence/rows.jsonl"
   fi
   for identifier in "$app" "$seed"; do

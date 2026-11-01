@@ -63,7 +63,7 @@ pulling the image. Model and corpus mounts are read-only. The default seccomp
 profile remains active.
 
 Stage allowances total 2,210 seconds, plus at most 120 seconds of stage termination
-grace and 130 seconds of collection/disposal. The outer command stops after
+grace and 150 seconds of collection/disposal. The outer command stops after
 43 minutes, with 45 seconds of kill grace; the job has a 45-minute deadline.
 These are hard campaign limits, not predicted run times. Only exact container
 IDs bearing this run's ownership label may be removed. A failed cleanup fails
