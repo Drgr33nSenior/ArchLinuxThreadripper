@@ -148,17 +148,17 @@ done
 # Validate the real default app schema and preserve existing owner app data.
 XDG_CONFIG_HOME=$work/session-config
 mkdir -p "$XDG_CONFIG_HOME/sunshine"
-printf '# existing owner configuration\n' > "$XDG_CONFIG_HOME/sunshine/sunshine.conf"
-jq '.env={"KEEP":"fixture"}' "$repo_root/infrastructure/gaming/wayland-apps.json" > "$XDG_CONFIG_HOME/sunshine/apps.json"
+printf '# existing owner configuration\n' >"$XDG_CONFIG_HOME/sunshine/sunshine.conf"
+jq '.env={"KEEP":"fixture"}' "$repo_root/infrastructure/gaming/wayland-apps.json" >"$XDG_CONFIG_HOME/sunshine/apps.json"
 before_apps=$(common::sha256_file "$XDG_CONFIG_HOME/sunshine/apps.json")
 SUNSHINE_USER='' SUNSHINE_PASS='' gaming_init_sunshine
 [[ $(common::sha256_file "$XDG_CONFIG_HOME/sunshine/apps.json") == "$before_apps" ]]
-jq 'del(.env)' "$repo_root/infrastructure/gaming/wayland-apps.json" > "$XDG_CONFIG_HOME/sunshine/apps.json"
+jq 'del(.env)' "$repo_root/infrastructure/gaming/wayland-apps.json" >"$XDG_CONFIG_HOME/sunshine/apps.json"
 before_apps=$(common::sha256_file "$XDG_CONFIG_HOME/sunshine/apps.json")
 reject gaming_init_sunshine
 grep -Fq 'requires an env object and apps array' "$work/rejected.txt"
 [[ $(common::sha256_file "$XDG_CONFIG_HOME/sunshine/apps.json") == "$before_apps" ]]
-printf '{invalid-json\n' > "$XDG_CONFIG_HOME/sunshine/apps.json"
+printf '{invalid-json\n' >"$XDG_CONFIG_HOME/sunshine/apps.json"
 reject gaming_init_sunshine
 
 # Builder failure paths: synthetic download and Docker, no network/build daemon.
