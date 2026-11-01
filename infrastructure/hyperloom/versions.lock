@@ -1,0 +1,6 @@
+# Optional Hyperloom controller; reviewed 2026-10-30. No serving image change.
+HYPERLOOM_VERSION=1.1.5
+HYPERLOOM_COMMIT=7c0708ec9b75e70c4d9ce5309608f378b7fd8f69
+HYPERLOOM_WHEEL_URL=https://github.com/AMD-AGI/Hyperloom/releases/download/v1.1.5/hyperloom_inference_optimizer-1.1.5-py3-none-any.whl
+HYPERLOOM_WHEEL_SHA256=b6e155758652f5c9e32fdfd4a057a58398988080e89a8240f95e12fb3105ebc2
+HYPERLOOM_RUNTIME_LOCK_SHA256=5bb8a2fa87edadcd26ef0247b8fc6c35884a5812c89cbdbad8aabee27041b37d

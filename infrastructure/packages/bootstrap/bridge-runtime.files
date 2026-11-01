@@ -175,6 +175,13 @@ lib/workstation/telemetry.sh
 lib/workstation/telemetry_sample.py
 lib/workstation/monitoring.py
 lib/workstation/telemetry_power.py
+lib/workstation/hyperloom.py
+lib/workstation/hyperloom_sglang.py
+lib/workstation/hyperloom_owner.py
+infrastructure/hyperloom/sglang-rocm102.json
+infrastructure/hyperloom/runtime-linux-py314.lock
+infrastructure/hyperloom/versions.lock
+docs/HYPERLOOM.md
 templates/workstation/telemetry/workstation-alloy.service
 templates/workstation/telemetry/workstation-telemetry.service
 templates/workstation/telemetry/workstation-telemetry.sysusers
