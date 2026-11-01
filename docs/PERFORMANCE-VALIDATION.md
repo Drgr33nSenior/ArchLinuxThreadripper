@@ -7,16 +7,20 @@ GPU campaign or qualify its R9700/SGLang runner.
 The [opt-in model-kernel workflow](MODEL-KERNELS.md) adds independent compilation,
 warmup, restart-reuse and numerical/dispatch evidence without promoting defaults.
 
-**No performance default was promoted and no workstation speedup is claimed.**
+This guide defines measurement tooling; it does not promote a performance default.
+Local gains and failures belong to their exact retained experiment, not every
+model or runtime. See the [current runtime map](README.md#keep-the-runtime-layers-distinct).
 Use the commands below on the installed target after its existing qualification
 and access gates pass. Reports contain hardware identifiers and model/corpus
 hashes: keep them private. Use new output directories for every run.
 
 ## Coverage and remaining limits
 
-“Implemented” describes repository tooling, not successful hardware execution.
-Every physical qualification and measured improvement in this table is **NOT
-RUN — target hardware unavailable**.
+The table inventories generic tooling and its source tests. It is not a current
+physical-results register. Retained GPU experiments have run; consult their
+sealed handoffs for exact boot/source/model identities and open gates. A source
+fixture does not qualify another artifact, and a target pass does not erase an
+earlier unexplained failure.
 
 | Audit item | Implementation and evidence | Local validation | Remaining qualification or blocker |
 | --- | --- | --- | --- |
@@ -32,12 +36,16 @@ RUN — target hardware unavailable**.
 
 ## Baseline and evidence
 
-Keep the digest-pinned AMD SGLang `0.5.15.post1`, ROCm `10.0.0` container and
-existing Radeon Triton/AITER settings. AMD documents this image family for
-Radeon; it does not qualify an arbitrary Arch host kernel or a mixed native
-SDK/container library process. Record `torch.version.hip`, installed packages,
+Keep the exact accepted baseline for the campaign being compared. The checked-in
+dual-GPU overlay retains AMD SGLang `0.5.15.post1` / ROCm `10.0.0`; the single-GPU
+overlay selects local SGLang `0.5.18` / ROCm `10.1`. The separately selected native
+campaign uses SGLang `0.5.21` / ROCm `10.2` dev. These are distinct configurations,
+not interchangeable upgrade instructions. Preserve each one's settings, image,
+source/model identities and caches. Record `torch.version.hip`, installed packages,
 allocated devices, model hashes and actual allowlisted launch arguments with
-`serving-evidence`. [AMD SGLang guidance](https://rocm.docs.amd.com/projects/ai-ecosystem/en/latest/inference/sglang.html).
+`serving-evidence`. No version label qualifies a mixed host/container library
+process. Recheck [AMD's guidance](https://rocm.docs.amd.com/projects/ai-ecosystem/en/latest/inference/sglang.html)
+before changing a pinned stack.
 
 The `.80` static fraction covers weights/KV, not every activation or graph
 allocation. Two running requests is a baseline, not an optimum. Do not raise

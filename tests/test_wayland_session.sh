@@ -49,7 +49,7 @@ reject gaming_display
 XDG_CONFIG_HOME="$work/config"
 mkdir -p "$XDG_CONFIG_HOME/sunshine"
 printf 'paired-config-fixture\n' >"$XDG_CONFIG_HOME/sunshine/sunshine.conf"
-printf 'existing-apps-fixture\n' >"$XDG_CONFIG_HOME/sunshine/apps.json"
+printf '{"env":{"KEEP":"fixture"},"apps":[{"name":"Owner desktop"}]}\n' >"$XDG_CONFIG_HOME/sunshine/apps.json"
 cp "$XDG_CONFIG_HOME/sunshine/sunshine.conf" "$work/original.conf"
 cp "$XDG_CONFIG_HOME/sunshine/apps.json" "$work/original-apps.json"
 unset SUNSHINE_USER SUNSHINE_PASS

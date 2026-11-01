@@ -17,7 +17,10 @@ entrypoint=$(docker image inspect "$HOME_LAB_GAME_IMAGE" --format '{{json .Confi
 case $entrypoint in
   '["/usr/bin/dumb-init","--","/usr/lib/workstation/wayland-session"]' | \
     '["/usr/bin/catatonit","--","/usr/lib/workstation/wayland-session"]') ;;
-  *) printf 'Unexpected gaming entrypoint\n' >&2; exit 1 ;;
+  *)
+    printf 'Unexpected gaming entrypoint\n' >&2
+    exit 1
+    ;;
 esac
 docker run --rm --pull never --platform linux/amd64 --network none --read-only \
   --cap-drop ALL --security-opt no-new-privileges --user 1000:1000 \

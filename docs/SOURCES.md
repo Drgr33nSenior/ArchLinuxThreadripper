@@ -1,8 +1,9 @@
 # Primary references
 
-This implementation was reviewed against these primary sources on the
-`LOCK_DATE` in `versions.lock`. Recheck version-sensitive material before an
-install or upgrade.
+Use this register to locate primary documentation. Exact reviewed versions live
+in component locks and runtime manifests; their dates can differ from the root
+`LOCK_DATE`. This index is not a claim that every rolling page was refreshed on
+one date. Recheck relevant sources before an install or upgrade.
 
 ## Hardware and firmware
 

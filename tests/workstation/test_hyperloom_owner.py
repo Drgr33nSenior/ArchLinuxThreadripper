@@ -145,6 +145,12 @@ def run(name, argv, seconds, *, cwd):
         self.assertFalse((self.session / "executed.txt").exists())
         self.assertFalse((self.session / "HYPERLOOM-STARTED.json").exists())
 
+    def test_new_w5_menu_does_not_expand_the_historical_owner_contract(self):
+        with self.assertRaisesRegex(ValueError, "four/thirty-request owner schedule"):
+            self.fixture(requests_per_start=176)
+        self.assertFalse((self.session / "executed.txt").exists())
+        self.assertFalse((self.session / "HYPERLOOM-STARTED.json").exists())
+
     def test_success_delegates_in_order_imports_both_arms_and_refuses_retry(self):
         result, exporter = self.run_fixture(self.fixture())
         self.assertEqual(result["status"], "OWNER_COMPLETED_REPORTS_IMPORTED")

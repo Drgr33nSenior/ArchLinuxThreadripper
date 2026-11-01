@@ -204,6 +204,67 @@ class Tests(unittest.TestCase):
             file.write_text("#tb 0: 1/60\n" + "".join(f"0, {i}, {i}, 1, 8, {'0'*32}\n" for i in range(601)))
             self.assertEqual(frame_metrics.analyze(file, 60)["status"], "failed")
 
+    def test_serving_tracking_keeps_stock_and_c4_gates_separate(self):
+        result = stack_inventory.serving_project(Path(__file__).resolve().parents[2])
+        self.assertEqual(result["revision"], "d3f0db85997389ebd8836af17a7048659b930770")
+        self.assertEqual(result["profile"]["context_length"], 131040)
+        self.assertEqual(result["profile"]["max_total_tokens"], 262144)
+        self.assertEqual(result["profile"]["max_running_requests"], 2)
+        self.assertEqual(result["stock_endurance_graded_answers"], "352/352")
+        self.assertIn("NOT TESTED", result["c4_endurance"])
+        self.assertEqual(result["historical_adoption_verdict"], "ADOPTION_CRITERIA_NOT_MET")
+        self.assertIn("OWNER_ACCEPTED_A3_EXCEPTION", result["adoption"])
+        self.assertEqual(result["unresolved_gpu_fault"], "HSA_STATUS_ERROR_MEMORY_FAULT")
+        for field in ("reported_deployed", "public_fp8_selection_changed", "deployment_qualified",
+                      "target_inspected", "remote_rechecked_by_inventory"):
+            self.assertIs(result[field], False)
+
+    def test_host_inventory_includes_reviewed_serving_source_without_remote_call(self):
+        output = io.StringIO()
+        with patch.object(stack_inventory.subprocess, "check_output", side_effect=[
+                "core\n", "https://archive.archlinux.org/repos/2026/09/04/core/os/x86_64\n", "fixture 1\n"
+        ]) as commands, patch("sys.stdout", output):
+            stack_inventory.main()
+        result = json.loads(output.getvalue())
+        self.assertEqual(result["host_packages"], ["fixture 1"])
+        self.assertEqual(result["serving_project"]["status"], "reviewed-source-evidence-only")
+        self.assertEqual([call.args[0][0] for call in commands.call_args_list],
+                         ["pacman-conf", "pacman-conf", "pacman"])
+
+    def test_serving_tracking_rejects_evidence_drift_and_extra_paths(self):
+        source = Path(__file__).resolve().parents[2] / "infrastructure/sglang"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "infrastructure/sglang"
+            evidence = target / "serving-evidence"
+            evidence.mkdir(parents=True)
+            tracking = json.loads((source / "serving-project.json").read_text())
+            for name in tracking["records"]:
+                (evidence / name).write_bytes((source / "serving-evidence" / name).read_bytes())
+            manifest = target / "serving-project.json"
+            manifest.write_text(json.dumps(tracking))
+            member = evidence / next(iter(tracking["records"]))
+            original = member.read_bytes()
+            member.write_bytes(original + b"\n")
+            with self.assertRaisesRegex(ValueError, "identity changed"):
+                stack_inventory.serving_project(root)
+            member.unlink()
+            member.symlink_to(source / "serving-evidence" / member.name)
+            with self.assertRaisesRegex(ValueError, "regular serving evidence"):
+                stack_inventory.serving_project(root)
+            member.unlink()
+            member.write_bytes(original)
+            tracking["deployment_qualified"] = True
+            tracking["unapproved_metadata"] = "synthetic-unapproved-value"
+            manifest.write_text(json.dumps(tracking))
+            result = stack_inventory.serving_project(root)
+            self.assertFalse(result["deployment_qualified"])
+            self.assertNotIn("synthetic-unapproved-value", json.dumps(result))
+            tracking["records"]["../../outside.json"] = "a" * 64
+            manifest.write_text(json.dumps(tracking))
+            with self.assertRaisesRegex(ValueError, "invalid serving project"):
+                stack_inventory.serving_project(root)
+
     def test_offline_sweep_preserves_memory_and_gpu(self):
         deployment = {"spec": {"template": {"spec": {"containers": [{"name": "sglang", "args": [],
             "resources": {"requests": {"cpu": "20", "memory": "32Gi", "amd.com/gpu": "1"},

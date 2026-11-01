@@ -71,52 +71,33 @@ provenance. Match the model, quantization, corpus and inference settings.
 For one/two-card scaling, use the same model that fits one card including KV
 and workspace. A model that only fits two cards tests capacity, not speedup.
 The benchmark excludes tokenization/sampling; measure serving latency separately.
-Stop competing builds/VMs when necessary to preserve the 64 GiB no-swap budget.
+Stop competing builds/VMs when needed to preserve the current measured no-swap budget.
 Keep failures, and promote only after numerical, memory, thermal and recovery checks.
 
 ## Configuration and qualification boundaries
 
-All inventory values in this guide remain expectations until collected on the
-workstation. The current two modules do not establish their trained speed or
-channel configuration. Two 32 GiB GPUs have separate memory pools.
+Resource plans use a fresh target inventory, not nominal RAM or an earlier boot.
+The owner-reported upgrade is 128 GB; DIMM population, trained speed and MemTotal
+must be recollected. Two R9700s remain separate allocation/memory domains.
+Use the [runtime map](README.md#keep-the-runtime-layers-distinct) to distinguish
+host SDKs, checked-in overlays and the owner-selected ROCm 10.2 campaign.
 
-The existing flow is retained: `config/install*.conf` → `bin/bootstrap-arch` →
-`lib/bootstrap/{config,preflight,install,verify}.sh` and `templates/arch/` →
-installed encrypted RAID/XFS host. The full checkout's `bin/workstationctl` loads
-literal allowlisted `config/workstation.conf` values into
-`lib/workstation/runtime.sh`; component modules handle native builds and reports.
-`infrastructure/ansible/site.yml` and its bare-metal roles configure the packaged
-K3s runtime. `infrastructure/gpu-operator/` owns the device-plugin configuration;
-`apps/` Kustomize overlays select disabled workload manifests and persistent
-local-path PVCs. The existing KVM/AlmaLinux lab is a separate retained workflow.
+| Responsibility | Canonical implementation | Qualification boundary |
+| --- | --- | --- |
+| CPU/NUMA/RAM/GPU discovery | `lib/workstation/hardware.sh` | Same-boot observed topology; optional probes can remain unavailable |
+| Native builds and cache budget | `lib/workstation/build.sh`, config example | Effective flags, memory and cache evidence for each artifact; no global fast-math/PGO |
+| Kernel build and recovery | `templates/workstation/linux-git.config`, kernel policy/locks | Retained physical tests are scoped to their exact build/boot; preserve stable/LTS |
+| Host ROCm and native llama.cpp | `lib/workstation/rocm.sh`, `versions.lock` | Generic TheRock package release remains separate from source-built serving experiments |
+| K3s and static CPU allocation | Bare-metal Ansible role, GPU-operator lock | Opt-in full-core CPU Manager migration; explicit admission and rollback |
+| Workload envelopes and caches | `apps/`, resource planner | Measured host RAM and each card's VRAM; requests, limits and PVC sizes are not usage |
+| GPU handover | `lib/workstation/session.sh` | Exact UID/lock/snapshot checks, allocations and device holders; stop managed AI before gaming |
+| Sunshine candidate | [Sunshine guide](SUNSHINE.md) | Capture/basic input passed on the pinned Arch trial; audio, games, persistence and deployment remain open |
+| Peer transfer diagnostics | `tests/hardware/hip-peer-copy.cpp` | Match UUID/BDF and retained readback evidence; BAR metadata is not transfer proof |
 
-| Area | Source paths and behavior | Constraints and applicable versions | Change posture | Current configuration | Qualification |
-| --- | --- | --- | --- | --- | --- |
-| Target topology | `lib/workstation/hardware.sh`: observed/pending GPU report | [Linux topology ABI](https://www.kernel.org/doc/html/latest/admin-guide/cputopology.html), [9960X](https://www.amd.com/en/products/processors/ryzen-threadripper/9000-series/amd-ryzen-threadripper-9960x.html) | Extend | CPU/SMT/cache/NUMA, RAM/DIMMs, board/BIOS, BDF/render/link/BAR, NVMe/SMART and TRIM evidence; optional probes stay nullable | `tests/test_hardware_topology.sh`; physical NOT RUN |
-| Slot placement | Expected TRX50 AI TOP, no observed revision | [Gigabyte specifications](https://www.gigabyte.com/Motherboard/TRX50-AI-TOP/sp#sp): CPU-specific M2A/B/C Gen5 support; M2D unavailable for non-PRO | Discover, do not relocate automatically | Record revision and negotiated links, then compare the matching manual and physical slot labels | Owner inspection under load; NOT RUN |
-| Native kernel and CPU builds | `lib/workstation/{runtime,build}.sh`, `templates/workstation/linux-git.config`: native CPU gate and generic recovery path | Existing kernel/AUR pins in `versions.lock`; [GCC `znver5`/native semantics](https://gcc.gnu.org/onlinedocs/gcc/x86-Options.html) | Retain | No cross-host native specialization; kernel Kconfig, host C/C++/Rust mechanisms kept separate; no new LTO/PGO without a representative profile | Existing build/kernel mock tests; actual compile/boot NOT RUN |
-| Bounded builds/cache | `build.sh`: RAM/cgroup/CPU cap, link reserve, ccache content identity and budget | [ccache manual](https://ccache.dev/manual/latest.html), installed tool versions retained in build records | Retain and extend | Gaming/failed transitions inhibit new managed compiler commands; running/unrelated builds are not killed | `tests/test_resource_plan.sh` and existing build tests |
-| Coherent GPU stack | `rocm.sh`, `versions.lock`, `infrastructure/gpu-operator/` | [AMD ROCm 10.0 matrix](https://rocm.docs.amd.com/en/latest/compatibility/compatibility-matrix.html): RDNA4/gfx1201; Arch is not listed as a supported host combination | Retain qualification gates | Host owns amdgpu; no competing driver installer. TheRock remains a source plan, not a qualified package release | Package/provenance tests; actual Arch kernel/ROCm/framework compatibility NOT RUN |
-| Comparable inference builds | `rocm.sh`: pinned HIP llama.cpp already present | [Pinned Vulkan build](https://github.com/ggml-org/llama.cpp/blob/427291b5b34cd914a31b3fd3b61a68f6184f4b9f/ggml/src/ggml-vulkan/CMakeLists.txt), pinned benchmark interface above | Implement | Vulkan alternative, shared explicit batch/ubatch/FA knobs, same model/source hashes, repeated JSON throughput/spread | `tests/test_rocm_vulkan_build.sh`, `tests/test_rocm_benchmark.sh`; physical NOT RUN |
-| K3s exclusive CPUs | `infrastructure/ansible/roles/k3s_baremetal/`: previously kubelet defaults | K3s `v1.35.7+k3s1`; [drop-ins](https://docs.k3s.io/installation/configuration#kubelet-configuration-files), [v1.35 CPU policies](https://v1-35.docs.kubernetes.io/docs/tasks/administer-cluster/cpu-management-policies/) | Opt-in implementation | Offline SMT-based resource plan; static/full-core/strict reservation; restricted/pod topology; explicit checkpoint/running-service migration refusal | Resource fixtures and exact rendered task predicates; real kubelet admission NOT RUN |
-| AI CPU/RAM/GPU envelopes | `apps/base/{sglang,swarmui}/`, dual overlay: Burstable before this tranche | [Guaranteed QoS](https://kubernetes.io/docs/concepts/workloads/pods/pod-qos/); [SGLang arguments](https://github.com/sgl-project/sglang/blob/main/docs/advanced_features/server_arguments.md), image still unqualified | Implement resource corrections; retain models | Requests now match existing limits; init container also whole-core/Guaranteed. Existing `.80` memory fraction and two-request concurrency exposed through the ConfigMap; bounded `/dev/shm` retained | `tests/home-lab/check-manifests.rb`; serving correctness NOT RUN |
-| Exclusive GPUs and handover | Traditional plugin; no existing session controller | [AMD allocation semantics](https://instinct.docs.amd.com/projects/k8s-device-plugin/en/latest/user-guide/resource-allocation.html) | Implement conservative explicit command | `lib/workstation/session.sh`: exact UIDs, lock, snapshot, timeout, global pending/active GPU checks and live DRM holder check; stop all managed AI before gaming | `tests/test_session.sh` mocks; no real cluster or GPU execution |
-| Gaming activation | `apps/base/steam-headless/`: immutable image still pending promotion; non-root KWin/Wayland candidate | [Sunshine capture configuration](https://docs.lizardbyte.dev/projects/sunshine/master/md_docs_2configuration.html#capture), [Linux compatibility](https://docs.lizardbyte.dev/projects/sunshine/latest/) | Keep gated | KWin virtual output, PipeWire/WirePlumber, native KWin capture and Vulkan Video; XWayland supports Steam/legacy games. Session command refuses before stopping AI. Steam and Sunshine are alternative paths; Moonlight is the Sunshine client | Render/security tests; target GPU, capture, input, audio and codec checks NOT RUN |
-| Persistent storage | Model/creative/game PVCs, ccache; HF cache previously ephemeral | [K3s local storage](https://docs.k3s.io/storage) | Extend, retain layout | Separate 16 GiB HF cache PVC; read-only model mount retained. Existing gaming home holds shader caches; existing TRIM timer/encryption discard and backup design unchanged | Render/PVC tests and read-only discovery; actual cooling/TRIM/retention NOT RUN |
-| Functional peer transfers | BAR/PCI metadata cannot prove a transfer | [HIP peer API](https://rocm.docs.amd.com/projects/HIP/en/latest/doxygen/html/group___peer_to_peer.html) | Explicit diagnostic only | `tests/hardware/hip-peer-copy.cpp`: ordered pairs, 16 MiB transfer, UUID/PCI identity and readback verification | Compiled mock-HIP API tests; actual HIP compile and physical transfer NOT RUN |
-
-`versions.lock` remains authoritative. It selects K3s `v1.35.8+k3s1` and Qwen
-Code 0.23.2. The retained llama.cpp pin is
-`427291b5b34cd914a31b3fd3b61a68f6184f4b9f`, TheRock
-`b927c1865f37fa7bbecf5c7e35dee41b02afbb4f`, and the existing kernel/AUR pair.
-The operator chart remains `v1.5.1`, with archive and image digests in
-`infrastructure/gpu-operator/chart.lock` and its values. The plugin is
-`1.31.0.10`; driver management and AMD DRA remain disabled. TheRock's pinned
-[target selection](https://github.com/ROCm/TheRock/blob/b927c1865f37fa7bbecf5c7e35dee41b02afbb4f/README.md)
-does not prove a complete source dependency seal or an Arch-compatible release.
-Official Arch package versions, compiler identity, CMake options and binary
-hashes are recorded at actual build time. No Mesa/ROCm release number or image
-digest is fabricated for builds that have not happened.
+Version pins remain in `versions.lock` and component locks. This source map does
+not reopen previously measured kernel/P2P work or turn a source fixture into a
+physical result. Use fresh evidence for a changed artifact, boot or workload;
+do not repeat a GPU diagnostic solely because this guide was edited.
 
 ### Discover and budget the target
 
@@ -250,8 +231,9 @@ terminal/job manager before gaming; the cooperative build marker only blocks
 new managed compiler commands. No temporary TuneD/power changes need restoration.
 
 Gaming currently fails **before** stopping AI: its built image is not promoted,
-and GPU device access, capture/uinput/audio, private streaming exposure, network
-policy and encoder behaviour remain unqualified. The Wayland candidate now drops
+and complete gaming/network/audio/recovery acceptance remains open. Basic capture,
+encoder startup and keyboard/mouse passed the bounded Arch trial; see
+[Sunshine](SUNSHINE.md#current-result-1-november-2026). The Wayland candidate drops
 all capabilities and runs non-root; do not set
 `workstation.ai/qualification: qualified` merely to bypass this gate. It is the
 final reviewed marker after immutable image provenance and target tests; the
@@ -320,7 +302,8 @@ not a pass. A successful transfer API/readback does not independently prove the
 physical transport avoided host staging; use profiling before evaluating a
 direct-reduction patch. PCI/BAR flags alone never establish functional transfer.
 
-Physical checks still required — **NOT RUN: target hardware unavailable**:
+For each new build/boot, review the applicable checks below against its retained
+handoff. This checklist is not a claim that all historical physical work is unrun:
 
 - Inspect board revision/BIOS and DIMM labels against the matching Gigabyte manual.
   Recheck `lspci -Dvv -s <observed-BDF>` during load for expected width/speed; do

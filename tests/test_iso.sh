@@ -62,6 +62,9 @@ if command -v bsdtar >/dev/null; then
     [[ -f $packaged_root/.agents/skills/workstation-install/SKILL.md && ! -e $packaged_root/.git ]]
     [[ -f $packaged_root/BUILD-IDENTITY && -f $packaged_root/docs/INSTALLATION.md ]]
     [[ -f $packaged_root/docs/ISO.md && -f $packaged_root/docs/ISO-REFERENCE.md ]]
+    for guide in README TELEMETRY TELEMETRY-REFERENCE HYPERLOOM HYPERLOOM-REFERENCE SUNSHINE MODELS SERVING-INTEGRATION; do
+      cmp "$root/docs/$guide.md" "$packaged_root/docs/$guide.md"
+    done
     [[ -f $packaged_root/infrastructure/iso/mkarchiso.sh ]]
     [[ -f $packaged_root/docs/OPERATIONS.md && -f $packaged_root/docs/SECURITY.md ]]
     [[ ! -e $packaged_root/docs/BRIDGE-ISO.md && ! -e $packaged_root/docs/CODEX-INSTALL.md ]]
@@ -99,6 +102,9 @@ if command -v bsdtar >/dev/null; then
       payload="$pkgdir/usr/lib/bridge/workstation-$kind"
       (cd "$payload" && sha256sum --check --strict SOURCE-MANIFEST.sha256 >/dev/null)
       [[ $(<"$payload/INSTALLER-SOURCE.sha256") == "$(common::lock_get "$startdir/source.lock" SOURCE_SHA256)" ]]
+      for guide in TELEMETRY TELEMETRY-REFERENCE HYPERLOOM HYPERLOOM-REFERENCE SERVING-INTEGRATION; do
+        cmp "$root/docs/$guide.md" "$payload/docs/$guide.md"
+      done
     done
     [[ -x $pkgdir/usr/lib/bridge/workstation-runtime/bin/workstationctl && ! -e $pkgdir/etc && ! -e $pkgdir/var ]]
     [[ -f $pkgdir/usr/lib/bridge/workstation-runtime/lib/workstation/session.sh && -f $pkgdir/usr/lib/bridge/workstation-reference/apps/overlays/rag/SHA256SUMS ]]
@@ -108,6 +114,17 @@ if command -v bsdtar >/dev/null; then
     [[ -f $payload/lib/workstation/hyperloom.py && -f $payload/infrastructure/hyperloom/runtime-linux-py314.lock ]]
     [[ -f $payload/lib/workstation/hyperloom_sglang.py && -f $payload/infrastructure/hyperloom/sglang-rocm102.json ]]
     [[ -f $payload/lib/workstation/hyperloom_owner.py ]]
+    "${HOME_LAB_PYTHON:-python3}" -B -c '
+from pathlib import Path
+import runpy, sys
+root = Path(sys.argv[1])
+read = runpy.run_path(str(root / "lib/workstation/stack_inventory.py"))["serving_project"]
+result = read(root)
+assert result["revision"] == "d3f0db85997389ebd8836af17a7048659b930770"
+assert result["stock_endurance_graded_answers"] == "352/352"
+assert "NOT TESTED" in result["c4_endurance"]
+assert not result["deployment_qualified"]
+' "$payload"
     WORKSTATION_PYTHON="${HOME_LAB_PYTHON:-python3}" bash "$payload/bin/workstationctl" performance hyperloom --help >"$work/hyperloom-help.txt"
     grep -Fq 'isolated' "$work/hyperloom-help.txt"
     grep -Fq 'sglang-bind' "$work/hyperloom-help.txt"
@@ -141,6 +158,9 @@ if command -v bsdtar >/dev/null; then
     )
     [[ -f $payload/docs/TELEMETRY.md && -f $payload/infrastructure/observability/host/config.alloy ]]
     [[ -f $pkgdir/usr/lib/bridge/workstation-reference/docs/INSTALL-READINESS.md ]]
+    for guide in README SUNSHINE MODELS; do
+      cmp "$root/docs/$guide.md" "$pkgdir/usr/lib/bridge/workstation-reference/docs/$guide.md"
+    done
     [[ -f $pkgdir/usr/lib/systemd/system/workstation-telemetry.timer && -f $pkgdir/usr/lib/systemd/system/workstation-alloy.service ]]
     [[ -f $pkgdir/usr/lib/sysusers.d/workstation-telemetry.conf && " ${depends[*]} " == *' systemd '* ]]
     # Use the packaged tree without Git; no cluster call or target discovery.
