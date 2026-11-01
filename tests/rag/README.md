@@ -69,9 +69,13 @@ These are hard campaign limits, not predicted run times. Only exact container
 IDs bearing this run's ownership label may be removed. A failed cleanup fails
 the run. The ephemeral runner discards private DB/key/log files afterward.
 
-Artifacts contain only phase statuses/times and fixed JSON receipts with public
+Artifacts contain phase statuses/times and fixed JSON receipts with public
 document provenance, retrieval measurements, allowlisted settings and resource
-observations. Never upload the auth file, signing key, DB or raw server/HTTP logs.
+observations. If initial readiness fails before any client/account request,
+retain at most 64 KiB of startup output with all 64-hex strings redacted. The
+container's only secret then is its fresh 64-hex signing key. After the client
+starts, export only fixed error tokens and container fields. Never upload the
+auth file, signing key, DB or raw server/HTTP logs.
 
 ## Run and rollback
 

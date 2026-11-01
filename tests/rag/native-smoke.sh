@@ -15,7 +15,7 @@ printf 'phase\texit_status\telapsed_seconds\n' >"$evidence/summary.tsv"
 image=$(common::lock_get "$root/versions.lock" OPEN_WEBUI_IMAGE)
 revision=$(common::lock_get "$root/versions.lock" OPEN_WEBUI_COMMIT)
 nonce="rag-fixture-$$"
-seed='' app=''
+seed='' app='' client_started=0
 phase() {
   local name=$1 duration=$2 status started=$SECONDS
   shift 2
@@ -38,6 +38,11 @@ cleanup() {
     fi
     timeout 10s docker logs --tail 200 "$app" >"$scratch/server.log" 2>&1
     rg -o 'PermissionError|Read-only file system|Permission denied|ModuleNotFoundError|ImportError|FileNotFoundError|RuntimeError|ValueError|OutOfMemoryError|OfflineModeIsEnabled|LocalEntryNotFoundError|ConnectionError|\[Errno [0-9]{1,3}\]|/app/backend/open_webui/static|/app/backend/data|/rag-models|/root/\.cache|/app/backend/\.webui_secret_key' "$scratch/server.log" | sort | uniq -c >"$evidence/startup-tokens.txt"
+    if ((client_started == 0)); then
+      # Before any HTTP client/auth call, this isolated container's only secret
+      # is the freshly generated 64-hex signing key. Redact it and bound output.
+      LC_ALL=C sed -E 's/[0-9A-Fa-f]{64}/[redacted-64-hex]/g' "$scratch/server.log" | head -c 65536 >"$evidence/startup-sanitized.txt"
+    fi
     # Only fixed JSON receipts are exported; DB/auth/key/raw logs stay private.
     for kind in output failure; do
       timeout 10s docker cp "$app:/app/backend/data/.rag-smoke-$kind.json" "$evidence/$kind.json" >"$scratch/export-$kind.log" 2>&1
@@ -100,6 +105,7 @@ app=$(docker create --platform linux/amd64 --label "workstation.rag-fixture=$non
   --entrypoint bash "$image" /rag-fixture/entrypoint.sh)
 phase start 20s docker start "$app"
 phase readiness 120s bash "$root/tests/rag/wait-ready.sh" "$app"
+client_started=1
 phase client-initial 900s docker exec --user 1000:1000 "$app" python -B /rag-fixture/client.py initial
 phase restart 45s docker restart --timeout 30 "$app"
 phase restart-readiness 120s bash "$root/tests/rag/wait-ready.sh" "$app"
