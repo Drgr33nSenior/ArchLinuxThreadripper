@@ -58,9 +58,10 @@ HDR require separate qualification.
 - Prove rendering, capture and hardware encoding use the allocated GPU. Record
   the actual Moonlight codec, bitrate, frame cadence, encode/decode latency,
   frame-time tails, drops and audio.
-- Demonstrate keyboard/mouse in XWayland and native Wayland windows, plus each
-  controller type. The virtual KWin input route remains unresolved; device
-  access does not prove interactive control. Preserve consent gates.
+- Recheck keyboard/mouse in XWayland and native Wayland windows after a fresh
+  image/startup, then test each controller type. Basic keyboard/mouse passed on
+  the pinned Arch/KWin 6.8.2 candidate with an owner-approved name-specific grant;
+  persistent-home restart and controllers remain unqualified. Preserve consent gates.
 - Prepare private TCP/UDP streaming exposure and firewall policy for each owner.
   The checked-in ClusterIP Service does not provide complete LAN access. Test
   from the real client without exposing Sunshine administration publicly.

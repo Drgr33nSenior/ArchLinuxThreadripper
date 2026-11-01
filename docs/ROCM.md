@@ -1,25 +1,28 @@
 # Native ROCm builds and validation
 
-The current target is the TRX50 AI TOP, Threadripper 9960X, two Radeon AI PRO
-R9700 AI TOP cards, and 64 GiB DDR5-5600 ECC RDIMM. Both GPUs belong to the Arch
-host. The existing K3s VM remains optional and receives neither GPU by default.
-The policy is LUKS2/Argon2id, no swap, no zram and no hibernation.
+Use this guide for host SDK selection, native application builds and the generic
+TheRock build/package path. The target has a Threadripper 9960X, TRX50 AI TOP and
+two R9700s owned by Arch. The owner reports 128 GB RAM; the earlier 64-GiB/two-DIMM
+observations are historical. Collect current memory/topology before budgeting.
+The optional K3s VM receives neither GPU by default. No swap, zram or hibernation
+is configured.
 
-Installation is a one-shot operation, not a resumable installer; do not rerun
-it over a partial installation. The ISO packages the UKI synchronization helper and ALPM hook as
-`arch-workstation-boot`. The optional `arch-workstation-backup` package owns the
-Restic runtime. Existing unowned installations require reviewed manual migration;
-these packages do not make the pending ROCm source build a packaged release.
+The owner-selected **native serving campaign uses ROCm 10.2 dev / Torch 2.14**.
+It is separate from the host SDK and the older checked-in application overlays.
+See the [runtime map](README.md#keep-the-runtime-layers-distinct) and
+[SGLang owner binding](HYPERLOOM-REFERENCE.md#sglang-rocm-102-bridge).
+This guide's generic TheRock plan status does not mean that no source-built
+runtime or GPU workload has ever run.
 
 ## Implementation and remaining qualification
 
 | Area | Implemented | Still pending |
 | --- | --- | --- |
-| Hardware | Raw probes, JSON status, two-device/driver/target assertions | Actual PCI IDs, GPU architecture, memory topology and boot validation |
-| Builds | Native makepkg flags, ccache, memory limits, Ninja job pools, native git-kernel build controls | Target kernel/package builds, benchmarks and actual cache-hit measurement |
-| ROCm | Exact source pins, targeted TheRock plan/inventory, llama.cpp HIP build with official Arch or reviewed ROCm 10 AUR SDK | Full source dependency lock, TheRock build and source-built packaging |
+| Hardware | Probes and target-bound GPU/boot evidence exist | Recollect after boot, firmware or RAM changes; earlier captures do not establish today's capacity |
+| Builds | Native makepkg flags, ccache, memory limits, Ninja pools and kernel build controls | Qualify each produced artifact; a previous build does not qualify a new source tree |
+| ROCm | Native SDK selectors, generic TheRock plan and separately retained source-built serving runtime | Generic dependency/package release closure and recovery acceptance |
 | Recovery | Signed local package snapshots and verified rollback command plans | A qualified ROCm package set and restore drill |
-| AI | HIP per device, PyTorch numerical checks, RCCL and inference commands | Execution, reboot comparison, correctness review and soak |
+| AI | Retained physical HIP/framework/serving experiments plus reproducible validation commands | Model/profile-specific quality, lifecycle and deployment gates; no blanket qualification |
 
 `rocm plan` produces `status: plan-not-built`. A source inventory is not a build
 manifest proving reproducibility. `rocm build-llama` builds the application,

@@ -18,7 +18,7 @@ For browser chat with document retrieval, use `rag`. Its pinned Open WebUI
 image and separate data volumes are described in [RAG.md](RAG.md). The plain
 AI overlays still require Open WebUI image/admin bootstrap qualification.
 
-The single-card choice is the current smaller Qwen release, not a claim that
+The single-card choice is the locked smaller Qwen release, not a claim that
 9B matches the quality of 27B. Qwen3.8-27B-FP8 needs roughly 28.5 GB for weights
 according to the [SGLang model guide](https://docs.sglang.io/cookbook/autoregressive/Qwen/Qwen3.8-27B).
 Splitting it over two GPUs leaves room for activations, Gated DeltaNet state,
@@ -30,7 +30,7 @@ from BF16 or an AWQ/NVFP4 substitute. The checkpoint configuration selects its
 quantization; `--dtype bfloat16` controls the remaining tensors. The old forced
 `--quantization awq` has been removed from both profiles.
 
-## Complete model inventory
+## Model inventory
 
 | Area and source | Previous selection | Decision and evidence |
 | --- | --- | --- |
@@ -62,13 +62,14 @@ pair. Rendered chat paths include their revisions; tests reject drift between
 the lock and profile. Chat templates, tokenizers, configs and weights must all
 come from the same revision. Retain the model licenses with the staged files.
 
-The pinned AMD SGLang 0.5.15.post1 / ROCm 10 image already contains
-`Qwen3_5ForConditionalGeneration`, the architecture used by these chat models,
-and the `qwen3` reasoning and `qwen3_coder` tool-call parsers. Those parsers are
-now configured. Later [Qwen3.8 upstream work](https://github.com/sgl-project/sglang/pull/34859)
-includes CUDA-specific optimizations; its existence is not proof that the older
-AMD image cannot load the shared architecture, nor that it reaches current
-upstream performance. Inspect exact source changes before updating the image.
+The checked-in dual-GPU overlay retains the AMD SGLang 0.5.15.post1 / ROCm 10.0
+image. The single-GPU overlay selects the local SGLang 0.5.18 / ROCm 10.1 image.
+Both have a source contract for `Qwen3_5ForConditionalGeneration` and configure
+the `qwen3` reasoning and `qwen3_coder` tool-call parsers. The separately selected
+native campaign uses SGLang 0.5.21 / ROCm 10.2; that choice has not promoted a
+replacement image into these overlays. See the [runtime map](README.md#keep-the-runtime-layers-distinct).
+Upstream model support or a matching architecture does not qualify the actual
+FP8/GDN kernels, outputs, cache behavior or tool parser on this workstation.
 
 Retain Triton attention and the three AITER/MLA switches set to `false` in the
 profile, following [AMD's Radeon guidance](https://rocm.docs.amd.com/projects/ai-ecosystem/en/latest/inference/sglang.html).
@@ -89,7 +90,7 @@ behavior, numerical outputs and request latency after a reviewed image change.
 `--revision` does not checksum an arbitrary local directory. Verify transferred
 files independently; never qualify a workload from its path or model name alone.
 
-## Stage chat weights explicitly — not run here
+## Stage chat weights explicitly
 
 Use an already reviewed Hugging Face CLI environment on a machine with storage
 and network access. No CLI installation or model download occurs in CI. The

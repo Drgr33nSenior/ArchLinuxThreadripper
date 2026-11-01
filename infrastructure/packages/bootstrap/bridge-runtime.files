@@ -220,3 +220,5 @@ lib/workstation/service.py
 lib/workstation/service_backup.py
 lib/workstation/service_heartbeat.py
 lib/workstation/service_session.py
+docs/TELEMETRY-REFERENCE.md
+docs/HYPERLOOM-REFERENCE.md

@@ -1,56 +1,34 @@
-# Sunshine streaming candidate
+# Sunshine and Moonlight
 
-The default gaming-image candidate uses a container-local KWin Wayland virtual
-session, native KWin/PipeWire capture, XWayland for Steam and older games, and
-Sunshine Vulkan Video encoding. It does **not** start Xorg, XFCE, noVNC, a host
-display server, or the inherited rootful Steam-Headless supervisor. XWayland is
-present only as a compatibility server for applications that need X11.
+Sunshine streams the container-local desktop to Moonlight. The non-root gaming
+candidate uses KWin Wayland, native KWin/PipeWire capture, XWayland for X11 apps
+and Vulkan Video encoding. The default image recipe is Debian; `arch-wayland`
+is the opt-in candidate that passed the latest physical checks.
 
-This remains a candidate, not a qualified gaming deployment. All gaming replicas
-remain zero. Image promotion, device permissions, controller input, audio,
-private streaming exposure, egress, capture placement and encode quality must be
-accepted on the target workstation before a session command can enable gaming.
-Sunshine is the server; Moonlight is its client.
+## Current result: 1 November 2026
 
-### Target checks: 1 November 2026
+The pinned Arch candidate reached an AMD-rendered 1920×1080/60.000-Hz virtual
+output and started H.264, HEVC and AV1 Vulkan encoders. The owner confirmed mouse
+movement, clicks and typing in both X11 and native Wayland windows after the
+name-specific KWin grant below. The temporary session/network exception was
+cleaned up. Exact identities and failed predecessors remain in the private
+`test-results/sunshine-input-bootstrap.ReskhlIA/HANDOFF.md` evidence chain.
 
-The opt-in Arch candidate now has a manual Moonlight input pass: the owner
-confirmed pointer movement, clicking and typing in both X11 and native Wayland
-test windows after a name-specific KWin input grant. The temporary session and
-network exception were cleaned up. Audio, controllers, gaming performance and
-persistent-home restart remain unqualified. See
-`test-results/sunshine-input-bootstrap.ReskhlIA/HANDOFF.md`.
-
-The earlier Debian test reached an AMD OpenGL compositor and a measured
-1920x1080/60.000-Hz virtual output on the allocated R9700. Sunshine video startup
-failed because its KWin screencast interface was unavailable. That test qualified no Moonlight
-stream, hardware encode, input, audio or latency result is qualified.
-
-The test found that Debian splits the screencast and EIS plugins into
-[`kwin-common`](https://packages.debian.org/trixie/amd64/kwin-common/filelist).
-The recipe now installs it at the same pinned version as `kwin-wayland`;
-the image test checks both plugins. A physical follow-up with those plugins
-still failed capture, so the package correction is necessary but insufficient.
-The logs also show KWin starting before PipeWire is ready. Pinned KWin source
-[retries failed PipeWire connections](https://github.com/KDE/kwin/blob/v6.3.6/src/plugins/screencast/screencastmanager.cpp),
-so that warning does not establish the cause of the missing interface.
-
-The native image gate also failed because XWayland `2:24.1.6-1` lacks the
-required `-enable-ei-portal` option. Keep input unqualified and preserve this
-failure. The next diagnosis must distinguish KWin's executable/desktop-file
-permission lookup from PipeWire startup ordering. Keep permission checks
-enabled. Evidence and cleanup records are in
-`test-results/sunshine-capture-retry.zPNdschP/HANDOFF.md`.
+This is basic capture/encoder startup and manual input evidence. Audio,
+controllers, games, delivered frame cadence/quality/latency, repeated startup,
+persistent-home recovery and full handover remain unqualified. Gaming replicas
+stay zero. The latest profile/template integration has source/package checks;
+a fresh image rebuild from that final source is still required.
 
 ## Design and qualification boundary
 
-| Change | Source and evidence | Implementation | Remaining validation |
-| --- | --- | --- | --- |
-| Headless Wayland session | [KWin Wayland](https://invent.kde.org/plasma/kwin), [Sunshine capture configuration](https://docs.lizardbyte.dev/projects/sunshine/master/md_docs_2configuration.html#capture) | `infrastructure/gaming/wayland-session.sh` starts KWin's virtual backend, then PipeWire, WirePlumber, Steam and Sunshine in one non-root session | R9700 rendering, virtual output, capture, shutdown and recovery |
-| Native capture and encoder | [Sunshine Linux compatibility](https://docs.lizardbyte.dev/projects/sunshine/latest/) | Default `capture=kwin`, `encoder=vulkan`; the CLI rejects Vulkan with X11 or wlroots capture | Compare Vulkan and VA-API on the same qualified KWin capture path; no gain is claimed |
-| Pinned graphics userspace | [Sunshine 2026.906.222525](https://github.com/LizardByte/Sunshine/releases/tag/v2026.906.222525), [Mesa backport](https://packages.debian.org/trixie-backports/mesa-vulkan-drivers) | `versions.lock` pins Sunshine commit `cb72dffa3233c5815cd5ba88f09f049dd679ba75`, Mesa `26.1.6-1~bpo13+1`, and KWin `4:6.3.6-1` | KWin is a reviewed compatible lock, not a claim to be the newest release or to qualify the stack |
-| Persistent state and caches | Existing per-owner `gaming-home` PVC | Pairing, Sunshine configuration, Steam files and shader caches remain below `/home/default`; no reset, copy, chown or deletion occurs | Inspect ownership and absolute app paths; take a NAS backup before changing existing state |
-| Device isolation | [AMD device-plugin allocation](https://instinct.docs.amd.com/projects/k8s-device-plugin/en/latest/user-guide/resource-allocation.html) | The launcher requires one accessible AMD/amdgpu render node and records its BDF; the Deployment requests one `amd.com/gpu` | Confirm rendering, capture and encoding all use the allocated GPU; `DRI_PRIME` and `adapter_name` are preferences, not isolation |
+| Area | Implementation and limit |
+| --- | --- |
+| Desktop | One container-local non-root KWin session with PipeWire, WirePlumber, Steam and Sunshine; no host display/socket or inherited rootful supervisor |
+| Capture/encode | `capture=kwin`, `encoder=vulkan`; compare VA-API separately on the same accepted capture path |
+| Graphics | Sunshine and base inputs are locked; each build records installed packages and needs a fresh immutable image identity |
+| State | Per-owner gaming-home PVC retains pairing, config, Steam data and shader caches; no automatic state migration/reset |
+| GPU | One `amd.com/gpu`; verify actual render/capture/encode placement by BDF, not an environment index |
 
 The existing 12-CPU/12-GiB gaming envelope, 2-GiB shared-memory limit, one-GPU
 request, AI-unload checks and cooperative build inhibition are retained. This
@@ -95,24 +73,16 @@ non-root session, profile, device checks and persistent-home contract. The
 Debian targets and default selection remain available. Its receipt records the
 repository snapshot and package hash; Debian-specific version fields are null.
 
-The 1 November native CPU checks passed on Arch with Sunshine
-`2026.906.222525-1`, KWin `6.8.2-1`, Mesa `1:26.2.6-1` and XWayland
-`24.1.14-1`, including the EIS option missing from the Debian candidate. The
-first GPU startup exposed a separate default-app defect: the template omitted
-Sunshine's required `env` object. The template now includes it. The session
-checks JSON syntax and `env`/`apps` container types before launch and preserves
-existing invalid files for owner repair. This is not a complete application
-schema validator. The pinned Arch binary still aborts on malformed app JSON when
-called directly; that failure remains recorded.
+The tested Arch stack used Sunshine `2026.906.222525-1`, KWin `6.8.2-1`, Mesa
+`1:26.2.6-1` and XWayland `24.1.14-1`. Its initial startup exposed a missing
+`env` object in the default apps template, now corrected. The session checks
+JSON syntax and `env`/`apps` types before launch and preserves invalid existing
+files for owner repair; this is not a complete app-schema validator.
 
-The corrected Arch candidate completed a bounded physical startup and
-120-second observation on one R9700: native KWin capture worked at the observed
-1920x1080/60.000-Hz mode, and Sunshine selected `h264_vulkan`, `hevc_vulkan` and
-`av1_vulkan` during startup validation. This is not delivered-stream quality or
-gaming performance evidence. Moonlight input, audio, cadence and latency remain
-untested. The app template and graphics stack both changed relative to the
-failed Debian run; no single change is established as the cause of the capture
-improvement. See `test-results/sunshine-arch-confirm.M7e8jxAQ/HANDOFF.md`.
+The older Debian capture trials failed even after matching `kwin-common`
+plugins were added; its XWayland also lacked an option considered by the older
+input hypothesis. Preserve those failures. The Arch success does not establish
+one cause for the Debian capture failure, nor qualify that candidate's input.
 
 Sunshine's Debian maintainer scripts try udev/module operations during package
 installation. An ordinary isolated Docker build can report unavailable udev or
@@ -251,21 +221,19 @@ permissions, private streaming ports and Steam egress before accepting a
 manifest. Do not add blanket `/dev`, Docker socket, host IPC/network, host D-Bus
 or host display mounts to make it start.
 
-Native Wayland input is a separate unresolved acceptance requirement. KWin's
-[virtual backend does not consume libinput devices](https://github.com/KDE/kwin/blob/v6.3.6/src/input.cpp).
-Sunshine's [pinned Linux input implementation](https://github.com/LizardByte/libvirtualhid/blob/6fdb8bd4de3b68d96c30e5303ac2ebb333c09746/src/platform/linux/uhid_backend.cpp)
-uses uinput or XTest fallback. Adding `/dev/uinput` can suppress that fallback
-without delivering input to this compositor. Do not add it as a guessed fix.
-The input authorization path depends on the KWin version. The Debian candidate's
-earlier Xwayland EIS portal hypothesis remains unqualified. Option presence in
-`Xwayland -help` does not establish the route used by a running session.
+## Input on the tested Arch candidate
 
-The Arch candidate uses KWin 6.8.2, which passes `LIBEI_SOCKET` to Xwayland and
-has its own input permission dialog. It does not use `-enable-ei-portal` for this
-route. See the [pinned EIS backend](https://github.com/KDE/kwin/blob/f130ab33c8e6f3b9d728aade87836086ae9a8ed4/src/plugins/eis/eisbackend.cpp)
+KWin 6.8.2 passes `LIBEI_SOCKET` to Xwayland and uses its own input permission
+dialog. This route does not use `-enable-ei-portal`. See the pinned
+[EIS backend](https://github.com/KDE/kwin/blob/f130ab33c8e6f3b9d728aade87836086ae9a8ed4/src/plugins/eis/eisbackend.cpp)
 and [authorization check](https://github.com/KDE/kwin/blob/f130ab33c8e6f3b9d728aade87836086ae9a8ed4/src/plugins/eis/xwaylandeiscontext.cpp).
-The 1 November Moonlight test connected, but the user could not approve the Linux
-input dialog with the input awaiting approval. Keyboard/mouse remain unqualified.
+An unapproved client can display a consent dialog that the blocked input cannot
+click. Option presence or a device mount alone does not prove a working route.
+
+Do not add `/dev/uinput` as a guessed fix: the virtual KWin backend does not
+consume ordinary libinput devices, and changing Sunshine's fallback can leave
+input undelivered. Keep the tested direct-EIS route separate from the older
+Debian portal hypothesis.
 
 For an owner-approved headless trial on that version, the isolated container's
 `$XDG_CONFIG_HOME/kwinrc` can authorize the expected client before KWin starts:
