@@ -3,6 +3,11 @@ set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 source "$root/lib/common.sh"
 source "$root/lib/workstation/runtime.sh"
+if [[ -n ${HOME_LAB_PYTHON:-} ]]; then
+  "$HOME_LAB_PYTHON" -B "$root/tests/rag/test_client.py"
+else
+  printf 'SKIP: native RAG client unit checks require HOME_LAB_PYTHON\n'
+fi
 scratch=$(mktemp -d)
 trap 'rm -rf -- "$scratch"' EXIT
 

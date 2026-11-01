@@ -343,3 +343,12 @@ infrastructure/sglang/serving-evidence/MXFP4-CANDIDATE-PHASE1-20261031.json
 infrastructure/sglang/serving-evidence/MXFP4-CANDIDATE-128K-20261031.json
 infrastructure/sglang/serving-evidence/LICENSE
 docs/SERVING-INTEGRATION.md
+tests/rag/README.md
+tests/rag/client.py
+tests/rag/entrypoint.sh
+tests/rag/native-smoke.sh
+tests/rag/test_client.py
+tests/rag/wait-ready.sh
+tests/test_rag.sh
+tests/fixtures/rag/questions.json
+tests/home-lab/check-rag.rb
