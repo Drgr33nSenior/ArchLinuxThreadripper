@@ -578,8 +578,9 @@ later optional availability check, not required infrastructure.
 
 ## Shared-service notification extension
 
-The owner now reports 128 GB RAM. Recollect actual memory/topology; a nominal
-128 GiB less the existing 18 GiB reserves gives 110 GiB before firmware reserves.
+The workstation currently has 64 GB RAM. Recollect actual memory/topology;
+nominal 64 GiB less the existing 18 GiB reserves gives at most 46 GiB before
+firmware reserves.
 `service plan` adds gateway, database, tools and Alertmanager and counts builds
 and VMs explicitly. Existing limits and the telemetry reserve are retained.
 

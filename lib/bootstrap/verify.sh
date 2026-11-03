@@ -8,6 +8,59 @@ bootstrap_verify_file() {
   }
 }
 
+bootstrap_verify_unlock_options() {
+  local options=,$1, source=$2
+  [[ $options == *,fido2-device=auto,* ]] || {
+    bootstrap_die "FIDO2 autodetection is missing from $source"
+    return 1
+  }
+  case ${BOOT_UNLOCK:-fido2} in
+    fido2)
+      [[ $options != *,tpm2-device=* ]] || {
+        bootstrap_die "TPM unlock can request a PIN under the FIDO2 policy in $source"
+        return 1
+      }
+      ;;
+    tpm2-pin)
+      [[ $options == *,tpm2-device=auto,* ]] || {
+        bootstrap_die "TPM2 autodetection is missing from $source"
+        return 1
+      }
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+bootstrap_verify_unlock_cmdline() {
+  local file=$1 root_uuid=$2 line arg value found=0
+  local -a args
+  [[ -r $file ]] || {
+    bootstrap_die "kernel command line is unreadable: $file"
+    return 1
+  }
+  while IFS= read -r line || [[ -n $line ]]; do
+    IFS=$' \t' read -r -a args <<<"$line"
+    ((${#args[@]} == 0)) || found=1
+    for arg in "${args[@]}"; do
+      case $arg in
+        rd.luks.options=* | luks.options=*)
+          value=${arg#*=}
+          if [[ $value == *=* && ${value%%=*} == "$root_uuid" ]]; then
+            value=${value#*=}
+          elif [[ $value == *=* && ${value%%=*} != *,* && ${value%%=*} =~ ^[a-fA-F0-9-]+$ ]]; then
+            continue # An override for a different LUKS UUID.
+          fi
+          bootstrap_verify_unlock_options "$value" 'kernel command line' || return 1
+          ;;
+      esac
+    done
+  done <"$file"
+  [[ $found == 1 ]] || {
+    bootstrap_die "kernel command line is empty: $file"
+    return 1
+  }
+}
+
 bootstrap_verify_uki_signature() {
   local uki=$1 cert=$2
   sbverify --cert "$cert" "$uki" >/dev/null ||
@@ -76,7 +129,7 @@ bootstrap_verify_boot_order() {
 }
 
 bootstrap_verify() {
-  local cert uki helper hook state policy=${1:-installed}
+  local cert uki helper hook state root_uuid crypt_options policy=${1:-installed}
   BOOTSTRAP_TARGET=${BOOTSTRAP_TARGET:-/}
   cert="$BOOTSTRAP_TARGET/var/lib/sbctl/keys/db/db.pem"
   bootstrap_require_root || return 1
@@ -152,10 +205,13 @@ bootstrap_verify() {
     bootstrap_die 'crypttab is missing x-initrd.attach'
     return 1
   }
-  grep -Fq 'fido2-device=auto' "$BOOTSTRAP_TARGET/etc/crypttab" || {
-    bootstrap_die 'crypttab is missing FIDO2 autodetection'
+  IFS=$' \t' read -r root_uuid crypt_options < <(awk -v name="$CRYPT_NAME" '
+    $1==name && $2 ~ /^UUID=/ {n++; uuid=substr($2,6); options=$4}
+    END {if(n!=1) exit 1; print uuid,options}' "$BOOTSTRAP_TARGET/etc/crypttab") || {
+    bootstrap_die 'crypttab must identify the configured root once by LUKS UUID'
     return 1
   }
+  bootstrap_verify_unlock_options "$crypt_options" /etc/crypttab || return 1
   cmp -s "$BOOTSTRAP_TARGET/etc/crypttab" "$BOOTSTRAP_TARGET/etc/crypttab.initramfs" ||
     {
       bootstrap_die 'runtime and initramfs crypttab policies differ'
@@ -165,6 +221,12 @@ bootstrap_verify() {
     bootstrap_die 'initramfs crypttab is missing the approved discard policy'
     return 1
   }
+  bootstrap_verify_unlock_cmdline "$BOOTSTRAP_TARGET/etc/kernel/cmdline" "$root_uuid" || return 1
+  bootstrap_verify_unlock_cmdline "$BOOTSTRAP_TARGET/etc/kernel/cmdline.recovery" "$root_uuid" || return 1
+  if [[ $BOOTSTRAP_TARGET == / && $policy == installed ]]; then
+    # Signed UKI add-ons can override crypttab without changing /etc/kernel/cmdline.
+    bootstrap_verify_unlock_cmdline /proc/cmdline "$root_uuid" || return 1
+  fi
   cmp -s "$BOOTSTRAP_TARGET/efi/EFI/Linux/arch-linux.efi" "$BOOTSTRAP_TARGET/efi2/EFI/Linux/arch-linux.efi" ||
     {
       bootstrap_die 'stable UKI copies differ between ESPs'

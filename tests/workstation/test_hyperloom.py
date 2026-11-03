@@ -8,6 +8,7 @@ import sys
 import tarfile
 import tempfile
 import unittest
+from unittest import mock
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -105,6 +106,56 @@ print("offline execution boundaries passed")
             result = subprocess.run([sys.executable, "-I", "-B", "-c", guard + check, *argv],
                                     capture_output=True, text=True, timeout=15, check=True)
             self.assertIn("boundaries passed", result.stdout)
+
+    def test_source_paths_reach_public_resolver_without_changing_installed_files(self):
+        package = self.work / "packages"
+        modules = {
+            "TraceLens/__init__.py": "",
+            "TraceLens/TraceUtils/__init__.py": "",
+            "TraceLens/TraceUtils/kernel_source.py":
+                'def resolve_kernel_source(name, *, search_paths=None): return search_paths\n',
+            "hyperloom/__init__.py": "",
+            "hyperloom/orchestrator/__init__.py": "",
+            "hyperloom/orchestrator/trace_analysis/__init__.py": "",
+            "hyperloom/orchestrator/trace_analysis/bypass_trace_analysis.py":
+                'from TraceLens.TraceUtils.kernel_source import resolve_kernel_source\n'
+                'import json\nprint(json.dumps(resolve_kernel_source("sentinel")))\n',
+        }
+        for name, content in modules.items():
+            path = package / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content)
+        paths = [str(self.work / "source with spaces"), str(self.work / "second")]
+        code = "import sys; sys.path.insert(0, " + repr(str(package)) + ")\n" + integration.OFFLINE
+        env = integration.private_environment(self.work)
+        env["WORKSTATION_TRACELENS_SOURCE_PATHS"] = json.dumps(paths)
+        result = subprocess.run([sys.executable, "-I", "-B", "-c", code, "trace-analysis"],
+                                env=env, capture_output=True, text=True, check=True, timeout=15)
+        self.assertEqual(json.loads(result.stdout), paths)
+        for name, content in modules.items():
+            self.assertEqual((package / name).read_text(), content)
+
+    def test_analysis_keeps_home_and_caches_in_new_output_and_refuses_missing_source(self):
+        prefix, output = self.work / "installed", self.work / "analysis"
+        trace = self.work / "trace.json"
+        trace.write_text("{}")
+        argv = ["hyperloom.py", "--root", str(ROOT), "trace-analysis", str(prefix), str(trace), str(output),
+                "--source-path", str(self.work), "--source-path", str(self.work)]
+        with mock.patch.object(sys, "argv", argv), \
+             mock.patch.object(integration, "installed_python", return_value=Path(sys.executable)), \
+             mock.patch.object(integration, "tracelens_root", return_value=self.work), \
+             mock.patch.object(integration.subprocess, "run") as run:
+            self.assertEqual(integration.main(), 0)
+            env = run.call_args.kwargs["env"]
+            self.assertEqual(env["HOME"], str(output / "private-home"))
+            self.assertEqual(json.loads(env["WORKSTATION_TRACELENS_SOURCE_PATHS"]), [str(self.work.resolve())])
+            self.assertFalse(prefix.exists())
+            argv[6] = str(self.work / "refused-output")
+            argv[8] = str(self.work / "absent")
+            run.reset_mock()
+            self.assertEqual(integration.main(), 1)
+            run.assert_not_called()
+            self.assertFalse((self.work / "refused-output").exists())
 
     def test_tracelens_is_commit_pinned_and_excludes_unused_requirements(self):
         contract = integration.read_contract(ROOT)

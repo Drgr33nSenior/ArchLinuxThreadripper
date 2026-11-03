@@ -4,9 +4,24 @@ Prefer open-weight models that fit the selected
 workload and serving backend. Pin each release; do not use a moving `latest`
 checkpoint or assume that a newer model is faster on this workstation.
 
-The newer private MXFP4 128K/C4 direction, published source revision and
-remaining package/admission gaps are tracked in [Serving integration](SERVING-INTEGRATION.md).
-It has not replaced these checked-in image/model defaults.
+The current assistant target is the selected native Qwen3.8-27B Quark AWQ
+MXFP4/C4 candidate with 128K context. Its contract and remaining integration
+gates are in [native candidate integration](ASSISTANT.md#native-128k-candidate-integration).
+The table below describes the older checked-in container profiles; it does
+not describe that native candidate or establish a deployed service.
+
+Model fine-tuning, including QLoRA, is deferred as optional post-install work.
+See [current delivery scope](ASSISTANT.md#current-delivery-scope).
+The [programming-book and adaptation plan](RAG.md#programming-books-and-later-model-adaptation)
+starts with source-grounded retrieval, then uses observed coding failures to
+decide whether a separate adapter-training experiment is useful.
+
+Dense Qwen4 preparation is isolated in [Qwen4 readiness](QWEN4-READINESS.md).
+Its profile is disabled pending official checkpoint assets and ROCm execution
+evidence; it does not change the selections below.
+
+The published serving source and package/admission gaps are tracked in
+[Serving integration](SERVING-INTEGRATION.md).
 
 ## Selected defaults
 
@@ -38,7 +53,7 @@ quantization; `--dtype bfloat16` controls the remaining tensors. The old forced
 
 | Area and source | Previous selection | Decision and evidence |
 | --- | --- | --- |
-| `apps/overlays/dual-gpu/kustomization.yaml` | Llama-3.3-70B-Instruct-AWQ | Replace with official [Qwen3.8-27B-FP8](https://huggingface.co/Qwen/Qwen3.8-27B-FP8); prefer the current agent/chat candidate with more runtime headroom |
+| `apps/overlays/dual-gpu/kustomization.yaml` | Llama-3.3-70B-Instruct-AWQ | Recorded container replacement: official [Qwen3.8-27B-FP8](https://huggingface.co/Qwen/Qwen3.8-27B-FP8), with 32K context. The native 128K candidate has a separate integration handoff |
 | `apps/base/sglang/kustomization.yaml` | Qwen2.5-Coder-32B-Instruct-AWQ | Replace with official [Qwen3.5-9B](https://huggingface.co/Qwen/Qwen3.5-9B) for the explicit one-card option; this smaller release is not Qwen3.8 |
 | `apps/overlays/rag/`, `lib/workstation/rag.sh` | MiniLM, 384-dimensional embeddings | Replace with [Qwen3-Embedding-0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B), 1,024 dimensions; CPU-only, separate index/PVCs and mandatory reingestion |
 | RAG reranker | None | Remain disabled; evaluate Qwen3-Reranker-0.6B separately after measuring retrieval errors, CPU latency and memory |

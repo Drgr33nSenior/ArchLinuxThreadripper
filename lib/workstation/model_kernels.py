@@ -234,6 +234,10 @@ def validate_profile_contract(contract, settings):
 
 
 def validate_runtime_contract(contract, runtime):
+    model = runtime.get("model_contract", {})
+    if (any(str(a).startswith("Qwen4") for a in model.get("architectures", []) or [])
+            or str(model.get("model_type", "")).startswith("qwen4")):
+        raise ValueError("Qwen4 requires a separately reviewed dense checkpoint and ROCm runtime contract; run rocm model-preflight")
     validate_profile_contract(contract, runtime.get("settings"))
     if contract["scope"] != "single-bf16":
         return

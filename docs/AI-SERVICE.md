@@ -1,5 +1,20 @@
 # Shared workstation AI service
 
+The opt-in [Family AI starting point](ASSISTANT.md) adds a common interface over
+these services. Select it with `service render --experience assistant`; existing
+service defaults and deployment gates remain selectable.
+
+Its optional [shared web-search adapter](WEB-SEARCH.md) adds Exa Auto search
+and public-page extraction for WebUI and Qwen Code, with durable request limits.
+Tavily remains an explicit alternative.
+The legacy service composition does not enable provider access.
+
+The current delivery target is the [selected native 128K candidate](ASSISTANT.md#native-128k-candidate-integration).
+The container routes and limits documented below still describe the older
+FP8/9B composition. Native packaging, model-identity and limit reconciliation,
+and model/browser acceptance remain pending. QLoRA is deferred under the
+[current delivery scope](ASSISTANT.md#current-delivery-scope).
+
 This is an opt-in source implementation. It is not a deployed or hardware-qualified
 service. All new application replicas remain zero. See the
 [reconciliation and evidence matrix](AI-SERVICE-RECONCILIATION.md).
@@ -9,7 +24,7 @@ service. All new application replicas remain zero. See the
 | Component | Request path / owner | Credentials | Durable state and recovery |
 | --- | --- | --- | --- |
 | Traefik | Actual private node IP, TCP 32443; browser and API DNS names | Owner TLS Secret; private client CIDRs | K3s configuration and SQLite backup |
-| Open WebUI 0.11.3 | Browser HTTPS → WebUI → internal `/webui/v1` gateway route | WebUI login; server-held application credential and user-ID mapping | Accounts, conversations, uploads, embedded Chroma on `webui-rag-qwen3-data` |
+| Open WebUI 0.11.3 (`service`); 0.12.5 (`assistant`) | Browser HTTPS → WebUI → internal `/webui/v1` gateway route | WebUI login; server-held application credential and user-ID mapping | Accounts, conversations, uploads, embedded Chroma on `webui-rag-qwen3-data` |
 | LiteLLM OSS 1.106.2 | API HTTPS `/v1/models`, `/v1/chat/completions` → internal SGLang | Per-client virtual keys; separate master, salt and host-control credentials | Scoped `litellm` PostgreSQL role/database; dump plus matching K3s Secrets |
 | SGLang | ClusterIP only; unchanged qualified model/runtime inputs | No ordinary user access to backend | Weights and caches rebuildable; model revisions retained |
 | Read-only MCP | HTTPS `/mcp` → supported WebUI retrieval/file APIs | Caller's own restricted WebUI API key | Reuses WebUI document ACLs and retrieval state; no second vector store |
@@ -72,20 +87,21 @@ Primary sources checked against selected source versions:
   [WebUI image connector](https://github.com/open-webui/open-webui/blob/2a960a59fe1dbbd35282f0556b3666d81102e781/backend/open_webui/routers/images.py).
 - [Alertmanager configuration](https://prometheus.io/docs/alerting/latest/configuration/).
 
-## Recollect the 128 GB baseline
+## Recollect the 64 GB baseline
 
-The capacity upgrade is owner-reported. DIMM count, configured speed and MemTotal
-remain **NOT RUN** on the target. On the Arch workstation, use new private paths:
+The workstation has 64 GB installed RAM. Fresh DIMM count, configured speed
+and MemTotal collection remain
+**NOT RUN** on the target. On the Arch workstation, use new private paths:
 
 ```sh
-sudo ./bin/workstationctl hardware collect /var/lib/workstation-evidence/hardware-128gb
-sudo ./bin/workstationctl resources plan /var/lib/workstation-evidence/hardware-128gb/hardware.json /var/lib/workstation-evidence/resource-plan-128gb
+sudo ./bin/workstationctl hardware collect /var/lib/workstation-evidence/hardware-64gb
+sudo ./bin/workstationctl resources plan /var/lib/workstation-evidence/hardware-64gb/hardware.json /var/lib/workstation-evidence/resource-plan-64gb
 ```
 
 Review `.memory`, `.cpu_topology` and the retained DMI evidence. Do not round
-MemTotal up to 128 GiB or infer channels from DIMM count. The planner keeps the
-12 GiB host, 4 GiB K3s and 2 GiB eviction reservations: nominal 128 GiB leaves
-110 GiB before firmware reservations. Keep current application limits.
+MemTotal up to installed capacity or infer channels from DIMM count. The planner
+keeps the 12 GiB host, 4 GiB K3s and 2 GiB eviction reservations: nominal 64 GiB
+leaves at most 46 GiB before firmware reservations. Keep current application limits.
 
 `service plan` conservatively sums current limits for inference, WebUI/RAG,
 gateway, PostgreSQL, tools, Alertmanager and the verified telemetry composition.
@@ -93,7 +109,7 @@ Pass separate `--build-mib/--build-cpus` and `--vm-mib/--vm-cpus` budgets when t
 will run. Defaults of zero mean those workloads are excluded, not unlimited.
 With the current limits, split mode exceeds even the metrics profile's 42-CPU
 allocatable budget (43.25 logical CPU limits). **Do not activate it on the basis
-of added RAM.** Measure and qualify a deliberate limit/profile adjustment first.
+of nominal capacity.** Measure and qualify a deliberate limit/profile adjustment first.
 Revisit ingestion concurrency and build parallelism independently under pressure.
 
 Current planning limits, before any build/VM allowance:
@@ -108,12 +124,12 @@ Current planning limits, before any build/VM allowance:
 | Swarm/Comfy | Stopped | 12 GiB, one GPU | 0 / 12 |
 | Total | 54.75 GiB | 60.75 GiB | Large: 35.25 / 39.25; split: 43.25 / 47.25 |
 
-These are admission limits, not measurements. At nominal 128 GiB, the 110 GiB
-planning allowance would leave 55.25 GiB in large mode and 49.25 GiB in split mode
-before additional work. Actual firmware reservations reduce those values. With
-full telemetry, large mode leaves only 2.75 of the 42 allocatable logical CPUs
-under this conservative policy. Builds and VMs must share that CPU allowance;
-do not treat the remaining RAM as authorization for 48 parallel compiler jobs.
+These are admission limits, not measurements. At nominal 64 GiB, the 46 GiB
+planning allowance is exceeded by 8.75 GiB in large mode and 14.75 GiB in split
+mode before builds or VMs. Actual firmware reservations reduce available RAM
+further. Both full shared-service configurations therefore fail memory admission
+with these limits. Keep them disabled until a separately measured and qualified
+composition fits. Builds and VMs must share the same CPU/RAM allowance.
 
 ## Prepare and roll out
 
@@ -132,7 +148,7 @@ classified context, node and new output paths; placeholders are not site values.
    kubectl --context "$SERVICE_CONTEXT" -n ai-home-lab get pvc -o json > /private/existing-pvc.json
    ./bin/workstationctl service render /private/site.json ./service-large --mode large --existing-claims /private/existing-pvc.json
    ./bin/workstationctl --config /private/workstation.conf telemetry render ./service-telemetry apps/overlays/service
-   sudo ./bin/workstationctl service plan /var/lib/workstation-evidence/resource-plan-128gb/resource-plan.json ./service-large ./service-telemetry ./service-budget
+   sudo ./bin/workstationctl service plan /var/lib/workstation-evidence/resource-plan-64gb/resource-plan.json ./service-large ./service-telemetry ./service-budget
    ```
 
    A blocked budget is a stop condition. All rendered replicas remain zero.
@@ -223,7 +239,7 @@ classified context, node and new output paths; placeholders are not site values.
    model before using the current CLI:
 
    ```sh
-   sudo ./bin/workstationctl --config /etc/workstation/workstation.conf session switch ai /var/lib/workstation-evidence/hardware-128gb/hardware.json /var/lib/workstation-session --execute
+   sudo ./bin/workstationctl --config /etc/workstation/workstation.conf session switch ai /var/lib/workstation-evidence/hardware-64gb/hardware.json /var/lib/workstation-session --execute
    ```
 
    The service moves through draining/starting/ready. Drain is at most 180 seconds

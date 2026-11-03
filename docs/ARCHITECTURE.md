@@ -29,9 +29,11 @@ XFS root
 The ESPs are independent. They protect against an ESP or firmware-entry
 failure, but they cannot make RAID0 survive an NVMe failure.
 
-TPM enrolment is manual, after passphrase-only boot tests. New-install examples
-select `BOOT_UNLOCK=tpm2-pin`; legacy FIDO2 configurations and tokens remain
-supported. See [the TPM/PCR procedure](HOME-LAB.md#2-secure-boot-tpm2-and-pin).
+Hardware-key enrollment is owner-local, after passphrase-only boot tests.
+New-install examples select `BOOT_UNLOCK=fido2` with touch required and no PIN.
+See [YubiKey enrollment](INSTALLATION.md#6-enrol-a-yubikey-for-touch-only-unlock).
+TPM+PIN remains an explicit alternative under
+[the TPM/PCR procedure](HOME-LAB.md#2-secure-boot-tpm2-and-pin).
 
 The first installed boot paths are official Arch stable and LTS kernels. A
 reviewed, commit-pinned `linux-git` package is built later in a clean chroot.

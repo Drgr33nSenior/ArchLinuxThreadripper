@@ -224,6 +224,23 @@ if grep -Rq 'fixture-retrieval-secret' "$work/retrieval-bundle"; then exit 1; fi
 sed 's|^AGENT_RETRIEVAL_ENABLED=.*|AGENT_RETRIEVAL_ENABLED=true|' "$work/agent.conf" >"$work/loopback-retrieval.conf"
 reject "$root/bin/workstationctl" --config "$work/loopback-retrieval.conf" agent configure "$work/unsafe-retrieval"
 
+# Search and retrieval are independently selected, with one scoped MCP endpoint.
+for retrieval in true false; do
+  sed -e "s|^AGENT_RETRIEVAL_ENABLED=.*|AGENT_RETRIEVAL_ENABLED=$retrieval|" \
+    -e 's|^AGENT_HARNESS=.*|AGENT_HARNESS=qwen|' \
+    -e 's|^AGENT_WEB_SEARCH_ENABLED=.*|AGENT_WEB_SEARCH_ENABLED=true|' "$work/https.conf" >"$work/search-$retrieval.conf"
+  "$root/bin/workstationctl" --config "$work/search-$retrieval.conf" agent configure "$work/search-$retrieval" >/dev/null
+  jq -e --argjson retrieval "$retrieval" '
+    .mcpServers.workstationKnowledge as $m |
+    $m.httpUrl == "https://agents.example.test/mcp" and $m.trust == false and
+    $m.includeTools == ((if $retrieval then ["retrieve_project_passage"] else [] end) + ["search_web","read_web_page"])' \
+    "$work/search-$retrieval/qwen/settings.json" >/dev/null
+done
+sed 's|^AGENT_WEB_SEARCH_ENABLED=.*|AGENT_WEB_SEARCH_ENABLED=true|' "$work/agent.conf" >"$work/loopback-search.conf"
+reject "$root/bin/workstationctl" --config "$work/loopback-search.conf" agent configure "$work/unsafe-search"
+sed 's|^AGENT_HARNESS=.*|AGENT_HARNESS=hermes|' "$work/search-true.conf" >"$work/unsupported-search.conf"
+reject "$root/bin/workstationctl" --config "$work/unsupported-search.conf" agent configure "$work/unsupported-search"
+
 # Client failure is returned as-is, never retried through a second harness.
 ws_agent_exec() {
   printf '%s\n' "$1" >>"$work/failed-client-calls"

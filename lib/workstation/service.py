@@ -1,7 +1,9 @@
 """Offline service composition/admission and explicit operator key provisioning."""
 import argparse
+import ast
 import copy
 import datetime
+import hashlib
 import ipaddress
 import json
 import os
@@ -26,6 +28,141 @@ MODELS = {"Qwen3.8-27B-FP8", "Qwen3.5-9B"}
 def require(condition, message):
     if not condition:
         raise ValueError(message)
+
+
+def candidate_contract(pointer, expected_sha):
+    """Read selected metadata only; never import or launch a candidate packet."""
+    path = Path(pointer)
+    require(path.is_file() and not path.is_symlink() and path.stat().st_size <= 131072,
+            "candidate pointer must be a bounded regular file")
+    data = path.read_bytes()
+    require(isinstance(expected_sha, str) and re.fullmatch(r"[a-f0-9]{64}", expected_sha) is not None
+            and hashlib.sha256(data).hexdigest() == expected_sha, "candidate pointer digest differs")
+    record = json.loads(data)
+    require(isinstance(record, dict) and record.get("schema") == 1
+            and record.get("candidate_selected") is True, "supply an explicitly selected candidate pointer")
+    runtime = record.get("selected_runtime", {})
+    require(isinstance(runtime, dict), "invalid selected runtime")
+    cli = runtime.get("canonical_server_cli")
+    require(isinstance(cli, list) and len(cli) <= 512
+            and all(isinstance(arg, str) and len(arg) <= 4096 for arg in cli), "invalid candidate arguments")
+
+    def option(name, optional=False):
+        positions = [i for i, arg in enumerate(cli) if arg == name]
+        if optional and not positions:
+            return None
+        require(len(positions) == 1 and positions[0] + 1 < len(cli), "missing or duplicate candidate option")
+        value = cli[positions[0] + 1]
+        require(not value.startswith("--"), "candidate option lacks a value")
+        return value
+
+    model = option("--served-model-name")
+    require(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_./:-]{0,199}", model) is not None and ".." not in model,
+            "invalid served model identifier")
+    revision = option("--revision")
+    require(re.fullmatch(r"[a-f0-9]{40}", revision) is not None, "candidate revision must be pinned")
+    resolved = runtime.get("resolved_contract", {})
+    require(isinstance(resolved, dict), "invalid resolved contract")
+    numbers = {}
+    for flag, key, low, high in (("--context-length", "context_length", 2048, 262144),
+            ("--max-total-tokens", "max_total_tokens", 2048, 1048576),
+            ("--max-running-requests", "max_running_requests", 1, 8),
+            ("--tp-size", "tp_size", 1, 2)):
+        value = option(flag)
+        require(re.fullmatch(r"[1-9][0-9]{0,6}", value) is not None, "invalid candidate token/resource bound")
+        number = int(value)
+        require(low <= number <= high and type(resolved.get(key)) is int and resolved[key] == number,
+                "candidate CLI and resolved contract differ")
+        numbers[key] = number
+    require(numbers["max_total_tokens"] >= numbers["context_length"], "candidate pool is below one context")
+    package = record.get("candidate_package_base", {})
+    require(isinstance(package, dict) and isinstance(package.get("package_sha256"), str)
+            and re.fullmatch(r"[a-f0-9]{64}", package["package_sha256"]) is not None,
+            "candidate package digest is missing")
+    arm = package.get("selected_arm")
+    require(isinstance(arm, dict) and all(arm.get(key) == runtime.get(runtime_key)
+            and arm.get(key) is not None for key, runtime_key in
+            (("logical", "logical_arm"), ("physical", "physical_arm"), ("start", "start"))),
+            "candidate arm selection differs")
+    quantization, kv_dtype = option("--quantization"), option("--kv-cache-dtype")
+    require(quantization == "quark" and kv_dtype == "bf16", "this plan requires the Quark/BF16 candidate")
+    reasoning, tools = option("--reasoning-parser", True), option("--tool-call-parser", True)
+    require(reasoning in {None, "qwen3"} and tools in {None, "qwen3_coder"}, "unreviewed candidate parser")
+    # Only allowlisted metadata leaves the pointer. CLI keys, paths and values
+    # for authentication, environment or arbitrary loader options are omitted.
+    return {"pointer_sha256": expected_sha, "package_sha256": package["package_sha256"],
+            "served_model": model, "model_revision": revision, **numbers,
+            "quantization": quantization, "kv_cache_dtype": kv_dtype,
+            "reasoning_parser": reasoning, "tool_call_parser": tools,
+            "runtime_observed": False}
+
+
+def client_profile(mode):
+    require(mode in {"large", "split"}, "unknown client mode")
+    return ({"AGENT_MODEL": "Qwen3.8-27B-FP8", "AGENT_CONTEXT_TOKENS": 32768, "AGENT_MAX_OUTPUT_TOKENS": 4096}
+            if mode == "large" else
+            {"AGENT_MODEL": "Qwen3.5-9B", "AGENT_CONTEXT_TOKENS": 4096, "AGENT_MAX_OUTPUT_TOKENS": 1024})
+
+
+def candidate_plan(args):
+    """Prepare an offline integration comparison and a frozen quality menu."""
+    contract = candidate_contract(args.pointer, args.pointer_sha256)
+    require(type(args.output_tokens) is int and 128 <= args.output_tokens <= contract["context_length"] // 2,
+            "output allowance must be independent and at most half the context")
+    objects = kustomize(ROOT / "apps/overlays/assistant")
+    runtime = next(o for o in objects if o["kind"] == "ConfigMap"
+                   and "boundary.py" in o.get("data", {}))
+    # Inspect the rendered source without executing it or inspecting credentials.
+    tree = ast.parse(runtime["data"]["boundary.py"])
+    models = next(ast.literal_eval(node.value) for node in tree.body if isinstance(node, ast.Assign)
+                  and any(isinstance(target, ast.Name) and target.id == "CHAT_MODELS" for target in node.targets))
+    config = next(o for o in objects if o["kind"] == "ConfigMap" and "litellm.yaml" in o.get("data", {}))
+    routes = yaml.safe_load(config["data"]["litellm.yaml"])["model_list"]
+    ui = next(o for o in objects if o["kind"] == "Deployment" and o["metadata"]["name"] == "open-webui")
+    env = {entry["name"]: entry.get("value") for entry in ui["spec"]["template"]["spec"]["containers"][0]["env"]}
+    selected = env["DEFAULT_MODELS"]
+    route = next(r for r in routes if r["model_name"] == selected)
+    profile = next(o["data"] for o in objects if o["kind"] == "ConfigMap" and "MODEL_REVISION" in o.get("data", {}))
+    client = client_profile("large")
+    checks = [
+        {"id": "upstream-model", "matches": route["litellm_params"]["model"] == "openai/" + contract["served_model"],
+         "current": route["litellm_params"]["model"], "candidate": "openai/" + contract["served_model"]},
+        {"id": "gateway-context", "matches": models.get(selected, (None,))[0] == contract["context_length"],
+         "current": models.get(selected, (None,))[0], "candidate": contract["context_length"]},
+        {"id": "router-context", "matches": route["model_info"]["max_tokens"] == contract["context_length"],
+         "current": route["model_info"]["max_tokens"], "candidate": contract["context_length"]},
+        {"id": "client-context", "matches": client["AGENT_CONTEXT_TOKENS"] == contract["context_length"],
+         "current": client["AGENT_CONTEXT_TOKENS"], "candidate": contract["context_length"]},
+        {"id": "container-context", "matches": int(profile["CONTEXT_LENGTH"]) == contract["context_length"],
+         "current": int(profile["CONTEXT_LENGTH"]), "candidate": contract["context_length"]},
+        {"id": "container-model-revision", "matches": profile["MODEL_REVISION"] == contract["model_revision"],
+         "current": profile["MODEL_REVISION"], "candidate": contract["model_revision"]},
+    ]
+    menu_path = ROOT / "infrastructure/sglang/assistant-quality.json"
+    menu = json.loads(menu_path.read_text())
+    pending = ["Package the selected native runtime and weights for a persistent authenticated endpoint.",
+               "Verify model identity and actual tokenizer accounting, including templates, tools and output reserve.",
+               "Qualify native reasoning and tool-call parsers through the gateway and browser.",
+               "Measure the requested output allowance and client/gateway deadlines on the candidate.",
+               "Complete the quality menu and fresh host/GPU capacity admission before activation."]
+    output = new_directory(args.output)
+    (output / "candidate-contract.json").write_text(json.dumps(contract, indent=2) + "\n")
+    (output / "client-values.json").write_text(json.dumps({"AGENT_MODEL": contract["served_model"],
+        "AGENT_CONTEXT_TOKENS": contract["context_length"], "AGENT_MAX_OUTPUT_TOKENS": args.output_tokens,
+        "status": "proposed-not-qualified", "endpoint_required": True}, indent=2) + "\n")
+    (output / "quality-menu.json").write_text(json.dumps(menu, indent=2) + "\n")
+    report = {"schema": 1, "status": "blocked-integration", "deployment_ready": False,
+              "created_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+              "candidate_pointer_sha256": contract["pointer_sha256"], "checks": checks,
+              "assistant_source_sha256": hashlib.sha256(yaml.safe_dump_all(objects, sort_keys=True).encode()).hexdigest(),
+              "planner_sha256": sha(Path(__file__)),
+              "current_public_model": selected, "current_output_cap": models[selected][1],
+              "proposed_output_cap": args.output_tokens, "output_cap_qualified": False,
+              "quality_menu_sha256": sha(menu_path), "pending": pending,
+              "files": {name: sha(output / name) for name in
+                        ("candidate-contract.json", "client-values.json", "quality-menu.json")}}
+    (output / "integration-plan.json").write_text(json.dumps(report, indent=2) + "\n")
+    print("Candidate integration prepared; blocked pending runtime and quality qualification:", output)
 
 
 def protected(path):
@@ -63,7 +200,9 @@ def site_values(path):
 
 def render(args):
     site = site_values(args.site)
-    overlay = "service" if args.mode == "large" else "service-split"
+    experience = getattr(args, "experience", "service")
+    require(experience in {"service", "assistant"}, "unknown service experience")
+    overlay = experience if args.mode == "large" else experience + "-split"
     objects = kustomize(ROOT / "apps/overlays" / overlay)
     existing = {}
     if getattr(args, "existing_claims", None):
@@ -110,12 +249,13 @@ def render(args):
            "spec": {"backoffLimit": 0, "activeDeadlineSeconds": 660, "template": template}}
     (output / "migration.yaml").write_text(yaml.safe_dump(job, sort_keys=False))
     (output / "site.json").write_text(json.dumps(site, indent=2) + "\n")
-    (output / "client.conf").write_text(
-        f'AGENT_BASE_URL=https://{site["api_host"]}:32443/v1\n'
-        f'AGENT_MODEL={"Qwen3.8-27B-FP8" if args.mode == "large" else "Qwen3.5-9B"}\n'
-        f'AGENT_CONTEXT_TOKENS={32768 if args.mode == "large" else 4096}\n'
-        f'AGENT_MAX_OUTPUT_TOKENS={4096 if args.mode == "large" else 1024}\n')
+    (output / "client.conf").write_text(f'AGENT_BASE_URL=https://{site["api_host"]}:32443/v1\n' +
+        "".join(f"{key}={value}\n" for key, value in client_profile(args.mode).items()))
+    if experience == "assistant":
+        with (output / "client.conf").open("a") as client:
+            client.write('AGENT_RETRIEVAL_ENABLED=true\nAGENT_WEB_SEARCH_ENABLED=true\n')
     (output / "evidence.json").write_text(json.dumps({"status": "source-rendered-not-deployed", "mode": args.mode,
+        "experience": experience,
         "existing_claims": existing,
         "files": {n: sha(output / n) for n in ("workloads.yaml", "traefik.yaml", "migration.yaml", "site.json", "client.conf")},
         "required": ["TLS Secret", "private DNS", "NodePort firewall review", "retained-PV migration",
@@ -287,7 +427,13 @@ def main():
     commands = parser.add_subparsers(dest="action", required=True)
     p = commands.add_parser("render")
     p.add_argument("site"); p.add_argument("output"); p.add_argument("--mode", choices=["large", "split"], default="large")
+    p.add_argument("--experience", choices=["service", "assistant"], default="service")
     p.add_argument("--existing-claims", help="operator-collected PVC JSON; preserve immutable storage classes")
+    p = commands.add_parser("candidate-plan", help="compare a pinned selected native candidate with assistant source; offline only")
+    p.add_argument("pointer"); p.add_argument("output")
+    p.add_argument("--pointer-sha256", required=True)
+    p.add_argument("--output-tokens", type=int, default=4096,
+                   help="proposed output allowance, separate from context; remains unqualified")
     p = commands.add_parser("plan")
     for name in ("resources", "rendered", "telemetry", "output"):
         p.add_argument(name)
@@ -313,6 +459,7 @@ def main():
     args = parser.parse_args()
     try:
         if args.action == "render": render(args)
+        elif args.action == "candidate-plan": candidate_plan(args)
         elif args.action == "plan": return plan(args)
         elif args.action == "credentials": credentials(args)
         elif args.action == "notifications": notifications(args)

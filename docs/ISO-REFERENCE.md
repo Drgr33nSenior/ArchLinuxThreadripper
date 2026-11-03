@@ -389,7 +389,7 @@ then boot the original installed fixture again.
 
 On the real workstation, recovery must also include an offline LUKS header backup
 and tested passphrase fallback. Do not enroll TPM PCRs from the live ISO. Physical
-TPM+PIN, early-PCR11 policy, Secure Boot and multi-GPU tests remain target-hardware
+YubiKey touch-only unlock, optional TPM+PIN/early-PCR11 policy, Secure Boot and multi-GPU tests remain target-hardware
 acceptance gates. Refer to [HOME-LAB.md](HOME-LAB.md) and [INSTALLATION.md](INSTALLATION.md).
 
 ## Verification and maintenance

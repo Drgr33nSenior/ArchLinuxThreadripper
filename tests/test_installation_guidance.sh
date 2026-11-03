@@ -15,7 +15,7 @@ guidance_block() {
   ' "$root/docs/INSTALLATION.md"
 }
 
-for block in verify-owner-ukis tpm2-enrol-preview tpm2-enrol-execute installed-wifi-connect tpm2-prediction-inspect; do
+for block in verify-owner-ukis fido2-enrol-touch fido2-test-touch tpm2-enrol-preview tpm2-enrol-execute installed-wifi-connect tpm2-prediction-inspect; do
   guidance_block "$block" >"$work/$block.sh" || {
     printf 'Missing or incomplete guidance block: %s\n' "$block" >&2
     exit 1
@@ -27,6 +27,7 @@ done
 export ENROLL_SCRIPT="$root/infrastructure/host/tpm2-enroll.sh"
 export LUKS_UUID=11111111-2222-3333-4444-555555555555
 export EARLY_PCR11_SHA256=1111111111111111111111111111111111111111111111111111111111111111
+export FIDO2_TOKEN_ID=2 FIDO2_KEY_SLOT=3
 plan=$(bash "$work/tpm2-enrol-preview.sh")
 [[ $plan == " + systemd-cryptenroll --tpm2-device=auto --tpm2-with-pin=yes --tpm2-pcrs=0:sha256+7:sha256+11:sha256=$EARLY_PCR11_SHA256 /dev/disk/by-uuid/$LUKS_UUID" ]]
 if EARLY_PCR11_SHA256=REPLACE_WITH_REVIEWED_DIGEST bash "$work/tpm2-enrol-preview.sh" >"$work/refused" 2>&1; then exit 1; fi
@@ -56,6 +57,15 @@ sudo() {
     bash)
       [[ $# == 5 && $2 == "$ENROLL_SCRIPT" && $3 == "$LUKS_UUID" && $4 == "$EARLY_PCR11_SHA256" && $5 == --execute ]] || return 96
       ;;
+    systemd-cryptenroll)
+      [[ $# == 7 && $2 == --fido2-device=auto && $3 == --fido2-parameters-in-header=yes &&
+        $4 == --fido2-with-client-pin=no && $5 == --fido2-with-user-presence=yes &&
+        $6 == --fido2-with-user-verification=no && $7 == "/dev/disk/by-uuid/$LUKS_UUID" ]] || return 102
+      ;;
+    cryptsetup)
+      [[ $# == 7 && $2 == open && $3 == --test-passphrase && $4 == --token-only &&
+        $5 == --token-id=2 && $6 == --key-slot=3 && $7 == "/dev/disk/by-uuid/$LUKS_UUID" ]] || return 103
+      ;;
     nmcli)
       [[ $# == 8 && $2 == --ask && $3 == device && $4 == wifi && $5 == connect && $6 == 'YOUR SSID' && $7 == ifname && $8 == wlan0 ]] || return 98
       ;;
@@ -84,6 +94,10 @@ if GUIDANCE_LOG="$work/compare-failure" GUIDANCE_FAIL_COMPARE=/efi/EFI/Linux/arc
 if grep -Fqx 'cmp /efi/EFI/Linux/arch-linux-lts.efi /efi2/EFI/Linux/arch-linux-lts.efi' "$work/compare-failure"; then exit 1; fi
 bash "$work/tpm2-enrol-execute.sh"
 grep -Fqx "bash $ENROLL_SCRIPT $LUKS_UUID $EARLY_PCR11_SHA256 --execute" "$GUIDANCE_LOG"
+bash "$work/fido2-enrol-touch.sh"
+grep -Fqx "systemd-cryptenroll --fido2-device=auto --fido2-parameters-in-header=yes --fido2-with-client-pin=no --fido2-with-user-presence=yes --fido2-with-user-verification=no /dev/disk/by-uuid/$LUKS_UUID" "$GUIDANCE_LOG"
+bash "$work/fido2-test-touch.sh"
+grep -Fqx "cryptsetup open --test-passphrase --token-only --token-id=2 --key-slot=3 /dev/disk/by-uuid/$LUKS_UUID" "$GUIDANCE_LOG"
 # Exercise the documented Wi-Fi command with no real service or network calls.
 # Called in the child shell running the documentation snippet.
 # shellcheck disable=SC2329
@@ -123,4 +137,4 @@ for failure in packages image; do
   if GUIDANCE_FAIL_INSPECT=$failure GUIDANCE_LOG="$work/inspect-$failure" bash "$work/tpm2-prediction-inspect.sh" >"$work/refused" 2>&1; then exit 1; fi
   if grep -Fq 'journalctl' "$work/inspect-$failure"; then exit 1; fi
 done
-printf 'Installation signature-check, TPM inspection/enrolment and Wi-Fi command guidance tests passed (no live operations)\n'
+printf 'Installation signature, FIDO2 touch-only enrollment/test, TPM alternative and Wi-Fi guidance tests passed (no live operations)\n'

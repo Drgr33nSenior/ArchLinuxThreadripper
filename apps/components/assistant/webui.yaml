@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: open-webui
+  annotations:
+    workstation.ai/qualification: pending-assistant-native-ui-rag-image-search-and-capacity
+spec:
+  template:
+    spec:
+      containers:
+        - name: open-webui
+          env:
+            # Explicit values override both upstream defaults and envFrom.
+            - {name: WEBUI_NAME, value: Family AI}
+            - {name: ENABLE_PERSISTENT_CONFIG, value: 'false'}
+            - {name: ENABLE_SIGNUP, value: 'false'}
+            - {name: DEFAULT_MODEL_PARAMS, value: '{"function_calling":"native"}'}
+            - {name: ENABLE_WEB_SEARCH, value: 'true'}
+            - {name: ENABLE_WEB_SEARCH_CONFIRMATION, value: 'true'}
+            - {name: WEB_SEARCH_ENGINE, value: external}
+            - {name: EXTERNAL_WEB_SEARCH_URL, value: 'http://service-tools:8000/webui/search'}
+            - name: EXTERNAL_WEB_SEARCH_API_KEY
+              valueFrom:
+                secretKeyRef: {name: webui-gateway-connection, key: service-key}
+            - {name: WEB_LOADER_ENGINE, value: external}
+            - {name: EXTERNAL_WEB_LOADER_URL, value: 'http://service-tools:8000/webui/fetch'}
+            - name: EXTERNAL_WEB_LOADER_API_KEY
+              valueFrom:
+                secretKeyRef: {name: webui-gateway-connection, key: service-key}
+            - {name: WEB_SEARCH_RESULT_COUNT, value: '3'}
+            - {name: WEB_SEARCH_CONCURRENT_REQUESTS, value: '1'}
+            - {name: WEB_LOADER_CONCURRENT_REQUESTS, value: '1'}
+            # Public results are transient prompt evidence. Local knowledge
+            # remains the existing authenticated RAG collection.
+            - {name: BYPASS_WEB_SEARCH_EMBEDDING_AND_RETRIEVAL, value: 'true'}
+            - {name: ENABLE_IMAGE_PROMPT_GENERATION, value: 'false'}
+            - {name: AUDIO_TTS_ENGINE, value: ''}
+            - {name: AUDIO_STT_OPENAI_API_BASE_URL, value: ''}
+            - {name: AUDIO_TTS_OPENAI_API_BASE_URL, value: ''}

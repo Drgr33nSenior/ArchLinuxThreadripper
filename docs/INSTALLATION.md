@@ -41,8 +41,8 @@ $workstation-install verify the installed workstation using config/install.conf
 7. Disable CSM. Enable Above 4G Decoding, Resizable BAR, SVM and IOMMU. Keep
    Secure Boot enforcement disabled while booting the unqualified live USB;
    do not clear its firmware key databases or reset the TPM for this step.
-   Select the physical SPI TPM rather than AMD fTPM. Confirm
-   which TPM Linux selected before enrolment; see
+   If explicitly selecting TPM+PIN instead of YubiKey unlock, select the physical
+   SPI TPM rather than AMD fTPM. Confirm which TPM Linux selected before enrolment; see
    [the TPM procedure](HOME-LAB.md#2-secure-boot-tpm2-and-pin).
 8. Leave NUMA/NPS, CPPC, preferred cores, SMT, C-states, and PCIe ASPM at their
    defaults. Do not enable ACS override.
@@ -197,11 +197,11 @@ ignored `config/install.conf` is also supported. Commands below use the custom
 ISO launcher and `/run/install.conf`; from a checkout, use
 `sudo ./bin/bootstrap-arch` with that checkout's config path.
 
-Both new-install examples select `BOOT_UNLOCK=tpm2-pin`. This selects the boot
-configuration; it does not enrol a TPM or prove that TPM unlock works. Keep the
-PIN out of the configuration. Older configurations that omit `BOOT_UNLOCK`
-retain the legacy `fido2` policy, as do those that explicitly select `fido2`.
-There is no automatic conversion of an existing installation.
+Both new-install examples select `BOOT_UNLOCK=fido2` for YubiKey touch-only
+unlock. This configures the boot path; enroll the key locally after installation
+using section 6. Keep the passphrase and offline recovery path. Omitted
+`BOOT_UNLOCK` also defaults to `fido2`; `tpm2-pin` remains an explicit alternative.
+No existing token, PIN or boot policy is converted automatically.
 
 Replace the disk paths with complete `/dev/disk/by-id/...` values and copy the exact
 serials reported by `udevadm` or `lsblk`. Do not use `/dev/nvme0n1` names.
@@ -324,7 +324,8 @@ with Secure Boot disabled and unlock with your LUKS passphrase. Select the
 installer's named entries in the firmware boot menu; `sudo efibootmgr -v` shows
 their paths. Keep the recovery USB and protected offline LUKS header backup.
 
-Secure Boot authenticates boot code. TPM+PIN unlock in section 6 is separate.
+Secure Boot authenticates boot code. YubiKey unlock in section 6 and the optional
+TPM+PIN procedure in section 6A are separate.
 The ISO's GPG release signature is neither of these. The installer already ran
 `sbctl create-keys` and signed the unified kernel images (UKIs). **Do not generate
 replacement keys.** Key creation is not firmware enrolment.
@@ -450,15 +451,122 @@ Check `pacman -Q sbctl` and the installed `sbctl enroll-keys --help` if versions
 
 <a id="6-enrol-the-yubikey"></a>
 
-## 6. Enrol TPM2 with a PIN
+## 6. Enrol a YubiKey for touch-only unlock
 
+Run this on the **installed workstation**, after Secure Boot and passphrase-only
+stable/LTS/recovery boot tests succeed. The installer selects FIDO2 in both
+crypttab files and includes the existing systemd FIDO2 plugin in the initramfs.
+Enrollment is owner-local; it never runs from the ISO or during package install.
+The target behavior is an inserted YubiKey plus a touch, with no PIN entry.
+
+### Identify the key and establish recovery
+
+Run these read-only checks locally:
+
+```sh
+sudo sbctl status
+sudo systemd-cryptenroll --fido2-device=list
+findmnt -no SOURCE /
+sudo cryptsetup status cryptroot
+```
+
+Use your configured mapper name, such as `crypt_root` for the home-lab example.
+Require one compatible FIDO2 authenticator implementing HMAC-secret and confirm
+its physical identity. A reset is not part of enrollment. Retain existing key
+applications and credentials; investigate an incompatible device separately.
+
+Match the underlying encrypted device from `cryptsetup status` to the installed
+root. Set its actual path; the standard example is:
+
+```sh
+LUKS_DEVICE=/dev/md/archroot
+LUKS_UUID=$(sudo cryptsetup luksUUID "$LUKS_DEVICE")
+sudo cryptsetup open --test-passphrase "/dev/disk/by-uuid/$LUKS_UUID"
+```
+
+Home-lab installations normally use `/dev/md0`; do not use a decrypted mapper,
+an NVMe member or an ESP. Enter the existing passphrase only in this unrecorded
+local terminal and require exit 0. Inspect slots and tokens locally. If a FIDO2
+token already exists, inspect its policy before adding another; never wipe slots
+as a shortcut. Preserve the passphrase and separate recovery key. Follow
+[the protected backup procedure](#62-establish-recovery-before-adding-a-tpm-slot)
+before enrollment and keep the backup off the RAID0 on separately encrypted,
+disconnected storage. Do not send headers, recovery keys or full token metadata
+to an agent.
+
+### Enrol and test touch-only access
+
+With exactly the intended key attached, run:
+
+<a id="fido2-enrol-touch"></a>
+
+```sh
+sudo systemd-cryptenroll \
+  --fido2-device=auto \
+  --fido2-parameters-in-header=yes \
+  --fido2-with-client-pin=no \
+  --fido2-with-user-presence=yes \
+  --fido2-with-user-verification=no \
+  "/dev/disk/by-uuid/$LUKS_UUID"
+```
+
+Enter the current disk passphrase locally and touch the key when requested.
+Require successful enrollment. These flags store PIN-disabled, touch-required,
+user-verification-disabled policy in the new LUKS FIDO2 token. They do not remove
+existing slots or reset the key. Keep the key separate from the workstation when
+it is not in use: possession plus touch authorizes this unlock path.
+
+Inspect the new token locally. Record its numeric token ID and referenced
+keyslot as `FIDO2_TOKEN_ID` and `FIDO2_KEY_SLOT` in the same terminal; these IDs
+can differ. Check `fido2-clientPin-required=false`, `fido2-up-required=true` and
+`fido2-uv-required=false`. Then test the selected token without creating another
+mapping or allowing passphrase fallback:
+
+<a id="fido2-test-touch"></a>
+
+```sh
+sudo cryptsetup open --test-passphrase --token-only \
+  --token-id="$FIDO2_TOKEN_ID" --key-slot="$FIDO2_KEY_SLOT" \
+  "/dev/disk/by-uuid/$LUKS_UUID"
+```
+
+Touch the key when it flashes and require exit 0. If the touch times out, retry
+only after arranging the physical interaction. Do not reset the key or remove
+recovery slots. Create a new protected offline header backup containing the new
+slot; retain the earlier backup separately.
+
+### Verify the boot policy and cold boot
+
+Keep the generated runtime and initramfs crypttab copies equal. The FIDO2 policy
+uses `fido2-device=auto,token-timeout=30s,password-echo=no,discard,x-initrd.attach`.
+PIN and touch requirements come from enrollment metadata. Fresh installs need
+no extra UKI add-on: the normal crypttab path already selects FIDO2.
+
+A UUID-specific `rd.luks.options=` overrides crypttab rather than adding options.
+For example, an override containing only `discard,x-initrd.attach` disables
+hardware-token attempts. Review the effective kernel command line and signed
+`*.efi.extra.d/*.addon.efi` files if the touch prompt is missing. The installer
+verifier rejects overrides that omit the selected unlock method. Changing only
+`/etc/kernel/cmdline` does not remove an active signed add-on.
+
+Run installed verification, then cold-boot stable, LTS and recovery with the key
+inserted. Require disk unlock after touch without typing a PIN or passphrase.
+Test passphrase/recovery-key access with the key absent, and authenticated
+emergency-console access. A fixture or successful enrollment is not a boot test.
+Keep the recovery USB and credentials available until these tests pass.
+
+<a id="6-enrol-tpm2-with-a-pin"></a>
+
+## 6A. Optional TPM2 with a PIN
+
+Select `BOOT_UNLOCK=tpm2-pin` before installation to use this alternative.
 Run this section on the **installed host**, after section 5 and passphrase-only
 stable/LTS/recovery tests succeed. `BOOT_UNLOCK=tpm2-pin` configures the boot
 policy; it does not enrol a TPM. Until enrolment, use your LUKS passphrase.
 The helper adds an unlock slot; it does not replace your passphrase or enable
 Secure Boot. Do not run it from the ISO or a chroot.
 
-### 6.1. Confirm the TPM and the encrypted root device
+### 6A.1. Confirm the TPM and the encrypted root device
 
 ```sh
 sudo sbctl status
@@ -491,7 +599,9 @@ metadata. Inspect slots/tokens locally; do not paste full metadata into an agent
 If a `systemd-tpm2` token already exists, stop: the helper deliberately refuses
 replacement. This is not a slot-wiping or automatic reenrolment procedure.
 
-### 6.2. Establish recovery before adding a TPM slot
+<a id="62-establish-recovery-before-adding-a-tpm-slot"></a>
+
+### 6A.2. Establish recovery before adding a TPM slot
 
 In your own unrecorded local terminal, add a separate recovery key if you do not
 already have a tested one:
@@ -521,7 +631,9 @@ sudo test ! -e "$BACKUP/luks-before-tpm2.header" &&
 Verify that protected backup locally, then unmount and disconnect the storage.
 LUKS headers are protected recovery material; do not send them to an agent.
 
-### 6.3. Obtain the correct early-unlock PCR 11 prediction
+<a id="63-obtain-the-correct-early-unlock-pcr-11-prediction"></a>
+
+### 6A.3. Obtain the correct early-unlock PCR 11 prediction
 
 The goal is to calculate a **boot fingerprint for the moment the encrypted disk
 is unlocked**. It is not your PIN, passphrase, LUKS UUID or the checksum of the
@@ -588,10 +700,10 @@ EARLY_PCR11_SHA256='REPLACE_WITH_REVIEWED_64_HEX_DIGEST'
 
 Replace the placeholder; it is deliberately not a usable digest. The digest is
 not a secret, but it must belong to your reviewed image and phase. Setting this
-variable makes no TPM or disk change. Continue to the **preview** in 6.4 only
+variable makes no TPM or disk change. Continue to the **preview** in 6A.4 only
 when the prediction has been verified; accepting its syntax is not qualification.
 
-### 6.4. Preview, then enrol in your local terminal
+### 6A.4. Preview, then enrol in your local terminal
 
 Use the installed bootstrap package's helper if present:
 
@@ -635,7 +747,7 @@ On failure, stop and retain all recovery slots. On success, inspect the added
 token locally and create a **new** protected header backup, using a distinct
 filename such as `luks-after-tpm2.header`. Do not overwrite the earlier backup.
 
-### 6.5. Cold-test and retain fallback access
+### 6A.5. Cold-test and retain fallback access
 
 Cold-test TPM+PIN on the exact enrolled UKI. Test passphrase and recovery-key
 unlock on stable, LTS and recovery boot paths. Record which image satisfies the
@@ -650,9 +762,9 @@ guess the PIN: TPM dictionary-attack protection can lock it out. Do not wipe
 slots, reset the TPM or rerun installation. Review changed firmware, Secure Boot
 policy, UKI bytes and phase before planning a separate reenrolment.
 
-A YubiKey is not required. Existing FIDO2 tokens remain optional legacy unlock
-paths; this procedure neither enrols nor removes them. TPM PIN requirements do
-not apply to the separate passphrase or recovery-key paths.
+The TPM alternative does not require a YubiKey. This optional procedure neither
+enrolls nor removes FIDO2 tokens. TPM PIN requirements do not apply to the
+separate passphrase or recovery-key paths.
 
 Also test authenticated rescue/emergency-console access from a disposable boot
 or recovery drill. Successful LUKS unlock alone does not prove that `sulogin`

@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "graphrag_version": "3.3.0",
+  "python_minor": [3, 14],
+  "python_compatibility": "experimental-owner-requested-upstream-declares-less-than-3.14",
+  "graphrag_wheel_sha256": "24e57f54cbf02c4c678bd132e0cc1f1796bd020176ab02d77318a8f0de7bd9ee",
+  "method": "standard-global",
+  "max_documents": 8,
+  "max_corpus_bytes": 65536,
+  "max_requests": 128,
+  "max_request_bytes": 131072,
+  "max_total_request_bytes": 8388608,
+  "max_response_bytes": 2097152,
+  "max_output_tokens": 2048,
+  "request_timeout_seconds": 120,
+  "run_timeout_seconds": 1800,
+  "max_artifact_bytes": 268435456,
+  "chunk_size": 384,
+  "chunk_overlap": 48,
+  "workflows": [
+    "load_input_documents",
+    "create_base_text_units",
+    "create_final_documents",
+    "extract_graph",
+    "finalize_graph",
+    "create_communities",
+    "create_final_text_units",
+    "create_community_reports"
+  ],
+  "entity_types": ["MODEL", "RUNTIME", "PROFILE", "COMPONENT", "DOCUMENT", "DECISION", "VALIDATION", "SERVICE"]
+}

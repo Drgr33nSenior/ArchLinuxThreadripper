@@ -1,0 +1,3 @@
+# Optional isolated pilot environment; Python 3.14 compatibility experiment.
+# Keep this separate from serving, training and the installed host environment.
+graphrag==3.3.0

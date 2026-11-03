@@ -1,6 +1,6 @@
 # Documentation guide
 
-Updated 1 November 2026 against repository configuration and retained target
+Updated 3 November 2026 against repository configuration and retained target
 evidence. This is a guide to the project, not a live inventory or a deployment
 approval. Versions belong to the linked locks and runtime manifests.
 
@@ -15,6 +15,7 @@ approval. Versions belong to the linked locks and runtime manifests.
 | Configure bare-metal K3s and GPU ownership | [Home lab](HOME-LAB.md) | [Resource and session policy](AI-PERFORMANCE.md) |
 | Track the latest serving project and its integration gaps | [Serving integration](SERVING-INTEGRATION.md) | [Models](MODELS.md), [Hyperloom](HYPERLOOM.md) |
 | Select or stage a model | [Models](MODELS.md) | [Retrieval](RAG.md), [IDE agents](AGENT-HARNESSES.md) |
+| Connect local chat, web research and document retrieval | [Assistant](ASSISTANT.md) | [Web search](WEB-SEARCH.md), [GraphRAG pilot](GRAPHRAG.md) |
 | Provide private browser/API access | [AI service](AI-SERVICE.md) | [Integration evidence](AI-SERVICE-RECONCILIATION.md) |
 | Use Sunshine with Moonlight | [Sunshine](SUNSHINE.md) | [Acceptance checklist](INSTALL-READINESS.md#sunshine-and-moonlight) |
 | Compare serving configurations | [Performance validation](PERFORMANCE-VALIDATION.md) | [Profiles](PERFORMANCE-PROFILES.md), [kernel packages](MODEL-KERNELS.md) |
@@ -35,6 +36,7 @@ It is not the bare-metal AI cluster and its backup does not cover application PV
 | Sunshine / Moonlight | Arch candidate captured 1920×1080/60 and started Vulkan encoders; owner confirmed mouse/click/typing in X11 and native Wayland windows on 1 November | Audio, controllers, games, repeat startup, persistent pairing/home recovery, delivered cadence and latency |
 | Hyperloom / TraceLens | Offline tools and the project adapter to an existing SGLang owner workflow were exercised | Upstream R9700 runner remains vLLM-only in the inspected release; no autonomous SGLang optimization or model qualification follows |
 | Shared chat/API service | Source integration and disposable native gateway/database smoke path | Full target rollout, multiuser acceptance and independent recovery |
+| GraphRAG pilot | Private Python 3.14 environment; real library indexing/global/direct fixture workflows passed on Linux and macOS | Live Qwen quality/resource evaluation; chapter conversion and Kindle ingestion remain follow-ups |
 
 These are scoped observations, not a blanket pass. Historical numerical,
 model-quality and shutdown failures remain open unless their specific cause was

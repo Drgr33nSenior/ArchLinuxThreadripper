@@ -1,0 +1,14 @@
+{
+  "hyperloom_commit": "7c0708ec9b75e70c4d9ce5309608f378b7fd8f69",
+  "hyperloom_version": "1.1.5",
+  "record": {
+    "path": "hyperloom_inference_optimizer-1.1.5.dist-info/RECORD",
+    "sha256": "24ac700a4f244a13375a7a1666eb20784f69b60b808b6fecb4ef15dcce0d1dfe"
+  },
+  "schema": 1,
+  "source_files": {
+    "hyperloom/orchestrator/actions/executors/benchmark_backend.py": "819abe0f937318af73207e3b2dbf9375330c1c4bb7a3d5e882ea3eace6c703c5"
+  },
+  "status": "CPU_PROTOTYPE_NOT_QUALIFIED",
+  "wheel_sha256": "b6e155758652f5c9e32fdfd4a057a58398988080e89a8240f95e12fb3105ebc2"
+}

@@ -2,7 +2,7 @@
 
 Use this guide for host SDK selection, native application builds and the generic
 TheRock build/package path. The target has a Threadripper 9960X, TRX50 AI TOP and
-two R9700s owned by Arch. The owner reports 128 GB RAM; the earlier 64-GiB/two-DIMM
+two R9700s owned by Arch. The workstation currently has 64 GB RAM; the earlier 64-GiB/two-DIMM
 observations are historical. Collect current memory/topology before budgeting.
 The optional K3s VM receives neither GPU by default. No swap, zram or hibernation
 is configured.

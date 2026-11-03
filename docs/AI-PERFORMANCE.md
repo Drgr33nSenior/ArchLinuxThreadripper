@@ -77,7 +77,7 @@ Keep failures, and promote only after numerical, memory, thermal and recovery ch
 ## Configuration and qualification boundaries
 
 Resource plans use a fresh target inventory, not nominal RAM or an earlier boot.
-The owner-reported upgrade is 128 GB; DIMM population, trained speed and MemTotal
+The workstation currently has 64 GB RAM; DIMM population, trained speed and MemTotal
 must be recollected. Two R9700s remain separate allocation/memory domains.
 Use the [runtime map](README.md#keep-the-runtime-layers-distinct) to distinguish
 host SDKs, checked-in overlays and the owner-selected ROCm 10.2 campaign.

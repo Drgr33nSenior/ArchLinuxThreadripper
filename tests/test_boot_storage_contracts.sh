@@ -6,6 +6,7 @@ source "$repo_root/lib/common.sh"
 source "$repo_root/lib/bootstrap/common.sh"
 source "$repo_root/lib/bootstrap/config.sh"
 source "$repo_root/lib/bootstrap/install.sh"
+source "$repo_root/lib/bootstrap/verify.sh"
 work=$(mktemp -d)
 trap 'rm -rf -- "$work"' EXIT
 BOOTSTRAP_DRY_RUN=1
@@ -22,11 +23,8 @@ BOOTSTRAP_DRY_RUN=1
   [[ $BOOT_UNLOCK == fido2 ]]
   printf 'BOOT_UNLOCK=fido2\n' >>"$work/legacy-unlock.conf"
   for policy in tpm2-pin fido2; do
-    if [[ $policy == tpm2-pin ]]; then
-      bootstrap_load_config "$repo_root/config/install.conf.example"
-    else
-      bootstrap_load_config "$work/legacy-unlock.conf"
-    fi
+    sed "s/^BOOT_UNLOCK=.*/BOOT_UNLOCK=$policy/" "$repo_root/config/install.conf.example" >"$work/policy.conf"
+    bootstrap_load_config "$work/policy.conf"
     [[ $BOOT_UNLOCK == "$policy" ]]
     BOOTSTRAP_TARGET="$work/unlock-$policy"
     mkdir -p "$BOOTSTRAP_TARGET/etc/kernel" "$BOOTSTRAP_TARGET/etc/mkinitcpio.d"
@@ -35,9 +33,52 @@ BOOTSTRAP_DRY_RUN=1
     if [[ $policy == tpm2-pin ]]; then
       grep -Fqx "$CRYPT_NAME UUID=$LUKS_UUID none tpm2-device=auto,fido2-device=auto,discard,x-initrd.attach" "$BOOTSTRAP_TARGET/etc/crypttab"
     else
-      grep -Fqx "$CRYPT_NAME UUID=$LUKS_UUID none fido2-device=auto,token-timeout=5s,password-echo=no,discard,x-initrd.attach" "$BOOTSTRAP_TARGET/etc/crypttab"
+      grep -Fqx "$CRYPT_NAME UUID=$LUKS_UUID none fido2-device=auto,token-timeout=30s,password-echo=no,discard,x-initrd.attach" "$BOOTSTRAP_TARGET/etc/crypttab"
+      if grep -Fq 'tpm2-device=' "$BOOTSTRAP_TARGET/etc/crypttab"; then exit 1; fi
+    fi
+    # crypttab is authoritative; UUID-specific cmdline overrides can disable tokens.
+    if grep -Eq '(^|[[:space:]])(rd\.)?luks\.options=' "$BOOTSTRAP_TARGET/etc/kernel/cmdline" "$BOOTSTRAP_TARGET/etc/kernel/cmdline.recovery"; then exit 1; fi
+  done
+)
+
+(
+  IFS=$'\n\t'
+  BOOT_UNLOCK=fido2
+  uuid=11111111-2222-3333-4444-555555555555
+  other=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
+  cmdline="$work/unlock.cmdline"
+  # /proc/cmdline has no stat size. Verify readable streams as well as files.
+  printf 'rd.luks.options=%s=fido2-device=auto,discard\n' "$uuid" |
+    bootstrap_verify_unlock_cmdline /dev/stdin "$uuid"
+  if printf 'rd.luks.options=%s=discard\n' "$uuid" |
+    bootstrap_verify_unlock_cmdline /dev/stdin "$uuid" >/dev/null 2>&1; then exit 1; fi
+  : >"$cmdline"
+  if bootstrap_verify_unlock_cmdline "$cmdline" "$uuid" >/dev/null 2>&1; then exit 1; fi
+  for line in \
+    "rd.luks.name=$uuid=cryptroot" \
+    "rd.luks.options=$uuid=fido2-device=auto,discard,x-initrd.attach" \
+    'rd.luks.options=fido2-device=auto,token-timeout=30s,discard' \
+    "rd.luks.options=$other=discard,x-initrd.attach"; do
+    printf '%s\n' "$line" >"$cmdline"
+    bootstrap_verify_unlock_cmdline "$cmdline" "$uuid"
+  done
+  for line in \
+    "rd.luks.options=$uuid=discard,x-initrd.attach" \
+    "luks.options=$uuid=discard" \
+    'rd.luks.options=discard' \
+    "rd.luks.options=$uuid=tpm2-device=auto,fido2-device=auto,discard" \
+    "rd.luks.options=$uuid=fido2-device=auto rd.luks.options=$uuid=discard"; do
+    printf '%s\n' "$line" >"$cmdline"
+    if bootstrap_verify_unlock_cmdline "$cmdline" "$uuid" >/dev/null 2>&1; then
+      echo 'kernel command line disabled the selected touch-only unlock policy' >&2
+      exit 1
     fi
   done
+  BOOT_UNLOCK=tpm2-pin
+  printf 'rd.luks.options=%s=tpm2-device=auto,fido2-device=auto,discard\n' "$uuid" >"$cmdline"
+  bootstrap_verify_unlock_cmdline "$cmdline" "$uuid"
+  printf 'rd.luks.options=%s=fido2-device=auto,discard\n' "$uuid" >"$cmdline"
+  if bootstrap_verify_unlock_cmdline "$cmdline" "$uuid" >/dev/null 2>&1; then exit 1; fi
 )
 
 (

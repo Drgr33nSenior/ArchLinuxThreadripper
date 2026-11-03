@@ -1,5 +1,29 @@
 # Shared AI service reconciliation
 
+## Current scope update — 3 November 2026
+
+The current assistant target is the selected native 128K MXFP4/C4 candidate
+described in [native candidate integration](ASSISTANT.md#native-128k-candidate-integration).
+The pointer digest checked for this update matches the prepared integration
+readout. That readout identifies six differences in the older container
+composition. Persistent native packaging and model/browser acceptance remain
+pending; selection metadata and offline checks do not establish deployment.
+
+Current delivery covers the 64 GB installation and a stable, private serving,
+WebUI, Exa and local RAG setup. The shared Exa adapter and eight-case candidate
+quality menu are prepared. Real search, retrieval, citations and tool calling
+must pass through the selected model and browser before service acceptance.
+QLoRA and other model fine-tuning are deferred as optional post-install work,
+with no added installation dependency or acceptance gate. The
+[assistant scope](ASSISTANT.md#current-delivery-scope) records this decision.
+
+## Earlier source reconciliation
+
+The following sections retain the earlier baseline and its dated validation
+records. References to unavailable target evidence describe that original task.
+Use the current scope update above for the selected native candidate and
+deferred work.
+
 Review baseline: `92dea182b930c7dd7f8e7b6514bbfad781dd2e61` (2026-10-22).
 The earlier `2512495` review is historical evidence. No reset was performed.
 Existing IDE and scratch work is excluded from this change.
@@ -10,7 +34,7 @@ This is the final reconciliation for the source change. It does not identify a d
 
 | Finding | Current evidence/path | Final disposition and change | Validation | Remaining gate |
 | --- | --- | --- | --- | --- |
-| 128 GB baseline | `hardware.sh`, `resources.sh`, `tests/test_resource_plan.sh`; refreshed HOME-LAB/STACK/RAG/TELEMETRY; `service.py` | Observed-memory planning and 128 GiB fixtures **already satisfied**; stale current-hardware prose corrected; service/build/VM admission **implemented** | **source-validated**: existing 128 GiB topology fixture, firmware-reserved service fixture, CPU/RAM/GPU budget rejection. Limits and 18 GiB reserves retained | **NOT RUN**: current DIMMs, trained speed, MemTotal and pressure measurements |
+| 64 GB baseline | `hardware.sh`, `resources.sh`, `tests/test_resource_plan.sh`; HOME-LAB/STACK/RAG/TELEMETRY; `service.py` | Current installed capacity is 64 GB. Observed-memory service/build/VM admission **implemented** | **source-validated**: capacity fixtures include a hypothetical 128 GiB host; these do not establish installed hardware. Limits and 18 GiB reserves retained | **NOT RUN**: fresh DIMMs, trained speed, MemTotal and pressure measurements; full shared-service budgets exceed nominal 64 GiB admission |
 | Application recovery | `service_backup.py`, Restic units, `SERVICE-RECOVERY.md` | **Implemented**: baseline/full captures; canonical lock and writer shutdown; PostgreSQL dump; SQLite/token/config; gaming homes; independent-SSD local snapshot and exact-ID off-site copy; protected UID/replica journal | **source-validated**: storage/writer gates, failure/retry/freshness fixtures and isolated restore staging. **integration-tested**: native Restic copy/retry/check/restore using two disposable local repositories. Existing PVs require Retain migration | **NOT RUN**: physical SSD, S3, K3s token/bootstrap, independent recovery credentials, PostgreSQL and application restore. Synthetic restore is not disaster recovery |
 | Shared model API | `apps/base/shared-api/`, `service.py` | **Implemented**: pinned LiteLLM OSS/PostgreSQL, native key policy, private per-person WebUI translation, bounded ASGI admission/status, scoped DB role/migration, content-free operational signals | **source-validated** against selected source; **integration-tested** boundary/adapter with deterministic upstreams and native LiteLLM/PostgreSQL on a hosted runner, including identity denial, expiry, quotas, streaming/tools, cancellation and restart persistence | **NOT RUN**: target service acceptance with actual clients and the GPU backend. Native hosted evidence covers commit `3f8fa579ca13aa41800501ce9bc8e9d5e2f674c8`; local Docker remains unavailable |
 | Private ingress and clients | `apps/overlays/service/`, `infrastructure/service/traefik.yaml`, `agents.sh` | **Implemented**: existing Traefik NodePort 32443, actual-site renderer, TLS/consumer routes, exact flows, normal HTTPS client bundles | **source-validated**: Kustomize/site rendering, no public admin route, union of policies admits required flows and denies lateral access; Qwen separate retrieval-key fixture | **NOT RUN**: real LAN/DNS/TLS, Flannel enforcement, browser WebSocket and full proxy streaming/disconnect |
@@ -22,7 +46,9 @@ This is the final reconciliation for the source change. It does not identify a d
 
 ## Authoritative model inputs
 
-`versions.lock`, `apps/base/sglang/` and the selected overlay remain authoritative.
+For the checked-in container profiles, `versions.lock`, `apps/base/sglang/`
+and the selected overlay remain authoritative. The native candidate's separate
+contract and handoff are linked in the current scope update above.
 Dual GPU: Qwen3.8-27B-FP8 revision `017b9c7af6b5689d5dd426a76e0bc077eb5ca20a`,
 32,768 context tokens. Single GPU: Qwen3.5-9B BF16 revision
 `c202236235762e1c871ad0ccb60c8ee5ba337b9a`, 4,096 context tokens.
@@ -33,7 +59,7 @@ previous tuning receipts and rendered manifests do not qualify a shared service.
 ## Unavailable target evidence
 
 This checkout is on the owner's Mac. No classified, authenticated workstation
-target or current 128 GB hardware collection has been supplied for this task.
+target or fresh 64 GB hardware collection has been supplied for this task.
 DIMM count, trained speed, Linux-visible RAM, physical GPU handover and deployed
 application state remain **NOT RUN**. Collect these on the workstation using
 the existing `workstationctl hardware collect` and `resources plan` commands.

@@ -238,6 +238,13 @@ elif sys.argv[1] in {"sglang-import", "sglang-bind"}:
     print(json.dumps({"status":result["status"], "groups":len(result["groups"]),
                       "output":output, "automatic_optimization":False}))
 elif sys.argv[1] == "trace-analysis":
+    import functools, os
+    paths = json.loads(os.environ.get("WORKSTATION_TRACELENS_SOURCE_PATHS", "[]"))
+    if paths:
+        # The pinned bypass CLI has no source-path argument. Supply TraceLens's
+        # public search_paths parameter in this process, before its caller imports it.
+        from TraceLens.TraceUtils import kernel_source
+        kernel_source.resolve_kernel_source = functools.partial(kernel_source.resolve_kernel_source, search_paths=paths)
     sys.argv = ["bypass_trace_analysis", *sys.argv[2:]]
     runpy.run_module("hyperloom.orchestrator.trace_analysis.bypass_trace_analysis", run_name="__main__")
 else:
@@ -343,6 +350,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
     actions = parser.add_subparsers(dest="action", required=True)
+    evidence = actions.add_parser("sglang-evidence", help="prepare authenticated research and historical evidence for the optimizer")
+    evidence.add_argument("manifest", type=Path)
+    evidence.add_argument("output", type=Path)
+    evidence.add_argument("--manifest-sha256", required=True)
+    evidence.add_argument("--runtime-root", type=Path, help="absolute bundle path on the optimizer host")
     download = actions.add_parser("fetch", help="fetch the exact binary runtime into a new private directory")
     download.add_argument("output", type=Path)
     setup = actions.add_parser("install", help="offline installation from the exact locked wheelhouse")
@@ -379,6 +391,8 @@ def main():
     trace.add_argument("prefix", type=Path)
     trace.add_argument("trace", type=Path)
     trace.add_argument("output", type=Path)
+    trace.add_argument("--source-path", type=Path, action="append", default=[],
+                       help="kernel source directory for TraceLens; repeat for multiple roots")
     owner = actions.add_parser("sglang-owner", help="check a fresh native owner packet; launch only with --execute-owner")
     owner.add_argument("session", type=Path)
     owner.add_argument("--authorization-sha256", required=True)
@@ -391,6 +405,11 @@ def main():
     os.umask(0o077)
     try:
         contract = read_contract(args.root)
+        if args.action == "sglang-evidence":
+            from hyperloom_evidence import bundle
+            result = bundle(args.manifest, args.manifest_sha256, args.output, runtime_root=args.runtime_root)
+            print(json.dumps(result, indent=2))
+            return 0
         if args.action in {"tracelens-fetch", "tracelens-install", "trace-analysis"}:
             contract = {**contract, **read_contract(args.root, "TRACELENS")}
         if args.action == "sglang-owner":
@@ -422,18 +441,23 @@ def main():
             return 0
         python = installed_python(args.prefix, contract)
         forwarded = ["status"] if args.action == "status" else ["--help"]
-        env, timeout = private_environment(args.prefix), 60
+        env, timeout = (None if args.action == "trace-analysis" else private_environment(args.prefix)), 60
         if args.action == "trace-analysis":
             source = tracelens_root(args.prefix, contract)
             require(args.trace.is_file() and not args.trace.is_symlink() and args.trace.stat().st_size <= 4 * 1024 ** 3,
                     "trace input missing, linked or too large")
             output = args.output
             require(output.is_absolute() and not output.exists() and not output.is_symlink(), "choose a fresh absolute analysis output")
+            require(all(path.is_dir() for path in args.source_path), "source paths must be existing directories")
+            source_paths = list(dict.fromkeys(str(path.resolve()) for path in args.source_path))
             output.mkdir(mode=0o700)
+            env = private_environment(output)
             for private in ("cache", "tmp"):
                 (output / private).mkdir(mode=0o700)
             env.update(TRACELENS_ROOT=str(source), TRACELENS_KSI_CACHE_DIR=str(output / "cache"),
-                       TMPDIR=str(output / "tmp"), HYPERLOOM_ROCPROF_ROOFLINE_ENRICH="0")
+                       TMPDIR=str(output / "tmp"), HYPERLOOM_ROCPROF_ROOFLINE_ENRICH="0",
+                       WORKSTATION_TRACELENS_SOURCE_PATHS=json.dumps(source_paths))
+            (output / "SOURCE-PATHS.json").write_text(json.dumps({"source_paths": source_paths}, indent=2) + "\n")
             forwarded = ["trace-analysis", "--trace-input", str(args.trace.resolve()), "--workspace-path", str(output),
                          "--session-id", "offline", "--framework", "sglang", "--target-platform", "r9700"]
             timeout = 1800
