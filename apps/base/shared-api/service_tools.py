@@ -166,7 +166,7 @@ class ServiceTools:
             raise Refusal(400, "invalid_collection")
         if not isinstance(query, str) or not 1 <= len(query) <= 2000:
             raise Refusal(400, "invalid_query")
-        # v0.11.3 validates every requested collection against the current user's
+        # v0.11.4 validates every requested collection against the current user's
         # permissions. Never query Chroma directly or use a shared admin token.
         result = await self.upstream_json("POST", self.webui + "/api/v1/retrieval/query/collection",
             headers=headers, data={"collection_names": [collection], "query": query,

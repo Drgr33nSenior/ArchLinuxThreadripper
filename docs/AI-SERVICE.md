@@ -25,6 +25,7 @@ service. All new application replicas remain zero. See the
 | --- | --- | --- | --- |
 | Traefik | Actual private node IP, TCP 32443; browser and API DNS names | Owner TLS Secret; private client CIDRs | K3s configuration and SQLite backup |
 | Open WebUI 0.11.3 (`service`); 0.12.5 (`assistant`) | Browser HTTPS → WebUI → internal `/webui/v1` gateway route | WebUI login; server-held application credential and user-ID mapping | Accounts, conversations, uploads, embedded Chroma on `webui-rag-qwen3-data` |
+| Open WebUI 0.11.4 | Browser HTTPS → WebUI → internal `/webui/v1` gateway route | WebUI login; server-held application credential and user-ID mapping | Accounts, conversations, uploads, embedded Chroma on `webui-rag-qwen3-data` |
 | LiteLLM OSS 1.106.2 | API HTTPS `/v1/models`, `/v1/chat/completions` → internal SGLang | Per-client virtual keys; separate master, salt and host-control credentials | Scoped `litellm` PostgreSQL role/database; dump plus matching K3s Secrets |
 | SGLang | ClusterIP only; unchanged qualified model/runtime inputs | No ordinary user access to backend | Weights and caches rebuildable; model revisions retained |
 | Read-only MCP | HTTPS `/mcp` → supported WebUI retrieval/file APIs | Caller's own restricted WebUI API key | Reuses WebUI document ACLs and retrieval state; no second vector store |
@@ -79,12 +80,12 @@ Primary sources checked against selected source versions:
   [migration CLI](https://github.com/BerriAI/litellm/blob/49943cd52ea46aacf8db2e5cb2b890d580fe9bb4/litellm/proxy/proxy_cli.py).
 - [WebUI/LiteLLM integration](https://docs.litellm.ai/docs/tutorials/openweb_ui),
   [WebUI environment configuration](https://docs.openwebui.com/reference/env-configuration/),
-  [selected retrieval ACL implementation](https://github.com/open-webui/open-webui/blob/2a960a59fe1dbbd35282f0556b3666d81102e781/backend/open_webui/routers/retrieval.py).
+  [selected retrieval ACL implementation](https://github.com/open-webui/open-webui/blob/8bd8b4fac5e059578ac0c74b3c18d11139f88b7d/backend/open_webui/routers/retrieval.py).
 - [K3s networking](https://docs.k3s.io/networking/networking-services),
   [Traefik chart 40.1.0 settings](https://github.com/traefik/traefik-helm-chart/blob/v40.1.0/traefik/values.yaml).
 - [Swarm API](https://github.com/mcmonkeyprojects/SwarmUI/blob/ec823c3f750ce9b5103e623f3ad9918d02b8ddde/docs/API.md),
   [self-start backend](https://github.com/mcmonkeyprojects/SwarmUI/blob/ec823c3f750ce9b5103e623f3ad9918d02b8ddde/src/BuiltinExtensions/ComfyUIBackend/ComfyUISelfStartBackend.cs),
-  [WebUI image connector](https://github.com/open-webui/open-webui/blob/2a960a59fe1dbbd35282f0556b3666d81102e781/backend/open_webui/routers/images.py).
+  [WebUI image connector](https://github.com/open-webui/open-webui/blob/8bd8b4fac5e059578ac0c74b3c18d11139f88b7d/backend/open_webui/routers/images.py).
 - [Alertmanager configuration](https://prometheus.io/docs/alerting/latest/configuration/).
 
 ## Recollect the 64 GB baseline

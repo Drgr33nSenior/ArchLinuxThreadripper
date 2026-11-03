@@ -100,11 +100,11 @@ KWIN_DEBIAN_VERSION=4:6.3.6-1
 SUNSHINE_ARCH_BASE_IMAGE=docker.io/library/archlinux@sha256:dfc5be7be44cf1acf3d9b3b902e3e9c8a29f97ed41e35631823cdc9c97e5d4f0
 SUNSHINE_ARCH_SNAPSHOT=2026/10/31
 SUNSHINE_ARCH_SHA256=efe1f0229f9d6da026d8d4d8d93f70211965a1d125defff71b747dd8b6cdd42a
-# CPU-only RAG pilot inputs reviewed 2026-09-08. Registry config revision matches
+# CPU-only RAG pilot inputs reviewed 2026-11-01. Registry config revision matches
 # the source commit; runtime, first-admin bootstrap and retrieval remain unqualified.
-OPEN_WEBUI_VERSION=0.11.3
-OPEN_WEBUI_COMMIT=2a960a59fe1dbbd35282f0556b3666d81102e781
-OPEN_WEBUI_IMAGE=ghcr.io/open-webui/open-webui:v0.11.3@sha256:9cd136effce6bb12a6a1988a35ab3b82cb40c48a6768fceeb17c83baf7cfac9c
+OPEN_WEBUI_VERSION=0.11.4
+OPEN_WEBUI_COMMIT=8bd8b4fac5e059578ac0c74b3c18d11139f88b7d
+OPEN_WEBUI_IMAGE=ghcr.io/open-webui/open-webui:v0.11.4@sha256:332438e079ad23bb11b0ab278b43e7c98b50e8cec14b0840281644e8a289f49f
 RAG_EMBEDDING_REPOSITORY=Qwen/Qwen3-Embedding-0.6B
 RAG_EMBEDDING_REVISION=97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3
 # Per-file SHA-256 inputs: apps/overlays/rag/SHA256SUMS (safetensors, no pickle).

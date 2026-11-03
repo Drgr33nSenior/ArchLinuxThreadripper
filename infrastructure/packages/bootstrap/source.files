@@ -483,3 +483,12 @@ tests/workstation/test_hyperloom_profile.py
 tests/workstation/test_hyperloom_sdk_adapter.py
 tests/workstation/test_hyperloom_workload.py
 tests/workstation/test_rocprof_trace.py
+tests/rag/README.md
+tests/rag/client.py
+tests/rag/entrypoint.sh
+tests/rag/native-smoke.sh
+tests/rag/test_client.py
+tests/rag/wait-ready.sh
+tests/test_rag.sh
+tests/fixtures/rag/questions.json
+tests/home-lab/check-rag.rb

@@ -4,12 +4,40 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      rag_pilot:
+        description: Run the disposable CPU RAG pilot (no workstation access)
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
   group: source-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ inputs.rag_pilot != true }}
 jobs:
+  rag-smoke:
+    if: github.event_name == 'workflow_dispatch' && inputs.rag_pilot
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {persist-credentials: false}
+      - name: Bounded CPU-only WebUI retrieval pilot
+        run: timeout --kill-after=45s 43m bash tests/rag/native-smoke.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: native-rag-evidence
+          path: |
+            test-results/native-rag.*/summary.tsv
+            test-results/native-rag.*/output.json
+            test-results/native-rag.*/failure.json
+            test-results/native-rag.*/rows.jsonl
+            test-results/native-rag.*/container-state.txt
+            test-results/native-rag.*/startup-tokens.txt
+            test-results/native-rag.*/startup-sanitized.txt
+          retention-days: 7
+          if-no-files-found: error
   source:
     runs-on: ubuntu-24.04
     timeout-minutes: 30

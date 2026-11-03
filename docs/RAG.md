@@ -4,6 +4,11 @@ This is an opt-in, CPU-only Open WebUI pilot for the
 Threadripper workstation. It does not start workloads, ingest documents, create
 accounts or contact a cluster automatically. Physical testing is pending.
 
+The optional [disposable Linux retrieval test](../tests/rag/README.md) exercises
+real CPU embeddings, dense/hybrid retrieval, access revocation and same-volume
+restart without using the workstation or starting a language model. It is
+separate from workstation and generated-answer qualification.
+
 Retrieval-augmented generation (RAG) supplies selected source passages to a model.
 It does not retrain the model, guarantee correct answers or enlarge its context
 window. Persistent agent memory stores decisions across sessions. A knowledge
@@ -100,8 +105,8 @@ Canonical sources are `apps/overlays/rag/`, `lib/workstation/rag.sh` and
 `versions.lock`. The `rag` overlay extends `dual-gpu`, changes only Open WebUI
 and adds its configuration and two PVCs. Other overlays are unchanged.
 
-- Open WebUI: **0.11.3**, source commit
-  `2a960a59fe1dbbd35282f0556b3666d81102e781`. The Linux/amd64 image manifest is
+- Open WebUI: **0.11.4**, source commit
+  `8bd8b4fac5e059578ac0c74b3c18d11139f88b7d`. The Linux/amd64 image manifest is
   digest-pinned; its registry configuration identifies the same source revision.
 - Embeddings: `Qwen/Qwen3-Embedding-0.6B`, revision
   `97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3`, 1,024 dimensions, CPU. The
@@ -113,10 +118,24 @@ and adds its configuration and two PVCs. Other overlays are unchanged.
   Apache-2.0 attribution. No dependency manager or host ROCm package changes.
 
 The settings were checked against the pinned
-[configuration source](https://github.com/open-webui/open-webui/blob/2a960a59fe1dbbd35282f0556b3666d81102e781/backend/open_webui/config.py),
-[retrieval implementation](https://github.com/open-webui/open-webui/blob/2a960a59fe1dbbd35282f0556b3666d81102e781/backend/open_webui/routers/retrieval.py)
-and [image recipe](https://github.com/open-webui/open-webui/blob/2a960a59fe1dbbd35282f0556b3666d81102e781/Dockerfile).
+[configuration source](https://github.com/open-webui/open-webui/blob/8bd8b4fac5e059578ac0c74b3c18d11139f88b7d/backend/open_webui/config.py),
+[retrieval implementation](https://github.com/open-webui/open-webui/blob/8bd8b4fac5e059578ac0c74b3c18d11139f88b7d/backend/open_webui/routers/retrieval.py)
+and [image recipe](https://github.com/open-webui/open-webui/blob/8bd8b4fac5e059578ac0c74b3c18d11139f88b7d/Dockerfile).
 Do not assume settings from a later documentation release work with this pin.
+
+The 0.11.4 update addresses the upstream
+[stale knowledge-file access](https://github.com/open-webui/open-webui/security/advisories/GHSA-9cxp-636w-4997)
+and [foreign directory disclosure](https://github.com/open-webui/open-webui/security/advisories/GHSA-jx3w-3pqq-7f3w)
+advisories affecting the previous 0.11.3 pin. Keep the pilot private; this patch
+and its regression checks do not constitute a complete security audit.
+
+As of 1 November 2026, upstream's current release is 0.12.5. The retained 0.11.4
+test candidate is also affected by the later
+[channel-message impersonation advisory](https://github.com/open-webui/open-webui/security/advisories/GHSA-3vvh-g22g-jq6r),
+fixed in 0.12.2. This network-isolated fixture has no browser/channel traffic.
+Keep deployment replicas at zero; review and qualify a current release before
+exposing the application. Do not treat this historical-profile test as security
+clearance for 0.11.4.
 
 | Resource or setting | Pilot baseline |
 | --- | --- |
@@ -132,7 +151,10 @@ Do not assume settings from a later documentation release work with this pin.
 The application remains Burstable, not CPU-Manager-exclusive. The init container
 validates pilot settings and model hashes before startup. Missing assets stop
 startup rather than causing an online download. The copied tiktoken cache avoids
-hiding the image's preloaded tokenizer behind an empty data PVC. The embedding
+hiding the image's preloaded tokenizer behind an empty data PVC. Its writable
+mount is `/runtime-tiktoken`, selected by `TIKTOKEN_CACHE_DIR`. Keep it outside
+the data mount: a runtime-created nested mount parent can be root-owned and
+prevent UID 1000 from creating other application caches. The embedding
 splitter uses the staged Qwen tokenizer, not tiktoken. Open WebUI's pinned
 retrieval code applies `RAG_EMBEDDING_QUERY_PREFIX` to query embeddings; the
 deployment supplies Qwen's native `Instruct: ...\nQuery:` prefix as an actual

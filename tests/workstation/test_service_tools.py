@@ -36,7 +36,7 @@ class ToolsTests(unittest.IsolatedAsyncioTestCase):
             path = req.url.path
             if path.startswith("/api/") and environment.get("ENABLE_API_KEYS", "false").lower() != "true":
                 return httpx.Response(403)
-            # Open WebUI v0.11.3 auth.py matches either the exact endpoint or
+            # Open WebUI v0.11.4 auth.py matches either the exact endpoint or
             # endpoint + '/'. A trailing slash on a prefix denies file IDs.
             if path.startswith("/api/") and environment.get("ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS", "false").lower() == "true" and not any(path == endpoint or path.startswith(endpoint + "/")
                                                       for endpoint in allowed):
