@@ -2,12 +2,16 @@
 
 This is an opt-in, CPU-only Open WebUI pilot for the
 Threadripper workstation. It does not start workloads, ingest documents, create
-accounts or contact a cluster automatically. Physical testing is pending.
+accounts or contact a cluster automatically. An isolated workstation test of
+Open WebUI 0.12.5 with CPU Qwen embeddings passed its API, access-control and
+application-restart checks. Retrieval misses remain; see the
+[verification record](VERIFICATION.md#webui-retrieval-evidence). This does not
+qualify the deployed assistant or generated answers.
 
 The optional [disposable Linux retrieval test](../tests/rag/README.md) exercises
-real CPU embeddings, dense/hybrid retrieval, access revocation and same-volume
+real CPU embeddings, retrieval, access revocation and same-volume
 restart without using the workstation or starting a language model. It is
-separate from workstation and generated-answer qualification.
+separate from workstation, browser and generated-answer qualification.
 
 Retrieval-augmented generation (RAG) supplies selected source passages to a model.
 It does not retrain the model, guarantee correct answers or enlarge its context
@@ -25,7 +29,7 @@ it is not a substitute for any of those stores.
 | Qdrant | Alternative to pgvector, not an additional default service | Open WebUI currently treats its connector as non-core; qualify the connector before upgrades |
 | Cross-encoder reranking | Deferred until the baseline has measured retrieval failures | Pin a model and test citation/retrieval accuracy versus added latency; no cross-encoder is loaded in this pilot |
 | Qwen3-Embedding-0.6B | Replace MiniLM for the disabled CPU pilot | [Author model card](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B); use the native query prefix, 1,024 dimensions and a new index |
-| Persistent project memory | Prioritise the [Graphiti continuity pilot](MEMORY.md); shared integration remains planned | Compare with native client memory plus a compact handoff; verify provenance, corrections, isolation and measured resource use |
+| Persistent project memory | [Graphiti is primary](MEMORY.md); native 6.0.3 storage fixtures passed, shared integration remains planned | Compare with native client memory plus a compact handoff; qualify real-model corrections/recall, authenticated isolation and measured resource use |
 | GraphRAG | Optional on-demand [document-analysis pilot](GRAPHRAG.md), standard indexing/global search with local completions | Retain cross-document comparisons; Graphiti is the preferred memory pilot. No standing graph service or installation gate |
 | PDF/diagram ingestion | Defer OCR, Docling and multimodal models; pilot accepts Markdown/text | Qualify extraction and bound peak ingestion RAM before adding document types |
 | Prefix/HiCache | Separate experiment; do not enable host KV offload here | [SGLang HiCache](https://docs.sglang.io/docs/advanced_features/hicache_best_practices); verify the pinned AMD backend and measure cache hits, RAM, bandwidth and time to first token |
@@ -36,8 +40,9 @@ database does not keep snippets local if an agent sends them to a cloud model.
 
 The [continuity decision](MEMORY.md) separates evolving user/project memory,
 active task handoffs, public Exa evidence and exact local document retrieval.
-Graphiti integration and footprint remain unqualified; it is not assumed to be
-smaller than this file-based GraphRAG experiment.
+Graphiti's small storage fixture does not qualify its shared integration or
+production footprint. It is not assumed to be smaller than this file-based
+GraphRAG experiment.
 
 ## Programming books and later model adaptation
 

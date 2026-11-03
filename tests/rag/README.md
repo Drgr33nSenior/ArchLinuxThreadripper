@@ -21,8 +21,12 @@ documents through the existing `rag corpus` and authenticated upload interfaces:
 
 Run one warmup per retrieval mode. Run each of the ten checked-in questions three
 times, alternating dense/hybrid order by question and repetition. This gives
-60 measured queries in one startup, not independent startup pairs. Dense and
-hybrid query the same index through the pinned API's per-request selector.
+60 measured queries in one startup, not independent startup pairs. The client
+labels requests `dense`/`hybrid` and sends a `hybrid` field to the same index.
+Those labels do not prove which backend ran. The isolated WebUI 0.12.5
+workstation test returned identical passage rankings for both flags; no
+independent backend coverage or hybrid benefit was established. See the
+[dated retrieval evidence](../../docs/VERIFICATION.md#webui-retrieval-evidence).
 
 Report source-level hit@3 and source recall@3 for the eight positive questions.
 The two no-evidence questions remain in the timing record but are excluded from

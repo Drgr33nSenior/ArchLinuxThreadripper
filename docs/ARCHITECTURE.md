@@ -21,7 +21,7 @@ UEFI firmware
           ↓
 mdadm RAID0 (two equal NVMe member partitions)
           ↓
-LUKS2 (Argon2id passphrase + owner-enrolled TPM2/PIN + recovery key)
+LUKS2 (Argon2id passphrase + owner-enrolled FIDO2 touch + recovery key)
           ↓
 XFS root
 ```
