@@ -544,6 +544,10 @@ def main():
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="mode", required=True)
+    p = sub.add_parser("model-preflight", help="offline disabled Qwen4 profile diagnostics; never activates a service")
+    p.add_argument("output")
+    p.add_argument("--model-dir")
+    p.add_argument("--resource-plan")
     p = sub.add_parser("loading-plan")
     p.add_argument("deployment"); p.add_argument("evidence"); p.add_argument("output")
     p.add_argument("--threads", required=True); p.add_argument("--reserve-mib", type=int, required=True)
@@ -561,7 +565,10 @@ def main():
     p = sub.add_parser("pod-status")
     p.add_argument("pod"); p.add_argument("output")
     args = parser.parse_args()
-    if args.mode == "loading-plan":
+    if args.mode == "model-preflight":
+        from model_readiness import preflight
+        result = preflight(args.model_dir, args.resource_plan)
+    elif args.mode == "loading-plan":
         observed = evidence(args.evidence)
         result = loading_plan(json.loads(Path(args.deployment).read_text()), observed,
                               [int(value) for value in args.threads.split(",")], args.reserve_mib, args.per_thread_mib)

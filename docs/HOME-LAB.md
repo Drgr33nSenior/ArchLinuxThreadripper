@@ -2,7 +2,7 @@
 
 This is an additive profile for the existing Arch repository. It does not replace
 the EL9/KVM lab, install a second operating system, or run a cluster during tests.
-The target is the Threadripper 9960X with owner-reported 128 GB system RAM,
+The target is the Threadripper 9960X with 64 GB installed system RAM,
 two Samsung 9100 PRO NVMes, and two R9700s. Actual DIMM population, trained
 speed and Linux MemTotal must be recollected; capacity alone does not establish them. `gfx1201` is an expected input that must match `rocminfo`.
 
@@ -114,7 +114,9 @@ for offline LUKS header backup. Copy a fresh header after every keyslot change t
 separately encrypted, disconnected media; never commit it. Test the recovery
 passphrase without deleting any slot. An old header can retain old keyslot access.
 
-## 2. Secure Boot, TPM2 and PIN
+<a id="2-secure-boot-tpm2-and-pin"></a>
+
+## 2. Secure Boot and hardware-key unlock
 
 Direct UEFI boot uses firmware PK/KEK/db trust, not shim's MOK enrollment.
 The existing installer creates sbctl keys and registers/signs the UKIs. Firmware
@@ -141,7 +143,13 @@ it never transfers the private key or rebuilds modules. DKMS signs before module
 compression. Verify signing failures stop package promotion and check each
 kernel's modules before rebooting. Keep the upstream/LTS recovery path.
 
-For the requested static PCR policy, bind PCRs **0+7+11** and require a PIN.
+The home-lab install example selects `BOOT_UNLOCK=fido2`. Follow
+[the owner-local YubiKey procedure](INSTALLATION.md#6-enrol-a-yubikey-for-touch-only-unlock)
+for touch-only enrollment, protected header backups and key-absent recovery tests.
+No key reset or automatic enrollment is part of installation. The remaining
+TPM guidance applies only when explicitly selecting `BOOT_UNLOCK=tpm2-pin`.
+
+For that optional static PCR policy, bind PCRs **0+7+11** and require a PIN.
 PCR 0 changes on firmware updates; PCR 7 changes with Secure Boot state/policy;
 PCR 11 changes with UKI content and boot phases. Enrollment after login using
 literal `--tpm2-pcrs=0+7+11` normally captures the wrong PCR 11 phase for early
@@ -164,14 +172,14 @@ UKI can still fail TPM unlock. Retain the recovery passphrase, back up headers,
 and plan reenrollment after firmware/UKI changes. Signed PCR policies are a more
 maintainable alternative, but are not silently substituted for the requested
 static policy. The helper refuses existing TPM tokens rather than wiping slots.
-Passphrase and recovery-key fallback remain available. Existing FIDO2 tokens are
-optional legacy paths, not a prerequisite. PIN requirements apply to the TPM path,
+Passphrase and recovery-key fallback remain available. FIDO2 tokens remain
+independent of this optional TPM path. PIN requirements apply to the TPM path,
 not to every emergency recovery method.
 
 ### Predict the early-unlock PCR 11
 
 This is a **target-specific qualification step**, not an automatic enrollment
-feature. Start with [INSTALLATION 6.3's read-only inspection and expected results](INSTALLATION.md#63-obtain-the-correct-early-unlock-pcr-11-prediction)
+feature. Start with [INSTALLATION 6A.3's read-only inspection and expected results](INSTALLATION.md#63-obtain-the-correct-early-unlock-pcr-11-prediction)
 after Secure Boot and passphrase recovery tests. This reference covers the
 subsequent image/phase review and calculation. Keep the image hash and tool
 versions from that inspection. Use the same exact signed UKI selected for the
@@ -536,7 +544,8 @@ Before changing any application replica count, record image/model digests and pa
 the dual-GPU HIP/PyTorch/RCCL/reboot tests in [ROCM.md](ROCM.md). Then verify the
 rendered K3s containerd configuration, both allocated devices, tmpfs accounting,
 SGLang quantization, SwarmUI authentication, gaming input/encoding, private ingress,
-network-policy denials, preemption, cold TPM+PIN unlock and recovery unlock.
+network-policy denials, preemption, cold YubiKey touch-only unlock and key-absent
+recovery. Test TPM+PIN instead only when that alternative was explicitly selected.
 
 Keep last-known-good kernels, UKIs, source-built ROCm sets and runtime packages.
 Test off-array backups of PVC data, encrypted header backups and SQLite recovery.

@@ -82,3 +82,9 @@ infrastructure/sglang/serving-evidence/MXFP4-CANDIDATE-PHASE1-20261031.json
 infrastructure/sglang/serving-evidence/MXFP4-CANDIDATE-128K-20261031.json
 infrastructure/sglang/serving-evidence/LICENSE
 docs/SERVING-INTEGRATION.md
+docs/QWEN4-READINESS.md
+docs/ASSISTANT.md
+docs/WEB-SEARCH.md
+docs/GRAPHRAG.md
+docs/MEMORY.md
+docs/GPU-PROFILING.md

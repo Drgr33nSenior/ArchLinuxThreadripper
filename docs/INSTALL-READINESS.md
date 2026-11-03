@@ -5,6 +5,25 @@ command, exit status, candidate identity and result path. Keep credentials and
 raw application data outside reports. The SGLang tuning campaign is separate;
 do not interrupt its GPU owner.
 
+## Current scope
+
+Use the current 64 GB hardware budget. The assistant delivery target is the
+selected native 128K model with private WebUI, Exa search and local RAG.
+Follow [current delivery scope](ASSISTANT.md#current-delivery-scope) and
+[native candidate integration](ASSISTANT.md#native-128k-candidate-integration)
+for the remaining packaging, identity, context and quality checks. The older
+container profiles do not establish acceptance of the native candidate.
+
+QLoRA and other model fine-tuning are optional post-install work. They are
+outside current installation and service acceptance; training packages,
+datasets and training runs are not required to complete these gates.
+
+[Graphiti is the preferred session-memory pilot](MEMORY.md); GraphRAG remains
+optional on-demand document analysis. This decision adds no installation
+dependency. If shared memory is enabled for family use later, qualify its
+user/project isolation, correction/deletion, persistence and resource budget
+through the memory plan before exposing it to additional accounts.
+
 ## Before erasing the workstation
 
 | Gate | Procedure | Acceptance |
@@ -25,16 +44,19 @@ raw startup/migration logs and fixture credentials are not published.
 
 1. Run `workstationctl hardware collect` and derive `resources plan` from that
    collection. Verify actual memory, trained DIMM speed, disk identities and GPUs.
-   A planned 128 GB upgrade is not a measurement.
+   The workstation has 64 GB installed RAM; use measured Linux-visible capacity.
 2. Complete installed-system verification and the owner-run Secure Boot,
-   passphrase recovery, TPM+PIN and stable/LTS/recovery boot procedures in
+   passphrase recovery, YubiKey touch-only unlock and stable/LTS/recovery boot procedures in
    [installation](INSTALLATION.md). VM acceptance does not qualify physical paths.
 3. Follow [service target acceptance](AI-SERVICE.md#notifications-and-target-acceptance).
    Test browser login and retained chats for two users, a revocable IDE key,
    actual HTTPS streaming/disconnects, WebSockets and denied lateral access.
 4. Ingest a document and retrieve it through the browser and real IDE MCP client.
    Check citations, another user's denial, deletion and no-evidence behavior.
-   Run the existing RAG evaluation against the deployed model.
+   Run the existing RAG evaluation against the deployed model. Complete the
+   shared [web-search acceptance](WEB-SEARCH.md#provision-and-connect)
+   and the candidate quality menu, including tool-result follow-ups and
+   version-correct source citations.
 5. Build and qualify the creative runtime. Prove an image survives restart and
    gives a bounded response when unavailable. Split mode currently fails CPU
    admission; qualify a measured profile adjustment before enabling it. Do not

@@ -37,12 +37,13 @@ firmware databases, retains required vendor certificates, and verifies each UKI
 before promotion. Private keys stay on the encrypted root filesystem or
 offline, never on an ESP.
 
-New-install examples select owner-enrolled TPM2 with a PIN. The human Argon2id
-passphrase slot and separate recovery key remain available; TPM unlock is an
-additional path, not a replacement. Existing FIDO2 tokens remain optional legacy
-paths. Back up the LUKS header after every token or keyslot change. Follow
-[the TPM/PCR procedure](HOME-LAB.md#2-secure-boot-tpm2-and-pin) for enrolment and
-update-sensitive recovery planning; configuration alone is not enrolment evidence.
+New-install examples select owner-enrolled FIDO2 with touch required and PIN
+and user verification disabled. Possession of the key plus touch authorizes disk
+unlock; keep the key separate when not in use. The human Argon2id passphrase slot
+and separate recovery key remain available. Follow [YubiKey enrollment](INSTALLATION.md#6-enrol-a-yubikey-for-touch-only-unlock)
+and back up the LUKS header after every token or keyslot change. TPM2 with a PIN
+remains an explicit alternative under [the TPM/PCR procedure](HOME-LAB.md#2-secure-boot-tpm2-and-pin).
+Configuration alone does not establish enrollment or successful boot unlock.
 
 Discard is enabled by explicit policy. This leaks which encrypted blocks are
 unused but does not reveal their plaintext.

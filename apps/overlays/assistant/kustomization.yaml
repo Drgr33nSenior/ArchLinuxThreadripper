@@ -1,0 +1,21 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: ai-home-lab
+resources: [../service]
+components: [../../components/assistant]
+patches:
+  - target: {kind: Deployment, name: open-webui}
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: {name: open-webui}
+      spec:
+        template:
+          spec:
+            containers:
+              - name: open-webui
+                env:
+                  - {name: DEFAULT_MODELS, value: Qwen3.8-27B-FP8}
+                  - {name: ENABLE_IMAGE_GENERATION, value: 'false'}
+# The accepted large model owns two GPUs. Image jobs require an explicit owner
+# handover to the separately admitted split profile; never substitute the model.

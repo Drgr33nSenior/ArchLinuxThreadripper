@@ -116,6 +116,8 @@ LLAMA_HIP_EXPORT_METRICS=0
 AGENT_HARNESS=qwen
 # Qwen read-only MCP retrieval uses the caller's separate WebUI API key.
 AGENT_RETRIEVAL_ENABLED=false
+# Qwen web search/page reading shares the same MCP URL and user credential.
+AGENT_WEB_SEARCH_ENABLED=false
 # OpenAI-compatible /v1 route: HTTP only on localhost/127.0.0.1 via an owner-set
 # authenticated tunnel, or an authenticated HTTPS endpoint. No embedded passwords,
 # query strings or fragments. Supply WORKSTATION_AGENT_API_KEY via the environment.

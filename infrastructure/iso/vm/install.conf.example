@@ -38,8 +38,8 @@ RAID_CHUNK_KIB=512
 LUKS_ITER_TIME_MS=2000
 LUKS_MEMORY_KIB=1048576
 LUKS_PARALLEL=4
-# Boot unlock is fido2 or tpm2-pin. Enrol and test the selected recovery path after install.
-BOOT_UNLOCK=tpm2-pin
+# Match the physical install's FIDO2 policy; VM tests do not enroll or qualify a key.
+BOOT_UNLOCK=fido2
 # The approved design requires true. This enables SSD discard through the encrypted stack.
 ALLOW_DISCARDS=true
 

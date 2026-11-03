@@ -1,0 +1,8 @@
+{
+  "provider": "exa",
+  "monthly_requests": 1000,
+  "daily_requests": 100,
+  "requests_per_minute": 6,
+  "max_results": 3,
+  "max_content_chars": 6000
+}

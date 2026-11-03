@@ -178,12 +178,17 @@ and [Hermes configuration
 example](https://github.com/NousResearch/hermes-agent/blob/13fb5e1eceba51fc45a48b5d95a357e144d42689/cli-config.yaml.example)
 before changing these modes.
 
-The generated clients do not automatically inherit the RAG pilot, an Open WebUI
-collection, persistent agent memory, or database access. The RAG pilot has no
-IDE tool endpoint. Add an MCP server only after its tool scope, authentication,
-input handling, audit record, and read/write permissions have been reviewed. A
-first MCP integration should be an authenticated, read-only retrieval tool; it
-must not expose raw Chroma data or Kubernetes credentials.
+The generated clients do not automatically inherit an Open WebUI collection,
+shared session memory or database access. The opt-in Qwen MCP bundle exposes
+only its selected document/web tools with the caller's separate credential.
+Those permissions do not grant memory writes or raw Chroma access.
+
+The pinned Qwen Code supports local `AGENTS.md`/`QWEN.md` briefings and automatic
+Markdown memory. That capability is separate from a shared browser/coding store
+and still needs model-specific qualification. The [continuity plan](MEMORY.md)
+selects Graphiti as the next shared memory pilot and keeps a short project
+handoff. Review memory-tool authentication, input handling, audit records and
+read/write scopes separately; no memory MCP endpoint is implemented here.
 
 All clients address the same SGLang model instance. A second harness does not
 create another GPU allocation, extra model replica, or independent VRAM pool.

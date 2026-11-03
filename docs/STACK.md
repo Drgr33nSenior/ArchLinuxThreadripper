@@ -36,8 +36,9 @@ outputs. Edit the source and regenerate both previews; do not edit them separate
   before starting the selected workload. It does not implement simultaneous
   one-GPU AI and one-GPU gaming. New managed builds are inhibited during gaming;
   already-running or unrelated builds are not stopped automatically.
-- The owner reports 128 GB RAM. DIMM population, trained speed and Linux-visible
-  capacity remain unmeasured in this checkout; collect and regenerate budgets.
+- The workstation has 64 GB installed RAM.
+  Recollect DIMM population, trained speed and Linux-visible capacity before
+  regenerating budgets.
 - Node-local PVCs, native caches and files use the encrypted NVMe-backed root.
   PVC size requests are not filesystem quotas. RAID0 has no data redundancy;
   the second ESP provides another boot copy, not another copy of root data.

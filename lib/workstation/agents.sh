@@ -8,8 +8,12 @@ ws_agent_config_validate() {
   : "${AGENT_CONTEXT_TOKENS:=32768}"
   : "${AGENT_MAX_OUTPUT_TOKENS:=4096}"
   : "${AGENT_RETRIEVAL_ENABLED:=false}"
+  : "${AGENT_WEB_SEARCH_ENABLED:=false}"
   case $AGENT_RETRIEVAL_ENABLED in true | false) ;; *) ws_die 'AGENT_RETRIEVAL_ENABLED must be true or false' ;; esac
+  case $AGENT_WEB_SEARCH_ENABLED in true | false) ;; *) ws_die 'AGENT_WEB_SEARCH_ENABLED must be true or false' ;; esac
   [[ $AGENT_RETRIEVAL_ENABLED != true || $AGENT_BASE_URL == https://* ]] || ws_die 'shared retrieval requires the HTTPS service endpoint'
+  [[ $AGENT_WEB_SEARCH_ENABLED != true || $AGENT_BASE_URL == https://* ]] || ws_die 'shared web search requires the HTTPS service endpoint'
+  [[ $AGENT_WEB_SEARCH_ENABLED != true || $AGENT_HARNESS == qwen ]] || ws_die 'shared web search bundle currently supports Qwen Code; other clients need separate MCP qualification'
   case $AGENT_HARNESS in qwen | dsh | hermes) ;; *) ws_die 'AGENT_HARNESS must be qwen, dsh or hermes' ;; esac
   # Deliberately narrow API URLs: no credentials, query strings or redirects.
   # Plain HTTP is only for an owner-established loopback tunnel.
@@ -55,7 +59,7 @@ ws_agent_configure() (
   local output=$1 qwen_commit dsh_commit hermes_commit qwen_version retrieval=''
   common::require_command jq
   ws_agent_config_validate
-  [[ $AGENT_RETRIEVAL_ENABLED != true ]] || retrieval="${AGENT_BASE_URL%/v1}/mcp"
+  [[ $AGENT_RETRIEVAL_ENABLED != true && $AGENT_WEB_SEARCH_ENABLED != true ]] || retrieval="${AGENT_BASE_URL%/v1}/mcp"
   [[ -n $output && ! -e $output && ! -L $output ]] || ws_die 'agent output directory must not already exist'
   qwen_commit=$(ws_read_lock QWEN_CODE_COMMIT)
   qwen_version=$(ws_read_lock QWEN_CODE_VERSION)
@@ -70,6 +74,7 @@ ws_agent_configure() (
   # writes to existing dotfiles, or secondary model services are involved.
   jq -n --arg url "$AGENT_BASE_URL" --arg model "$AGENT_MODEL" \
     --arg retrieval "$retrieval" \
+    --argjson retrieval_enabled "$AGENT_RETRIEVAL_ENABLED" --argjson search_enabled "$AGENT_WEB_SEARCH_ENABLED" \
     --argjson context "$AGENT_CONTEXT_TOKENS" --argjson output "$AGENT_MAX_OUTPUT_TOKENS" \
     '{general:{enableAutoUpdate:false},privacy:{usageStatisticsEnabled:false},telemetry:{enabled:false},
       security:{auth:{selectedType:"openai"},folderTrust:{enabled:true}},
@@ -80,7 +85,8 @@ ws_agent_configure() (
           samplingParams:{max_tokens:$output}}}]} } +
       (if $retrieval=="" then {} else {mcpServers:{workstationKnowledge:{httpUrl:$retrieval,
         headers:{Authorization:"Bearer ${WORKSTATION_RETRIEVAL_API_KEY}"},trust:false,timeout:35000,
-        includeTools:["retrieve_project_passage"]}}} end)' >"$output/qwen/settings.json"
+        includeTools:((if $retrieval_enabled then ["retrieve_project_passage"] else [] end) +
+                      (if $search_enabled then ["search_web","read_web_page"] else [] end))}}} end)' >"$output/qwen/settings.json"
   jq -n --arg url "$AGENT_BASE_URL" --arg model "$AGENT_MODEL" \
     --argjson context "$AGENT_CONTEXT_TOKENS" --argjson output "$AGENT_MAX_OUTPUT_TOKENS" \
     '{"agent-default-model":{provider:"workstation",model:$model},

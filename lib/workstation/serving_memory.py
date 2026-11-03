@@ -19,6 +19,90 @@ from telemetry import validate_evidence
 MIB = 1024**2
 
 
+def resource_memory(resource):
+    """Use the existing observed two-GPU resource plan, never planned DIMMs."""
+    memory = resource["memory"]
+    reserves = sum(integer(memory[key]) for key in ("host_reserve_mib", "kube_reserve_mib", "eviction_mib"))
+    if (resource.get("schema_version") != 1 or resource.get("status") != "offline-plan-not-applied" or resource.get("gpu_count") != 2
+            or not 0 < integer(memory["allocatable_mib"]) == integer(memory["total_mib"]) - reserves
+            or reserves <= 0):
+        raise ValueError("require the existing discovered two-GPU resource plan with host headroom")
+    return memory
+
+
+def model_memory_estimate(config, inventory, resource=None):
+    """Partial storage accounting, NOT admission or an observed runtime peak.
+
+    Categories are name-based diagnostics; actual partition/loader rules must
+    be reviewed against the released checkpoint. Unknown costs stay null.
+    """
+    categories = dict.fromkeys(("main_weights", "unquantized_tensors", "scales",
+                               "embedding_tables", "mtp_weights"), 0)
+    for name, row in (inventory or {}).get("tensors", {}).items():
+        if "scale" in name:
+            category = "scales"
+        elif "mtp" in name or "nextn" in name:
+            category = "mtp_weights"
+        elif "ngram_embedding" in name or "ple_embedding" in name:
+            category = "embedding_tables"
+        elif row["dtype"].startswith("F8_"):
+            category = "main_weights"
+        else:
+            category = "unquantized_tensors"
+        categories[category] += row["bytes"]
+    total = sum(categories.values()) if inventory else None
+    # Storage / TP is arithmetic only: loaders may skip MTP/vision tensors or
+    # convert dtypes. It is not a lower bound on resident device memory.
+    report = {"status": "estimate-incomplete-not-admission", "tensor_storage_bytes": categories if inventory else None,
+              "total_tensor_storage_bytes": total, "tensor_parallel": 2,
+              "checkpoint_storage_half_bytes": (total + 1)//2 if total is not None else None,
+              "per_rank_weight_bytes": [None, None], "external_draft_weights_bytes": 0,
+              "kv_bf16_full_context_per_rank_bytes": None, "active_recurrent_fp32_per_rank_bytes": None,
+              "active_gdn_convolution_bf16_per_rank_bytes": None,
+              "qsa_indexer_cache_bytes": None, "ple_history_convolution_bytes": None,
+              "prefix_and_speculative_state_slots_bytes": None,
+              "graph_capture_bytes": None, "temporary_workspace_bytes": None,
+              "loading_peak_per_rank_bytes": [None, None], "host_loading_peak_bytes": None,
+              "host_offload": {"enabled": False, "resident_bytes": None,
+                               "transfer_bytes_per_token": None, "bandwidth_bytes_per_second": None,
+                               "latency_seconds": None},
+              "observed_host_plan": None, "observed_gpu_free_bytes": [None, None],
+              "blockers": ["resources: actual per-rank weights, loading peaks, state pools, graphs and workspace budgets unresolved",
+                           "resources: fresh GPU free-memory/admission and other-workload budgets required"]}
+    if resource is not None:
+        try:
+            report["observed_host_plan"] = resource_memory(resource)
+        except (KeyError, TypeError, ValueError) as error:
+            report["blockers"].append("resources: invalid observed resource plan: " + str(error))
+    else:
+        report["blockers"].append("resources: observed host resource plan missing; planned 128 GB is not a measurement")
+    if config:
+        # Explicit metadata only; no layer count or geometry inferred from 27B.
+        def valid(*keys):
+            return all(type(config.get(k)) is int and config[k] > 0 for k in keys)
+        layers = config.get("layer_types")
+        if isinstance(layers, list) and len(layers) == config.get("num_hidden_layers"):
+            attention = sum(k in ("full_attention", "indexed_attention", "qwen_sparse_attention") for k in layers)
+            recurrent = layers.count("linear_attention")
+            kv = config.get("num_key_value_heads")
+            if valid("num_key_value_heads", "head_dim") and (kv % 2 == 0 or kv == 1):
+                report["kv_bf16_full_context_per_rank_bytes"] = attention * 2 * max(1, kv//2) * config["head_dim"] * 2 * 32768 * 2
+            if valid("linear_num_value_heads", "linear_num_key_heads", "linear_key_head_dim",
+                     "linear_value_head_dim", "linear_conv_kernel_dim"):
+                v, k = config["linear_num_value_heads"], config["linear_num_key_heads"]
+                if v % 2 == 0 and k % 2 == 0:
+                    dk, dv = config["linear_key_head_dim"], config["linear_value_head_dim"]
+                    report["active_recurrent_fp32_per_rank_bytes"] = recurrent * 2 * (v//2) * dk * dv * 4
+                    report["active_gdn_convolution_bf16_per_rank_bytes"] = recurrent * 2 * (2*k*dk+v*dv)//2 * (config["linear_conv_kernel_dim"]-1) * 2
+    report["assumptions"] = ["BF16 KV envelope: 32768 tokens per request, two requests, TP2; no QSA storage discount",
+                             "FP32 recurrent lower bound: two active slots; prefix/speculative history and padding excluded",
+                             "Weight categories use tensor names/dtypes, not an authenticated loader partition; storage / TP is not resident memory",
+                             "Largest shard is a transfer input, not a bound on host or device loading peaks",
+                             "No inference resource limit is changed; host RAM cannot enlarge GPU VRAM"]
+    report["largest_shard_bytes"] = max((r["bytes"] for r in (inventory or {}).get("files", {}).values()), default=None)
+    return report
+
+
 def integer(value):
     if isinstance(value, bool) or not re.fullmatch(r"[0-9]+", str(value)):
         raise ValueError("missing or invalid nonnegative memory counter")
@@ -200,12 +284,7 @@ def plan(deployment_path, workload_path, resource_path, observations, other_mib,
     shm_mib = mib(shm[0]["emptyDir"]["sizeLimit"])
     if not 0 < shm_mib < old:
         raise ValueError("shared memory must fit inside the pod budget")
-    memory = resource["memory"]
-    reserves = sum(integer(memory[key]) for key in ("host_reserve_mib", "kube_reserve_mib", "eviction_mib"))
-    if (resource.get("schema_version") != 1 or resource.get("status") != "offline-plan-not-applied" or resource.get("gpu_count") != 2
-            or not 0 < integer(memory["allocatable_mib"]) == integer(memory["total_mib"]) - reserves
-            or reserves <= 0):
-        raise ValueError("require the existing discovered two-GPU resource plan with host headroom")
+    memory = resource_memory(resource)
     lock_path = Path(__file__).resolve().parents[2]/"versions.lock"
     lock_data = lock_path.read_bytes()
     inputs.hashes[str(lock_path)] = hashlib.sha256(lock_data).hexdigest()

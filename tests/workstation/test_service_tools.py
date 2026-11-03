@@ -131,6 +131,28 @@ class ToolsTests(unittest.IsolatedAsyncioTestCase):
         fetch = next(r for r in self.calls if r.url.path == "/" + self.artifact_path)
         self.assertEqual(b"/View/local/raw/a%20red%20cabin.png", fetch.url.raw_path)
 
+    async def test_distinct_image_requests_do_not_mutate_the_loaded_workflow(self):
+        for prompt, size in (("first landscape", "512x512"), ("second landscape", "1024x1024")):
+            response = await self.client.post("/webui/images/generations", headers=self.headers,
+                json={**self.image, "prompt": prompt, "size": size, "n": 1, "response_format": "b64_json"})
+            self.assertEqual(200, response.status_code)
+        jobs = [json.loads(r.content) for r in self.calls if r.url.path == "/API/GenerateText2Image"]
+        self.assertEqual([512, 1024], [json.loads(j["comfyworkflowraw"])["4"]["inputs"]["width"] for j in jobs])
+        self.assertEqual(["first landscape", "second landscape"], [j["prompt"] for j in jobs])
+        self.assertEqual("", self.tools.image_workflow["2"]["inputs"]["text"])
+        self.assertEqual(0, self.tools.image_workflow["5"]["inputs"]["seed"])
+        health = (await self.client.get("/health")).json()
+        self.assertEqual("workstation-sdxl", health["image_profile"])
+        self.assertEqual(64, len(health["workflow_sha256"]))
+
+    async def test_unsupported_images_never_reach_swarm(self):
+        for change in ({"model": "unqualified-flux"}, {"n": True}, {"n": 2}, {"size": "2048x2048"},
+                       {"prompt": "${workflow}"}, {"workflow": {"class_type": "untrusted"}}):
+            response = await self.client.post("/webui/images/generations", headers=self.headers,
+                                              json={**self.image, **change})
+            self.assertEqual(400, response.status_code)
+        self.assertEqual([], self.calls)
+
     async def test_failed_cancellation_survives_restart_and_blocks_duplicate_job(self):
         self.slow, self.cancel_ack = True, False
         response = await self.client.post("/webui/images/generations", headers=self.headers, json=self.image)

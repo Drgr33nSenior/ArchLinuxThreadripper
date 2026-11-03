@@ -25,14 +25,79 @@ it is not a substitute for any of those stores.
 | Qdrant | Alternative to pgvector, not an additional default service | Open WebUI currently treats its connector as non-core; qualify the connector before upgrades |
 | Cross-encoder reranking | Deferred until the baseline has measured retrieval failures | Pin a model and test citation/retrieval accuracy versus added latency; no cross-encoder is loaded in this pilot |
 | Qwen3-Embedding-0.6B | Replace MiniLM for the disabled CPU pilot | [Author model card](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B); use the native query prefix, 1,024 dimensions and a new index |
-| Persistent project memory | Design notes only; no automatic memory writer or IDE endpoint | Store approved decisions with source, date, scope, supersession and deletion. Do not treat generated summaries as measured facts |
-| GraphRAG | Defer until questions need relationships across sources | [Microsoft GraphRAG](https://microsoft.github.io/graphrag/); test multi-document relationship questions before accepting the indexing cost |
+| Persistent project memory | Prioritise the [Graphiti continuity pilot](MEMORY.md); shared integration remains planned | Compare with native client memory plus a compact handoff; verify provenance, corrections, isolation and measured resource use |
+| GraphRAG | Optional on-demand [document-analysis pilot](GRAPHRAG.md), standard indexing/global search with local completions | Retain cross-document comparisons; Graphiti is the preferred memory pilot. No standing graph service or installation gate |
 | PDF/diagram ingestion | Defer OCR, Docling and multimodal models; pilot accepts Markdown/text | Qualify extraction and bound peak ingestion RAM before adding document types |
 | Prefix/HiCache | Separate experiment; do not enable host KV offload here | [SGLang HiCache](https://docs.sglang.io/docs/advanced_features/hicache_best_practices); verify the pinned AMD backend and measure cache hits, RAM, bandwidth and time to first token |
 
 IDE agents will need an authenticated retrieval-tool integration. This pilot
 does not expose raw database access or add a new agent framework. A local
 database does not keep snippets local if an agent sends them to a cloud model.
+
+The [continuity decision](MEMORY.md) separates evolving user/project memory,
+active task handoffs, public Exa evidence and exact local document retrieval.
+Graphiti integration and footprint remain unqualified; it is not assumed to be
+smaller than this file-based GraphRAG experiment.
+
+## Programming books and later model adaptation
+
+Use programming books as a private reference corpus first. A 27B model's size
+does not establish whether it knows a particular book, recalls its examples
+accurately or distinguishes editions and dependency versions. Retrieved source
+passages can supply that evidence without changing model weights.
+
+Start with one chapter and representative coding questions. Compare the same
+model without retrieval and with hybrid retrieval; add GraphRAG as an optional
+cross-document comparison. Prefer exact source passages for code, API details
+and version-specific instructions. Use
+the graph comparison for relationships across chapters, authors or design
+principles. The current GraphRAG pilot tests global community-report search;
+it does not implement GraphRAG local search or replace original code with a
+verified executable representation. See [GraphRAG query methods](https://microsoft.github.io/graphrag/query/overview/).
+
+Kindle ingestion is planned, not implemented. Obtain a readable EPUB, PDF or
+text copy before conversion. Amazon permits EPUB/PDF downloads for eligible
+purchased DRM-free titles when the publisher enables that option; check
+Manage Your Content and Devices or the publisher's download service. This
+availability does not apply to every Kindle title. See
+[Amazon's download guidance](https://kdp.amazon.com/en_US/help/topic/GDDXGH9VR22ACM8U).
+Neither pilot reads a Kindle account or imports a Kindle library directly.
+
+Before a chapter enters either corpus:
+
+1. Review the selected content and its permitted use. Keep the book, extracted
+   text and derived index within the owner's private collection.
+2. Convert to Markdown/text and inspect headings, code indentation, tables,
+   equations and diagram references. Preserve complete code examples and their
+   surrounding explanation; record extraction omissions.
+3. Retain title, author, edition, chapter/section, applicable language/library
+   versions, source hash and access scope with each extract. Do not merge
+   conflicting editions without identifying them.
+4. Prepare a new explicit corpus through a reviewed ingestion/profile change.
+   The GraphRAG pilot currently requires its three project documents and caps
+   the corpus at 8 Markdown inputs / 64 KiB. Whole-book or EPUB/PDF ingestion
+   needs separate implementation and resource qualification.
+
+Evaluate supported answers, usable citations, executable code where relevant,
+version accuracy, elapsed time, prompt size, indexing calls and peak memory.
+Retrieving a few passages can reduce context compared with supplying complete
+books. Retrieval and graph construction also add work; faster inference or
+better answers are not established by ingestion alone.
+
+QLoRA remains optional post-install work. It trains adapters through a frozen
+quantized base model; it is not a document index or a guarantee of exact factual
+recall. For personalisation, first collect reviewed coding tasks, tested
+solutions, useful corrections and project conventions. Book passages can
+support those examples. Training on raw prose is possible, but does not by
+itself specify the desired coding-assistant behaviour. Keep evaluation tasks
+separate from the training examples. Retrieval and adaptation can complement
+one another; [RAFT](https://arxiv.org/abs/2403.10131) studies training models to
+use retrieved evidence. See also the [QLoRA paper](https://arxiv.org/abs/2305.14314).
+
+Qualify a separate training environment, quantization format, adapter-serving
+path and memory budget before training. The native Quark AWQ MXFP4 inference
+candidate is not an already-qualified QLoRA training checkpoint. No training,
+dataset generation or ingestion runs during installation.
 
 ## Inputs and configuration
 
@@ -118,8 +183,8 @@ This is an admission cap, not evidence that the CPU embedding load fits every
 concurrent workload. Do not enable every scaffold at once. No swap, RAM-backed
 corpus, GPU sharing or new ROCm dependency is introduced.
 
-The current owner-reported capacity is 128 GB. Recollect DIMM population, trained
-speed, topology and MemTotal; do not infer a four-DIMM layout. Keep the 6 GiB cap
+The current installed capacity is 64 GB. Recollect DIMM population, trained
+speed, topology and MemTotal. Keep the 6 GiB cap
 and current ingestion concurrency until a separate worker/batch sweep measures
 pressure alongside the service budget. The authenticated read-only MCP path in
 [AI-SERVICE.md](AI-SERVICE.md) reuses this store and its access checks; no second

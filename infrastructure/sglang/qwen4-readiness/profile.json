@@ -1,0 +1,159 @@
+{
+  "schema": 1,
+  "profile": "qwen4-readiness",
+  "automatic_apply": false,
+  "qualification": "blocked-unreleased-dense-checkpoint",
+  "model": {
+    "repository": null,
+    "revision": null,
+    "license": null,
+    "architecture": null,
+    "tokenizer_sha256": null
+  },
+  "image": null,
+  "reviewed_at": "2026-10-25",
+  "reviewed_sources": {
+    "intel": {
+      "revision": "265bbe2b85a2caf0f0a0c1835f2f0d4fd4a162e2",
+      "pull_request": "https://github.com/analytics-zoo/vllm-xpu-kernels/pull/22",
+      "merge_commit": "f597f304a6e3d4874b733bc8e5ce31806ec35785"
+    },
+    "sglang": {
+      "revision": "39b54ae0eeca90f7097b22fe016e9212523a5968",
+      "repository": "https://github.com/sgl-project/sglang"
+    },
+    "transformers": {
+      "revision": "05a2d95bf36096f79a85af682ac387beb68f447b",
+      "repository": "https://github.com/huggingface/transformers"
+    },
+    "flash_next": {
+      "revision": "de4b8e4d43b917e7706784d8bb445c9af86a3540",
+      "repository": "Qwen/Qwen3.8-Flash-Next",
+      "role": "architecture reference only; not dense Qwen4"
+    }
+  },
+  "evidence_files": [
+    {
+      "url": "https://raw.githubusercontent.com/analytics-zoo/vllm-xpu-kernels/265bbe2b85a2caf0f0a0c1835f2f0d4fd4a162e2/custom-kernels-inventory.md",
+      "sha256": "2296ed23843f92c89d6253044a83000cb0e6ef160e7c0f8f2c4893c0728333a0",
+      "bytes": 10658
+    },
+    {
+      "url": "https://raw.githubusercontent.com/huggingface/transformers/05a2d95bf36096f79a85af682ac387beb68f447b/docs/source/en/model_doc/qwen4_exp.md",
+      "sha256": "bc67613116d6d28ae5a0e64033f6bcaa3f7600b4a841b4569509b5f855796788",
+      "bytes": 4614
+    },
+    {
+      "url": "https://raw.githubusercontent.com/huggingface/transformers/05a2d95bf36096f79a85af682ac387beb68f447b/src/transformers/models/qwen4_exp/configuration_qwen4_exp.py",
+      "sha256": "bb1d71db625fb50d1bf86589032edaa9c0f00f8ba2b9f1d06946aa0a8eeae246",
+      "bytes": 16120
+    },
+    {
+      "url": "https://raw.githubusercontent.com/huggingface/transformers/05a2d95bf36096f79a85af682ac387beb68f447b/src/transformers/models/qwen4_exp/modeling_qwen4_exp.py",
+      "sha256": "e57b3617e71e81ecb7e5ae3b420c45b5aee80d76a07aa8c88b797c2642f1f5df",
+      "bytes": 122153
+    },
+    {
+      "url": "https://raw.githubusercontent.com/sgl-project/sglang/39b54ae0eeca90f7097b22fe016e9212523a5968/python/sglang/srt/models/qwen4_exp.py",
+      "sha256": "19fcdf661e5b2c745823a8b914a48ae7d73d102c4b82f1f60997e5ad733116cc",
+      "bytes": 105447
+    },
+    {
+      "url": "https://raw.githubusercontent.com/sgl-project/sglang/39b54ae0eeca90f7097b22fe016e9212523a5968/python/sglang/srt/models/qwen4_exp_mtp.py",
+      "sha256": "f3978dcf93a5758c48060328d39af5de4cd34c28fecfb3856c9ac5b96fe94d6d",
+      "bytes": 8805
+    },
+    {
+      "url": "https://huggingface.co/Qwen/Qwen3.8-Flash-Next/raw/de4b8e4d43b917e7706784d8bb445c9af86a3540/README.md",
+      "sha256": "35ca37ccc366f1ba478dab33841a2c0c18ce53fd62f291ca05341f7728b225b2",
+      "bytes": 65155
+    },
+    {
+      "url": "https://huggingface.co/Qwen/Qwen3.8-Flash-Next/raw/de4b8e4d43b917e7706784d8bb445c9af86a3540/config.json",
+      "sha256": "889658f2508e8c61d409b02e70e0d78d8d4452ec65aaafbe129805d213d2e74b",
+      "bytes": 4745
+    },
+    {
+      "url": "https://api.github.com/repos/intel-innersource/applications.ai.gpu.llm-scaler-vllm/pulls/51",
+      "error": "HTTP Error 404: Not Found"
+    },
+    {
+      "url": "https://huggingface.co/api/models?author=Qwen&search=Qwen4&limit=100",
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "bytes": 2
+    },
+    {
+      "url": "https://raw.githubusercontent.com/sgl-project/sglang/39b54ae0eeca90f7097b22fe016e9212523a5968/python/sglang/kernels/ops/quantization/fp8_kernel.py",
+      "sha256": "1913b690b331170ae722874a3e27ca41fadbcc560ab0c0490e62e482d2c7fe67"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/sgl-project/sglang/39b54ae0eeca90f7097b22fe016e9212523a5968/python/sglang/srt/configs/qwen4_exp.py",
+      "sha256": "dc575dc836041b42f6a747f9edc46f3b3067bf6a779d47908320d0d187e0f803"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/sgl-project/sglang/39b54ae0eeca90f7097b22fe016e9212523a5968/python/sglang/srt/layers/attention/qsa/__init__.py",
+      "sha256": "e51d714ac268b8c70db70992c009a8c6644922d3e83595bdc779d0bfecaad1c5"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/sgl-project/sglang/39b54ae0eeca90f7097b22fe016e9212523a5968/python/sglang/srt/layers/attention/qsa/config.py",
+      "sha256": "54a7f0f88f189b9174ef04f722abd03f125de524209274ff80c9794849f36e3e"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/sgl-project/sglang/39b54ae0eeca90f7097b22fe016e9212523a5968/python/sglang/srt/layers/attention/qsa/fused_kv.py",
+      "sha256": "f02714d27d7af9c7604e0cc99bc9c6d3b3dc53ce8025a3e1d6bfd3f874b38a4b"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/sgl-project/sglang/39b54ae0eeca90f7097b22fe016e9212523a5968/python/sglang/srt/layers/attention/qsa/glue.py",
+      "sha256": "025fd7a4e72dd6948d692282dbe56f73c1c1d2b66e40d3b9e83b3a196f17115e"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/sgl-project/sglang/39b54ae0eeca90f7097b22fe016e9212523a5968/python/sglang/srt/layers/attention/qsa/graph_metadata.py",
+      "sha256": "aa5925eb0f0984708c227d808b2e46f7507d87841d20b4282f0aeb5484b29683"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/sgl-project/sglang/39b54ae0eeca90f7097b22fe016e9212523a5968/python/sglang/srt/layers/attention/qsa/kernel.py",
+      "sha256": "70e46af04aaf81fa0e75cf4ca2a9bb93dac1b781c6af5a6edb17794dff0fa491"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/sgl-project/sglang/39b54ae0eeca90f7097b22fe016e9212523a5968/python/sglang/srt/layers/attention/qsa/metadata.py",
+      "sha256": "a7faf9694eaf7ebfda97d22a08631bd69377ef317cfb3209d7b575dfbeeced20"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/sgl-project/sglang/39b54ae0eeca90f7097b22fe016e9212523a5968/python/sglang/srt/layers/attention/qsa/mqa.py",
+      "sha256": "358d4ba68a4b30b3cfe6b60fda261d2e0a11b3e3a44d3b2d8c906ca51733fde1"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/sgl-project/sglang/39b54ae0eeca90f7097b22fe016e9212523a5968/python/sglang/srt/layers/attention/qsa/qsa_indexer.py",
+      "sha256": "d21eb08e7f1c9da3f996ccebe306078ed1b24b0bc3d774ff9b03b8f990d85c1c"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/sgl-project/sglang/39b54ae0eeca90f7097b22fe016e9212523a5968/python/sglang/srt/layers/attention/qsa/sparse_attn.py",
+      "sha256": "e15dcff8682cf1c72aa6b743586065fd1846b74c2d8043b9bc4376a69db615b7"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/sgl-project/sglang/39b54ae0eeca90f7097b22fe016e9212523a5968/python/sglang/srt/configs/mamba_utils.py",
+      "sha256": "659d941b57b6960f1144e7c6a6e0449ea630b273ea69cb4f89312c10e0a8ff11",
+      "bytes": 14158
+    }
+  ],
+  "baseline_policy": {
+    "tensor_parallel": 2,
+    "context_length_ceiling": 32768,
+    "max_running_requests_ceiling": 2,
+    "speculation": null,
+    "external_drafter": null,
+    "graph_capture": false,
+    "host_offload": false,
+    "lossy_communication": false,
+    "additional_quantization": false,
+    "kv_dtype": "bfloat16",
+    "note": "Evaluation constraints, not launch arguments or a model specification; preserve selected profiles."
+  },
+  "runtime_dependencies": null,
+  "offline_staging": [
+    "Official dense model card, licence, config, tokenizer, chat template and all safetensors at one reviewed immutable revision, with independent file verification",
+    "Separate digest-pinned ROCm image and complete source/dependency/ABI/build inventory; no moving upstream install",
+    "Observed hardware/resource plan and same-boot session/Bridge admission",
+    "Per-rank loading and steady memory, kernel dispatch, numerical and lifecycle evidence"
+  ]
+}

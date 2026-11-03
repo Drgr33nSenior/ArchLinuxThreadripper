@@ -1,1 +1,2 @@
-@CRYPT_NAME@ UUID=@LUKS_UUID@ none fido2-device=auto,token-timeout=5s,password-echo=no,discard,x-initrd.attach
+# Touch/PIN requirements are stored in the owner-enrolled FIDO2 LUKS token.
+@CRYPT_NAME@ UUID=@LUKS_UUID@ none fido2-device=auto,token-timeout=30s,password-echo=no,discard,x-initrd.attach

@@ -118,6 +118,129 @@ class BoundaryTests(unittest.IsolatedAsyncioTestCase):
             await task
         self.assertFalse(self.gateway.active)
 
+    async def test_browser_tool_roundtrip_preserves_reasoning_and_result_identity(self):
+        tool = {"type": "function", "function": {"name": "search_web", "parameters": {
+            "type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}}
+        call = {"id": "call-search-1", "type": "function", "function": {
+            "name": "search_web", "arguments": '{"query":"SGLang documentation"}'}}
+        answer = {"role": "assistant", "content": "17 entries [source](https://example.com/cache)"}
+        result = {"role": "tool", "tool_call_id": call["id"], "content": '{"capacity":17}'}
+        headers = {b"authorization": b"Bearer " + b"s" * 32, b"x-openwebui-user-id": b"alice"}
+        for thinking in (False, True):
+            seen = []
+            async def backend(scope, receive, send):
+                body = json.loads((await receive())["body"])
+                seen.append((scope, body))
+                message = {"role": "assistant", "content": None, "tool_calls": [call]} if len(seen) == 1 else answer
+                await boundary.reply(send, 200, {"choices": [{"message": message,
+                    "finish_reason": "tool_calls" if len(seen) == 1 else "stop"}]})
+            self.gateway.app = backend
+            initial = {**self.chat, "tools": [tool], "tool_choice": "auto",
+                       "chat_template_kwargs": {"enable_thinking": thinking}, "temperature": 1.0}
+            first = await request(self.gateway, "/webui/v1/chat/completions", initial, headers)
+            message = json.loads(first[-1]["body"])["choices"][0]["message"]
+            self.assertEqual([call], message["tool_calls"])
+            followup = {**initial, "messages": initial["messages"] + [message, result]}
+            final = await request(self.gateway, "/webui/v1/chat/completions", followup, headers)
+            self.assertEqual(answer, json.loads(final[-1]["body"])["choices"][0]["message"])
+            self.assertEqual(2, len(seen))
+            self.assertEqual(followup["messages"], seen[1][1]["messages"])
+            for scope, body in seen:
+                self.assertEqual(b"Bearer sk-" + b"a" * 32, dict(scope["headers"])[b"authorization"])
+                self.assertEqual({"enable_thinking": thinking}, body["chat_template_kwargs"])
+                self.assertEqual([tool], body["tools"])
+                self.assertEqual("auto", body["tool_choice"])
+            self.assertFalse(self.gateway.active)
+
+
+class CandidatePlanTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        self.pointer = self.root / "pointer.json"
+        self.record = {"schema": 1, "candidate_selected": True,
+            "candidate_package_base": {"package_sha256": "a" * 64,
+                "selected_arm": {"logical": "mtp", "physical": "kv4", "start": 2, "operation": 174}},
+            "selected_runtime": {"logical_arm": "mtp", "physical_arm": "kv4", "start": 2,
+                "canonical_server_cli": ["--served-model-name", "fp8-serving-screen", "--revision", "b" * 40,
+                    "--context-length", "131040", "--max-total-tokens", "262144",
+                    "--max-running-requests", "2", "--tp-size", "2", "--quantization", "quark",
+                    "--kv-cache-dtype", "bf16", "--api-key", "synthetic-value-must-not-leave-input"],
+                "resolved_contract": {"context_length": 131040, "max_total_tokens": 262144,
+                    "max_running_requests": 2, "tp_size": 2}}}
+
+    def save(self):
+        self.pointer.write_text(json.dumps(self.record))
+        return service.sha(self.pointer)
+
+    def test_plan_records_candidate_mismatches_without_promoting_or_leaking_cli(self):
+        expected = self.save()
+        before = service.sha(ROOT / "apps/base/shared-api/boundary.py")
+        output = self.root / "plan"
+        service.candidate_plan(SimpleNamespace(pointer=self.pointer, pointer_sha256=expected,
+                                             output=output, output_tokens=4096))
+        report = json.loads((output / "integration-plan.json").read_text())
+        contract = json.loads((output / "candidate-contract.json").read_text())
+        client = json.loads((output / "client-values.json").read_text())
+        self.assertEqual("blocked-integration", report["status"])
+        self.assertFalse(report["deployment_ready"])
+        self.assertFalse(report["output_cap_qualified"])
+        self.assertEqual(service.sha(Path(service.__file__)), report["planner_sha256"])
+        self.assertRegex(report["assistant_source_sha256"], r"^[a-f0-9]{64}$")
+        self.assertTrue(all(not check["matches"] for check in report["checks"]))
+        self.assertEqual(131040, contract["context_length"])
+        self.assertEqual("fp8-serving-screen", client["AGENT_MODEL"])
+        self.assertEqual(131040, client["AGENT_CONTEXT_TOKENS"])
+        self.assertEqual(4096, client["AGENT_MAX_OUTPUT_TOKENS"])
+        self.assertTrue(client["endpoint_required"])
+        self.assertIsNone(contract["tool_call_parser"])
+        for filename, digest in report["files"].items():
+            self.assertEqual(digest, service.sha(output / filename))
+        for path in output.iterdir():
+            self.assertNotIn("synthetic-value-must-not-leave-input", path.read_text())
+            self.assertNotIn("--api-key", path.read_text())
+        self.assertEqual(before, service.sha(ROOT / "apps/base/shared-api/boundary.py"))
+        self.assertEqual(expected, service.sha(self.pointer))
+
+    def test_unpinned_unselected_mixed_arm_and_contract_drift_are_refused(self):
+        for mutation in ("digest", "selected", "arm", "context", "duplicate", "symlink"):
+            with self.subTest(mutation=mutation):
+                original = json.loads(json.dumps(self.record))
+                if mutation == "selected": self.record["candidate_selected"] = False
+                if mutation == "arm": self.record["selected_runtime"]["logical_arm"] = "control"
+                if mutation == "context": self.record["selected_runtime"]["resolved_contract"]["context_length"] = 32768
+                if mutation == "duplicate": self.record["selected_runtime"]["canonical_server_cli"] += ["--context-length", "32768"]
+                expected = self.save()
+                target = self.pointer
+                if mutation == "digest": expected = "0" * 64
+                if mutation == "symlink":
+                    target = self.root / "link.json"
+                    target.symlink_to(self.pointer)
+                with self.assertRaises(ValueError):
+                    service.candidate_contract(target, expected)
+                self.record = original
+
+    def test_output_budget_is_separate_and_invalid_values_create_no_plan(self):
+        expected = self.save()
+        for budget in (127, 65521, True):
+            output = self.root / str(budget)
+            with self.assertRaises(ValueError):
+                service.candidate_plan(SimpleNamespace(pointer=self.pointer, pointer_sha256=expected,
+                                                     output=output, output_tokens=budget))
+            self.assertFalse(output.exists())
+
+    def test_quality_menu_requires_actual_tokenizer_and_declares_unrun_cases(self):
+        menu = json.loads((ROOT / "infrastructure/sglang/assistant-quality.json").read_text())
+        self.assertEqual("prepared-not-run", menu["status"])
+        self.assertEqual(3, menu["execution"]["repetitions"])
+        cases = {case["id"]: case for case in menu["cases"]}
+        self.assertEqual(len(cases), len(menu["cases"]))
+        self.assertEqual([16384, 65536, 120000], cases["long-context-retrieval"]["target_input_tokens"])
+        self.assertEqual("tool_calls", cases["search-tool"]["grading"]["require_finish_reason"])
+        self.assertEqual("answer-and-citation", cases["tool-result-followup"]["grading"]["kind"])
+        self.assertEqual("both", cases["untrusted-page"]["mode"])
+
 
 class BackupTests(unittest.TestCase):
     def setUp(self):

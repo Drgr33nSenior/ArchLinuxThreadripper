@@ -1,0 +1,34 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: ai-home-lab
+resources: [../service-split]
+components: [../../components/assistant]
+patches:
+  - target: {kind: Deployment, name: open-webui}
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: {name: open-webui}
+      spec:
+        template:
+          spec:
+            containers:
+              - name: open-webui
+                env:
+                  - {name: DEFAULT_MODELS, value: Qwen3.5-9B}
+                  - {name: ENABLE_IMAGE_GENERATION, value: 'true'}
+                  - {name: WEB_SEARCH_RESULT_COUNT, value: '1'}
+  - target: {kind: Deployment, name: service-tools}
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: {name: service-tools}
+      spec:
+        template:
+          spec:
+            containers:
+              - name: tools
+                env:
+                  - {name: WEB_PAGE_CHAR_LIMIT, value: '1600'}
+# This preserves the existing one-GPU chat + one-GPU Swarm admission contract.
+# Rendering does not qualify the split profile or change replica counts.

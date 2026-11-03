@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "status": "expectations-not-observed-results",
+  "corpus": ["docs/ASSISTANT.md", "docs/MODELS.md", "docs/WEB-SEARCH.md"],
+  "questions": [
+    {"id": "native-context", "question": "What model-weight format and context length does the selected native assistant candidate use? Distinguish this from the checked-in container defaults.", "expected_sources": ["docs/ASSISTANT.md", "docs/MODELS.md"], "review": ["Quark AWQ MXFP4/C4", "131,040 context tokens", "Older FP8 container remains a separate configuration"]},
+    {"id": "candidate-handoff", "question": "What must connect the selected native runtime, gateway, clients and browser before the assistant can be accepted?", "expected_sources": ["docs/ASSISTANT.md", "docs/MODELS.md"], "review": ["Persistent authenticated endpoint", "Consistent model identity and context/output limits", "Actual model and browser quality checks", "Selection metadata does not establish deployment"]},
+    {"id": "search-and-knowledge", "question": "How do Exa search, local project retrieval and the model's context cache differ in this setup?", "expected_sources": ["docs/ASSISTANT.md", "docs/WEB-SEARCH.md"], "review": ["Exa supplies public search/page evidence", "Local RAG retains document permissions", "Web evidence is temporary", "Prefix cache reuses computation rather than durable knowledge"]},
+    {"id": "search-accounting", "question": "Do direct Codex Exa calls and the shared WebUI/Qwen Code search adapter use the same request ledger? Explain the operational consequence.", "expected_sources": ["docs/WEB-SEARCH.md"], "review": ["Separate accounting paths", "Direct Codex calls bypass the shared adapter ledger", "Provider account usage still matters"]},
+    {"id": "training-scope", "question": "Does completing installation and assistant acceptance require QLoRA training?", "expected_sources": ["docs/ASSISTANT.md", "docs/MODELS.md"], "review": ["QLoRA is optional post-install work", "No added installation dependency or acceptance gate"]},
+    {"id": "no-evidence", "question": "On which exact date will replacement workstation memory arrive?", "expected_sources": [], "review": ["State that the supplied documents do not establish an arrival date", "Do not invent a date"]}
+  ],
+  "grading": "Human review against source passages: correctness, supported citations, version/supersession handling and no-evidence behavior. Compare direct-context and GraphRAG answers on the same snapshot; do not use keyword presence or model self-scores as acceptance."
+}

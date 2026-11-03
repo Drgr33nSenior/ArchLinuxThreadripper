@@ -72,12 +72,26 @@ private home, drops inherited credentials and forces `--no-llm`. Its offline
 guard denies network, child processes and GPU-device opens. It does not invent a
 Hyperloom session from unrelated benchmark results.
 
-## Analyze an existing trace with TraceLens
+## Offline trace analysis with TraceLens
 
-Use a separate prefix. The lock selects TraceLens commit
-`614c597bc0c66cabf6a15152037324acc7386090`, matching Hyperloom 1.1.5's setup
-selection, plus ten hash-pinned binary wheels. Unused TraceLens cloud/plotting
-requirements and its build backend are not executed.
+Hyperloom's bypass trace analysis imports `TraceLens.TraceUtils.kernel_source`
+for kernel source mapping. `versions.lock` pins TraceLens commit
+`614c597bc0c66cabf6a15152037324acc7386090`, the one Hyperloom 1.1.5's
+`install_kernel_tools.sh` selects, as a commit-addressed GitHub archive with its
+SHA256. TraceLens is MIT licensed.
+`infrastructure/hyperloom/tracelens-linux-py314.lock` pins ten binary wheels:
+the same Hyperloom release wheel without extras, pandas, NumPy, python-dateutil,
+six, tzdata, tqdm, openpyxl, et-xmlfile and itanium-demangler.
+
+TraceLens declares more requirements than this path uses. The import and a
+complete bypass run never load `office365-rest-python-client`, `msal`,
+matplotlib, tabulate, orjson or PyYAML, so they are not installed. Upstream
+installs TraceLens editable at `TRACELENS_ROOT`. Here a site-packages path
+entry exposes the authenticated source tree instead, so `setup.py`, a build
+backend and the unused requirements never run. `importlib.metadata` therefore
+reports no TraceLens version, which upstream handles as a source checkout.
+
+Use a separate prefix; the existing Hyperloom prefix is unchanged:
 
 ```sh
 export WORKSTATION_PYTHON=/usr/bin/python3
@@ -91,17 +105,66 @@ bash bin/workstationctl performance hyperloom trace-analysis \
   /absolute/trace.json.gz /absolute/new-analysis
 ```
 
-Fetch is about 356 MiB, including upstream test/evaluation archives; the installed
-prefix about 802 MiB. Extraction uses Python's `data` filter. The complete source
-archive remains retained and its tree directories are read-only. A site-packages
-path entry exposes the checked source without an editable install; the absence
-of a TraceLens distribution version is expected for this path.
+Add one `--source-path /absolute/source-directory` for each kernel source tree
+that TraceLens should search. Paths can contain spaces when quoted. The wrapper
+validates the directories and passes them to the pinned TraceLens resolver's
+`search_paths` parameter. This adapter operates in memory; installed source
+files remain unchanged. `SOURCE-PATHS.json` records the resolved directories.
+Omitting the option preserves upstream source discovery. Missing directories
+cause the wrapper to refuse the run before it creates the output directory.
 
-Before analysis, the wrapper authenticates Hyperloom and every TraceLens package
-file, refusing additions. It runs the bypass analyzer with `--framework sglang
---target-platform r9700` and `TRACELENS_ROOT`, using private output caches and the
-same offline guard. Best-effort upstream git/rocminfo probes are denied. Analysis
-does not qualify kernels, launch a profiler or select a serving optimization.
+For ROCprofiler JSON, first use the offline converter described in
+[GPU profiling](GPU-PROFILING.md). The converted trace has kernel timings and
+HIP correlations, but no Torch operator attribution.
+
+The fetch downloads about 356 MiB, mostly TraceLens test traces and evaluation
+archives. The installed prefix is about 802 MiB, including the retained archive. The installation extracts the complete archive with Python's `data`
+filter, keeps the archive and makes the tree's directories read-only. To delete
+a retired prefix, first restore owner write permission on its `TraceLens` tree.
+
+Before each analysis, the wrapper checks the installed Hyperloom files against
+the release wheel. It also checks every TraceLens package file against the
+retained archive and refuses any added file. It runs `bypass_trace_analysis`
+with `--framework sglang --target-platform r9700` and sets `TRACELENS_ROOT`.
+The run uses the offline guard, the empty private home and caches inside the
+new output. Refused network, process and GPU-device operations raise
+`PermissionError`, so upstream's best-effort `git`/`rocminfo` provenance probes
+record nothing. The output contains Hyperloom's analysis files; it does not
+qualify a kernel, select an optimization or launch a workload.
+
+## Research and historical evidence for an optimizer campaign
+
+`sglang-evidence` prepares data for Hyperloom's existing custom-specialist
+interface. It authenticates explicitly listed files, verifies supplied seal
+membership, and preserves original hashes when compressing traces. It accepts
+no more than 128 files, 64 MiB per file and 512 MiB in total. No framework import,
+GPU operation or provider call is needed.
+
+```sh
+WORKSTATION_PYTHON=/opt/local/bin/python3.11 bash bin/workstationctl performance hyperloom sglang-evidence \
+  /absolute/evidence-input.json /absolute/new-evidence-bundle \
+  --manifest-sha256 <reviewed-input-sha256> \
+  --runtime-root /absolute/bundle-path-on-optimizer-host
+```
+
+The version-1 input names the selected baseline artifact, objective, campaign
+ceiling (at most 14,400 seconds), fixed constraints, hypotheses and experiment
+history. Each artifact has an ID, kind, canonical path, byte count, SHA256 and
+description. A `sealed_by` object adds the sealed root and manifest SHA256.
+Hypotheses identify their mechanism, falsifying measurement, accuracy risk and
+evidence IDs. Historical outcomes retain phases that did not execute; a missing
+timing is not a zero timing.
+
+The bundle contains `EVIDENCE-INDEX.json`, authenticated artifacts,
+`SPECIALIST-PROMPT.md`, `HYPERLOOM-ARGUMENTS.json` and a checksum manifest.
+The arguments use the pinned release's `--custom-specialist-description` and
+`--custom-specialist-prompt-file` options. The prompt is limited to the actual
+16 KiB CLI bound. `--runtime-root` changes generated references to the final
+host path; it does not transfer or execute the bundle.
+
+Preparing evidence does not start the optimizer, qualify the SGLang/gfx12
+runner or authorize GPU work. Runtime qualification and new benchmark results
+remain separate requirements. Existing offline commands retain their guards.
 
 ## Use the SGLang owner adapter
 

@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: service-tools
+  annotations:
+    workstation.ai/qualification: pending-assistant-search-rag-and-capacity
+spec:
+  template:
+    spec:
+      containers:
+        - name: tools
+          env:
+            - {name: WEB_SEARCH_ENABLED, value: 'true'}
+          volumeMounts:
+            - {name: web-search, mountPath: /run/web-search, readOnly: true}
+      volumes:
+        - name: web-search
+          # Missing credentials disable search calls; local retrieval still works.
+          secret:
+            secretName: exa-search
+            optional: true
+            defaultMode: 0440
+            items: [{key: api-key, path: exa-api-key}]

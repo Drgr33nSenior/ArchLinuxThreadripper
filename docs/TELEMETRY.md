@@ -321,13 +321,20 @@ Common failure checks:
 
 | Symptom | Check |
 | --- | --- |
-| Grafana unavailable | Pod readiness, existing admin Secret, PVC and private tunnel |
+| Grafana unavailable | Pod readiness, last termination/OOM status, memory working set versus limit, existing admin Secret, PVC and private tunnel |
 | All host series stale | Sampler result, producer timestamp and host Alloy forwarding |
 | VRAM visible but GPU clocks/activity missing | Channel readability and possible runtime suspension; preserve gaps instead of zeroes |
 | Serving panels empty while `up=1` | Native target/instance, metric-name normalization and post-filter series |
 | Pod budgets visible but actual CPU/RAM missing | Optional kubelet TLS/RBAC, namespace allowlist and cAdvisor target |
 | Price remains manual | Exact supported tariff/payment settings, helper result and expiry |
 | Energy/cost unavailable | Sensor/state freshness, coverage and counter discontinuities |
+
+On 3 November 2026, a retained read-only investigation found Grafana had reached
+its 512 MiB container memory limit and was OOM-killed. The host still had ample
+available RAM. Kubernetes restarted Grafana, and its health/login routes then
+responded. The investigation changed no limits or deployment settings. Check
+container memory and restart evidence before treating another unresponsive
+dashboard as host CPU exhaustion.
 
 Rollback restores the previous reviewed render and host configuration through
 owner maintenance. Stop only the named collectors/helper being retired. Preserve

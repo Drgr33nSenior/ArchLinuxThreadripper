@@ -37,8 +37,9 @@ RAID_CHUNK_KIB=512
 LUKS_ITER_TIME_MS=5000
 LUKS_MEMORY_KIB=4194304
 LUKS_PARALLEL=4
-# Boot unlock is fido2 or tpm2-pin. Enrol and test the selected recovery path after install.
-BOOT_UNLOCK=tpm2-pin
+# Touch-only YubiKey enrollment is owner-local after install; retain passphrase recovery.
+# See docs/INSTALLATION.md section 6. tpm2-pin is an explicit alternative.
+BOOT_UNLOCK=fido2
 # The approved design requires true. This enables SSD discard through the encrypted stack.
 ALLOW_DISCARDS=true
 
