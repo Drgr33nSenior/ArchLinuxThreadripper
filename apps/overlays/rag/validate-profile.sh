@@ -16,6 +16,7 @@ expected_query_prefix=$'Instruct: Given a web search query, retrieve relevant pa
 [[ -z ${RAG_EMBEDDING_CONTENT_PREFIX+x} ]] || fail 'Qwen content prefix must remain unset'
 [[ ${RAG_EMBEDDING_ENGINE:-} == '' && ${RAG_RERANKING_ENGINE:-} == '' && ${RAG_RERANKING_MODEL:-} == '' ]] || fail 'external engines and cross-encoder need separate qualification'
 [[ ${RAG_TEXT_SPLITTER:-} == token_transformers ]] || fail 'token_transformers required'
+[[ ${TIKTOKEN_CACHE_DIR:-} == /runtime-tiktoken ]] || fail 'tokenizer cache must not create a nested data-volume mount'
 [[ ${ENABLE_RAG_HYBRID_SEARCH:-} == true || ${ENABLE_RAG_HYBRID_SEARCH:-} == false ]] || fail 'hybrid search must be true or false'
 for key in CHUNK_SIZE CHUNK_OVERLAP RAG_TOP_K RAG_TOP_K_RERANKER RAG_EMBEDDING_BATCH_SIZE; do
   [[ ${!key} =~ ^[1-9][0-9]{0,2}$ ]] || fail "$key must be a positive integer below 1000"

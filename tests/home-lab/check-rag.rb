@@ -64,6 +64,9 @@ end
 check(profile['RAG_TEXT_SPLITTER'] == 'token_transformers' && profile['CHUNK_SIZE'] == '192' && profile['CHUNK_OVERLAP'] == '32', 'RAG tokenizer/chunk baseline changed')
 check(profile['RAG_EMBEDDING_MODEL'] == '/rag-models/Qwen3-Embedding-0.6B' && profile['RAG_TOKENIZER_MODEL'] == profile['RAG_EMBEDDING_MODEL'] && profile['RAG_EMBEDDING_BATCH_SIZE'] == '1' && !profile.key?('RAG_EMBEDDING_CONTENT_PREFIX') && profile['RAG_RERANKING_MODEL'] == '', 'Qwen embedding profile changed')
 check(profile['RAG_TOP_K'] == '3' && profile['RAG_TOP_K_RERANKER'] == '3', 'Both per-query and merged retrieval must retain the three-hit limit')
+check(profile['TIKTOKEN_CACHE_DIR'] == '/runtime-tiktoken', 'Tokenizer cache must use a separate writable mount')
+check(app.fetch('volumeMounts').any? { |v| v['name'] == 'webui-tiktoken' && v['mountPath'] == profile['TIKTOKEN_CACHE_DIR'] }, 'Tokenizer cache path/mount differ')
+check(app.fetch('volumeMounts').none? { |v| v['mountPath'].start_with?('/app/backend/data/') }, 'Nested mounts can create an unwritable data-volume parent')
 volumes = pod.fetch('volumes').to_h { |v| [v['name'], v] }
 check(volumes['data'].dig('persistentVolumeClaim', 'claimName') == 'webui-rag-qwen3-data', 'Qwen RAG must not reuse MiniLM data')
 check(volumes['rag-models'].dig('persistentVolumeClaim', 'claimName') == 'webui-rag-qwen3-models', 'Qwen model PVC is missing')

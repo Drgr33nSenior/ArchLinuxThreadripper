@@ -61,7 +61,7 @@ spec:
             - {name: rag-models, mountPath: /rag-models, readOnly: true}
             # Upstream writes these assets on startup; do not grant root/group 0.
             - {name: webui-static, mountPath: /app/backend/open_webui/static}
-            - {name: webui-tiktoken, mountPath: /app/backend/data/cache/tiktoken}
+            - {name: webui-tiktoken, mountPath: /runtime-tiktoken}
       volumes:
         - name: data
           persistentVolumeClaim: {claimName: webui-rag-qwen3-data}
