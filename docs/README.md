@@ -16,6 +16,7 @@ approval. Versions belong to the linked locks and runtime manifests.
 | Track the latest serving project and its integration gaps | [Serving integration](SERVING-INTEGRATION.md) | [Models](MODELS.md), [Hyperloom](HYPERLOOM.md) |
 | Select or stage a model | [Models](MODELS.md) | [Retrieval](RAG.md), [IDE agents](AGENT-HARNESSES.md) |
 | Connect local chat, web research and document retrieval | [Assistant](ASSISTANT.md) | [Web search](WEB-SEARCH.md), [GraphRAG pilot](GRAPHRAG.md) |
+| Preserve context between browser and coding sessions | [Session memory](MEMORY.md) | Graphiti pilot plan, native-memory baseline and resource/quality gates |
 | Provide private browser/API access | [AI service](AI-SERVICE.md) | [Integration evidence](AI-SERVICE-RECONCILIATION.md) |
 | Use Sunshine with Moonlight | [Sunshine](SUNSHINE.md) | [Acceptance checklist](INSTALL-READINESS.md#sunshine-and-moonlight) |
 | Compare serving configurations | [Performance validation](PERFORMANCE-VALIDATION.md) | [Profiles](PERFORMANCE-PROFILES.md), [kernel packages](MODEL-KERNELS.md) |
@@ -36,7 +37,8 @@ It is not the bare-metal AI cluster and its backup does not cover application PV
 | Sunshine / Moonlight | Arch candidate captured 1920×1080/60 and started Vulkan encoders; owner confirmed mouse/click/typing in X11 and native Wayland windows on 1 November | Audio, controllers, games, repeat startup, persistent pairing/home recovery, delivered cadence and latency |
 | Hyperloom / TraceLens | Offline tools and the project adapter to an existing SGLang owner workflow were exercised | Upstream R9700 runner remains vLLM-only in the inspected release; no autonomous SGLang optimization or model qualification follows |
 | Shared chat/API service | Source integration and disposable native gateway/database smoke path | Full target rollout, multiuser acceptance and independent recovery |
-| GraphRAG pilot | Private Python 3.14 environment; real library indexing/global/direct fixture workflows passed on Linux and macOS | Live Qwen quality/resource evaluation; chapter conversion and Kindle ingestion remain follow-ups |
+| GraphRAG pilot, optional | Private Python 3.14 environment; real library indexing/global/direct fixture workflows passed on Linux and macOS | On-demand document analysis; live Qwen quality/resource evaluation and book conversion remain follow-ups |
+| Session continuity | Graphiti selected for the next memory pilot; built-in client capabilities inspected | Shared integration, local-model reliability, isolation and resource use remain unqualified |
 
 These are scoped observations, not a blanket pass. Historical numerical,
 model-quality and shutdown failures remain open unless their specific cause was

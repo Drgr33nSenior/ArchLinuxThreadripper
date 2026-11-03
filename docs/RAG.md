@@ -20,14 +20,19 @@ it is not a substitute for any of those stores.
 | Qdrant | Alternative to pgvector, not an additional default service | Open WebUI currently treats its connector as non-core; qualify the connector before upgrades |
 | Cross-encoder reranking | Deferred until the baseline has measured retrieval failures | Pin a model and test citation/retrieval accuracy versus added latency; no cross-encoder is loaded in this pilot |
 | Qwen3-Embedding-0.6B | Replace MiniLM for the disabled CPU pilot | [Author model card](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B); use the native query prefix, 1,024 dimensions and a new index |
-| Persistent project memory | Design notes only; no automatic memory writer or IDE endpoint | Store approved decisions with source, date, scope, supersession and deletion. Do not treat generated summaries as measured facts |
-| GraphRAG | Separate opt-in [GraphRAG pilot](GRAPHRAG.md), standard indexing/global search with local completions | Compare relationship questions with the same direct-context snapshot; no shared graph or installation gate |
+| Persistent project memory | Prioritise the [Graphiti continuity pilot](MEMORY.md); shared integration remains planned | Compare with native client memory plus a compact handoff; verify provenance, corrections, isolation and measured resource use |
+| GraphRAG | Optional on-demand [document-analysis pilot](GRAPHRAG.md), standard indexing/global search with local completions | Retain cross-document comparisons; Graphiti is the preferred memory pilot. No standing graph service or installation gate |
 | PDF/diagram ingestion | Defer OCR, Docling and multimodal models; pilot accepts Markdown/text | Qualify extraction and bound peak ingestion RAM before adding document types |
 | Prefix/HiCache | Separate experiment; do not enable host KV offload here | [SGLang HiCache](https://docs.sglang.io/docs/advanced_features/hicache_best_practices); verify the pinned AMD backend and measure cache hits, RAM, bandwidth and time to first token |
 
 IDE agents will need an authenticated retrieval-tool integration. This pilot
 does not expose raw database access or add a new agent framework. A local
 database does not keep snippets local if an agent sends them to a cloud model.
+
+The [continuity decision](MEMORY.md) separates evolving user/project memory,
+active task handoffs, public Exa evidence and exact local document retrieval.
+Graphiti integration and footprint remain unqualified; it is not assumed to be
+smaller than this file-based GraphRAG experiment.
 
 ## Programming books and later model adaptation
 
@@ -37,8 +42,9 @@ accurately or distinguishes editions and dependency versions. Retrieved source
 passages can supply that evidence without changing model weights.
 
 Start with one chapter and representative coding questions. Compare the same
-model without retrieval, with hybrid retrieval and with GraphRAG. Prefer exact
-source passages for code, API details and version-specific instructions. Use
+model without retrieval and with hybrid retrieval; add GraphRAG as an optional
+cross-document comparison. Prefer exact source passages for code, API details
+and version-specific instructions. Use
 the graph comparison for relationships across chapters, authors or design
 principles. The current GraphRAG pilot tests global community-report search;
 it does not implement GraphRAG local search or replace original code with a

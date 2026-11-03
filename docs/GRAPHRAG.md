@@ -5,6 +5,10 @@ answers enough to justify graph construction. It uses Microsoft GraphRAG 3.3.0,
 the selected local SGLang candidate and a private document snapshot. It adds no
 installation gate, shared service or automatic ingestion.
 
+[Graphiti is the preferred next pilot for persistent session memory](MEMORY.md).
+This GraphRAG pilot is retained for optional, on-demand document analysis; it
+is not the selected continuity layer. No existing artifacts or checks are removed.
+
 The first comparison uses GraphRAG **standard indexing and global search** versus
 a direct-context answer from the same model and documents. Global search uses
 community reports; it does not need vector embeddings. The workflow omits

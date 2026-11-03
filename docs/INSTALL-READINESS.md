@@ -18,6 +18,12 @@ QLoRA and other model fine-tuning are optional post-install work. They are
 outside current installation and service acceptance; training packages,
 datasets and training runs are not required to complete these gates.
 
+[Graphiti is the preferred session-memory pilot](MEMORY.md); GraphRAG remains
+optional on-demand document analysis. This decision adds no installation
+dependency. If shared memory is enabled for family use later, qualify its
+user/project isolation, correction/deletion, persistence and resource budget
+through the memory plan before exposing it to additional accounts.
+
 ## Before erasing the workstation
 
 | Gate | Procedure | Acceptance |

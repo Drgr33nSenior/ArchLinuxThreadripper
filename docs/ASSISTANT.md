@@ -16,6 +16,13 @@ reconciling model identity and limits across the gateway and clients, and
 running the prepared quality menu through the model and browser. The older
 container defaults below remain a separate source configuration.
 
+For cross-session coding and home-assistant continuity, prioritise the
+[Graphiti memory pilot](MEMORY.md), paired with a compact project handoff.
+Keep Exa for public research and local retrieval for private code/documents.
+GraphRAG remains optional on-demand document analysis. Shared memory integration,
+local-model reliability and resource use still need qualification; this decision
+adds no installed service or installation gate.
+
 QLoRA and other model fine-tuning are optional post-install projects. They are
 outside the current delivery requirements and add no installation dependency
 or acceptance gate. Revisit them after stable operation provides useful
@@ -29,6 +36,7 @@ environment and resource budget.
 | Conversation | Open WebUI → per-user gateway key → SGLang | Preserve the selected model identity and existing context limits |
 | Documents | Open WebUI → CPU Qwen embedding model → embedded Chroma | Preserve document permissions; answer/citation quality remains unqualified |
 | Web research | Open WebUI/Qwen Code → shared Exa adapter | Auto search and public-page extraction; one durable request ceiling; Tavily optional |
+| Session continuity, planned | Browser/coding clients → authenticated memory tools → Graphiti, plus project handoff | Selected pilot direction; no shared memory endpoint or automatic writer implemented |
 | Image creation | Open WebUI → bounded image adapter → SwarmUI → embedded ComfyUI | SDXL only, one image job, explicit split-mode admission |
 | Creative controls | Operator → SwarmUI; ComfyUI remains its embedded backend | No new public ComfyUI port or unauthenticated creative Ingress |
 | Spoken answers | Open WebUI browser speech synthesis | Quality and voice availability depend on the browser/operating system |

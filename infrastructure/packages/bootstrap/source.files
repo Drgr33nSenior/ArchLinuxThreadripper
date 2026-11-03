@@ -365,6 +365,7 @@ apps/components/assistant/network-policy.yaml
 docs/WEB-SEARCH.md
 tests/workstation/test_web_search.py
 docs/GRAPHRAG.md
+docs/MEMORY.md
 infrastructure/graphrag/profile.json
 infrastructure/graphrag/questions.json
 infrastructure/graphrag/tokenizers.json

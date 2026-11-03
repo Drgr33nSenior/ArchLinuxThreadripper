@@ -9,8 +9,10 @@ KVM lab is separate. New hosts are headless by default.
 boundaries, tested features and the right procedure for each task.
 
 The current [assistant scope](docs/ASSISTANT.md#current-delivery-scope) connects
-the native 128K candidate, private WebUI, Exa and local retrieval. The
-[GraphRAG pilot](docs/GRAPHRAG.md) is separate; QLoRA remains optional post-install work.
+the native 128K candidate, private WebUI, Exa and local retrieval.
+[Graphiti is the preferred continuity pilot](docs/MEMORY.md); the
+[GraphRAG pilot](docs/GRAPHRAG.md) remains optional on-demand document analysis.
+QLoRA remains optional post-install work.
 
 ## Common tasks
 
@@ -22,6 +24,7 @@ the native 128K candidate, private WebUI, Exa and local retrieval. The
 | Use Grafana or diagnose missing data | [Monitoring](docs/TELEMETRY.md) |
 | Configure models and private chat/API access | [Models](docs/MODELS.md), [AI service](docs/AI-SERVICE.md) |
 | Compare document retrieval and plan book ingestion | [RAG](docs/RAG.md), [GraphRAG pilot](docs/GRAPHRAG.md) |
+| Plan persistent coding and home-assistant memory | [Session continuity](docs/MEMORY.md) |
 | Build the Sunshine/Moonlight candidate | [Sunshine](docs/SUNSHINE.md) |
 | Measure or optimize inference | [Performance validation](docs/PERFORMANCE-VALIDATION.md), [Hyperloom](docs/HYPERLOOM.md) |
 
