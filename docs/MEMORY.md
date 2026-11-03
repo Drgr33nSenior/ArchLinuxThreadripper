@@ -35,8 +35,9 @@ sessions or make extracted facts correct. See the
 Compare Graphiti with the memory already available in the pinned clients plus a
 short handoff. Do not introduce a second store solely to duplicate those features.
 
-- Open WebUI 0.11.3 includes per-user memory, system-context injection and
-  background review controls. Upstream background review defaults to off.
+- Open WebUI 0.11.4 (`service`) and 0.12.5 (`assistant`) include per-user memory,
+  system-context injection and background review controls. Upstream background
+  review defaults to off in both pins.
 - Qwen Code 0.23.2 supports `AGENTS.md`/`QWEN.md` briefings and editable Markdown
   auto-memory. Upstream automatic extraction/consolidation defaults to on;
   team memory and its Git sync default to off. These are upstream capabilities,
@@ -44,9 +45,11 @@ short handoff. Do not introduce a second store solely to duplicate those feature
 - The two clients do not automatically share their stores. Their existing tool
   permissions do not grant access to a new shared memory service.
 
-Inspect the exact pins in `versions.lock`; verify effective settings and model
-behaviour before enabling automatic writes. Sources:
-[pinned WebUI configuration](https://github.com/open-webui/open-webui/blob/2a960a59fe1dbbd35282f0556b3666d81102e781/backend/open_webui/config.py),
+Inspect the exact pins in [versions.lock](../versions.lock) and the
+[assistant component](../apps/components/assistant/kustomization.yaml); verify
+effective settings and model behaviour before enabling automatic writes. Sources:
+[WebUI 0.11.4 configuration](https://github.com/open-webui/open-webui/blob/8bd8b4fac5e059578ac0c74b3c18d11139f88b7d/backend/open_webui/config.py),
+[WebUI 0.12.5 configuration](https://github.com/open-webui/open-webui/blob/f7ac7ee10962ddec0017f5c29b6740d9b9c5faca/backend/open_webui/config.py),
 [pinned Qwen memory guide](https://github.com/QwenLM/qwen-code/blob/f56de980b316cd5410f067fbb62357481ebd66b8/docs/users/features/memory.md).
 
 ## What to retain

@@ -24,8 +24,7 @@ service. All new application replicas remain zero. See the
 | Component | Request path / owner | Credentials | Durable state and recovery |
 | --- | --- | --- | --- |
 | Traefik | Actual private node IP, TCP 32443; browser and API DNS names | Owner TLS Secret; private client CIDRs | K3s configuration and SQLite backup |
-| Open WebUI 0.11.3 (`service`); 0.12.5 (`assistant`) | Browser HTTPS → WebUI → internal `/webui/v1` gateway route | WebUI login; server-held application credential and user-ID mapping | Accounts, conversations, uploads, embedded Chroma on `webui-rag-qwen3-data` |
-| Open WebUI 0.11.4 | Browser HTTPS → WebUI → internal `/webui/v1` gateway route | WebUI login; server-held application credential and user-ID mapping | Accounts, conversations, uploads, embedded Chroma on `webui-rag-qwen3-data` |
+| Open WebUI 0.11.4 (`service`); 0.12.5 (`assistant`) | Browser HTTPS → WebUI → internal `/webui/v1` gateway route | WebUI login; server-held application credential and user-ID mapping | Accounts, conversations, uploads, embedded Chroma on `webui-rag-qwen3-data` |
 | LiteLLM OSS 1.106.2 | API HTTPS `/v1/models`, `/v1/chat/completions` → internal SGLang | Per-client virtual keys; separate master, salt and host-control credentials | Scoped `litellm` PostgreSQL role/database; dump plus matching K3s Secrets |
 | SGLang | ClusterIP only; unchanged qualified model/runtime inputs | No ordinary user access to backend | Weights and caches rebuildable; model revisions retained |
 | Read-only MCP | HTTPS `/mcp` → supported WebUI retrieval/file APIs | Caller's own restricted WebUI API key | Reuses WebUI document ACLs and retrieval state; no second vector store |
