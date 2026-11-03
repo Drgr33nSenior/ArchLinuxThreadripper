@@ -11,6 +11,12 @@ The diagram below records the earlier infrastructure baseline. The authoritative
 shared-service endpoint and state map is now [AI-SERVICE.md](AI-SERVICE.md); no
 arrow in either view establishes deployment.
 
+For the current assistant direction, use [assistant scope](ASSISTANT.md),
+[primary Graphiti memory qualification](MEMORY.md) and the
+[dated component results](VERIFICATION.md). The native 128K serving candidate
+has a separate integration path; GraphRAG remains optional document analysis.
+The older infrastructure diagram does not qualify those newer components.
+
 ![Workstation stack overview](diagrams/workstation-stack.svg)
 
 [Open the PNG preview](diagrams/workstation-stack.png) or edit the authoritative

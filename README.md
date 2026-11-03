@@ -8,23 +8,29 @@ KVM lab is separate. New hosts are headless by default.
 **Start with the [documentation guide](docs/README.md)** for current runtime
 boundaries, tested features and the right procedure for each task.
 
-The current [assistant scope](docs/ASSISTANT.md#current-delivery-scope) connects
+The current [assistant target](docs/ASSISTANT.md#current-delivery-scope) combines
 the native 128K candidate, private WebUI, Exa and local retrieval.
-[Graphiti is the preferred continuity pilot](docs/MEMORY.md); the
+[Graphiti is the primary persistent-memory component under qualification](docs/MEMORY.md); the
 [GraphRAG pilot](docs/GRAPHRAG.md) remains optional on-demand document analysis.
 QLoRA remains optional post-install work.
+
+The [dated verification record](docs/VERIFICATION.md) covers passing gateway,
+Grafana/telemetry and Graphiti storage fixtures, workstation WebUI retrieval and
+their limits. Live Exa, shared memory integration and Qwen-dependent acceptance
+remain open; component tests do not establish a deployed assistant.
 
 ## Common tasks
 
 | Task | Guide |
 | --- | --- |
+| Check tested components and remaining gates | [Verification record](docs/VERIFICATION.md) |
 | Prepare installation media | [ISO build and assembly](docs/ISO.md) |
 | Install or recover the workstation | [Installation](docs/INSTALLATION.md) |
 | Update, back up or restore | [Operations](docs/OPERATIONS.md), [service recovery](docs/SERVICE-RECOVERY.md) |
 | Use Grafana or diagnose missing data | [Monitoring](docs/TELEMETRY.md) |
 | Configure models and private chat/API access | [Models](docs/MODELS.md), [AI service](docs/AI-SERVICE.md) |
 | Compare document retrieval and plan book ingestion | [RAG](docs/RAG.md), [GraphRAG pilot](docs/GRAPHRAG.md) |
-| Plan persistent coding and home-assistant memory | [Session continuity](docs/MEMORY.md) |
+| Qualify persistent coding and home-assistant memory | [Session continuity](docs/MEMORY.md) |
 | Build the Sunshine/Moonlight candidate | [Sunshine](docs/SUNSHINE.md) |
 | Measure or optimize inference | [Performance validation](docs/PERFORMANCE-VALIDATION.md), [Hyperloom](docs/HYPERLOOM.md) |
 

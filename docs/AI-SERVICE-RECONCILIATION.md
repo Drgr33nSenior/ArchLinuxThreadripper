@@ -17,6 +17,14 @@ QLoRA and other model fine-tuning are deferred as optional post-install work,
 with no added installation dependency or acceptance gate. The
 [assistant scope](ASSISTANT.md#current-delivery-scope) records this decision.
 
+Later [Qwen-independent component checks](VERIFICATION.md) passed native
+gateway/database restart, workstation software, isolated WebUI retrieval,
+Grafana/telemetry and native Graphiti 6.0.3 storage fixtures. Graphiti is the
+primary memory path; GraphRAG remains secondary document analysis. Live Exa,
+authenticated shared memory and the selected model/client path remain open.
+Historical `NOT RUN` entries below describe their dated campaigns, not these
+later component results.
+
 ## Earlier source reconciliation
 
 The following sections retain the earlier baseline and its dated validation

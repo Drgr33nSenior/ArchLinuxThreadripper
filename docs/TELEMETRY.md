@@ -6,6 +6,11 @@ it is separate from the optional VM lab. Retained target tests exercised real
 collectors and dashboards. They do not establish today's health or negligible
 benchmark overhead.
 
+The [3 November component checks](VERIFICATION.md) passed Grafana dashboard and
+Prometheus-query checks across restart, Loki/Tempo ingestion and retrieval,
+Alloy privacy processing and Alertmanager routing. Those disposable fixtures
+do not replace current target-health checks or a workload soak test.
+
 For installation and collector internals, use the
 [configuration reference](TELEMETRY-REFERENCE.md). All paths below refer to a
 reviewed checkout unless they explicitly name an installed runtime.

@@ -1,21 +1,22 @@
 # Session continuity and persistent memory
 
-Decision recorded on 3 November 2026: prioritise a **Graphiti pilot** for
-persistent coding and home-assistant context. Keep Exa for current public web
-evidence, local retrieval for private code/documents and a compact project
-handoff for the active task. Microsoft GraphRAG remains an optional, on-demand
-document-analysis experiment.
+Decision recorded on 3 November 2026: Graphiti is the **primary persistent-memory
+component under qualification** for coding and home-assistant context. Keep Exa
+for current public web evidence, local retrieval for private code/documents and
+a compact project handoff for the active task. Microsoft GraphRAG remains an
+optional, on-demand document-analysis experiment.
 
-This is an architecture decision and pilot plan. Graphiti is not installed,
-integrated or resource-qualified by this change. No memory service, background
-writer, client hook or new API endpoint is introduced. The current 64 GB host
+This is an architecture decision with partial pilot verification. Graphiti was
+installed in an isolated test environment on the workstation; it is not a shared
+memory service or a qualified client integration. No background writer, client
+hook or new API endpoint is introduced. The current 64 GB host
 budget, serving ownership and installation/recovery gates still apply.
 
 ## Responsibilities
 
 | Need | Selected direction | Current status |
 | --- | --- | --- |
-| Durable preferences, decisions and changing project facts | Graphiti, scoped by user and project | Preferred next pilot; integration and quality tests pending |
+| Durable preferences, decisions and changing project facts | Graphiti, scoped by user and project | Primary memory path; native FalkorDB 6.0.3 storage/restart/restore fixture passed; model and client qualification pending |
 | Current public web information | Existing Exa adapter | Source integration exists; full target acceptance remains separate |
 | Exact code, private documentation and book passages | Repository tools and local hybrid retrieval | Existing retrieval path; book conversion remains planned |
 | Active goal, constraints, last result and next steps | Short project handoff | Shared handoff storage/loading not implemented |
@@ -85,10 +86,11 @@ deduplication depend on structured output. Test the selected Qwen/SGLang route
 for schema validity, factual accuracy and correction behaviour. Valid JSON alone
 does not qualify memory quality. See [local-model guidance](https://github.com/getzep/graphiti#using-graphiti-with-openai-compatible-providers-and-local-llms).
 
-Select and pin the graph backend after a bounded compatibility test. The MCP
-server documents FalkorDB and Neo4j. The library's embedded FalkorDBLite option
-is another candidate; compatibility with the chosen service and Python 3.14
-remains untested. No database choice or allocation is made by this document.
+Select and pin the graph backend after it passes the compatibility and restart
+tests. The MCP server documents FalkorDB and Neo4j. The library's embedded
+FalkorDBLite option was tested on Python 3.14; its bundled 4.x engines failed
+the restart gate. A separate native FalkorDB 6.0.3 candidate passed the storage
+fixture described below. Deployment packaging and allocation remain unselected.
 
 Graphiti is not assumed to save RAM or disk compared with the current GraphRAG
 pilot. That pilot runs on demand and stores files without a resident graph
@@ -104,6 +106,62 @@ of the initial client scope. No direct client database access or new public
 port is required by this plan.
 
 ## Acceptance before adoption
+
+### Observed workstation checks, 3 November 2026
+
+Graphiti 0.31.2 installed and ran on CPython 3.14.7 with FalkorDBLite 0.11.0
+and, in a separate environment, 0.10.0. Both environments passed `pip check`.
+Tests used six synthetic facts across three user/project partitions, deterministic
+fixture vectors and clients that reject model calls. Network and PID namespaces
+isolated the processes; the database used an owner-only Unix socket with TCP off.
+No GPU devices, paid API or real model were used.
+The [component verification record](VERIFICATION.md) preserves the broader
+source identity, platform limits and remaining acceptance gates.
+
+- Fresh writes, hybrid and full-text search, explicit current/historical validity
+  filters, source-episode references and partition-scoped searches passed.
+  Scoped deletion passed in a fresh database and retained the other partitions.
+  These checks do not establish authenticated user isolation or model quality.
+- Restart acceptance failed with both FalkorDBLite versions. The persisted facts
+  remained visible in a graph scan, but the labelled, indexed UUID lookup used by
+  `EntityEdge.get_by_uuid` returned no record. On the 0.11.0 snapshot, removing
+  endpoint labels or using a scan predicate found the same fact. Rebuilding the
+  indexes did not correct the labelled lookup. No query workaround was adopted.
+- `Graphiti.close()` left the embedded server running in both environments.
+  Explicit save/shutdown stopped each owned server. No database process remained
+  after the tests, and the workstation diagnostic lock was released.
+- The two fresh seed phases recorded about 191–193 MiB sampled combined process
+  RSS and about 17 kB persisted snapshots. This tiny fixture excludes real model
+  extraction, semantic embeddings, production growth and concurrent serving.
+  It is not a deployment resource limit or an end-to-end footprint estimate.
+
+FalkorDBLite 0.11.0 bundled FalkorDB engine 4.22.1 with Redis 8.10.2; 0.10.0
+bundled engine 4.18.3 with Redis 8.6.2. Both tests used FalkorDB Python client
+1.8.1 and Redis Python client 8.1.0. The restart failure does not establish that
+other Graphiti backends fail, or that Python 3.14 caused the failure.
+
+The unmodified embedded wheels remain unqualified. A later isolated test used
+the official FalkorDB 6.0.3 module, verified against its release SHA-256, with the
+existing Redis 8.10.2 binary and Graphiti 0.31.2 on CPython 3.14.7. An explicit
+process owner saved and stopped the database; no installed module was replaced.
+The original fixture's writes, lookup, search, temporal and provenance assertions
+passed across all five phases: seed, process restart, scoped deletion, restart
+after deletion and restore of a separate saved snapshot. Each phase used a new
+PID/network namespace. All five database shutdowns were graceful.
+
+This makes native FalkorDB 6.0.3 the next backend candidate for packaging. It
+does not qualify the unchanged FalkorDBLite wheels or fix their default close
+behaviour. The six-fact seed recorded about 153 MiB sampled combined RSS and a
+42,858-byte snapshot. These are tiny-fixture observations, not a comparison of
+production resource use or a deployment limit. An isolated snapshot restore
+also does not establish off-machine disaster recovery or Kubernetes PVC recovery.
+See the [official engine release](https://github.com/FalkorDB/FalkorDB/releases/tag/v6.0.3).
+
+Next qualify extraction, correction detection, semantic recall and authenticated
+browser/coding integration with the selected local completion and embedding
+endpoints. No shared Graphiti service was deployed during these tests.
+
+### Remaining adoption gates
 
 Use the same tasks and evidence for native client memory plus handoff, then
 Graphiti plus handoff. A new chat and a new coding session must be separate

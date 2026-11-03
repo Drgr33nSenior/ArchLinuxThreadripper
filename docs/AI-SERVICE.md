@@ -18,6 +18,9 @@ and model/browser acceptance remain pending. QLoRA is deferred under the
 This is an opt-in source implementation. It is not a deployed or hardware-qualified
 service. All new application replicas remain zero. See the
 [reconciliation and evidence matrix](AI-SERVICE-RECONCILIATION.md).
+The [dated component checks](VERIFICATION.md) cover native gateway/database
+fixtures and isolated WebUI/telemetry tests. They do not qualify the selected
+native model, deployed client path or independent recovery.
 
 ## Components, endpoints and state
 

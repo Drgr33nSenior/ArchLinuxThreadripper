@@ -15,8 +15,9 @@ approval. Versions belong to the linked locks and runtime manifests.
 | Configure bare-metal K3s and GPU ownership | [Home lab](HOME-LAB.md) | [Resource and session policy](AI-PERFORMANCE.md) |
 | Track the latest serving project and its integration gaps | [Serving integration](SERVING-INTEGRATION.md) | [Models](MODELS.md), [Hyperloom](HYPERLOOM.md) |
 | Select or stage a model | [Models](MODELS.md) | [Retrieval](RAG.md), [IDE agents](AGENT-HARNESSES.md) |
-| Connect local chat, web research and document retrieval | [Assistant](ASSISTANT.md) | [Web search](WEB-SEARCH.md), [GraphRAG pilot](GRAPHRAG.md) |
-| Preserve context between browser and coding sessions | [Session memory](MEMORY.md) | Graphiti pilot plan, native-memory baseline and resource/quality gates |
+| Connect local chat, web research and document retrieval | [Assistant](ASSISTANT.md) | [Web search](WEB-SEARCH.md), [RAG](RAG.md) |
+| Preserve context between browser and coding sessions | [Session memory](MEMORY.md) | Primary Graphiti pilot, native-memory baseline and resource/quality gates |
+| Check what passed and what remains open | [Verification record](VERIFICATION.md) | Dated component results, source identity and test limits |
 | Provide private browser/API access | [AI service](AI-SERVICE.md) | [Integration evidence](AI-SERVICE-RECONCILIATION.md) |
 | Use Sunshine with Moonlight | [Sunshine](SUNSHINE.md) | [Acceptance checklist](INSTALL-READINESS.md#sunshine-and-moonlight) |
 | Compare serving configurations | [Performance validation](PERFORMANCE-VALIDATION.md) | [Profiles](PERFORMANCE-PROFILES.md), [kernel packages](MODEL-KERNELS.md) |
@@ -36,14 +37,18 @@ It is not the bare-metal AI cluster and its backup does not cover application PV
 | Creative / ComfyUI | One R9700 generated and served a 1024² SDXL PNG; first request 10.74 s, backend readiness 6.62 s | Final recipe rebuild, vulnerable/licensed ImageSharp dependency resolution, WebUI delivery, cancellation, persistence and broader quality |
 | Sunshine / Moonlight | Arch candidate captured 1920×1080/60 and started Vulkan encoders; owner confirmed mouse/click/typing in X11 and native Wayland windows on 1 November | Audio, controllers, games, repeat startup, persistent pairing/home recovery, delivered cadence and latency |
 | Hyperloom / TraceLens | Offline tools and the project adapter to an existing SGLang owner workflow were exercised | Upstream R9700 runner remains vLLM-only in the inspected release; no autonomous SGLang optimization or model qualification follows |
-| Shared chat/API service | Source integration and disposable native gateway/database smoke path | Full target rollout, multiuser acceptance and independent recovery |
+| Shared chat/API service | Native gateway/database fixtures passed authentication, quotas, streaming/tools, cancellation and restart persistence | Full target rollout with the selected native model, actual clients and independent recovery |
+| WebUI document retrieval | Isolated workstation Open WebUI 0.12.5 test: 112 API calls, access revocation and application restart passed | Two expected-source misses remain; requested dense/hybrid flags did not establish independent backend coverage. Browser and generated-answer quality remain open |
+| Public web retrieval | Exa/Tavily adapter fixtures passed; bounded live Exa probe prepared | Live provider check needs a protected API-key file reference; no paid provider call was made |
 | GraphRAG pilot, optional | Private Python 3.14 environment; real library indexing/global/direct fixture workflows passed on Linux and macOS | On-demand document analysis; live Qwen quality/resource evaluation and book conversion remain follow-ups |
-| Session continuity | Graphiti selected for the next memory pilot; built-in client capabilities inspected | Shared integration, local-model reliability, isolation and resource use remain unqualified |
+| Session continuity | Graphiti is primary; native FalkorDB 6.0.3 passed storage, restart, deletion and isolated restore fixtures | Earlier bundled 4.x engines remain unqualified. Authenticated shared integration, real-model memory quality and production resource use remain open |
 
 These are scoped observations, not a blanket pass. Historical numerical,
 model-quality and shutdown failures remain open unless their specific cause was
 resolved. Private `test-results/` handoffs retain exact run identities and failed
 evidence; they are not bundled into this public documentation.
+The [verification record](VERIFICATION.md) identifies the new results, tested
+source snapshot and fixture/platform limits without publishing protected data.
 
 ## Keep the runtime layers distinct
 

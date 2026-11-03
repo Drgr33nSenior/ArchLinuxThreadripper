@@ -6,6 +6,11 @@ and Qwen Code use the same adapter and request ledger. Tavily remains an explici
 alternative. Rendering leaves replicas
 at zero. Software checks do not establish browser, model or workstation readiness.
 
+The [verification record](VERIFICATION.md) separates the passing provider-adapter
+fixtures from the live Exa search/extraction check. That check still needs a
+protected API-key file reference; no paid provider call was made during the
+Qwen-independent component campaign.
+
 ## Request paths
 
 | Client or source | Path | Data boundary |
