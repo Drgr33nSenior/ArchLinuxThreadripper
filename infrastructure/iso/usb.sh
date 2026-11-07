@@ -48,6 +48,8 @@ usb_compare() { usb_read "$1" "$3" | /usr/bin/cmp "$2" -; }
 # bare /dev/sdX is refused because kernel names move between boots and plugs.
 usb_linux_resolve() { /usr/bin/readlink -e -- "$1"; }
 usb_linux_is_link() { [[ -L "$1" ]]; }
+# GNU stat -f means filesystem status, so the macOS usb_size adapter is unusable here.
+usb_linux_size() { /usr/bin/wc -c <"$1" | /usr/bin/tr -d ' '; }
 usb_linux_is_block() { [[ -b "$1" && ! -L "$1" ]]; }
 usb_linux_lsblk() { /usr/bin/lsblk -J -b -o NAME,PATH,TYPE,TRAN,SIZE,RO,LOG-SEC,MODEL,SERIAL,MOUNTPOINTS,FSTYPE -- "$1"; }
 usb_linux_udev() { /usr/bin/udevadm info --query=property --name="$1"; }
@@ -67,7 +69,7 @@ usb_linux_flush() { /usr/bin/sync && /usr/bin/blockdev --flushbufs "$1"; }
 usb_linux_compare() { /usr/bin/dd if="$3" iflag=direct,count_bytes bs=4M count="$1" status=none | /usr/bin/cmp -- "$2" -; }
 
 usb_linux_identity() {
-  local path="$1" bytes="$2" device name tree udev serial model devpath bus block
+  local path="$1" bytes="$2" device name tree udev serial usb_serial model devpath bus block usb_model
   if ! [[ "$path" =~ ^/dev/disk/by-id/usb-[A-Za-z0-9._:-]+$ && "$path" != *-part[0-9]* ]] || ! usb_linux_is_link "$path"; then
     common::die 'select the whole-disk /dev/disk/by-id/usb-... path; bare /dev/sdX, partitions and other names are refused'
   fi
@@ -95,10 +97,17 @@ usb_linux_identity() {
   serial=$(sed -n 's/^ID_SERIAL=//p' <<<"$udev")
   model=$(sed -n 's/^ID_MODEL=//p' <<<"$udev")
   devpath=$(sed -n 's/^DEVPATH=//p' <<<"$udev")
-  [[ "$bus" == usb && -n "$serial" && -n "$model" && -n "$devpath" && "${path##*/}" == "usb-$serial"* ]] ||
+  # A USB-SATA bridge with ATA passthrough reports the inner drive in ID_SERIAL
+  # (ID_BUS=ata) and the bridge in ID_USB_SERIAL, from which udev builds the
+  # usb-* link. Plain usb-storage devices have only ID_SERIAL with ID_BUS=usb.
+  usb_serial=$(sed -n 's/^ID_USB_SERIAL=//p' <<<"$udev")
+  [[ -n "$usb_serial" || "$bus" != usb ]] || usb_serial=$serial
+  usb_model=$(sed -n 's/^ID_USB_MODEL=//p' <<<"$udev")
+  [[ -n "$usb_model" ]] || usb_model=$model
+  [[ -n "$usb_serial" && -n "$serial" && -n "$model" && "$devpath" =~ /usb[0-9]+/ && "${path##*/}" == "usb-$usb_serial" ]] ||
     common::die 'udev USB identity is missing or does not match the by-id path'
   block=$(jq -r '.blockdevices[0]["log-sec"]' <<<"$tree")
-  jq -cn --arg path "$path" --arg device "$device" --arg serial "$serial" --arg model "$model" --arg devpath "$devpath" \
+  jq -cn --arg path "$path" --arg device "$device" --arg serial "$usb_serial" --arg model "$usb_model" --arg devpath "$devpath" \
     --argjson bytes "$(jq '.blockdevices[0].size' <<<"$tree")" --argjson block "$block" \
     --arg disk_model "$(jq -r '.blockdevices[0].model // ""' <<<"$tree")" --arg disk_serial "$(jq -r '.blockdevices[0].serial // ""' <<<"$tree")" \
     '{path:$path,device:$device,usb_serial:$serial,usb_model:$model,disk_model:$disk_model,disk_serial:$disk_serial,
@@ -117,7 +126,7 @@ usb_linux_write() (
   [[ -f "$requested" && ! -L "$requested" ]] || common::die 'ISO must be a regular non-symlink file'
   iso="$(cd -- "$(dirname -- "$requested")" && pwd -P)/${requested##*/}"
   hash=$(usb_image_check "$iso") || exit 1
-  bytes=$(usb_size "$iso") || common::die 'cannot read ISO size'
+  bytes=$(usb_linux_size "$iso") || common::die 'cannot read ISO size'
   [[ "$bytes" =~ ^[1-9][0-9]*$ ]] || common::die 'cannot determine ISO size'
   initial=$(usb_linux_identity "$path" "$bytes") || exit 1
   device=$(jq -r .device <<<"$initial")
@@ -139,7 +148,7 @@ usb_linux_write() (
   trap 'exit 130' INT
   trap 'exit 143' TERM
   usb_confirm "ERASE $path $(jq -r .bytes <<<"$initial") ${hash:0:12}"
-  [[ "$(usb_image_check "$iso")" == "$hash" && "$(usb_size "$iso")" == "$bytes" ]] || common::die 'ISO changed after preview'
+  [[ "$(usb_image_check "$iso")" == "$hash" && "$(usb_linux_size "$iso")" == "$bytes" ]] || common::die 'ISO changed after preview'
   usb_linux_source_check "$iso" "$device"
   fresh=$(usb_linux_identity "$path" "$bytes") || exit 1
   [[ "$fresh" == "$initial" ]] || common::die 'USB identity changed after confirmation; start again'
@@ -155,9 +164,9 @@ usb_linux_write() (
   usb_linux_flush "$device" || common::die 'synchronization failed; copy is not verified'
   fresh=$(usb_linux_identity "$path" "$bytes") || exit 1
   [[ "$fresh" == "$initial" ]] || common::die 'USB identity changed before readback'
-  [[ "$(usb_image_check "$iso")" == "$hash" && "$(usb_size "$iso")" == "$bytes" ]] || common::die 'ISO changed during writing; copy is not verified'
+  [[ "$(usb_image_check "$iso")" == "$hash" && "$(usb_linux_size "$iso")" == "$bytes" ]] || common::die 'ISO changed during writing; copy is not verified'
   usb_linux_compare "$bytes" "$iso" "$device" || common::die 'readback mismatch or read failure; do not boot this USB'
-  [[ "$(usb_image_check "$iso")" == "$hash" && "$(usb_size "$iso")" == "$bytes" ]] || common::die 'ISO changed during readback; copy is not verified'
+  [[ "$(usb_image_check "$iso")" == "$hash" && "$(usb_linux_size "$iso")" == "$bytes" ]] || common::die 'ISO changed during readback; copy is not verified'
   [[ "$(usb_linux_identity "$path" "$bytes")" == "$initial" ]] || common::die 'USB identity changed during readback'
   completed=true
   common::info 'USB bytes verified against the ISO with direct reads. Remove the drive only now; UEFI/Secure Boot testing remains separate.'

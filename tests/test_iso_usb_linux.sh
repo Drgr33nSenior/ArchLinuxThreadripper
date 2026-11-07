@@ -18,7 +18,8 @@ USB_OS=linux
 phase=normal
 usb_platform() { USB_OS=linux; }
 common::require_root() { :; }
-usb_size() { wc -c <"$1" | tr -d ' '; }
+# The Linux path must use its own size adapter; the macOS one is unusable there.
+usb_size() { printf 'FAIL: macOS usb_size used on Linux\n' >&2; return 1; }
 usb_lock_path() { printf '%s/lock\n' "$work"; }
 usb_linux_is_link() { [[ $1 == "$fixture_path" ]]; }
 usb_linux_is_block() { [[ $1 == /dev/sdb ]]; }
@@ -42,12 +43,20 @@ usb_linux_lsblk() {
       model:"ST1000LM035-1RK172",serial:"C120D4Y3",mountpoints:[null],
       children:[{name:"sdb1",path:"/dev/sdb1",type:"part",size:4096,ro:false,mountpoints:[$mount]}]}]}'
 }
+# Default: a USB-SATA bridge with ATA passthrough, as the real LaCie reports
+# (inner drive in ID_SERIAL, bridge in ID_USB_SERIAL). usb-storage reports
+# only ID_SERIAL with ID_BUS=usb.
 usb_linux_udev() {
-  local serial=Fixture_Drive_000123-0:0
+  local serial=Fixture_Drive_000123-0:0 devpath=/devices/pci0000:00/0000:00:14.0/usb2/2-1/2-1:1.0/host8/block/sdb
   [[ $phase != wrong-serial ]] || serial=Other_Drive_999-0:0
-  [[ ! -f $work/replugged ]] || printf 'DEVPATH=/devices/replugged\n'
-  [[ -f $work/replugged ]] || printf 'DEVPATH=/devices/pci0000:00/usb2/2-1/block/sdb\n'
-  printf 'ID_BUS=usb\nID_SERIAL=%s\nID_MODEL=Mobile_Drive\n' "$serial"
+  [[ ! -f $work/replugged ]] || devpath=/devices/pci0000:00/0000:00:14.0/usb3/3-4/3-4:1.0/host9/block/sdb
+  [[ $phase != not-usb-path ]] || devpath=/devices/pci0000:00/0000:00:17.0/ata2/host1/block/sdb
+  printf 'DEVPATH=%s\nID_MODEL=ST1000LM035-1RK172\n' "$devpath"
+  if [[ $phase == usb-storage ]]; then
+    printf 'ID_BUS=usb\nID_SERIAL=%s\n' "$serial"
+  else
+    printf 'ID_BUS=ata\nID_SERIAL=ST1000LM035-1RK172_C120D4Y3\nID_SERIAL_SHORT=C120D4Y3\nID_USB_SERIAL=%s\nID_USB_MODEL=Mobile_Drive\n' "$serial"
+  fi
 }
 usb_linux_holders() { [[ $phase != held ]] || printf '/sys/class/block/sdb/sdb1/holders/dm-3\n'; }
 usb_linux_swaps() { [[ $phase != swap ]] || printf '/dev/sdb2\n'; }
@@ -92,7 +101,7 @@ for bad in /dev/sdb /dev/disk/by-id/usb-Fixture_Drive_000123-0:0-part1 /dev/disk
   if usb_linux_write "$iso" "$bad" false >"$work/out" 2>&1; then printf 'FAIL: %s accepted\n' "$bad" >&2; exit 1; fi
 done
 # Unsafe media and placement are refused in preview and execute mode alike.
-for unsafe in mounted read-only sata small unaligned held swap root-disk wrong-serial iso-on-target; do
+for unsafe in mounted read-only sata small unaligned held swap root-disk wrong-serial not-usb-path iso-on-target; do
   expect_refusal "$unsafe" usb_linux_write "$iso" "$fixture_path" true
 done
 # Preview reads identity only.
@@ -100,7 +109,12 @@ reset
 usb_linux_write "$iso" "$fixture_path" false >"$work/out" 2>&1
 grep -q 'Preview only' "$work/out"
 grep -q '"disk_serial":"C120D4Y3"' "$work/out"
+grep -q '"usb_model":"Mobile_Drive"' "$work/out"
 [[ ! -e $work/actions && ! -s $target ]]
+# Plain usb-storage identity (no ID_USB_SERIAL) is accepted through ID_SERIAL.
+reset
+(phase=usb-storage; usb_linux_write "$iso" "$fixture_path" false) >"$work/out" 2>&1
+grep -q 'Preview only' "$work/out"
 # Execute writes, flushes and verifies the exact ISO bytes after typed confirmation.
 reset
 usb_linux_write "$iso" "$fixture_path" true >"$work/out" 2>&1 || { cat "$work/out" >&2; exit 1; }
