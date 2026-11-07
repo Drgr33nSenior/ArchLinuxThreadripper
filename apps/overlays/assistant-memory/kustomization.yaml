@@ -1,0 +1,14 @@
+# Assistant experience plus opt-in Graphiti memory (render with
+# `service render --experience assistant-memory`). Memory adds about 7 GiB of
+# declared limits; `service plan` must admit it before any replica is raised.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: ai-home-lab
+resources: [../assistant]
+components: [../../components/memory]
+configMapGenerator:
+  - name: memory-profile
+    literals:
+      - MEMORY_LLM_MODEL=Qwen3.8-27B-FP8
+      - MEMORY_LLM_MAX_TOKENS=4096
+      - MEMORY_EMBEDDING_MODEL=Qwen3-Embedding-0.6B

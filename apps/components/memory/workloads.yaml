@@ -1,0 +1,177 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: neo4j
+  annotations: {workstation.ai/qualification: pending-memory-acceptance}
+spec:
+  replicas: 0
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app.kubernetes.io/name: neo4j}}
+  template:
+    metadata: {labels: {app.kubernetes.io/name: neo4j}}
+    spec:
+      automountServiceAccountToken: false
+      # A clean shutdown checkpoints the store; backups stop it before copying.
+      terminationGracePeriodSeconds: 120
+      nodeSelector: {kubernetes.io/arch: amd64, kubernetes.io/os: linux}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 7474
+        runAsGroup: 7474
+        fsGroup: 7474
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: neo4j
+          # Neo4j Community 5.26 LTS (GPLv3). Graphiti 0.31.2 requires 5.26 or later.
+          image: docker.io/library/neo4j:5.26.32-community@sha256:42ef3ebfd671ebd01fdebb6dcbe80cf7b45eef2aa3d346ef4132f7ef31e67d2f
+          env:
+            # File holds "neo4j/<password>"; never an inline value.
+            - {name: NEO4J_AUTH_FILE, value: /run/neo4j/neo4j-auth}
+            - {name: NEO4J_server_http_enabled, value: 'false'}
+            - {name: NEO4J_server_https_enabled, value: 'false'}
+            - {name: NEO4J_server_memory_heap_initial__size, value: 512m}
+            - {name: NEO4J_server_memory_heap_max__size, value: 1g}
+            - {name: NEO4J_server_memory_pagecache_size, value: 256m}
+            - {name: NEO4J_dbms_usage__report_enabled, value: 'false'}
+          ports: [{name: bolt, containerPort: 7687}]
+          resources:
+            requests: {cpu: 250m, memory: 1Gi}
+            limits: {cpu: '2', memory: 2Gi}
+          securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+          startupProbe:
+            tcpSocket: {port: bolt}
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            tcpSocket: {port: bolt}
+            periodSeconds: 10
+          volumeMounts:
+            - {name: data, mountPath: /data}
+            - {name: logs, mountPath: /logs}
+            - {name: auth, mountPath: /run/neo4j, readOnly: true}
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: graphiti-neo4j}
+        - name: logs
+          emptyDir: {sizeLimit: 256Mi}
+        - name: auth
+          secret:
+            secretName: memory-service
+            defaultMode: 0440
+            items: [{key: neo4j-auth, path: neo4j-auth}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: neo4j}
+spec:
+  selector: {app.kubernetes.io/name: neo4j}
+  ports: [{name: bolt, port: 7687, targetPort: bolt}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: memory-embedding
+  annotations: {workstation.ai/qualification: pending-memory-acceptance}
+spec:
+  replicas: 0
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app.kubernetes.io/name: memory-embedding}}
+  template:
+    metadata: {labels: {app.kubernetes.io/name: memory-embedding}}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      nodeSelector: {kubernetes.io/arch: amd64, kubernetes.io/os: linux}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: embedding
+          # Text Embeddings Inference CPU 1.9.2 (Apache-2.0). It serves the same
+          # hash-verified Qwen3-Embedding-0.6B files as RAG, read-only, offline.
+          image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9.2@sha256:16230cd8f679ae5f8a51d585033628b1c0d45cd70c2bc9b0d208170d71218fdb
+          args: [--model-id, /rag-models/Qwen3-Embedding-0.6B, --served-model-name, Qwen3-Embedding-0.6B,
+                 --port, '8080', --max-client-batch-size, '16', --max-batch-tokens, '8192', --auto-truncate]
+          env:
+            - {name: HF_HUB_OFFLINE, value: '1'}
+            - {name: HOME, value: /tmp}
+            - {name: HUGGINGFACE_HUB_CACHE, value: /tmp/hf}
+          ports: [{name: http, containerPort: 8080}]
+          resources:
+            requests: {cpu: '1', memory: 3Gi}
+            limits: {cpu: '4', memory: 4Gi}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          startupProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: {path: /health, port: http}
+          volumeMounts:
+            - {name: rag-models, mountPath: /rag-models, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: rag-models
+          persistentVolumeClaim: {claimName: webui-rag-qwen3-models, readOnly: true}
+        - name: tmp
+          emptyDir: {sizeLimit: 256Mi}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: memory-embedding}
+spec:
+  selector: {app.kubernetes.io/name: memory-embedding}
+  ports: [{name: http, port: 8080, targetPort: http}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: graphiti-memory
+  annotations: {workstation.ai/qualification: pending-memory-acceptance}
+spec:
+  replicas: 0
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app.kubernetes.io/name: graphiti-memory}}
+  template:
+    metadata: {labels: {app.kubernetes.io/name: graphiti-memory}}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 120
+      nodeSelector: {kubernetes.io/arch: amd64, kubernetes.io/os: linux}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: memory
+          image: localhost/workstation/graphiti-memory
+          imagePullPolicy: Never
+          envFrom: [{configMapRef: {name: memory-profile}}]
+          ports: [{name: http, containerPort: 8000}]
+          resources:
+            requests: {cpu: 250m, memory: 384Mi}
+            limits: {cpu: '1', memory: 1Gi}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          readinessProbe:
+            httpGet: {path: /health, port: http}
+          volumeMounts:
+            - {name: credentials, mountPath: /run/memory, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: credentials
+          # service-key: shared with service-tools; llm-key: this service's own
+          # gateway virtual key, restricted to the selected chat model.
+          secret: {secretName: memory-service, defaultMode: 0440}
+        - name: tmp
+          emptyDir: {sizeLimit: 64Mi}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: graphiti-memory}
+spec:
+  selector: {app.kubernetes.io/name: graphiti-memory}
+  ports: [{name: http, port: 8000, targetPort: http}]

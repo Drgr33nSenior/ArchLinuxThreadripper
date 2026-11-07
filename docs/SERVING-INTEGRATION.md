@@ -1,18 +1,34 @@
 # Serving project integration
 
-Reviewed 1 November 2026. The latest published serving source is
-[`d3f0db8`](https://github.com/Drgr33nSenior/Spry.ai-rdna4-serving/tree/d3f0db85997389ebd8836af17a7048659b930770).
-There are no published release tags or GitHub releases as of this check. Track the
-exact commit and evidence bytes, not a release version inferred from SGLang.
+Reviewed 7 November 2026. The latest published serving source is
+[`3f5ba24`](https://github.com/Drgr33nSenior/Spry.ai-rdna4-serving/tree/3f5ba24e292d43e0bc643f2c51cf5940afabc606).
+There are no published release tags or GitHub releases. Track the exact commit
+and evidence bytes, not a release version inferred from SGLang.
 
 The workstation's machine-readable record is
-[serving-project.json](../infrastructure/sglang/serving-project.json). It pins two
-unaltered public result records and ships their MIT licence. The existing
-`workstationctl performance stack` command includes a hash-checked summary on
-Arch. Inventory is offline: its checked date is the last source review, not a
-fresh upstream query or live deployment check.
+[serving-project.json](../infrastructure/sglang/serving-project.json). It keeps
+each import separately, with its own revision, check date and record hashes,
+and ships the records' MIT licence:
 
-## What changed upstream
+| Import | Revision | Status | Records |
+| --- | --- | --- | --- |
+| `mxfp4-128k-20261101` | `d3f0db8` | Historical | Phase 1 and 128K/C4 candidate records as published then |
+| `splitk-selection-20261107` | `3f5ba24` | Current | Split-K S4 selection (operation 234, with operation 232 as rollback) and the finalization record |
+
+`stack_inventory.serving_project` checks both imports and reports the current
+selection only from the current import. Later upstream edits to a historical
+record do not change the pinned bytes; that record still describes the earlier
+candidate. `workstationctl performance stack` includes the summary on Arch.
+Inventory is offline: the check date is the last source review, not a live
+deployment check. For the assistant integration of the current selection, see
+[the assistant guide](ASSISTANT.md#native-candidate-integration).
+
+## Historical import: 1 November 2026
+
+The rest of this section describes the `d3f0db8` import and the C4 candidate
+that the owner later replaced.
+
+### What changed upstream at that import
 
 | Area | Current evidence | Limit |
 | --- | --- | --- |
@@ -43,7 +59,7 @@ Do not add gains or treat those rates as a controlled power comparison.
 
 | Surface | Current state | Next required integration |
 | --- | --- | --- |
-| Serving source/results | This checkout tracks the published revision and both result hashes | Review a new commit and update the record when upstream evidence changes |
+| Serving source/results | This checkout tracks `3f5ba24` (current) and `d3f0db8` (historical) with their record hashes | Add a new import when upstream evidence changes; keep older imports |
 | Application images | `versions.lock` still selects the retained ROCm 10.0 dual-GPU and 10.1 single-GPU images | A complete reviewable runtime/image artifact, model inventory and package contract are needed before replacing pins |
 | Native 10.2 contract | [sglang-rocm102.json](../infrastructure/hyperloom/sglang-rocm102.json) is the existing expected SGLang/Torch/HIP contract | A version match alone does not bind the newer MXFP4 model, operators or complete loaded source |
 | Hyperloom owner adapter | Authenticates the older 4/30-request schedules and delegates existing owner controls | W5 has 176 requests/start and a changed evidence ABI; it is not admitted by this adapter |

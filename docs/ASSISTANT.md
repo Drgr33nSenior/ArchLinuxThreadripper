@@ -40,7 +40,7 @@ environment and resource budget.
 | Conversation | Open WebUI → per-user gateway key → SGLang | Preserve the selected model identity and existing context limits |
 | Documents | Open WebUI → CPU Qwen embedding model → embedded Chroma | Preserve document permissions; answer/citation quality remains unqualified |
 | Web research | Open WebUI/Qwen Code → shared Exa adapter | Auto search and public-page extraction; one durable request ceiling; Tavily optional |
-| Session continuity, planned integration | Browser/coding clients → authenticated memory tools → Graphiti, plus project handoff | Primary memory path; native storage/restart/restore fixture passed; no shared endpoint or automatic writer implemented |
+| Session continuity (opt-in) | Browser/coding clients → service-tools memory tools → Graphiti, plus project handoff | `assistant-memory` profile packaged on Neo4j Community with per-user memory groups; Neo4j storage/restart, extraction and recall quality not yet tested; no automatic writer |
 | Image creation | Open WebUI → bounded image adapter → SwarmUI → embedded ComfyUI | SDXL only, one image job, explicit split-mode admission |
 | Creative controls | Operator → SwarmUI; ComfyUI remains its embedded backend | No new public ComfyUI port or unauthenticated creative Ingress |
 | Spoken answers | Open WebUI browser speech synthesis | Quality and voice availability depend on the browser/operating system |
@@ -71,7 +71,7 @@ and existing claim metadata; do not apply example DNS or invent a new identity.
 `large` keeps the existing two-GPU Qwen3.8-27B-FP8 service contract and disables
 image generation in WebUI. `split` explicitly selects the existing one-GPU
 Qwen3.5-9B contract and enables SDXL on the other GPU. It never silently exchanges
-the chat model to make room for an image. The native ROCm 10.2 serving candidate
+the chat model to make room for an image. The native serving candidate (below)
 must still complete its own packaging and model-specific qualification; this
 profile does not substitute it for the existing published image.
 
@@ -82,58 +82,165 @@ is about 62 GiB.
 Existing split limits exceed the reviewed CPU budget; this change does not lower
 them to obtain admission. Shared UI configuration is not physical GPU ownership.
 
-## Native 128K candidate integration
+## Native candidate integration
 
-The selected private native candidate uses Qwen3.8-27B Quark AWQ MXFP4,
-BF16 target/draft KV, DFlash width 8 and C4 attention on two R9700s.
-Its context is 131,040 tokens; its shared token pool is 262,144 tokens for
-at most two running requests. Its tested served-model identifier is
-`fp8-serving-screen`; that historical name does not identify weight precision.
-This candidate is separate from the older container composition above.
-Its source-built runtime uses SGLang 0.5.21, ROCm 10.2 and Torch 2.14.
+### Current selection
 
-The selected pointer checked on 3 November 2026 has SHA-256
-`fe92916ca06f43ec719d3a66345e4345908106212596d7044c03713b575c3394`.
-The integration readout found six differences: upstream model identity,
-gateway, router, client and container context, and container model revision.
-Recheck the then-current pointer before preparing another handoff; this digest
-records metadata provenance and does not qualify an installed runtime.
+The serving project records the owner's interim selection until Qwen4 work
+resumes. The workstation imports it through
+[serving-project.json](../infrastructure/sglang/serving-project.json), which
+pins the public records by SHA-256:
 
-Prepare an offline comparison from the current selected pointer and its
-independently checked SHA-256:
+| Item | Value |
+| --- | --- |
+| Serving revision | `3f5ba24` (import `splitk-selection-20261107`, current) |
+| Selected arm | Operation 234 `mtp` (physical `kv4`, start 2): three-member cap16 plus S4 split-K down/out |
+| Rollback | Operation 232 `mtp` (physical `bf16`, start 1), the previous selection |
+| Private pointer | `2fda6127…`; superseded pointers `4e19fc56…` and `fe92916c…` are refused as stale |
+| Frozen verdict | `INCONCLUSIVE_PARK`; selection is an owner decision |
+| Weights / KV | Qwen3.8-27B Quark MXFP4; explicit BF16 target and draft KV; DFlash width 8; TP2 |
+| Limits | Context 131,040; aggregate token pool 262,144; two running requests |
+| Native alias | `fp8-serving-screen` (historical name; not the weight precision) |
+| Client alias | `Qwen3.8-27B-MXFP4` (proposed; not yet routed) |
+| Retained deviations | cap3 recurrent path, `LLVM_PATH`, mandatory startup numerical probes |
+
+The 1 November import of the earlier C4 candidate remains in the tracking file
+as a historical import. Its bytes describe that candidate only.
+
+This is a private experimental selection. It is not an installed service.
+Natural-answer grades exist for the rollback arm (operation 232) and the
+cleanup packet (operation 207). The selected arm has only BetterBench results,
+which have no answer-quality oracle. Neither qualifies the browser or
+coding-agent workflow; the acceptance suite below does that.
+
+### Runtime identity
+
+The measured runtime is SGLang 0.5.21 at `e00930c5`, ROCm SDK 10.1.0 and
+Python 3.14.4. Its launch overlays separately built site-packages, devel and
+composition trees on the base image `1d3ebef7…`, so a version tag cannot
+identify it. The contract records the package manifest, model and tokenizer
+digests, the composition argv digest and the runtime environment instead.
+
+The checkpoint has no separate `chat_template.jinja`. Its template is in
+`tokenizer_config.json` (`b11349aa…`). The template:
+
+- opens the thinking block in the generation prompt, so raw output has no
+  opening `<think>` tag;
+- accepts `reasoning_effort` values `low`, `medium` and `xhigh` only, and
+  raises an error for others, including `high`. The gateway therefore sends
+  `high` as `xhigh`, so clients that offer `high` do not get an error;
+- renders tool calls as `<tool_call><function=…><parameter=…>` XML and tool
+  results as `<tool_response>` blocks.
+
+### Prepare the integration plan
+
+The planner is offline. It authenticates the pointer against the imported
+selection, then the package files through the pointer's manifest digest:
 
 ```sh
 ./bin/workstationctl service candidate-plan /private/CANDIDATE-POINTER.json \
   /private/assistant-candidate-plan --pointer-sha256 EXACT_64_HEX_DIGEST \
-  --output-tokens 4096
+  --package-root /private/SELECTED-PACKAGE-V2 --output-tokens 4096
 ```
 
-The command authenticates the supplied pointer bytes and checks its selected
-arm and declared CLI/resolved-contract agreement. It does not authenticate
-the installed runtime, model weights or recorded approval. It writes a
-contract, proposed client values, an eight-case quality menu and an integration
-report. It omits arbitrary CLI values and credentials. It performs no network
-request, model launch, source promotion or workload deployment.
+It writes these files:
 
-The current UI/gateway still routes the older FP8 model with 32K context.
-The report identifies this mismatch. Context capacity and generated-output
-allowance are separate: `--output-tokens` proposes a policy for evaluation;
-it does not establish that allowance as qualified. The command succeeds when
-it writes the report; `blocked-integration` and `deployment_ready: false`
-describe integration readiness.
+- `candidate-contract.json`: allowlisted identities, limits, request defaults,
+  parser status, deviations and rollback.
+- `candidate-render.json`: inactive gateway, LiteLLM, Open WebUI and client
+  values, all derived from that contract, with cross-layer checks.
+- `candidate-sglang.yaml`: an inactive persistent Deployment (zero replicas).
+- `candidate-runtime.json`: deviations, blockers, readiness and rollback.
+- `integration-plan.json`: the comparison with the active profile and the
+  evidence levels.
 
-Before activation, package and qualify a persistent authenticated native
-endpoint. Reconcile its identity, router metadata, gateway policy and client
-settings together. Use the actual tokenizer and template to budget history,
-tools, retrieved text, output and scheduler reserve. Run the menu through the
-gateway and browser, including reasoning on/off, tool-result follow-ups and
-facts at the beginning, middle and end of long prompts. Retain failures and
-measure output truncation and deadlines. The offline gateway transport tests
-use deterministic backends; they do not qualify native model tool use.
+It refuses a stale or superseded pointer, mixed arms, CLI and resolved-limit
+drift, a changed package member and any launch flag outside the reviewed set.
+It never prints credentials, machine paths or arbitrary CLI values. The status
+shows the remaining gate: `blocked-missing-evidence` without `--package-root`,
+otherwise `blocked-integration`. `deployment_ready` stays false.
+`runtime_observed` stays false until the acceptance suite runs on the native
+endpoint.
 
-Operation 207's serving cleanup passed all 352 reference-vector comparisons
-and natural-answer grades across eight distinct prompt sequences. This bounded
-evidence does not establish broad assistant quality or an installed service.
+The active profile (`Qwen3.8-27B-FP8`, 32,768 context, 4,096 output) is not
+changed. Rollback before activation is to leave the render unapplied and
+re-render the active profile with `service render`.
+
+### Request profile and transport
+
+The baseline recipe is thinking enabled at low effort with greedy decoding.
+The selected arm was throughput-measured with a sampled profile (temperature
+0.7, top_k 20, top_p 0.95); the menu labels that as a separate recipe.
+
+| Layer | Behaviour at the pinned versions |
+| --- | --- |
+| Open WebUI 0.12.5 | Copies `DEFAULT_MODEL_PARAMS` to the top level of each request; sends `max_tokens`; drops prior reasoning on the next turn |
+| Gateway boundary | Accepts `reasoning_effort` `low`, `medium`, `high` and `xhigh`; sends `high` as `xhigh`, the nearest level the template accepts. Accepts `chat_template_kwargs` with only a boolean `enable_thinking`; refuses other fields |
+| LiteLLM 1.106.2 | `drop_params: false`; forwards `reasoning_effort` and `max_completion_tokens` unchanged; passes `top_k` and `chat_template_kwargs` through `extra_body` |
+| SGLang 0.5.21 | Passes `reasoning_effort` and `chat_template_kwargs` to the template |
+
+Without parser flags, SGLang returns reasoning and tool-call markup in
+`content`, and `finish_reason` stays `stop`. The persistent descriptor adds
+`--reasoning-parser qwen3 --tool-call-parser qwen3_coder`. These are the
+parsers of the existing service profile and match the template format. The
+descriptor records them as a labelled deviation from the measured CLI. The
+frozen serving benchmark contract is unchanged.
+
+Admission and execution are separate limits. The gateway admits four
+concurrent requests, and the native runtime runs two. With four active
+requests, two wait in the native queue and count against the client deadline.
+
+### Persistent endpoint blockers
+
+| Missing artifact or capability | Affected step |
+| --- | --- |
+| A runtime image reproducing the measured composition (base `1d3ebef7…`, site-packages, devel and composition trees, package overlays), passed as a local digest | Startup, every native qualification |
+| The MXFP4 checkpoint and DFlash draft staged at the rendered `/models` paths and checked against the inventory | Startup |
+| A persistent entry that runs the package's startup numerical probes without the campaign client and shutdown (an owner-reviewed serving change) | Readiness |
+| Fresh `service plan` capacity with collected memory evidence (64 GB installed; about 62 GiB was last visible to Linux) | Activation |
+| Native assistant API and quality-menu results through the gateway and the browser | Activation |
+
+The serving launcher stops its runtime when its bound client finishes. Its
+owner, deadline and release checks stay unchanged.
+
+### Acceptance suite
+
+The menu is [assistant-quality.json](../infrastructure/sglang/assistant-quality.json).
+It has 15 unique tasks: the eight original cases and seven held-out tasks.
+
+- Python and Go bug fixes, each with real tests.
+- Terraform and Ansible compatibility fixes, checked with `terraform validate`
+  and `ansible-playbook --syntax-check`.
+- Kubernetes troubleshooting from supplied evidence.
+- Version selection.
+- Incident analysis.
+
+Repetitions are counted separately from tasks. Human-rubric items stay
+`needs-review` until a person decides.
+
+```sh
+./bin/workstationctl service acceptance plan /private/acceptance-plan.json \
+  --model Qwen3.8-27B-MXFP4 --tokenizer-dir /private/model-tokenizer
+./bin/workstationctl service acceptance run /private/gateway-run.json \
+  --boundary gateway --base-url https://API_HOST:32443 --model Qwen3.8-27B-MXFP4 \
+  --key-file /private/virtual-key
+```
+
+Each run names one boundary: `direct`, `gateway` or `webui-api`. An
+unreachable endpoint gives `NOT RUN`. The report contains the following:
+
+- Task pass rate, tool round-trip success, grounded-answer accuracy,
+  abstention, truncation and time to a usable answer.
+- Request and response hashes, finish reasons, token counts and the elapsed
+  time for each attempt.
+
+Code and configuration answers pass only when the task's real tests or
+validators pass inside the network-free Linux sandbox. That sandbox uses the
+serving project's pinned grader design: bubblewrap with every namespace
+unshared, a cleared environment and a timeout. On other hosts, those tasks
+are `NOT RUN`. The coding-client and browser scenarios in the menu are manual
+checklists for the preferred client (Qwen Code): repository edits, a
+failed-test-to-fix cycle, interrupt and resume, and context compaction.
 
 ## Pinned inputs and gates
 

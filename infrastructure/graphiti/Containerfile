@@ -1,0 +1,16 @@
+# Graphiti memory service. Build on the workstation with:
+#   podman build -f infrastructure/graphiti/Containerfile -t localhost/workstation/graphiti-memory infrastructure/graphiti
+# then set the resulting local digest in apps/components/memory/kustomization.yaml.
+# Dependencies install only from the hashed lock; no source build or network
+# access is needed at runtime.
+FROM docker.io/library/python:3.14.10-slim@sha256:af8a5aa14780025dbfbcfbc81bd8a91ebd87711dd5b0f48ed71090949dd7cb1d
+COPY requirements-python314.lock /opt/memory/requirements.lock
+RUN python -m pip install --no-cache-dir --require-hashes --only-binary=:all: --no-deps \
+        -r /opt/memory/requirements.lock \
+    && useradd --uid 1000 --no-create-home --shell /usr/sbin/nologin memory
+COPY memory_service.py /opt/memory/memory_service.py
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 GRAPHITI_TELEMETRY_ENABLED=false POSTHOG_DISABLED=1
+USER 1000:1000
+WORKDIR /opt/memory
+EXPOSE 8000
+ENTRYPOINT ["python", "-I", "/opt/memory/memory_service.py"]

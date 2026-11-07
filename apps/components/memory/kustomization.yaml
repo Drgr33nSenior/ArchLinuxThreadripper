@@ -1,0 +1,33 @@
+# Opt-in Graphiti memory for the assistant experience. Replicas stay zero;
+# scale only after `service plan` admits the extra memory budget and the
+# memory acceptance in docs/MEMORY.md has run. Neo4j Community is GPLv3.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources: [workloads.yaml, storage.yaml, network-policy.yaml]
+images:
+  # Graphiti 0.31.2 service image built from infrastructure/graphiti/Containerfile.
+  # Replace with the local build digest; an unbuilt image cannot start.
+  - name: localhost/workstation/graphiti-memory
+    newName: registry.invalid/ai-home-lab/graphiti-memory
+    newTag: UNBUILT
+# Each overlay generates memory-profile with the chat model it serves.
+patches:
+  - target: {kind: Deployment, name: service-tools}
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: MEMORY_ENABLED, value: 'true'}
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: MEMORY_WRITE_ENABLED, value: 'true'}
+      - op: add
+        path: /spec/template/spec/containers/0/volumeMounts/-
+        value: {name: memory-service-key, mountPath: /run/memory, readOnly: true}
+      - op: add
+        path: /spec/template/spec/volumes/-
+        value:
+          name: memory-service-key
+          secret:
+            secretName: memory-service
+            defaultMode: 0440
+            items: [{key: service-key, path: service-key}]

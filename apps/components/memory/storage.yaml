@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: graphiti-neo4j
+  labels: {workstation.ai/backup: irreplaceable}
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: workstation-retain
+  resources: {requests: {storage: 5Gi}}

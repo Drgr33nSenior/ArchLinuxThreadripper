@@ -1,0 +1,12 @@
+# Split assistant plus opt-in Graphiti memory; extraction uses the 9B model.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: ai-home-lab
+resources: [../assistant-split]
+components: [../../components/memory]
+configMapGenerator:
+  - name: memory-profile
+    literals:
+      - MEMORY_LLM_MODEL=Qwen3.5-9B
+      - MEMORY_LLM_MAX_TOKENS=1024
+      - MEMORY_EMBEDDING_MODEL=Qwen3-Embedding-0.6B

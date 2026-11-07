@@ -2,6 +2,7 @@
 import asyncio
 import importlib.util
 import json
+import os
 from pathlib import Path
 import sqlite3
 import sys
@@ -9,6 +10,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 from types import SimpleNamespace
+
+import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "apps/base/shared-api"), str(ROOT / "lib/workstation")]
@@ -153,82 +156,314 @@ class BoundaryTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(self.gateway.active)
 
 
+    async def test_selected_profile_fields_reach_backend_unchanged(self):
+        # Open WebUI 0.12.5 sends max_tokens and copies DEFAULT_MODEL_PARAMS to
+        # the top level; this is that request shape for the selected profile.
+        body = {**self.chat, "stream": True, "stop": ["</s>"], "max_tokens": 2048, "temperature": 0.0,
+                "top_k": 1, "top_p": 1.0, "reasoning_effort": "low", "chat_template_kwargs": {"enable_thinking": True},
+                "tools": [{"type": "function", "function": {"name": "f", "parameters": {"type": "object"}}}]}
+        result = await request(self.gateway, "/v1/chat/completions", body)
+        self.assertEqual(200, result[0]["status"])
+        self.assertEqual(body, self.seen[-1][1])  # nothing dropped, renamed or added
+
+    async def test_reasoning_and_template_fields_are_narrowly_validated(self):
+        for change, code in (({"reasoning_effort": "max"}, "invalid_reasoning_effort"),
+                             ({"reasoning_effort": ["low"]}, "invalid_reasoning_effort"),
+                             ({"chat_template_kwargs": {"enable_thinking": "true"}}, "invalid_chat_template_kwargs"),
+                             ({"chat_template_kwargs": {"preserve_thinking": False}}, "invalid_chat_template_kwargs"),
+                             ({"chat_template_kwargs": {"chat_template": "{{ x }}"}}, "invalid_chat_template_kwargs"),
+                             ({"chat_template_kwargs": []}, "invalid_chat_template_kwargs"),
+                             ({"min_p": 0.1}, "unsupported_request_field"),
+                             ({"repetition_penalty": 1.1}, "unsupported_request_field"),
+                             ({"separate_reasoning": False}, "unsupported_request_field")):
+            with self.subTest(change=change):
+                result = await request(self.gateway, "/v1/chat/completions", {**self.chat, **change})
+                self.assertEqual(400, result[0]["status"])
+                self.assertEqual(code, json.loads(result[-1]["body"])["error"]["code"])
+        self.assertEqual([], self.seen)
+        for effort, sent in (("low", "low"), ("medium", "medium"), ("high", "xhigh"), ("xhigh", "xhigh")):
+            result = await request(self.gateway, "/v1/chat/completions", {**self.chat, "reasoning_effort": effort})
+            self.assertEqual(200, result[0]["status"])
+            # "high" is accepted and sent as the template's xhigh level.
+            self.assertEqual(sent, self.seen[-1][1]["reasoning_effort"])
+
+    async def test_candidate_alias_tool_roundtrip_with_reasoning_and_later_turn(self):
+        """Fixture backend only: proves the boundary path, not native parsing or model behaviour."""
+        contract = {"client_alias": "Qwen3.8-27B-MXFP4", "served_model": "fp8-serving-screen",
+                    "context_length": 131040, "max_total_tokens": 262144, "max_running_requests": 2,
+                    "request_defaults": {"chat_template_kwargs": {"enable_thinking": True}, "reasoning_effort": "low",
+                                         "temperature": 0.0, "top_k": 1, "top_p": 1.0}}
+        rendered = service.candidate_render(contract, 4096, 180, 16)
+        tool = {"type": "function", "function": {"name": "search_web", "parameters": {
+            "type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}}
+        frames = [{"choices": [{"index": 0, "delta": {"role": "assistant", "reasoning_content": "Need a search."}}]},
+                  {"choices": [{"index": 0, "delta": {"tool_calls": [{"index": 0, "id": "call-7", "type": "function",
+                                "function": {"name": "search_web", "arguments": '{"que'}}]}}]},
+                  {"choices": [{"index": 0, "delta": {"tool_calls": [{"index": 0, "function": {"arguments": 'ry":"cache"}'}}]}}]},
+                  {"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]}]
+        stream = "".join("data: " + json.dumps(frame) + "\n\n" for frame in frames) + "data: [DONE]\n\n"
+        answers = [{"role": "assistant", "reasoning_content": "Cite it.", "content": "17 entries (https://example.com/cache)"},
+                   {"role": "assistant", "reasoning_content": "Prior answer applies.", "content": "Still 17."}]
+        seen = []
+        async def backend(scope, receive, send):
+            seen.append(json.loads((await receive())["body"]))
+            if len(seen) == 1:
+                await send({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"text/event-stream")]})
+                await send({"type": "http.response.body", "body": stream.encode(), "more_body": False})
+            else:
+                await boundary.reply(send, 200, {"choices": [{"index": 0, "message": answers[len(seen) - 2], "finish_reason": "stop"}]})
+        with patch.dict(boundary.CHAT_MODELS, {alias: tuple(limits) for alias, limits in rendered["gateway"]["chat_models"].items()}):
+            self.gateway.app = backend
+            self.gateway.state = {"phase": "ready", "model": "Qwen3.8-27B-MXFP4", "images": False}
+            base = {**rendered["request"], "stream": True, "tools": [tool],
+                    "messages": [{"role": "user", "content": "What is the cache capacity?"}]}
+            first = await request(self.gateway, "/v1/chat/completions", base)
+            body = b"".join(m.get("body", b"") for m in first).decode()
+            self.assertTrue(body.endswith("data: [DONE]\n\n"))
+            call = {"id": "call-7", "type": "function", "function": {"name": "search_web", "arguments": '{"query":"cache"}'}}
+            history = base["messages"] + [{"role": "assistant", "content": "", "tool_calls": [call]},
+                                          {"role": "tool", "tool_call_id": "call-7", "content": '{"capacity":17}'}]
+            second = await request(self.gateway, "/v1/chat/completions", {**base, "stream": False, "messages": history})
+            final = json.loads(second[-1]["body"])["choices"][0]
+            self.assertEqual(("stop", "17 entries (https://example.com/cache)", "Cite it."),
+                             (final["finish_reason"], final["message"]["content"], final["message"]["reasoning_content"]))
+            later = history + [{"role": "assistant", "content": final["message"]["content"]},
+                               {"role": "user", "content": "And now?"}]
+            third = await request(self.gateway, "/v1/chat/completions", {**base, "stream": False, "messages": later})
+            self.assertEqual(200, third[0]["status"])
+        self.assertEqual(3, len(seen))
+        for sent in seen:
+            self.assertEqual(("low", {"enable_thinking": True}, 0.0, 1, 4096),
+                             (sent["reasoning_effort"], sent["chat_template_kwargs"], sent["temperature"], sent["top_k"], sent["max_tokens"]))
+        self.assertEqual(history, seen[1]["messages"])
+        self.assertEqual(later, seen[2]["messages"])
+        self.assertFalse(self.gateway.active)
+
+CLI = ["--model-path", "/mnt/models", "--served-model-name", "fp8-serving-screen", "--revision", "b" * 40,
+       "--host", "127.0.0.1", "--port", "18088",
+       "--context-length", "131040", "--max-total-tokens", "262144", "--chunked-prefill-size", "2048",
+       "--max-running-requests", "2", "--tp-size", "2", "--quantization", "quark", "--kv-cache-dtype", "bf16",
+       "--speculative-algorithm", "DFLASH", "--speculative-draft-model-path", "/mnt/draft-model",
+       "--speculative-draft-model-revision", "c" * 40, "--speculative-num-draft-tokens", "8",
+       "--speculative-dflash-block-size", "8", "--speculative-draft-kv-cache-dtype", "bf16",
+       "--mamba-max-states-per-path", "3", "--api-key", "synthetic-value-must-not-leave-input"]
+RESOLVED = {"context_length": 131040, "max_total_tokens": 262144, "max_running_requests": 2, "tp_size": 2,
+            "chunked_prefill_size": 2048, "kv_cache_dtype": "bf16", "speculative_draft_kv_cache_dtype": "bf16",
+            "model_config_sha256": "d" * 64, "prefix_cache": {"mamba_max_states_per_path": 3}}
+
+
 class CandidatePlanTests(unittest.TestCase):
+    """Fixture pointers in the selected-pointer shape; the real import is checked separately."""
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
         self.pointer = self.root / "pointer.json"
-        self.record = {"schema": 1, "candidate_selected": True,
-            "candidate_package_base": {"package_sha256": "a" * 64,
-                "selected_arm": {"logical": "mtp", "physical": "kv4", "start": 2, "operation": 174}},
-            "selected_runtime": {"logical_arm": "mtp", "physical_arm": "kv4", "start": 2,
-                "canonical_server_cli": ["--served-model-name", "fp8-serving-screen", "--revision", "b" * 40,
-                    "--context-length", "131040", "--max-total-tokens", "262144",
-                    "--max-running-requests", "2", "--tp-size", "2", "--quantization", "quark",
-                    "--kv-cache-dtype", "bf16", "--api-key", "synthetic-value-must-not-leave-input"],
-                "resolved_contract": {"context_length": 131040, "max_total_tokens": 262144,
-                    "max_running_requests": 2, "tp_size": 2}}}
+        package = {key: "a" * 64 for key in ("package_sha256", "archive_sha256", "manifest_sha256",
+                                              "source_manifest_sha256", "worker_source_manifest_sha256")}
+        self.record = {"schema": 1, "candidate_selected": True, "deployment": False,
+            "candidate": "Private Qwen3.8-27B MXFP4 experimental candidate",
+            "candidate_package_base": {**package,
+                "selected_arm": {"logical": "mtp", "physical": "kv4", "start": 2, "operation": 234}},
+            "rollback": {"logical_arm": "mtp", "physical_arm": "bf16", "start": 1, "operation": 232,
+                         "launch_authorized": False},
+            "selected_runtime": {"logical_arm": "mtp", "physical_arm": "kv4", "start": 2, "operation": 234,
+                "dflash_width": 8, "canonical_server_cli": list(CLI), "resolved_contract": json.loads(json.dumps(RESOLVED)),
+                "runtime_identity": {"sha256": "e" * 64}, "http_binding": {"sha256": "f" * 64},
+                "tested_deviations": ["mamba_max_states_per_path=3 (cap3)"]}}
+        self.selection = {"operation": 234, "selected_arm": {"logical": "mtp", "physical": "kv4", "start": 2},
+            "previous_pointer_sha256": "1" * 64, "superseded_pointer_sha256": ["1" * 64, "2" * 64],
+            "package": package, "canonical_server_cli": list(CLI), "resolved_contract": json.loads(json.dumps(RESOLVED)),
+            "rollback": {"operation": 232, "logical": "mtp", "physical": "bf16", "start": 1, "launch_authorized": False},
+            "limits_and_deviations": ["fixture"], "measured_request_profile": {"temperature": 0.7}}
 
     def save(self):
         self.pointer.write_text(json.dumps(self.record))
-        return service.sha(self.pointer)
+        digest = service.sha(self.pointer)
+        self.selection["pointer_sha256"] = digest
+        return digest
 
-    def test_plan_records_candidate_mismatches_without_promoting_or_leaking_cli(self):
+    def contract(self, digest, **kwargs):
+        return service.candidate_contract(self.pointer, digest, selection=self.selection, **kwargs)
+
+    def test_contract_binds_selection_and_exports_only_allowlisted_metadata(self):
+        contract = self.contract(self.save())
+        self.assertEqual(234, contract["operation"])
+        self.assertEqual({"logical": "mtp", "physical": "kv4", "start": 2}, contract["selected_arm"])
+        self.assertEqual(232, contract["rollback"]["operation"])
+        self.assertEqual("Qwen3.8-27B-MXFP4", contract["client_alias"])
+        self.assertEqual("fp8-serving-screen", contract["served_model"])
+        self.assertEqual("mxfp4", contract["weight_format"])
+        self.assertEqual({"algorithm": "DFLASH", "width": 8}, contract["speculative"])
+        self.assertEqual((131040, 262144, 2), (contract["context_length"], contract["max_total_tokens"],
+                                               contract["max_running_requests"]))
+        self.assertIsNone(contract["reasoning_parser"])
+        self.assertFalse(contract["runtime_observed"])
+        self.assertFalse(contract["installed"])
+        # Without the package root, identity is missing evidence, not assumed.
+        self.assertIsNone(contract["identity"])
+        self.assertIsNone(contract["request_defaults"])
+        self.assertTrue(contract["missing_evidence"])
+        text = json.dumps(contract)
+        for secret in ("synthetic-value-must-not-leave-input", "--api-key", "/mnt/", "127.0.0.1"):
+            self.assertNotIn(secret, text)
+
+    def test_stale_mixed_arm_and_contract_drift_are_refused_with_actionable_errors(self):
+        cases = {
+            "stale": (lambda: self.selection.update(superseded_pointer_sha256=[None]), "stale candidate selection"),
+            "unselected-current": (lambda: None, "not the selection named"),
+            "selected": (lambda: self.record.update(candidate_selected=False), "explicitly selected"),
+            "deployed": (lambda: self.record.update(deployment=True), "claims deployment"),
+            "arm": (lambda: self.record["selected_runtime"].update(physical_arm="bf16"), "mixed arms"),
+            "operation": (lambda: self.record["candidate_package_base"]["selected_arm"].update(operation=232), "mixed arms"),
+            "context": (lambda: (self.record["selected_runtime"]["resolved_contract"].update(context_length=32768),
+                                 self.selection["resolved_contract"].update(context_length=32768)), "context_length"),
+            "cli-vs-finalization": (lambda: self.record["selected_runtime"]["canonical_server_cli"].append("--x"),
+                                    "differs from the finalization"),
+            "duplicate": (lambda: [r["canonical_server_cli"].extend(["--context-length", "32768"])
+                                   for r in (self.record["selected_runtime"], self.selection)], "duplicate"),
+            "rollback": (lambda: self.record["rollback"].update(operation=226), "rollback differs"),
+            "package": (lambda: self.record["candidate_package_base"].update(package_sha256="9" * 64), "package differs"),
+            "draft-kv": (lambda: [r["canonical_server_cli"].__setitem__(r["canonical_server_cli"].index("--speculative-draft-kv-cache-dtype") + 1, "fp8")
+                                  for r in (self.record["selected_runtime"], self.selection)], "BF16 target and draft"),
+            "symlink": (lambda: None, "bounded regular"),
+        }
+        original_record, original_selection = json.dumps(self.record), json.dumps(self.selection)
+        for name, (mutate, message) in cases.items():
+            with self.subTest(case=name):
+                self.record, self.selection = json.loads(original_record), json.loads(original_selection)
+                mutate()
+                digest = self.save()
+                target = self.pointer
+                if name == "stale":
+                    self.selection["superseded_pointer_sha256"] = [digest]
+                if name == "unselected-current":
+                    self.selection["pointer_sha256"] = "3" * 64
+                if name == "symlink":
+                    target = self.root / "link.json"
+                    target.unlink(missing_ok=True)
+                    target.symlink_to(self.pointer)
+                with self.assertRaisesRegex(ValueError, message):
+                    service.candidate_contract(target, digest, selection=self.selection)
+
+    def test_package_evidence_is_authenticated_through_the_manifest(self):
+        import base64, zlib
+        package = self.root / "package"
+        (package / "review").mkdir(parents=True)
+        body = {"chat_template_kwargs": {"enable_thinking": True}, "reasoning_effort": "low", "temperature": 0.0,
+                "top_k": 1, "top_p": 1.0, "max_completion_tokens": 4096, "messages": [{"role": "user", "content": "private"}]}
+        binding = zlib.compress(json.dumps({"rows": [{"body": {**body, "seed": 1}}, {"body": {**body, "seed": 2}}]}).encode())
+        members = {
+            "review/MODEL-INVENTORY.json": json.dumps([{"name": "config.json", "sha256": "d" * 64},
+                {"name": "tokenizer_config.json", "sha256": "4" * 64}, {"name": "tokenizer.json", "sha256": "5" * 64}]).encode(),
+            "review/DRAFT-MODEL.json": json.dumps({"config": {"architectures": ["DFlash2DraftModel"],
+                "dflash_config": {"block_size": 8}, "dtype": "bfloat16"}}).encode(),
+            "review/COMMON-STACK-RECEIPT.json": json.dumps({"target": {"sglang": "0.5.21", "source_revision": "6" * 40},
+                "components": {"sdk": {"version": "10.1.0"}}, "image_manifest": "7" * 64}).encode(),
+            "review/RESOURCE-MANIFEST.json": json.dumps({"workload_argv_sha256": {"kv4": "8" * 64}, "workload_argv": {
+                "kv4": ["--setenv", "LLVM_PATH", "/fixture/llvm", "--setenv", "SECRET_TOKEN", "never-exported"]}}).encode(),
+            "review/FINAL-REQUESTS.zlib": zlib.compress(json.dumps({"CLIENT-BINDING.zlib": base64.b64encode(binding).decode()}).encode()),
+        }
+        for name, raw in members.items():
+            (package / name).write_bytes(raw)
+        manifest = json.dumps({"launch_authorized": False, "runtime_files": {"a": "b"},
+                               "package_files": {name: service.hashlib.sha256(raw).hexdigest() for name, raw in members.items()}}).encode()
+        (package / "MANIFEST.json").write_bytes(manifest)
+        self.record["candidate_package_base"]["manifest_sha256"] = service.hashlib.sha256(manifest).hexdigest()
+        self.selection["package"]["manifest_sha256"] = self.record["candidate_package_base"]["manifest_sha256"]
+        contract = self.contract(self.save(), package_root=package)
+        self.assertEqual([], contract["missing_evidence"])
+        self.assertEqual("tokenizer_config.json", contract["identity"]["chat_template_source"])
+        self.assertEqual("4" * 64, contract["identity"]["model_files"]["tokenizer_config.json"])
+        self.assertEqual({"LLVM_PATH": "/fixture/llvm"}, contract["identity"]["runtime_environment"])
+        self.assertEqual("varies", contract["package_request_profile"]["seed"])
+        self.assertEqual({"chat_template_kwargs": {"enable_thinking": True}, "reasoning_effort": "low",
+                          "temperature": 0.0, "top_k": 1, "top_p": 1.0}, contract["request_defaults"])
+        self.assertEqual({"temperature": 0.7}, contract["selection_measured_profile"])
+        self.assertNotIn("never-exported", json.dumps(contract))
+        self.assertNotIn("private", json.dumps(contract))
+        (package / "review/MODEL-INVENTORY.json").write_bytes(b"[]")
+        with self.assertRaisesRegex(ValueError, "package member changed"):
+            self.contract(service.sha(self.pointer), package_root=package)
+        (package / "MANIFEST.json").write_bytes(manifest + b" ")
+        with self.assertRaisesRegex(ValueError, "does not match the selected pointer"):
+            self.contract(service.sha(self.pointer), package_root=package)
+
+    def test_render_projects_one_contract_consistently_into_every_layer(self):
+        contract = dict(self.contract(self.save()), request_defaults={"chat_template_kwargs": {"enable_thinking": True},
+            "reasoning_effort": "low", "temperature": 0.0, "top_k": 1, "top_p": 1.0})
+        rendered = service.candidate_render(contract, 8192, 180, 16)
+        self.assertTrue(all(check["matches"] for check in rendered["checks"]), rendered["checks"])
+        self.assertEqual("openai/fp8-serving-screen", rendered["route"]["litellm_params"]["model"])
+        self.assertEqual(131040 - 8192 - 16, rendered["route"]["model_info"]["max_input_tokens"])
+        self.assertEqual({"Qwen3.8-27B-MXFP4": [131040, 8192]}, rendered["gateway"]["chat_models"])
+        params = json.loads(rendered["webui"]["DEFAULT_MODEL_PARAMS"])
+        self.assertEqual({"chat_template_kwargs": {"enable_thinking": True}}, params["custom_params"])
+        self.assertNotIn("max_tokens", params)  # shared with the 9B profile; the gateway applies its cap
+        self.assertEqual("low", rendered["client"]["AGENT_REASONING_EFFORT"])
+        # Admission four and native running two are separate, documented limits.
+        self.assertEqual((4, 2, 2), (rendered["capacity"]["gateway_admission"], rendered["capacity"]["native_running"],
+                                     rendered["capacity"]["queued_at_native_when_full"]))
+        without = service.candidate_render(dict(contract, request_defaults=None), 4096, 180, 16)
+        self.assertFalse(next(c for c in without["checks"] if c["id"] == "request-defaults")["matches"])
+        for budget, deadline in ((127, 180), (65521, 180), (True, 180), (4096, 10)):
+            with self.assertRaises(ValueError):
+                service.candidate_render(contract, budget, deadline, 16)
+
+    def test_plan_records_mismatches_and_keeps_candidate_inactive(self):
         expected = self.save()
         before = service.sha(ROOT / "apps/base/shared-api/boundary.py")
         output = self.root / "plan"
-        service.candidate_plan(SimpleNamespace(pointer=self.pointer, pointer_sha256=expected,
-                                             output=output, output_tokens=4096))
+        with patch("stack_inventory.serving_project", return_value={"selection": self.selection}), \
+                self.assertRaisesRegex(ValueError, "unreviewed launch flag.*--api-key"):
+            service.candidate_plan(SimpleNamespace(pointer=self.pointer, pointer_sha256=expected, output=output,
+                                                   output_tokens=4096, package_root=None))
+        self.assertFalse(output.exists())
+        for record in (self.record["selected_runtime"], self.selection):
+            del record["canonical_server_cli"][-2:]
+        expected = self.save()
+        with patch("stack_inventory.serving_project", return_value={"selection": self.selection}):
+            service.candidate_plan(SimpleNamespace(pointer=self.pointer, pointer_sha256=expected, output=output,
+                                                   output_tokens=4096, package_root=None))
         report = json.loads((output / "integration-plan.json").read_text())
-        contract = json.loads((output / "candidate-contract.json").read_text())
-        client = json.loads((output / "client-values.json").read_text())
-        self.assertEqual("blocked-integration", report["status"])
+        self.assertEqual("blocked-missing-evidence", report["status"])
         self.assertFalse(report["deployment_ready"])
+        self.assertFalse(report["evidence_levels"]["runtime_observed"])
         self.assertFalse(report["output_cap_qualified"])
-        self.assertEqual(service.sha(Path(service.__file__)), report["planner_sha256"])
-        self.assertRegex(report["assistant_source_sha256"], r"^[a-f0-9]{64}$")
-        self.assertTrue(all(not check["matches"] for check in report["checks"]))
-        self.assertEqual(131040, contract["context_length"])
-        self.assertEqual("fp8-serving-screen", client["AGENT_MODEL"])
-        self.assertEqual(131040, client["AGENT_CONTEXT_TOKENS"])
-        self.assertEqual(4096, client["AGENT_MAX_OUTPUT_TOKENS"])
-        self.assertTrue(client["endpoint_required"])
-        self.assertIsNone(contract["tool_call_parser"])
+        checks = {check["id"]: check for check in report["checks"]}
+        self.assertTrue(checks["gateway-request-fields"]["matches"])
+        self.assertTrue(all(not checks[name]["matches"] for name in ("upstream-model", "gateway-context", "router-context")))
+        deployment = yaml.safe_load((output / "candidate-sglang.yaml").read_text())
+        container = deployment["spec"]["template"]["spec"]["containers"][0]
+        self.assertEqual(0, deployment["spec"]["replicas"])
+        self.assertIn("UNBUILT", container["image"])
+        self.assertEqual("2", container["resources"]["limits"]["amd.com/gpu"])
+        self.assertEqual(["--reasoning-parser", "qwen3", "--tool-call-parser", "qwen3_coder"], container["args"][-4:])
+        runtime = json.loads((output / "candidate-runtime.json").read_text())
+        self.assertTrue(any("startup numerical probes" in item for item in runtime["blockers"]))
         for filename, digest in report["files"].items():
             self.assertEqual(digest, service.sha(output / filename))
         for path in output.iterdir():
             self.assertNotIn("synthetic-value-must-not-leave-input", path.read_text())
-            self.assertNotIn("--api-key", path.read_text())
         self.assertEqual(before, service.sha(ROOT / "apps/base/shared-api/boundary.py"))
         self.assertEqual(expected, service.sha(self.pointer))
 
-    def test_unpinned_unselected_mixed_arm_and_contract_drift_are_refused(self):
-        for mutation in ("digest", "selected", "arm", "context", "duplicate", "symlink"):
-            with self.subTest(mutation=mutation):
-                original = json.loads(json.dumps(self.record))
-                if mutation == "selected": self.record["candidate_selected"] = False
-                if mutation == "arm": self.record["selected_runtime"]["logical_arm"] = "control"
-                if mutation == "context": self.record["selected_runtime"]["resolved_contract"]["context_length"] = 32768
-                if mutation == "duplicate": self.record["selected_runtime"]["canonical_server_cli"] += ["--context-length", "32768"]
-                expected = self.save()
-                target = self.pointer
-                if mutation == "digest": expected = "0" * 64
-                if mutation == "symlink":
-                    target = self.root / "link.json"
-                    target.symlink_to(self.pointer)
-                with self.assertRaises(ValueError):
-                    service.candidate_contract(target, expected)
-                self.record = original
+    def test_imported_selection_refuses_superseded_real_pointer_digests(self):
+        selection = __import__("stack_inventory").serving_project(ROOT)["selection"]
+        for stale in selection["superseded_pointer_sha256"]:
+            self.pointer.write_text("{}")
+            with self.assertRaisesRegex(ValueError, "digest differs"):
+                service.candidate_contract(self.pointer, stale)
+        self.assertNotIn(selection["pointer_sha256"], selection["superseded_pointer_sha256"])
 
-    def test_output_budget_is_separate_and_invalid_values_create_no_plan(self):
-        expected = self.save()
-        for budget in (127, 65521, True):
-            output = self.root / str(budget)
-            with self.assertRaises(ValueError):
-                service.candidate_plan(SimpleNamespace(pointer=self.pointer, pointer_sha256=expected,
-                                                     output=output, output_tokens=budget))
-            self.assertFalse(output.exists())
+    @unittest.skipUnless(os.environ.get("CANDIDATE_POINTER") and os.environ.get("CANDIDATE_PACKAGE_ROOT"),
+                         "set CANDIDATE_POINTER, CANDIDATE_POINTER_SHA256 and CANDIDATE_PACKAGE_ROOT for private inputs")
+    def test_private_selected_pointer_and_package(self):
+        contract = service.candidate_contract(os.environ["CANDIDATE_POINTER"], os.environ["CANDIDATE_POINTER_SHA256"],
+                                              os.environ["CANDIDATE_PACKAGE_ROOT"])
+        self.assertEqual([], contract["missing_evidence"])
+        self.assertTrue(all(c["matches"] for c in service.candidate_render(contract, 4096, 180, 16)["checks"]))
 
     def test_quality_menu_requires_actual_tokenizer_and_declares_unrun_cases(self):
         menu = json.loads((ROOT / "infrastructure/sglang/assistant-quality.json").read_text())

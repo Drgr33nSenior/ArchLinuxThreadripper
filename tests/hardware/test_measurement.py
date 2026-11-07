@@ -206,18 +206,30 @@ class Tests(unittest.TestCase):
 
     def test_serving_tracking_keeps_stock_and_c4_gates_separate(self):
         result = stack_inventory.serving_project(Path(__file__).resolve().parents[2])
-        self.assertEqual(result["revision"], "d3f0db85997389ebd8836af17a7048659b930770")
-        self.assertEqual(result["profile"]["context_length"], 131040)
-        self.assertEqual(result["profile"]["max_total_tokens"], 262144)
-        self.assertEqual(result["profile"]["max_running_requests"], 2)
-        self.assertEqual(result["stock_endurance_graded_answers"], "352/352")
-        self.assertIn("NOT TESTED", result["c4_endurance"])
-        self.assertEqual(result["historical_adoption_verdict"], "ADOPTION_CRITERIA_NOT_MET")
-        self.assertIn("OWNER_ACCEPTED_A3_EXCEPTION", result["adoption"])
-        self.assertEqual(result["unresolved_gpu_fault"], "HSA_STATUS_ERROR_MEMORY_FAULT")
+        self.assertEqual(result["revision"], "3f5ba24e292d43e0bc643f2c51cf5940afabc606")
+        history = result["historical_c4_candidate"]
+        self.assertEqual(history["revision"], "d3f0db85997389ebd8836af17a7048659b930770")
+        self.assertEqual(history["profile"]["context_length"], 131040)
+        self.assertEqual(history["profile"]["max_total_tokens"], 262144)
+        self.assertEqual(history["profile"]["max_running_requests"], 2)
+        self.assertEqual(history["stock_endurance_graded_answers"], "352/352")
+        self.assertIn("NOT TESTED", history["c4_endurance"])
+        self.assertEqual(history["historical_adoption_verdict"], "ADOPTION_CRITERIA_NOT_MET")
+        self.assertIn("OWNER_ACCEPTED_A3_EXCEPTION", history["adoption"])
+        self.assertEqual(history["unresolved_gpu_fault"], "HSA_STATUS_ERROR_MEMORY_FAULT")
+        selection = result["selection"]
+        self.assertEqual(234, selection["operation"])
+        self.assertEqual("INCONCLUSIVE_PARK", selection["frozen_verdict"])
+        self.assertEqual("4e19fc560932fba9c24e258d1da4afa12d744fd8f22309af3aad1c824a648a55",
+                         selection["previous_pointer_sha256"])
+        self.assertIn("fe92916ca06f43ec719d3a66345e4345908106212596d7044c03713b575c3394",
+                      selection["superseded_pointer_sha256"])
+        self.assertEqual({"operation": 232, "logical": "mtp", "physical": "bf16", "start": 1},
+                         {k: selection["rollback"][k] for k in ("operation", "logical", "physical", "start")})
         for field in ("reported_deployed", "public_fp8_selection_changed", "deployment_qualified",
                       "target_inspected", "remote_rechecked_by_inventory"):
             self.assertIs(result[field], False)
+        self.assertIs(selection["installed"], False)
 
     def test_host_inventory_includes_reviewed_serving_source_without_remote_call(self):
         output = io.StringIO()
@@ -239,31 +251,49 @@ class Tests(unittest.TestCase):
             evidence = target / "serving-evidence"
             evidence.mkdir(parents=True)
             tracking = json.loads((source / "serving-project.json").read_text())
-            for name in tracking["records"]:
+            names = [name for row in tracking["imports"] for name in row["records"]]
+            for name in names:
                 (evidence / name).write_bytes((source / "serving-evidence" / name).read_bytes())
             manifest = target / "serving-project.json"
             manifest.write_text(json.dumps(tracking))
-            member = evidence / next(iter(tracking["records"]))
-            original = member.read_bytes()
-            member.write_bytes(original + b"\n")
-            with self.assertRaisesRegex(ValueError, "identity changed"):
-                stack_inventory.serving_project(root)
-            member.unlink()
-            member.symlink_to(source / "serving-evidence" / member.name)
-            with self.assertRaisesRegex(ValueError, "regular serving evidence"):
-                stack_inventory.serving_project(root)
-            member.unlink()
-            member.write_bytes(original)
+            result = stack_inventory.serving_project(root)
+            # The current selection comes only from the current import; the
+            # 1 November import remains labelled historical.
+            self.assertEqual("2fda6127fccdc859de7b181b7f9376f7ef4d59eef74ed29fbb772830e46f95eb",
+                             result["selection"]["pointer_sha256"])
+            self.assertEqual({"logical": "mtp", "physical": "kv4", "start": 2}, result["selection"]["selected_arm"])
+            self.assertEqual(232, result["selection"]["rollback"]["operation"])
+            self.assertFalse(result["selection"]["installed"])
+            self.assertEqual(["historical", "current"], [row["status"] for row in result["imports"]])
+            for name in names:
+                member = evidence / name
+                original = member.read_bytes()
+                member.write_bytes(original + b"\n")
+                with self.assertRaisesRegex(ValueError, "identity changed"):
+                    stack_inventory.serving_project(root)
+                member.unlink()
+                member.symlink_to(source / "serving-evidence" / member.name)
+                with self.assertRaisesRegex(ValueError, "regular serving evidence"):
+                    stack_inventory.serving_project(root)
+                member.unlink()
+                member.write_bytes(original)
             tracking["deployment_qualified"] = True
             tracking["unapproved_metadata"] = "synthetic-unapproved-value"
             manifest.write_text(json.dumps(tracking))
             result = stack_inventory.serving_project(root)
             self.assertFalse(result["deployment_qualified"])
             self.assertNotIn("synthetic-unapproved-value", json.dumps(result))
-            tracking["records"]["../../outside.json"] = "a" * 64
-            manifest.write_text(json.dumps(tracking))
-            with self.assertRaisesRegex(ValueError, "invalid serving project"):
-                stack_inventory.serving_project(root)
+            for mutate in ("extra-path", "status-swap", "drop-historical"):
+                changed = json.loads(json.dumps(tracking))
+                if mutate == "extra-path":
+                    changed["imports"][1]["records"]["../../outside.json"] = "a" * 64
+                if mutate == "status-swap":
+                    changed["imports"][0]["status"], changed["imports"][1]["status"] = "current", "historical"
+                if mutate == "drop-historical":
+                    changed["imports"] = changed["imports"][1:]
+                manifest.write_text(json.dumps(changed))
+                with self.subTest(mutate=mutate), self.assertRaisesRegex(ValueError, "invalid serving project"):
+                    stack_inventory.serving_project(root)
 
     def test_offline_sweep_preserves_memory_and_gpu(self):
         deployment = {"spec": {"template": {"spec": {"containers": [{"name": "sglang", "args": [],

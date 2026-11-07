@@ -9,7 +9,7 @@ and public-page extraction for WebUI and Qwen Code, with durable request limits.
 Tavily remains an explicit alternative.
 The legacy service composition does not enable provider access.
 
-The current delivery target is the [selected native 128K candidate](ASSISTANT.md#native-128k-candidate-integration).
+The current delivery target is the [selected native 128K candidate](ASSISTANT.md#native-candidate-integration).
 The container routes and limits documented below still describe the older
 FP8/9B composition. Native packaging, model-identity and limit reconciliation,
 and model/browser acceptance remain pending. QLoRA is deferred under the

@@ -120,9 +120,12 @@ import runpy, sys
 root = Path(sys.argv[1])
 read = runpy.run_path(str(root / "lib/workstation/stack_inventory.py"))["serving_project"]
 result = read(root)
-assert result["revision"] == "d3f0db85997389ebd8836af17a7048659b930770"
-assert result["stock_endurance_graded_answers"] == "352/352"
-assert "NOT TESTED" in result["c4_endurance"]
+assert result["revision"] == "3f5ba24e292d43e0bc643f2c51cf5940afabc606"
+assert result["selection"]["installed"] is False
+history = result["historical_c4_candidate"]
+assert history["revision"] == "d3f0db85997389ebd8836af17a7048659b930770"
+assert history["stock_endurance_graded_answers"] == "352/352"
+assert "NOT TESTED" in history["c4_endurance"]
 assert not result["deployment_qualified"]
 ' "$payload"
     WORKSTATION_PYTHON="${HOME_LAB_PYTHON:-python3}" bash "$payload/bin/workstationctl" performance hyperloom --help >"$work/hyperloom-help.txt"

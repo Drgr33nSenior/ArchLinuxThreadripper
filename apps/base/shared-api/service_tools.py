@@ -73,7 +73,8 @@ def load_image_profile(directory):
 
 
 class ServiceTools:
-    def __init__(self, client, webui, swarm, gateway, browser_file, state_dir, image_timeout=120, public_webui="", web_search=None):
+    def __init__(self, client, webui, swarm, gateway, browser_file, state_dir, image_timeout=120, public_webui="", web_search=None,
+                 memory=None, memory_key_file="/run/memory/service-key", memory_write=False):
         self.client = client
         self.webui, self.swarm, self.gateway = webui, swarm, gateway
         self.browser_file = browser_file
@@ -81,6 +82,8 @@ class ServiceTools:
         self.image_timeout = image_timeout
         self.public_webui = public_webui.rstrip("/")
         self.web_search = web_search
+        # Graphiti memory: an internal URL or None. Writes are a separate switch.
+        self.memory, self.memory_key_file, self.memory_write = memory, memory_key_file, memory_write
         self.image_profile, self.image_workflow, self.workflow_sha256 = load_image_profile(Path(__file__).parent)
         self.busy = False
         self.retrieval_active = 0
@@ -147,6 +150,9 @@ class ServiceTools:
             return json.loads(raw)
 
     async def webui_identity(self, request):
+        return (await self.webui_user(request))[0]
+
+    async def webui_user(self, request):
         # This is the caller's WebUI API token, never an administrator token.
         auth = request.headers.get("authorization", "")
         if not auth.startswith("Bearer ") or len(auth) > 8192:
@@ -156,7 +162,27 @@ class ServiceTools:
         if user.get("role") != "user":
             # Do not turn an admin credential into a broad retrieval capability.
             raise Refusal(403, "restricted_user_required")
-        return headers
+        user_id = user.get("id")
+        if not isinstance(user_id, str) or not 1 <= len(user_id) <= 256:
+            raise Refusal(403, "user_identity_unavailable")
+        return headers, user_id
+
+    @staticmethod
+    def memory_group(user_id):
+        """One memory graph per WebUI user, derived only from authenticated identity."""
+        return "u_" + hashlib.sha256(("workstation-memory:" + user_id).encode()).hexdigest()[:32]
+
+    async def memory_call(self, path, group, args, allowed):
+        if not isinstance(args, dict) or set(args) - allowed:
+            raise Refusal(400, "invalid_tool_arguments")
+        key = Path(self.memory_key_file).read_text().strip()
+        response = await self.client.post(self.memory + path, json={**args, "group": group},
+                                          headers={"Authorization": "Bearer " + key}, timeout=300)
+        if response.status_code in {400, 404, 429}:
+            raise Refusal(response.status_code, response.json().get("error", "memory_refused"))
+        if response.status_code != 200 or len(response.content) > 262144:
+            raise Refusal(503, "memory_unavailable")
+        return response.json()
 
     async def retrieve(self, args, headers):
         if not isinstance(args, dict) or set(args) - {"collection", "query"}:
@@ -198,10 +224,11 @@ class ServiceTools:
         identifier = None
         try:
             # The endpoint is stateless Streamable HTTP with JSON responses.
-            # Read-only retrieval/search tools; no resources, prompts or writes.
+            # Retrieval and search are read-only. Memory writes exist only when
+            # MEMORY_WRITE_ENABLED is set; no resources or prompts.
             if request.headers.get("origin"):
                 raise Refusal(403, "browser_origin_not_supported")
-            headers = await self.webui_identity(request)
+            headers, user_id = await self.webui_user(request)
             message = json.loads(await read_body(request.receive, 16384))
             if not isinstance(message, dict) or message.get("jsonrpc") != "2.0":
                 raise Refusal(400, "invalid_jsonrpc")
@@ -226,6 +253,23 @@ class ServiceTools:
                         "required": ["collection", "query"], "properties": {
                             "collection": {"type": "string", "maxLength": 160},
                             "query": {"type": "string", "minLength": 1, "maxLength": 2000}}}}]}
+                if self.memory:
+                    memory_tools = [("recall_memory", "Recall facts the user asked you to remember, with their dates and whether each is still current. "
+                                     "Memory can be outdated: current repository, file or tool evidence overrides it.",
+                                     ["query"], {"query": {"type": "string", "minLength": 1, "maxLength": 1000}}, True, False)]
+                    if self.memory_write:
+                        memory_tools += [
+                            ("remember", "Store a fact only when the user explicitly asks you to remember it. "
+                             "To correct a fact, store the corrected statement; the older fact becomes historical.",
+                             ["text"], {"text": {"type": "string", "minLength": 1, "maxLength": 8000},
+                                        "source": {"type": "string", "maxLength": 240}}, False, False),
+                            ("forget_memory", "Delete one remembered episode by its episode_uuid when the user asks.",
+                             ["episode_uuid"], {"episode_uuid": {"type": "string", "maxLength": 36}}, False, True)]
+                    for name, description, required, properties, read_only, destructive in memory_tools:
+                        result["tools"].append({"name": name, "description": description,
+                            "annotations": {"readOnlyHint": read_only, "destructiveHint": destructive, "openWorldHint": False},
+                            "inputSchema": {"type": "object", "additionalProperties": False,
+                                            "required": required, "properties": properties}})
                 if self.web_search:
                     for name, description, required, properties in (
                         ("search_web", "Search public web sources. Send public search terms only, never private code, secrets or retrieved project passages.",
@@ -247,6 +291,21 @@ class ServiceTools:
                     result = {"content": [{"type": "text", "text": json.dumps(value)}], "isError": False}
                 finally:
                     self.retrieval_active -= 1
+            elif method == "tools/call" and params.get("name") in {"recall_memory", "remember", "forget_memory"}:
+                name, args = params["name"], params.get("arguments")
+                if not self.memory or (name != "recall_memory" and not self.memory_write):
+                    raise Refusal(404, "memory_disabled")
+                group = self.memory_group(user_id)
+                if name == "recall_memory":
+                    value = await self.memory_call("/recall", group, args, {"query"})
+                elif name == "remember":
+                    args = dict(args) if isinstance(args, dict) else args
+                    if isinstance(args, dict):
+                        args.setdefault("source", "explicit user request")
+                    value = await self.memory_call("/remember", group, args, {"text", "source"})
+                else:
+                    value = await self.memory_call("/forget", group, args, {"episode_uuid"})
+                result = {"content": [{"type": "text", "text": json.dumps(value)}], "isError": False}
             elif method == "tools/call" and params.get("name") in {"search_web", "read_web_page"}:
                 search = self.require_web_search()
                 args = params.get("arguments")
@@ -403,6 +462,8 @@ def create_app():
                            content_limit=int(os.environ.get("WEB_PAGE_CHAR_LIMIT", "6000")))
     service = ServiceTools(client, "http://open-webui:8080", "http://swarmui:7801",
                            "http://litellm:4000", "/run/browser/mapping.json", "/state",
-                           public_webui=os.environ["PUBLIC_WEBUI_BASE_URL"], web_search=search)
+                           public_webui=os.environ["PUBLIC_WEBUI_BASE_URL"], web_search=search,
+                           memory="http://graphiti-memory:8000" if os.environ.get("MEMORY_ENABLED", "false") == "true" else None,
+                           memory_write=os.environ.get("MEMORY_WRITE_ENABLED", "false") == "true")
     service.app.add_event_handler("shutdown", client.aclose)
     return service.app

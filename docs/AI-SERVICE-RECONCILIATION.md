@@ -3,7 +3,7 @@
 ## Current scope update — 3 November 2026
 
 The current assistant target is the selected native 128K MXFP4/C4 candidate
-described in [native candidate integration](ASSISTANT.md#native-128k-candidate-integration).
+described in [native candidate integration](ASSISTANT.md#native-candidate-integration).
 The pointer digest checked for this update matches the prepared integration
 readout. That readout identifies six differences in the older container
 composition. Persistent native packaging and model/browser acceptance remain

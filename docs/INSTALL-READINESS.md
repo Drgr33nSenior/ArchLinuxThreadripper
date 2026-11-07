@@ -10,7 +10,7 @@ do not interrupt its GPU owner.
 Use the current 64 GB hardware budget. The assistant delivery target is the
 selected native 128K model with private WebUI, Exa search and local RAG.
 Follow [current delivery scope](ASSISTANT.md#current-delivery-scope) and
-[native candidate integration](ASSISTANT.md#native-128k-candidate-integration)
+[native candidate integration](ASSISTANT.md#native-candidate-integration)
 for the remaining packaging, identity, context and quality checks. The older
 container profiles do not establish acceptance of the native candidate.
 
