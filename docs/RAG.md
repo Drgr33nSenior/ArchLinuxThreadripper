@@ -276,6 +276,14 @@ not observed model outputs. Update them deliberately when the source changes.
 Add literal identifiers, paraphrases, obsolete-version traps, no-evidence
 questions, restricted-document checks and malicious instructions in test data.
 
+The open `rocm-version` and `storage-quota` misses are not missing content. The
+`docs/HOME-LAB.md` answers are in its storage and ROCm 10 SGLang sections. The
+retrieved `ROCM.md` opening shares the question's "native 10.2" and "checked-in"
+wording but not the 10.0.0 answer. `docs/AI-PERFORMANCE.md` also states that
+local-path PVC requests are not quotas, but that question labels only
+`HOME-LAB.md`. Review both labels in a new frozen protocol version. Do not
+relabel or tune to improve recorded scores.
+
 For the dense comparison, `rag-dense` changes only
 `ENABLE_RAG_HYBRID_SEARCH=false`. Both profiles use `RAG_TOP_K=3` and
 `RAG_TOP_K_RERANKER=3`; the general limit also bounds the upstream merge across
@@ -285,6 +293,15 @@ collections. Render both without contacting a cluster:
 kubectl kustomize apps/overlays/rag-dense > artifacts/rag-dense.yaml
 kubectl kustomize apps/overlays/rag > artifacts/rag-hybrid.yaml
 ```
+
+The global profile is what selects the mode. In the pinned release, a
+request-level `hybrid=false` still runs hybrid search while the global setting is
+true; see the [retrieval test](../tests/rag/README.md#frozen-protocol). Earlier
+flag-only dense/hybrid records ran hybrid twice and are not a comparison. Record
+each arm's config readback and query route with its results. Without a
+cross-encoder, pinned hybrid search rescores BM25 and vector candidates by
+embedding cosine similarity. It changes the top three only when a BM25-only
+passage's recomputed cosine score exceeds a vector hit's score.
 
 Activate only one reviewed composition through maintenance; both select the
 same Deployment and pilot PVCs, not independent concurrent test services.

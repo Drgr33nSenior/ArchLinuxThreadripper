@@ -62,8 +62,12 @@ was about 1.09 GiB, with no swap or OOM kill.
 
 Expected-source hit@3 was six of eight positive questions (75%); mean source
 recall@3 was 68.75%. The `rocm-version` and `storage-quota` misses remain open.
-The two requested dense/hybrid flags produced identical rankings, so they do not
-establish independent backend coverage or a hybrid improvement. No serving model
+The two requested dense/hybrid flags produced identical rankings because both
+ran hybrid search: with the global setting on, the pinned WebUI's
+`query_collection` re-enters hybrid search when the request sets `hybrid=false`
+(0.11.4 `retrieval/utils.py:706-721`; 0.12.5 `:705-712`). This is not a
+dense/hybrid comparison. The corrected protocol runs the dense arm on the
+`rag-dense` profile; see [RAG](RAG.md). No serving model
 was called. This was an application restart within one temporary Pod, not a
 container restart, PVC recovery, browser-rendering or generated-answer test.
 
