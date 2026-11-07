@@ -59,8 +59,8 @@
     "memory_max_mib": 512,
     "status": "package-metadata-resolved-host-package-installation-and-journal-permissions-not-tested"
   },
-  "runtime_limits_mib": 4736,
-  "runtime_limits_with_host_alloy_mib": 5248,
+  "runtime_limits_mib": 5248,
+  "runtime_limits_with_host_alloy_mib": 5760,
   "pvc_requests_gib": 64,
   "limitations": [
     "Requests on local-path PVCs are not hard filesystem quotas.",

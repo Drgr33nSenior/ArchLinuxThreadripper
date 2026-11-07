@@ -123,12 +123,12 @@ Current planning limits, before any build/VM allowance:
 | WebUI/RAG | 6 GiB | 6 GiB | 2 |
 | Gateway + PostgreSQL | 4 GiB | 4 GiB | 2 |
 | Tools + Alertmanager | 0.75 GiB | 0.75 GiB | 0.75 |
-| Telemetry reserve | 6 GiB | 6 GiB | 6.5 metrics / 10.5 full |
+| Telemetry reserve | 6.5 GiB | 6.5 GiB | 6.5 metrics / 10.5 full |
 | Swarm/Comfy | Stopped | 12 GiB, one GPU | 0 / 12 |
-| Total | 54.75 GiB | 60.75 GiB | Large: 35.25 / 39.25; split: 43.25 / 47.25 |
+| Total | 55.25 GiB | 61.25 GiB | Large: 35.25 / 39.25; split: 43.25 / 47.25 |
 
 These are admission limits, not measurements. At nominal 64 GiB, the 46 GiB
-planning allowance is exceeded by 8.75 GiB in large mode and 14.75 GiB in split
+planning allowance is exceeded by 9.25 GiB in large mode and 15.25 GiB in split
 mode before builds or VMs. Actual firmware reservations reduce available RAM
 further. Both full shared-service configurations therefore fail memory admission
 with these limits. Keep them disabled until a separately measured and qualified

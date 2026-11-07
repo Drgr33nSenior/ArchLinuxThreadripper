@@ -1,8 +1,8 @@
 # Monitoring the workstation
 
 Open Grafana's **Workstation / Overview**, then use the links to drill into GPUs,
-Kubernetes, serving, host/storage or power. The stack runs on bare-metal K3s;
-it is separate from the optional VM lab. Retained target tests exercised real
+Kubernetes, serving, host/storage or power. The default stack runs on bare-metal
+K3s, separate from the optional VM lab. Retained target tests exercised real
 collectors and dashboards. They do not establish today's health or negligible
 benchmark overhead.
 
@@ -14,6 +14,16 @@ do not replace current target-health checks or a workload soak test.
 For installation and collector internals, use the
 [configuration reference](TELEMETRY-REFERENCE.md). All paths below refer to a
 reviewed checkout unless they explicitly name an installed runtime.
+
+The commissioned workstation now sends telemetry to the MicroServer. Its local
+Grafana, Prometheus, Loki and Tempo replicas were retired after NAS readback;
+their five PVCs retain local history. Use the private NAS HTTPS address for
+Grafana. The port-forward below applies to installations with a local backend.
+Before rebuilding this workstation, preserve the qualified collector
+destinations and retired replica counts. The generic local-stack renderer does
+not encode that private cutover and must not be applied unchanged. See the NAS
+repository's `docs/WORKSTATION-TELEMETRY.md` and `docs/READINESS.md` for acceptance
+and remaining storage work.
 
 ## Open Grafana
 
@@ -263,8 +273,8 @@ TLS and the existing narrow RBAC. No `nodes/proxy` or TLS bypass is needed.
 
 | Profile | Minimum allowance | With optional tariff helper |
 | --- | ---: | ---: |
-| `full` | 6144 MiB | 6208 MiB |
-| `metrics` | 4352 MiB | 4416 MiB |
+| `full` | 6656 MiB | 6720 MiB |
+| `metrics` | 4864 MiB | 4928 MiB |
 
 These allowances include the 768-MiB planning margin, not measured RSS or an
 OS reservation. Set `TELEMETRY_RESERVE_MIB` accordingly and admit the complete

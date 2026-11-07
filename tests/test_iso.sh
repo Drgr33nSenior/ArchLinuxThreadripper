@@ -170,9 +170,9 @@ assert not result["deployment_qualified"]
     jq -e '.source_identity.git_revision == null and .source_identity.build_identity_sha256 != null and .hardware_qualification == "NOT RUN"' \
       "$work/packaged-telemetry/evidence.json" >/dev/null
     WORKSTATION_PYTHON="${HOME_LAB_PYTHON:-python3}" TELEMETRY_ENABLED=true TELEMETRY_API_ADDRESS=192.168.50.10 \
-      TELEMETRY_WORKSTATION_ADDRESS=192.168.50.10 TELEMETRY_RESERVE_MIB=6208 \
+      TELEMETRY_WORKSTATION_ADDRESS=192.168.50.10 TELEMETRY_RESERVE_MIB=6720 \
       bash "$payload/bin/workstationctl" telemetry render "$work/packaged-tariff" --tariff true >/dev/null
-    jq -e '.component_limits_mib.tariff_refresher_mib == 64 and .calculated_allowance_mib == 6208' \
+    jq -e '.component_limits_mib.tariff_refresher_mib == 64 and .calculated_allowance_mib == 6720' \
       "$work/packaged-tariff/evidence.json" >/dev/null
 
     # Incidental edits to the consumed recipe or exported lock must be rejected.

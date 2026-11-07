@@ -259,14 +259,14 @@ spec:
           ports:
             - {name: http, containerPort: 3000}
           resources:
-            requests: {cpu: '250m', memory: '512Mi'}
-            limits: {cpu: '2', memory: '512Mi'}
+            requests: {cpu: '250m', memory: '1024Mi'}
+            limits: {cpu: '2', memory: '1024Mi'}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities: {drop: [ALL]}
           env:
-            - {name: GOMEMLIMIT, value: '409MiB'}
+            - {name: GOMEMLIMIT, value: '819MiB'}
             - {name: GF_SECURITY_ADMIN_USER, valueFrom: {secretKeyRef: {name: grafana-admin, key: admin-user}}}
             - {name: GF_SECURITY_ADMIN_PASSWORD, valueFrom: {secretKeyRef: {name: grafana-admin, key: admin-password}}}
             - {name: GF_AUTH_ANONYMOUS_ENABLED, value: 'false'}

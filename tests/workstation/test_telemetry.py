@@ -51,7 +51,7 @@ class TelemetryTests(unittest.TestCase):
         status_help = subprocess.run([sys.executable, "-B", str(runtime / "lib/workstation/monitoring.py"), "--help"],
                                      capture_output=True, text=True, timeout=10)
         self.assertEqual(status_help.returncode, 0, status_help.stderr)
-        for profile, allowance in (("full", 6144), ("metrics", 4352)):
+        for profile, allowance in (("full", 6656), ("metrics", 4864)):
             with self.subTest(profile=profile):
                 args = self.args(profile, root=str(runtime), profile=profile)
                 argv = [sys.executable, "-B", str(runtime / "lib/workstation/telemetry.py"), "render", args.output, args.overlay]
@@ -94,7 +94,7 @@ class TelemetryTests(unittest.TestCase):
         values = dict(root=str(ROOT), output=str(self.work / name), enabled="true",
                       gpu_exporter="false", trace="false", kubelet="false", node_name="fixture-node",
                       api_address="192.168.50.10", host_address="192.168.50.10",
-                      reserve_mib=6144, margin_mib=768, profile="full",
+                      reserve_mib=6656, margin_mib=768, profile="full",
                       workloads="sglang,open-webui", overlay="apps/overlays/dual-gpu")
         values.update(kwargs)
         return argparse.Namespace(**values)
@@ -102,11 +102,11 @@ class TelemetryTests(unittest.TestCase):
     def test_tariff_allowance_is_additional_and_explicit(self):
         with self.assertRaises(ValueError):
             telemetry.render(self.args(tariff="true"))
-        args = self.args(tariff="true", reserve_mib=6208)
+        args = self.args(tariff="true", reserve_mib=6720)
         telemetry.render(args)
         evidence = telemetry.verify(args.output)
         self.assertEqual(evidence["component_limits_mib"]["tariff_refresher_mib"], 64)
-        self.assertEqual(evidence["calculated_allowance_mib"], 6208)
+        self.assertEqual(evidence["calculated_allowance_mib"], 6720)
 
     def test_real_render_integrity_preserves_baseline(self):
         args = self.args()
@@ -115,8 +115,8 @@ class TelemetryTests(unittest.TestCase):
         self.assertEqual(evidence["status"], "generated-not-deployed")
         self.assertEqual(evidence["profile"], "full")
         self.assertEqual(evidence["component_limits_mib"],
-                         {"cluster_stack_mib": 4736, "host_alloy_mib": 512, "hardware_sampler_mib": 128})
-        self.assertEqual(evidence["calculated_allowance_mib"], 6144)
+                         {"cluster_stack_mib": 5248, "host_alloy_mib": 512, "hardware_sampler_mib": 128})
+        self.assertEqual(evidence["calculated_allowance_mib"], 6656)
         self.assertEqual(evidence["hardware_qualification"], "NOT RUN")
         objects = telemetry.load_objects((Path(args.output) / "workloads.yaml").read_text())
         actual = next(o for o in objects if o["kind"] == "Deployment" and o["metadata"]["name"] == "sglang")
@@ -157,12 +157,12 @@ class TelemetryTests(unittest.TestCase):
         self.assertNotIn("review-required-node", stack)
 
     def test_metrics_profile_removes_log_trace_components_and_preserves_health(self):
-        args = self.args(profile="metrics", reserve_mib=4352)
+        args = self.args(profile="metrics", reserve_mib=4864)
         telemetry.render(args)
         evidence = telemetry.verify(args.output)
         self.assertEqual(evidence["profile"], "metrics")
-        self.assertEqual(evidence["component_limits_mib"]["cluster_stack_mib"], 2944)
-        self.assertEqual(evidence["calculated_allowance_mib"], 4352)
+        self.assertEqual(evidence["component_limits_mib"]["cluster_stack_mib"], 3456)
+        self.assertEqual(evidence["calculated_allowance_mib"], 4864)
         stack = (Path(args.output) / "stack.yaml").read_text()
         workloads = telemetry.load_objects(stack)
         names = {o["metadata"]["name"] for o in workloads if "metadata" in o}
@@ -187,7 +187,7 @@ class TelemetryTests(unittest.TestCase):
 
     def test_metrics_profile_rejects_trace_and_insufficient_complete_allowance(self):
         for kwargs in ({"profile": "metrics", "trace": "true"},
-                       {"profile": "metrics", "reserve_mib": 4351},
+                       {"profile": "metrics", "reserve_mib": 4863},
                        {"margin_mib": 0}):
             with self.subTest(kwargs=kwargs), self.assertRaises(telemetry.InvalidTelemetry):
                 telemetry.render(self.args(**kwargs))
@@ -227,8 +227,11 @@ class TelemetryTests(unittest.TestCase):
         args = self.args()
         telemetry.render(args)
         source = self.work / "resources.json"
-        for index, (ram, cpu, fits) in enumerate(((47104, 42, True), (112640, 42, True),
-                                                 (45000, 42, False), (47104, 20, False))):
+        # The old 46-GiB allowance no longer fits after Grafana's extra 512 MiB.
+        # Keep that rejection and test the new exact boundary independently.
+        for index, (ram, cpu, fits) in enumerate(((47104, 42, False), (47616, 42, True),
+                                                 (112640, 42, True), (45000, 42, False),
+                                                 (47616, 20, False))):
             source.write_text(json.dumps({"schema_version": 1, "status": "offline-plan-not-applied",
                                           "memory": {"allocatable_mib": ram},
                                           "allocatable_logical_cpus": cpu, "gpu_count": 2}))

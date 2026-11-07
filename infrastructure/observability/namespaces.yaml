@@ -23,7 +23,7 @@ kind: ResourceQuota
 metadata: {name: observability-budget, namespace: workstation-observability}
 spec:
   hard:
-    limits.memory: 4608Mi
+    limits.memory: 5120Mi
     requests.storage: 70Gi
     pods: '12'
 ---
