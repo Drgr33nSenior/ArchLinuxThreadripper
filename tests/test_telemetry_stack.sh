@@ -49,14 +49,24 @@ workloads.each do |workload|
   next if workload.dig('metadata', 'name') == 'node-exporter'
   check((pod['volumes'] || []).none? { |v| v.key?('hostPath') }, 'hostPath outside dedicated exporter')
 end
-check(total_memory == 4736, "unexpected memory budget #{total_memory}")
-check(total_memory <= 6144, 'stack exceeds 6Gi envelope')
+check(total_memory == 5248, "unexpected memory budget #{total_memory}")
+check(total_memory <= 6656, 'stack exceeds 6.5Gi envelope')
 check(documents.none? { |d| %w[Secret Ingress].include?(d['kind']) }, 'credential or public endpoint embedded')
 documents.select { |d| d['kind'] == 'Service' }.each do |service|
   check(service.dig('spec', 'type') == 'ClusterIP', 'public service')
 end
 grafana = object(documents, 'Deployment', 'grafana')
 env = grafana.dig('spec', 'template', 'spec', 'containers', 0, 'env')
+container = grafana.dig('spec', 'template', 'spec', 'containers', 0)
+check(container.dig('resources', 'requests', 'memory') == '1024Mi' &&
+      container.dig('resources', 'limits', 'memory') == '1024Mi', 'Grafana memory reservation/limit drift')
+check(env.find { |e| e['name'] == 'GOMEMLIMIT' }['value'] == '819MiB', 'Grafana Go memory headroom lost')
+quota = object(documents, 'ResourceQuota', 'observability-budget')
+namespace_memory = workloads.select { |w| w.dig('metadata', 'namespace') == 'workstation-observability' }
+                            .sum { |w| w.dig('spec', 'template', 'spec', 'containers').sum { |c| c.dig('resources', 'limits', 'memory').to_i } }
+check(quota.dig('spec', 'hard', 'limits.memory').to_i >= namespace_memory, 'namespace quota must admit the complete stack')
+limits = JSON.parse(File.read("#{root}/versions.json"))
+check(limits['runtime_limits_mib'] == total_memory && limits['runtime_limits_with_host_alloy_mib'] == total_memory + 512, 'runtime memory metadata drift')
 %w[GF_SECURITY_ADMIN_USER GF_SECURITY_ADMIN_PASSWORD].each do |key|
   check(env.find { |e| e['name'] == key }.dig('valueFrom', 'secretKeyRef', 'name') == 'grafana-admin', 'missing owner auth')
 end

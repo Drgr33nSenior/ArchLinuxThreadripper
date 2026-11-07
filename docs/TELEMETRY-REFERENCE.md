@@ -100,11 +100,11 @@ the exact image passes acceptance. See
 
 ## Memory, CPU and storage
 
-The full profile's cluster container limits total **4736 MiB**. Host Alloy is
+The full profile's cluster container limits total **5248 MiB**. Host Alloy is
 limited to 512 MiB and the sampler to 128 MiB. Its calculated allowance is
-6144 MiB: 4736 + 512 + 128 + the explicit 768 MiB planning margin. The metrics
+6656 MiB: 5248 + 512 + 128 + the explicit 768 MiB planning margin. The metrics
 profile removes Loki (1024 MiB) and Tempo (768 MiB), so its calculated allowance
-is 4352 MiB. `TELEMETRY_RESERVE_MIB` remains the owner-approved capacity reserve;
+is 4864 MiB. `TELEMETRY_RESERVE_MIB` remains the owner-approved capacity reserve;
 it must be at least the calculated allowance and may be higher. Do not allocate
 an apparent profile saving to model workloads without a separate reviewed plan.
 Neither allowance is a kubelet reservation, an RSS measurement or proof of
@@ -113,7 +113,7 @@ are 50%/10%; observe throttling before increasing collection rates.
 
 The optional tariff refresher adds a separate 64 MiB host limit and 5% CPU
 quota. Include `--tariff true` in a render and set `TELEMETRY_RESERVE_MIB` to
-at least 6208 MiB for full telemetry or 4416 MiB for metrics telemetry before
+at least 6720 MiB for full telemetry or 4928 MiB for metrics telemetry before
 activation. These amounts retain the existing 768 MiB margin. A default render
 does not include or activate the optional refresher.
 
@@ -125,8 +125,8 @@ only. Omitting the input remains compatible, but does not prove that telemetry
 is absent or make the corresponding capacity available to a model.
 
 Historical lower-memory example: on a nominal 64 GiB machine, existing 12 GiB host, 4 GiB K3s and 2 GiB eviction
-reserves leave 46 GiB. A 38 GiB SGLang pod, 2 GiB WebUI and 6 GiB telemetry
-allowance consume all of that. Firmware-reserved RAM can lower Linux MemTotal:
+reserves leave 46 GiB. A 38 GiB SGLang pod, 2 GiB WebUI and the current 6.5 GiB
+full telemetry allowance exceed that by 512 MiB. Firmware-reserved RAM can lower Linux MemTotal:
 a real 64 GiB inventory can correctly fail this plan. Do not round it up or
 remove safety reserves to force success. Review workloads and measured memory
 before adjusting limits.

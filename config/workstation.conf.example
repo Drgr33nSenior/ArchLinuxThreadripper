@@ -18,7 +18,7 @@ TELEMETRY_WORKSTATION_ADDRESS=
 TELEMETRY_KUBELET=true
 TELEMETRY_NODE_NAME=
 # Includes collector/exporter headroom; the planner counts selected workload limits.
-TELEMETRY_RESERVE_MIB=6144
+TELEMETRY_RESERVE_MIB=6656
 # Full keeps metrics, classified logs and selected traces. Metrics retains
 # Prometheus/Grafana, host/GPU/Bridge metrics and collector-health signals only.
 # It omits Loki/Tempo, journal collection and trace pipelines. It does not make
