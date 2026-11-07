@@ -6,7 +6,7 @@ checkpoint or assume that a newer model is faster on this workstation.
 
 The current assistant target is the selected native Qwen3.8-27B Quark AWQ
 MXFP4/C4 candidate with 128K context. Its contract and remaining integration
-gates are in [native candidate integration](ASSISTANT.md#native-128k-candidate-integration).
+gates are in [native candidate integration](ASSISTANT.md#native-candidate-integration).
 The table below describes the older checked-in container profiles; it does
 not describe that native candidate or establish a deployed service.
 

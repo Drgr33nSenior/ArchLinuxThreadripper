@@ -6,7 +6,11 @@ description: Prepare and verify ArchLinuxThreadripper installation media, plan a
 # Workstation installation
 
 Guide the owner through the existing workflow. Do not create another installer
-or resume engine. Skill invocation does not authorize destructive operations.
+or resume engine. The only permitted orchestrator is `workstationctl postinstall`
+([stage order](../../../docs/INSTALLATION.md#after-first-boot-stage-order)). It
+chains existing commands and never performs owner-gated actions; never pass its
+`--owner-completed` flag for the owner. Skill invocation does not authorize
+destructive operations.
 
 ## Read the current sources
 

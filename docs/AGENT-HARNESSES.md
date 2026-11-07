@@ -188,7 +188,9 @@ Markdown memory. That capability is separate from a shared browser/coding store
 and still needs model-specific qualification. The [continuity plan](MEMORY.md)
 selects Graphiti as the next shared memory pilot and keeps a short project
 handoff. Review memory-tool authentication, input handling, audit records and
-read/write scopes separately; no memory MCP endpoint is implemented here.
+read/write scopes separately. With the opt-in `assistant-memory` profile,
+set `AGENT_MEMORY_ENABLED=true` to add the shared `recall_memory`, `remember`
+and `forget_memory` tools to Qwen Code; see [Deploy memory](MEMORY.md#deploy-memory-opt-in).
 
 All clients address the same SGLang model instance. A second harness does not
 create another GPU allocation, extra model replica, or independent VRAM pool.

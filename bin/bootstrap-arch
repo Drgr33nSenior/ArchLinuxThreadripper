@@ -30,10 +30,13 @@ source "$BOOTSTRAP_ROOT/lib/bootstrap/verify.sh"
 source "$BOOTSTRAP_ROOT/lib/bootstrap/package.sh"
 # shellcheck source=lib/bootstrap/bridge.sh
 source "$BOOTSTRAP_ROOT/lib/bootstrap/bridge.sh"
+# shellcheck source=lib/bootstrap/discover.sh
+source "$BOOTSTRAP_ROOT/lib/bootstrap/discover.sh"
 
 usage() {
   cat <<'USAGE'
 Usage: bootstrap-arch [--config FILE] [--boot-package FILE] [--events] [--dry-run|--execute] <preflight|install|verify>
+       bootstrap-arch [--output NEW-FILE] discover
 
 The installer only accepts two immutable /dev/disk/by-id paths.  `install`
 defaults to a dry run. `--execute install` destroys both approved disks after
@@ -41,13 +44,17 @@ all checks and confirmation of both fully resolved paths and serials.
 `--dry-run` never formats, mounts, or writes disks.
 
 Configuration is a strict KEY=VALUE file. See config/install.conf.example.
+`discover` is read-only. It drafts that file to stdout or a new --output file
+(never overwritten). It fills the four disk keys only when exactly two
+equal-size, non-removable, unused NVMe disks exist; otherwise it lists the
+candidates and leaves those keys blank. Review the draft, then run preflight.
 --events sends sanitized stage records to the local workstation-install journal.
 It does not capture terminal output or create resumability; live logs are volatile.
 USAGE
 }
 
 main() {
-  local config_file='' action='' mode=''
+  local config_file='' action='' mode='' output_file=''
   BOOTSTRAP_DRY_RUN=1
   BOOTSTRAP_EVENTS=0
   BOOTSTRAP_BOOT_PACKAGE=/var/cache/arch-workstation/boot.pkg.tar.zst
@@ -69,6 +76,14 @@ main() {
         BOOTSTRAP_BOOT_PACKAGE=$2
         shift 2
         ;;
+      --output)
+        (($# >= 2)) || {
+          bootstrap_die '--output needs a path'
+          return 2
+        }
+        output_file=$2
+        shift 2
+        ;;
       --events)
         BOOTSTRAP_EVENTS=1
         shift
@@ -87,7 +102,7 @@ main() {
         usage
         return 0
         ;;
-      preflight | install | verify)
+      preflight | install | verify | discover)
         [[ -z $action ]] || {
           bootstrap_die 'only one action is allowed'
           return 2
@@ -103,6 +118,18 @@ main() {
   done
   [[ -n $action ]] || {
     usage >&2
+    return 2
+  }
+  if [[ $action == discover ]]; then
+    [[ -z $config_file && -z $mode && $BOOTSTRAP_EVENTS == 0 ]] || {
+      bootstrap_die 'discover is read-only and accepts only --output'
+      return 2
+    }
+    bootstrap_discover "$output_file"
+    return
+  fi
+  [[ -z $output_file ]] || {
+    bootstrap_die '--output is only valid for discover'
     return 2
   }
   [[ $mode != --execute || $action == install ]] || {

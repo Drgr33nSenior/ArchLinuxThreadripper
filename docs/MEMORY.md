@@ -6,17 +6,18 @@ for current public web evidence, local retrieval for private code/documents and
 a compact project handoff for the active task. Microsoft GraphRAG remains an
 optional, on-demand document-analysis experiment.
 
-This is an architecture decision with partial pilot verification. Graphiti was
-installed in an isolated test environment on the workstation; it is not a shared
-memory service or a qualified client integration. No background writer, client
-hook or new API endpoint is introduced. The current 64 GB host
-budget, serving ownership and installation/recovery gates still apply.
+This is an architecture decision with partial pilot verification. An opt-in,
+deployable memory profile now exists (see [Deploy memory](#deploy-memory-opt-in)).
+It is inactive by default and is not yet a qualified client integration. There
+is no background writer: memory is written only when a user explicitly asks
+through the `remember` tool. The current 64 GB host budget, serving ownership
+and installation/recovery gates still apply.
 
 ## Responsibilities
 
 | Need | Selected direction | Current status |
 | --- | --- | --- |
-| Durable preferences, decisions and changing project facts | Graphiti, scoped by user and project | Primary memory path; native FalkorDB 6.0.3 storage/restart/restore fixture passed; model and client qualification pending |
+| Durable preferences, decisions and changing project facts | Graphiti on Neo4j Community, scoped by user | Opt-in `assistant-memory` profile packaged; Neo4j storage/restart test, model and client qualification pending |
 | Current public web information | Existing Exa adapter | Source integration exists; full target acceptance remains separate |
 | Exact code, private documentation and book passages | Repository tools and local hybrid retrieval | Existing retrieval path; book conversion remains planned |
 | Active goal, constraints, last result and next steps | Short project handoff | Shared handoff storage/loading not implemented |
@@ -90,7 +91,18 @@ Select and pin the graph backend after it passes the compatibility and restart
 tests. The MCP server documents FalkorDB and Neo4j. The library's embedded
 FalkorDBLite option was tested on Python 3.14; its bundled 4.x engines failed
 the restart gate. A separate native FalkorDB 6.0.3 candidate passed the storage
-fixture described below. Deployment packaging and allocation remain unselected.
+fixture described below.
+
+Selected on 7 November 2026: **Neo4j Community 5.26 LTS (GPLv3)** instead of
+FalkorDB (SSPLv1). Licence clarity matters because this setup may support
+software work. Neo4j is also Graphiti's primary backend, and its driver is
+already in the lock. It costs about 1 GiB more memory than FalkorDB. Neo4j
+Community has one database, so users are separated by Graphiti's `group_id`
+inside it, enforced by the memory service. The FalkorDB storage fixture
+does not transfer; repeat the storage and restart test on Neo4j. The graph
+store stays on the workstation. It can move to the MicroServer later through
+`MEMORY_GRAPH_URI` (with `bolt+s://`) if measured memory is tight; the
+embedding server needs the Threadripper's CPU and stays there.
 
 Graphiti is not assumed to save RAM or disk compared with the current GraphRAG
 pilot. That pilot runs on demand and stores files without a resident graph
@@ -104,6 +116,60 @@ not authorization. Qualify read/write scopes independently from the existing
 read-only document and web tools. Broad graph-clear/delete tools are not part
 of the initial client scope. No direct client database access or new public
 port is required by this plan.
+
+## Deploy memory (opt-in)
+
+The `assistant-memory` experience adds memory to the assistant profile. It is
+inactive until you raise replicas, and it is absent from every other profile.
+
+| Component | Source | Limits | Purpose |
+| --- | --- | --- | --- |
+| `neo4j` | `neo4j:5.26.32-community`, pinned digest; Bolt only, HTTP off; 1 GiB heap, 256 MiB page cache | 2 CPU, 2 GiB | Graph store on PVC `graphiti-neo4j` (retained, backed up) |
+| `memory-embedding` | Text Embeddings Inference CPU 1.9.2, pinned digest | 4 CPU, 4 GiB | Serves the hash-verified RAG `Qwen3-Embedding-0.6B` files read-only |
+| `graphiti-memory` | Local image from [infrastructure/graphiti](../infrastructure/graphiti/Containerfile): Graphiti 0.31.2, hashed lock | 1 CPU, 1 GiB | Internal memory API |
+
+The service-tools MCP server exposes the tools to Open WebUI and Qwen Code:
+
+| Tool | Scope | Switch |
+| --- | --- | --- |
+| `recall_memory` | Read: facts with dates, marked current or historical | `MEMORY_ENABLED` |
+| `remember` | Write one explicit fact; a corrected statement makes the older fact historical | `MEMORY_WRITE_ENABLED` |
+| `forget_memory` | Delete one episode by its ID | `MEMORY_WRITE_ENABLED` |
+
+Each WebUI user gets a separate memory group. service-tools derives the group
+from the caller's own authenticated identity; a tool argument can never select
+it, and administrator tokens are refused. The memory service passes that group
+to every search, drops any result without it, and checks an episode's group
+before deleting it. Recall results say that current repository,
+file or tool evidence overrides memory. NetworkPolicies allow only
+service-tools → graphiti-memory → Neo4j, the embedding server and the
+gateway. Nothing is exposed outside the cluster.
+
+To enable it on the installed workstation:
+
+1. Build the image and record its digest in
+   `apps/components/memory/kustomization.yaml`:
+   `podman build -f infrastructure/graphiti/Containerfile -t localhost/workstation/graphiti-memory infrastructure/graphiti`.
+2. Render with `service render <site.json> <new-dir> --experience assistant-memory`.
+   Run `service plan` with fresh resources. Memory adds about 7 GiB of declared
+   limits. These are estimates, not measurements, and `service plan` counts
+   limits, so measure real use on the running host before adjusting them.
+3. Create the `memory-service` Secret from the files `service credentials`
+   writes: `service-key` from `memory-service-key` and `neo4j-auth` from
+   `memory-neo4j-auth`. Add `llm-key` from a `service provision` key for client
+   `graphiti-memory`, restricted to the profile's chat model.
+4. Raise replicas in this order: `neo4j`, `memory-embedding`,
+   `graphiti-memory`, then restart service-tools.
+
+Backups capture `graphiti-neo4j` when it exists. The capture stops
+graphiti-memory, then stops Neo4j cleanly, which checkpoints the store, before
+the copy.
+Deployments without memory are unaffected.
+
+Offline checks: `tests/workstation/test_memory.py` covers identity binding,
+tool switches, group-scoped recall and deletion, the HTTP service key, the
+rendered policies and pins, the lock and the backup claim. These use fakes; they
+do not test extraction or recall quality.
 
 ## Acceptance before adoption
 

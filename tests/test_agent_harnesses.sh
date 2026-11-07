@@ -241,6 +241,19 @@ reject "$root/bin/workstationctl" --config "$work/loopback-search.conf" agent co
 sed 's|^AGENT_HARNESS=.*|AGENT_HARNESS=hermes|' "$work/search-true.conf" >"$work/unsupported-search.conf"
 reject "$root/bin/workstationctl" --config "$work/unsupported-search.conf" agent configure "$work/unsupported-search"
 
+# Memory tools are a separate opt-in on the same scoped endpoint, Qwen Code only.
+sed -e 's|^AGENT_HARNESS=.*|AGENT_HARNESS=qwen|' -e 's|^AGENT_MEMORY_ENABLED=.*|AGENT_MEMORY_ENABLED=true|' \
+  "$work/https.conf" >"$work/memory.conf"
+"$root/bin/workstationctl" --config "$work/memory.conf" agent configure "$work/memory" >/dev/null
+jq -e '.mcpServers.workstationKnowledge.includeTools == ["recall_memory","remember","forget_memory"]' \
+  "$work/memory/qwen/settings.json" >/dev/null
+jq -e '.mcpServers.workstationKnowledge.includeTools | index("recall_memory") == null' \
+  "$work/search-true/qwen/settings.json" >/dev/null
+sed 's|^AGENT_MEMORY_ENABLED=.*|AGENT_MEMORY_ENABLED=true|' "$work/agent.conf" >"$work/loopback-memory.conf"
+reject "$root/bin/workstationctl" --config "$work/loopback-memory.conf" agent configure "$work/unsafe-memory"
+sed 's|^AGENT_HARNESS=.*|AGENT_HARNESS=hermes|' "$work/memory.conf" >"$work/unsupported-memory.conf"
+reject "$root/bin/workstationctl" --config "$work/unsupported-memory.conf" agent configure "$work/unsupported-memory"
+
 # Client failure is returned as-is, never retried through a second harness.
 ws_agent_exec() {
   printf '%s\n' "$1" >>"$work/failed-client-calls"

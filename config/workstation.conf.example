@@ -118,6 +118,8 @@ AGENT_HARNESS=qwen
 AGENT_RETRIEVAL_ENABLED=false
 # Qwen web search/page reading shares the same MCP URL and user credential.
 AGENT_WEB_SEARCH_ENABLED=false
+# Qwen shared memory tools (opt-in assistant-memory profile) use the same MCP URL.
+AGENT_MEMORY_ENABLED=false
 # OpenAI-compatible /v1 route: HTTP only on localhost/127.0.0.1 via an owner-set
 # authenticated tunnel, or an authenticated HTTPS endpoint. No embedded passwords,
 # query strings or fragments. Supply WORKSTATION_AGENT_API_KEY via the environment.

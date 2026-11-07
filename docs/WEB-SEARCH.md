@@ -29,9 +29,41 @@ worker, model or GPU allocation is introduced.
 
 The selected provider receives the query or selected public URLs, not the
 conversation, local retrieval results, user identity or inference credential.
-Generated queries can still contain private text: review search confirmation
-and IDE tool requests before sending sensitive material. Web sources are
+The adapter refuses a query with `private_material_in_query` before it reserves
+a request if the query contains local retrieval output markers (`file_id`,
+`content_trust`, `untrusted-source-text`, `/api/v1/files/`), PEM armour
+(`-----BEGIN`/`-----END`) or an internal host name (`.local`, `.localhost`,
+`.internal`, `.lan`, `.home`). This check is narrow. Generated queries can still
+contain private text: review search confirmation and IDE tool requests before
+sending sensitive material. Web sources are
 untrusted evidence and cannot authorize tools or change project instructions.
+
+## Evidence metadata
+
+Search hits and page metadata are flat scalar fields:
+
+- `provider`, `provider_id` (Exa result `id`; empty for Tavily) and the source
+  URL (`link` or `source`). Pages also have `title` (empty for Tavily).
+- `retrieved_at`: UTC time the adapter received the provider response. Exa can
+  serve cached content, so this is not the provider's crawl time.
+- `published_date`: provider publication date as `YYYY-MM-DD`, or empty. The
+  adapter does not infer a software version. Compare this date and versioned
+  URL paths with the version that the project pins.
+- `content_sha256`: SHA-256 of the returned text.
+- `completeness`: `complete` only when no character cap can have removed provider
+  text (Tavily text within the page limit). `truncated` means more text is known
+  to exist; search snippets are always `truncated`. `unknown` means truncation
+  cannot be excluded. Exa applies `text.maxCharacters` on its side, so an
+  untruncated Exa page is `unknown`. The adapter requests one extra character to
+  detect the Exa cap. `complete` describes the provider's extracted text, not
+  page content that the provider did not extract.
+- `truncated` is `true` unless `completeness` is `complete`. Earlier versions
+  reported `false` for Exa pages cut at the provider cap.
+- Pages have `offset`. A `truncated` page has `next_offset` when the next section
+  is within the section limit. `WebSearch.extract([url], offset=...)` returns
+  that section. The `read_web_page` MCP tool and `/webui/fetch` do not pass an
+  offset yet. A provider can change a page between reads; compare
+  `retrieved_at` and `content_sha256`.
 
 ## Limits and accounting
 
@@ -45,8 +77,11 @@ untrusted evidence and cannot authorize tools or change project instructions.
   and a 25-second provider-operation deadline.
 - At most 6,000 characters per extracted page. The smaller `assistant-split`
   profile requests one search result and limits pages to 1,600 characters.
+- A follow-up section read covers one URL and must end within the first 48,000
+  characters of the provider text. Each section read reserves one request.
 
 Exa search uses `auto` with at most three results and 1,600-character highlights.
+Snippets keep whole highlights; only a single oversized highlight is cut.
 Extraction requests bounded text only. No generated summaries, additional
 queries, Agent jobs or subpage crawling are enabled. Tavily search uses `basic`,
 with automatic parameter selection and generated answers disabled; extraction
@@ -129,7 +164,7 @@ not resolve or fetch user-selected destinations itself.
    ingestion; importing selected web documents into permanent knowledge is a
    separate reviewed action.
 5. Check a public documentation query in WebUI and Qwen Code. Open one returned
-   page, verify its citation and truncation, then retrieve an allowed local
+   page, verify its citation, `completeness` and `retrieved_at`, then retrieve an allowed local
    passage. Confirm another user's private collection stays inaccessible. Check
    tool-call parsing and final prompt/answer budgets for each selected model.
    Do not infer these properties from a successful provider request alone.

@@ -1,0 +1,3 @@
+- name: Record the synthetic service port
+  ansible.builtin.set_fact:
+    service_port: 8080

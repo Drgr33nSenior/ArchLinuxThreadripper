@@ -1,10 +1,13 @@
-"""Evaluate bounded coding and tool-call responses without executing model text.
+"""Evaluate bounded coding and tool-call responses.
 
-The installed Bridge worker deliberately accepts only named build recipes, so it
-is not an execution authority for this corpus.  Code tasks retain their required
-compile/unit-test contract but report unavailable until a separately reviewed
-isolated evaluator supplies a sealed attestation.  This program never calls a
-shell, opens the network, or reads credentials.
+Model text is executed only inside the network-free Linux sandbox below, the
+design of the serving project's pinned CPU grader (``grade_sandbox.py``
+78ba51a9..., ``grade_response.py`` 5fdf9fa8...): bubblewrap with every
+namespace unshared, a cleared environment, read-only system directories, a
+tmpfs /tmp and a hard timeout. Where that sandbox is unavailable (macOS, no
+bwrap) code tasks report ``unavailable-no-isolated-executor``; parsing alone
+never passes a coding task. This program never calls a shell, opens the
+network, or reads credentials.
 """
 import argparse
 import ast
@@ -13,11 +16,96 @@ import json
 import math
 import os
 from pathlib import Path
+import platform
+import shutil
+import subprocess
+import tempfile
+import time
 
 
 MAX_FILE = 2 * 1024 * 1024
 MAX_RESPONSE = 64 * 1024
 ALLOWED_KINDS = frozenset(("structured", "tool", "negative", "code"))
+SANDBOX_TOOLS = ("/usr/bin/bwrap", "/usr/bin/timeout", "/usr/bin/prlimit")
+SANDBOX_ENV = {"PATH": "/usr/bin", "HOME": "/tmp", "LANG": "C.UTF-8", "PYTHONDONTWRITEBYTECODE": "1",
+               "GOCACHE": "/tmp/go-cache", "GOPATH": "/tmp/go", "GOPROXY": "off", "GOTOOLCHAIN": "local",
+               "GOFLAGS": "-mod=mod", "TF_IN_AUTOMATION": "1", "CHECKPOINT_DISABLE": "1",
+               "ANSIBLE_LOCAL_TEMP": "/tmp/ansible", "ANSIBLE_HOME": "/tmp/ansible"}
+OUTPUT_TAIL = 2048
+
+
+def sandbox_available():
+    """Return None when the isolated executor can run, else the reason it cannot."""
+    if platform.system() != "Linux":
+        return "isolated executor requires Linux bubblewrap; this host is " + platform.system()
+    for tool in SANDBOX_TOOLS:
+        path = Path(tool)
+        if not path.is_file() or path.stat().st_mode & 0o022:
+            return "missing or writable sandbox tool " + tool
+    return None
+
+
+def sandbox_argv(command, seconds):
+    """Deny-by-default argv: no network, no host home, no credentials, one writable /work."""
+    if (not isinstance(command, list) or not command or not all(isinstance(arg, str) for arg in command)
+            or not command[0].startswith("/usr/bin/") or not 1 <= seconds <= 300):
+        raise ValueError("sandbox command must be an absolute /usr/bin program with a bounded timeout")
+    argv = ["/usr/bin/timeout", "--signal=TERM", "--kill-after=2", str(seconds),
+            "/usr/bin/bwrap", "--die-with-parent", "--new-session", "--unshare-all",
+            "--ro-bind", "/usr", "/usr", "--ro-bind", "/lib", "/lib", "--ro-bind", "/lib64", "/lib64",
+            "--ro-bind-try", "/etc/ssl", "/etc/ssl", "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp",
+            "--bind", "{work}", "/work", "--clearenv"]
+    for key, value in sorted(SANDBOX_ENV.items()):
+        argv += ["--setenv", key, value]
+    return argv + ["--chdir", "/work", "/usr/bin/prlimit", "--cpu=" + str(seconds), "--fsize=67108864",
+                   "--nofile=256", "--nproc=256", "--"] + command
+
+
+def run_task(fixture, files, command, seconds=120, allowed=(), sandbox=True):
+    """Copy a fixture, apply the response files, then run its real test command.
+
+    ``files`` maps relative paths to new contents; only paths listed in
+    ``allowed`` may change, so a response cannot rewrite the tests. With
+    ``sandbox=False`` the command runs on the host; use it only for authored
+    reference solutions, never for model output.
+    """
+    fixture = Path(fixture)
+    if not fixture.is_dir() or fixture.is_symlink():
+        raise ValueError("fixture must be a directory")
+    for name, text in files.items():
+        if name not in allowed or not isinstance(text, str) or len(text.encode()) > MAX_RESPONSE:
+            raise ValueError("response may only replace the task's editable files")
+    if sandbox:
+        reason = sandbox_available()
+        if reason:
+            return {"status": "unavailable-no-isolated-executor", "reason": reason}
+    with tempfile.TemporaryDirectory(prefix="coding-task-") as temporary:
+        work = Path(temporary) / "work"
+        shutil.copytree(fixture, work, symlinks=False)
+        for name, text in files.items():
+            (work / name).write_text(text)
+        if sandbox:
+            argv = [str(work) if arg == "{work}" else arg for arg in sandbox_argv(command, seconds)]
+            environment = {"PATH": "/usr/bin"}
+        else:
+            argv = list(command)
+            environment = {key: value for key, value in SANDBOX_ENV.items() if key != "PATH"}
+            environment["PATH"] = os.environ.get("PATH", "/usr/bin")
+            for key in ("GOCACHE", "GOPATH", "ANSIBLE_LOCAL_TEMP", "ANSIBLE_HOME"):
+                environment[key] = str(Path(temporary) / key.lower())
+            environment["HOME"] = temporary
+        started = time.monotonic()
+        try:
+            completed = subprocess.run(argv, cwd=work, env=environment, capture_output=True,
+                                       timeout=seconds + 10, check=False)
+        except subprocess.TimeoutExpired:
+            return {"status": "timeout", "elapsed_seconds": round(time.monotonic() - started, 3)}
+        output = completed.stdout + completed.stderr
+        timed_out = completed.returncode in (124, 137)
+        return {"status": "timeout" if timed_out and sandbox else "tests-passed" if completed.returncode == 0 else "tests-failed",
+                "exit_status": completed.returncode, "elapsed_seconds": round(time.monotonic() - started, 3),
+                "output_sha256": digest(output), "output_tail": output[-OUTPUT_TAIL:].decode(errors="replace"),
+                "isolated": sandbox, "argv_sha256": digest(canonical(command))}
 
 
 def digest(value):
@@ -241,7 +329,19 @@ def json_equal(actual, expected):
     return actual == expected
 
 
-def evaluate_task(task, response):
+def execute_python(source, tests):
+    """Run one response function against its assertions inside the sandbox."""
+    if not isinstance(tests, list) or not tests or not all(isinstance(test, str) and len(test) <= 512 for test in tests):
+        raise ValueError("code task lacks executable tests")
+    with tempfile.TemporaryDirectory(prefix="coding-fixture-") as fixture:
+        check = "from solution import *\n" + "".join(f"assert {test}, {test!r}\n" for test in tests)
+        (Path(fixture) / "check.py").write_text(check)
+        (Path(fixture) / "solution.py").write_text("")
+        return run_task(fixture, {"solution.py": source}, ["/usr/bin/python3", "-I", "-S", "-B", "check.py"],
+                        seconds=20, allowed=("solution.py",))
+
+
+def evaluate_task(task, response, execute=False):
     """Return a redacted deterministic result.  Never retain response text."""
     result = {"task_id": task["id"], "kind": task["kind"], "attempts": response["attempts"],
               "latency_ms": response.get("latency_ms"), "input_tokens": response.get("input_tokens"),
@@ -277,18 +377,26 @@ def evaluate_task(task, response):
             source = actual["source"]
             if not isinstance(source, str) or len(source.encode()) > MAX_RESPONSE or task["expected"]["contains"] not in source:
                 raise ValueError("required code shape is absent")
-            # Parsing detects malformed Python, but is not compilation or a
-            # unit test.  No source is run without a future sealed executor.
+            # Parsing only rejects malformed Python early; it never passes a task.
             ast.parse(source, mode="exec")
-            result["status"] = "unavailable-no-reviewed-isolated-executor"
             result["required_verification"] = task["expected"]["verification"]
+            result["status"] = "unavailable-no-reviewed-isolated-executor"
+            if execute:
+                run = execute_python(source, task["expected"].get("tests"))
+                result["execution"] = {key: run[key] for key in ("status", "exit_status", "elapsed_seconds",
+                                                                  "output_sha256", "reason") if key in run}
+                if run["status"] == "tests-passed":
+                    result["status"] = "passed"
+                elif run["status"] in ("tests-failed", "timeout"):
+                    result["status"] = "failed"
+                    result["failure"] = run["status"]
     except (ValueError, TypeError, SyntaxError) as error:
         result["status"] = "failed"
         result["failure"] = type(error).__name__
     return result
 
 
-def evaluate(corpus_file, responses_file):
+def evaluate(corpus_file, responses_file, execute=False):
     corpus, corpus_hash, templates = load_corpus(corpus_file)
     responses, response_hash = read_json(responses_file)
     rows = response_map(responses, corpus_hash)
@@ -300,7 +408,7 @@ def evaluate(corpus_file, responses_file):
             if task["kind"] == "tool":
                 results[-1]["protocol_status"] = "unknown-not-collected"
         else:
-            results.append(evaluate_task(task, row))
+            results.append(evaluate_task(task, row, execute))
     if rows:
         raise ValueError("responses include unknown task IDs")
     passed = sum(row["status"] == "passed" for row in results)
@@ -315,9 +423,10 @@ def evaluate(corpus_file, responses_file):
             "template_sha256": templates, "responses_sha256": response_hash,
             "generation": responses["generation"], "results": results, "successes": passed,
             "failures": failed, "unavailable": unavailable, "unknown": unknown, "protocol": protocol,
-            "execution": "unavailable: Bridge worker only accepts named build recipes; response text was not executed",
+            "execution": ("isolated sandbox requested; see per-task execution status" if execute else
+                          "unavailable: response text was not executed (run with --execute on Linux bubblewrap)"),
             "limitations": ["Task text, model responses and tool payloads are not retained in this result.",
-                            "Static parsing is not a compile or unit-test result.",
+                            "Static parsing is not a compile or unit-test result; only sandboxed tests pass code tasks.",
                             "This coding suite supplements, and does not replace, numerical quality checks."]}
 
 
@@ -335,8 +444,10 @@ def main():
     parser.add_argument("responses")
     parser.add_argument("output")
     parser.add_argument("--corpus", default=str(corpus_path()))
+    parser.add_argument("--execute", action="store_true",
+                        help="run code tasks inside the network-free Linux sandbox; unavailable elsewhere")
     args = parser.parse_args()
-    write(args.output, evaluate(args.corpus, args.responses))
+    write(args.output, evaluate(args.corpus, args.responses, args.execute))
 
 
 if __name__ == "__main__":

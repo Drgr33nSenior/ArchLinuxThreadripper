@@ -161,7 +161,7 @@ class AssistantTests(unittest.TestCase):
             root = Path(temp)
             path = root / "site.json"
             path.write_text(json.dumps(site))
-            for experience in (None, "assistant"):
+            for experience in (None, "assistant", "assistant-memory"):
                 for mode in ("large", "split"):
                     output = root / f"{experience}-{mode}"
                     args = SimpleNamespace(site=path, output=output, mode=mode)
@@ -177,6 +177,14 @@ class AssistantTests(unittest.TestCase):
                         _, env = environment(objects)
                         self.assertEqual("Family AI", env["WEBUI_NAME"])
                         self.assertIn("AGENT_WEB_SEARCH_ENABLED=true", (output / "client.conf").read_text())
+                        memory = experience == "assistant-memory"
+                        self.assertIn(f"AGENT_MEMORY_ENABLED={'true' if memory else 'false'}", (output / "client.conf").read_text())
+                        claims = {o["metadata"]["name"]: o for o in objects if o["kind"] == "PersistentVolumeClaim"}
+                        self.assertEqual(memory, "graphiti-neo4j" in claims)
+                        if memory:
+                            self.assertEqual("irreplaceable", claims["graphiti-neo4j"]["metadata"]["labels"]["workstation.ai/backup"])
+                            deployments = {o["metadata"]["name"] for o in objects if o["kind"] == "Deployment"}
+                            self.assertLessEqual({"neo4j", "memory-embedding", "graphiti-memory"}, deployments)
                     self.assertTrue(all(service.sha(output / name) == digest
                                         for name, digest in record["files"].items()))
 

@@ -1,0 +1,3 @@
+# Direct dependency of the Graphiti memory service. Resolve changes into
+# requirements-python314.lock with hashes; never install without them.
+graphiti-core==0.31.2

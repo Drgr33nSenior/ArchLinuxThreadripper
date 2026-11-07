@@ -17,7 +17,16 @@ CHAT_FIELDS = {
     "max_completion_tokens", "temperature", "top_p", "top_k", "seed", "stop",
     "tools", "tool_choice", "parallel_tool_calls", "response_format",
     "presence_penalty", "frequency_penalty", "chat_template_kwargs", "n",
+    "reasoning_effort",
 }
+# Client effort levels mapped to the levels the pinned checkpoint template
+# accepts (low, medium, xhigh). Clients such as Open WebUI offer the OpenAI
+# "high" level, which that template would reject, so it is sent as its
+# nearest level, xhigh. The selected profile uses low.
+REASONING_EFFORTS = {"low": "low", "medium": "medium", "high": "xhigh", "xhigh": "xhigh"}
+# Template variables a client may set. Other variables can change the rendered
+# prompt in unreviewed ways, so they are refused rather than forwarded.
+TEMPLATE_KWARGS = {"enable_thinking": bool}
 
 
 class Refusal(Exception):
@@ -185,6 +194,15 @@ class GatewayBoundary:
             raise Refusal(429, "service_concurrency_limit")
         if data.get("n", 1) != 1:
             raise Refusal(400, "one_completion_per_request")
+        if "reasoning_effort" in data and (type(data["reasoning_effort"]) is not str
+                                           or data["reasoning_effort"] not in REASONING_EFFORTS):
+            raise Refusal(400, "invalid_reasoning_effort")
+        if "reasoning_effort" in data:
+            data["reasoning_effort"] = REASONING_EFFORTS[data["reasoning_effort"]]
+        kwargs = data.get("chat_template_kwargs", {})
+        if (not isinstance(kwargs, dict) or set(kwargs) - set(TEMPLATE_KWARGS)
+                or any(type(value) is not TEMPLATE_KWARGS[key] for key, value in kwargs.items())):
+            raise Refusal(400, "invalid_chat_template_kwargs")
         if "max_tokens" in data and "max_completion_tokens" in data:
             raise Refusal(400, "ambiguous_output_limit")
         field = "max_completion_tokens" if "max_completion_tokens" in data else "max_tokens"

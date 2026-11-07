@@ -80,6 +80,8 @@ docs/diagrams/workstation-stack.svg
 infrastructure/sglang/serving-project.json
 infrastructure/sglang/serving-evidence/MXFP4-CANDIDATE-PHASE1-20261031.json
 infrastructure/sglang/serving-evidence/MXFP4-CANDIDATE-128K-20261031.json
+infrastructure/sglang/serving-evidence/MXFP4-FINALIZATION-20261105.json
+infrastructure/sglang/serving-evidence/MXFP4-SPLITK-S4-SELECTION-20261107.json
 infrastructure/sglang/serving-evidence/LICENSE
 docs/SERVING-INTEGRATION.md
 docs/QWEN4-READINESS.md

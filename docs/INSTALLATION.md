@@ -206,6 +206,21 @@ No existing token, PIN or boot policy is converted automatically.
 Replace the disk paths with complete `/dev/disk/by-id/...` values and copy the exact
 serials reported by `udevadm` or `lsblk`. Do not use `/dev/nvme0n1` names.
 
+To draft these values, run the read-only discovery as root instead of `cp`:
+
+```sh
+bootstrap-arch --output /run/install.conf discover
+```
+
+It copies the packaged example and refuses to overwrite an existing file. It fills
+`PRIMARY_DISK`, `SECONDARY_DISK` and both serials only when exactly two equal-size,
+non-removable NVMe disks are unmounted and have no active swap or storage stack.
+Otherwise it lists every candidate with its exclusion reason and leaves those keys
+blank, which preflight refuses. Without `--output`, it prints the draft. Review
+all values. Discovery does not answer installer prompts: `ERASE`, the LUKS
+passphrase and the user/root passwords stay interactive. For the home-lab
+example, copy only the four reviewed disk lines into that file.
+
 Keep `HOST_PROFILE=headless` for an AI/remote-gaming server. This omits GNOME,
 GDM and host gaming packages, keeps the multi-user target, and selects TuneD's
 balanced policy. `HOST_PROFILE=desktop` is an explicit new-install alternative.
@@ -906,6 +921,76 @@ Before moving to rolling mirrors, review the optional bootstrap package's exact
 Codex dependency: update/rebuild it coherently, or remove that optional bootstrap
 package. Never remove `arch-workstation-boot`, which owns the UKI recovery hooks,
 merely to upgrade Codex. Follow the existing full-upgrade/recovery policy.
+
+## After first boot: stage order
+
+Use this order after the boot/recovery baseline. `workstationctl postinstall` is the
+only orchestrator. It runs the existing commands below, records each attempt in
+a private state directory and stops at every owner gate. It never runs a gated
+action and does not resume or repeat the installer. Keep the state directory
+outside Git and the checkout.
+
+```sh
+./bin/workstationctl postinstall plan ~/postinstall-state --install-config /path/to/install.conf
+./bin/workstationctl postinstall run ~/postinstall-state --install-config /path/to/install.conf \
+  --service-site /private/site.json --gpu-chart /path/to/downloaded-chart.tgz
+```
+
+`plan` runs nothing and creates nothing. `run` creates the state directory with
+mode 0700 and refuses symlinks. Each JSON record contains the step, argv, input
+digests, boot ID, exit status, UTC start/end times, and output and log digests.
+It contains no secrets. A rerun skips steps whose inputs did not change.
+Boot-bound checks (verification, hardware collection, ROCm validation) run again
+once in each boot. Changed upstream output makes the dependent steps run again.
+
+`run` stops at the first failure (exit 1), owner gate (3), missing input (4) or
+privilege boundary (5). It prints the exact next command, for example
+`sudo ./bin/workstationctl postinstall run …` for a root step. Root steps write
+root-owned outputs, and the records stay readable by the state owner. After the
+owner completes a gate, the owner adds `--owner-completed GATE` to the printed
+rerun command. This records owner-reported completion only. Agents never pass it.
+`--config FILE` before `postinstall` passes the reviewed workstation configuration
+to each `workstationctl` step.
+Add `--with-memory` to render the opt-in Graphiti memory profile
+(`assistant-memory`) instead of the plain assistant; see
+[Deploy memory](MEMORY.md#deploy-memory-opt-in). Toggling it re-runs the render.
+
+| Order | Stage | Existing command or owner gate | Runs as |
+| --- | --- | --- | --- |
+| 1 | Secure Boot and unlock | Gate: sections 5 and 6 (6A for `tpm2-pin`) | Owner |
+| 2 | Verification | `bootstrap-arch --config FILE verify`, `workstationctl status`, `swap validate` | Root |
+| 3 | Packages | Gate: `sudo ./bin/workstationctl dev setup server templates/workstation/packages.pacman` | Owner |
+| 4 | Hardware and resources | `hardware collect`, `resources plan` | Root |
+| 5 | ROCm | `rocm validate` | User |
+| 6 | K3s package | Gate: build, sign and install `k3s-workstation-bin` ([bare-metal K3s](HOME-LAB.md#3-package-and-configure-bare-metal-k3s)) | Owner |
+| 7 | K3s host | Gate: `site.yml` with `lab_manage_service=false` | Owner |
+| 8 | K3s start | Gate: reviewed `site.yml` with `lab_manage_service=true` | Owner |
+| 9 | GPU Operator | `render.sh`; apply is a gate ([GPU Operator](HOME-LAB.md#4-gpu-operator-and-allocation)) | User, owner |
+| 10 | GPU qualification | Gate: [validation and promotion](HOME-LAB.md#6-validation-and-promotion) | Owner |
+| 11 | Service preparation | `telemetry render`/`verify`, `service render --experience assistant`, `rag stage-models`/`verify-models` | User |
+| 12 | Admission | `telemetry plan`, `service plan`; a blocked budget stops here | Root |
+| 13 | Rollout | Gates: backup credentials, service credentials and Secrets, web-search key, then [service rollout](AI-SERVICE.md#prepare-and-roll-out) | Owner |
+
+The ROCm packages must come before `site.yml`. The `arch_host` role requires a
+hardware report from the current boot. That report must list both GPUs in
+`rocm_agents`, which come from `rocminfo`. Record the current-boot
+`hardware collect` path as `lab_hardware_report`; the K3s gate prints it.
+`lab_manage_service=false` keeps the first play from starting K3s.
+
+With `ENABLE_SSH=false`, run Ansible at the target's local console over a local
+connection. Put this in the ignored `inventory.local.ini`:
+
+```ini
+[ai_lab_baremetal]
+CHOSEN_LAB_ALIAS ansible_connection=local
+
+[ai_lab_baremetal:vars]
+lab_environment=dev
+```
+
+Then use the [bare-metal K3s](HOME-LAB.md#3-package-and-configure-bare-metal-k3s)
+command with the same `--limit CHOSEN_LAB_ALIAS`. `--ask-become-pass` prompts
+locally for sudo. `lab_environment` must be `dev`, `tst` or `int`.
 
 ## Continuity and interrupted installation
 

@@ -1,12 +1,31 @@
 {
-  "schema": 1,
+  "schema": 2,
   "repository": "https://github.com/Drgr33nSenior/Spry.ai-rdna4-serving",
-  "revision": "d3f0db85997389ebd8836af17a7048659b930770",
-  "checked_at": "2026-11-01T09:21:42+00:00",
   "release": null,
   "distribution": "experimental-source-prototype",
-  "records": {
-    "MXFP4-CANDIDATE-PHASE1-20261031.json": "62613bcd57b5266b1b7da5f68c6e1e0df1bca909ff79a736a39b403941234c8a",
-    "MXFP4-CANDIDATE-128K-20261031.json": "f87a500a3d23eab6d3f63728a2b6490a3f8b7107c5c67049c4e8a3bc931135f0"
-  }
+  "current_import": "splitk-selection-20261107",
+  "imports": [
+    {
+      "id": "mxfp4-128k-20261101",
+      "status": "historical",
+      "revision": "d3f0db85997389ebd8836af17a7048659b930770",
+      "checked_at": "2026-11-01T09:21:42+00:00",
+      "scope": "Imported 1 November 2026 before operation232; these bytes describe the earlier C4 candidate, not the current selection. Upstream has since revised the 128K record; the pinned bytes are retained unchanged.",
+      "records": {
+        "MXFP4-CANDIDATE-PHASE1-20261031.json": "62613bcd57b5266b1b7da5f68c6e1e0df1bca909ff79a736a39b403941234c8a",
+        "MXFP4-CANDIDATE-128K-20261031.json": "f87a500a3d23eab6d3f63728a2b6490a3f8b7107c5c67049c4e8a3bc931135f0"
+      }
+    },
+    {
+      "id": "splitk-selection-20261107",
+      "status": "current",
+      "revision": "3f5ba24e292d43e0bc643f2c51cf5940afabc606",
+      "checked_at": "2026-11-07T16:08:03+00:00",
+      "scope": "Owner selection of operation234 (three-member cap16 plus S4 split-K down/out) with operation232's selected arm as rollback; frozen INCONCLUSIVE_PARK verdict retained; programme parked. Private experimental selection only; not an installed service.",
+      "records": {
+        "MXFP4-SPLITK-S4-SELECTION-20261107.json": "1925391554df4e1c582539512746f2dbbacb4d4b0683dee3b9a18a9dbd9d7fa8",
+        "MXFP4-FINALIZATION-20261105.json": "f50f446132e1c7aaa9803fee9939ef5d5881aff8777294dde842c352158f12ca"
+      }
+    }
+  ]
 }

@@ -555,7 +555,7 @@ of repository validation.
 ## Primary references inspected
 
 - [K3s advanced configuration and containerd v3](https://docs.k3s.io/advanced)
-- [Pinned K3s release](https://github.com/k3s-io/k3s/releases/tag/v1.35.7%2Bk3s1)
+- [Pinned K3s release](https://github.com/k3s-io/k3s/releases/tag/v1.35.8%2Bk3s1)
 - [AMD GPU Operator v1.5.1 source](https://github.com/ROCm/gpu-operator/tree/v1.5.1)
 - [AMD device-plugin/DRA exclusivity](https://instinct.docs.amd.com/projects/gpu-operator/en/main/device_plugin/device-plugin.html)
 - [systemd cryptenroll PCR syntax](https://github.com/systemd/systemd/blob/main/man/systemd-cryptenroll.xml)

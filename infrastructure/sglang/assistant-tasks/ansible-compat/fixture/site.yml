@@ -1,0 +1,6 @@
+- name: Configure the synthetic service
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Load service tasks
+      include: tasks/service.yml

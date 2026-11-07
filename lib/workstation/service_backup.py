@@ -26,6 +26,9 @@ DATA = Path("/var/lib/rancher/k3s")
 NAMESPACE = "ai-home-lab"
 WRITERS = ("open-webui", "service-tools", "litellm")
 CLAIMS = {"webui-rag-qwen3-data", "creative-models", "service-tools-state", "gateway-postgres"}
+# Opt-in memory: captured when its claim exists, never required. Its writer
+# stops first, then the graph store stops cleanly (a checkpoint) before the copy.
+OPTIONAL_CLAIMS = {"graphiti-neo4j": ("graphiti-memory", "neo4j")}
 GAMING_HOMES = {"gaming-home": "steam-headless", "parent-gaming-home": "parent-steam-headless",
                 "kids-gaming-home": "kids-steam-headless"}
 CAPTURES = Path("/var/lib/workstation-service-backup")
@@ -389,7 +392,8 @@ def validate_capture(directory):
     applications = claims - gaming
     require(record.get("database") == "k3s-sqlite" and
             (claims and applications <= CLAIMS - {"gateway-postgres", "service-tools-state"}
-             if baseline else applications == CLAIMS), "wrong datastore or incomplete application capture")
+             if baseline else CLAIMS <= applications <= CLAIMS | OPTIONAL_CLAIMS.keys()),
+            "wrong datastore or incomplete application capture")
     require(not gaming or set(record.get("gaming_claims", [])) == gaming, "gaming home inventory missing")
     require(set(record["files"]) >= {"state.db", "server-token", "server.tar", "config.tar",
                                     "models.json", "rag-SHA256SUMS"} |
@@ -505,8 +509,10 @@ class Capture:
         names = {p["metadata"]["name"] for p in pvcs}
         require(not any(re.search(r"gaming.*home|home.*gaming", name, re.I) and name not in GAMING_HOMES
                         for name in names), "unknown gaming-home claim requires an explicit backup policy change")
-        claims = {p["metadata"]["name"]: p for p in pvcs if p["metadata"]["name"] in CLAIMS | GAMING_HOMES.keys()}
+        claims = {p["metadata"]["name"]: p for p in pvcs
+                  if p["metadata"]["name"] in CLAIMS | GAMING_HOMES.keys() | OPTIONAL_CLAIMS.keys()}
         if self.baseline:
+            require(not set(claims).intersection(OPTIONAL_CLAIMS), "memory claims require a full capture")
             require(not set(claims).intersection({"gateway-postgres", "service-tools-state"}),
                     "new service claims require a full capture")
             # Preserve the pre-service treatment of unbound application claims,
@@ -633,6 +639,13 @@ class Capture:
             with (output / name).open("xb") as stream:
                 run(self.kube + ["-n", NAMESPACE, "exec", pg[0]["metadata"]["name"], "--"] + command, output=stream)
         self.scale_zero("gateway-postgres", journal, output)
+        for claim, (writer, store) in OPTIONAL_CLAIMS.items():
+            if claim not in getattr(self, "optional_claims", ()):
+                continue
+            self.scale_zero(writer, journal, output)
+            # scale_zero waits for the Pod to exit; Neo4j checkpoints on a clean
+            # shutdown, so the stopped store files are consistent for the copy.
+            self.scale_zero(store, journal, output)
         self.stopped()
 
     def capture(self):
@@ -687,6 +700,7 @@ class Capture:
             # still rechecks the same claim/PV identities after quiescing.
             planned_volumes = self.volumes(node)
             self.gaming_writers = self.gaming_writers_plan(planned_volumes)
+            self.optional_claims = set(planned_volumes).intersection(OPTIONAL_CLAIMS)
             if local:
                 validate_local_repository(self.policy, sources=tuple(Path(v["source"]) for v in planned_volumes.values()))
             output.mkdir(mode=0o700, parents=False)
