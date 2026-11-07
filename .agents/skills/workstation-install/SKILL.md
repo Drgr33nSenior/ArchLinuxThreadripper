@@ -124,7 +124,9 @@ retain disposable UEFI test results separately. Signed packages do not establish
 Secure Boot support for the live ISO. For official Arch media, follow INSTALLATION
 signature checks and separately prepare the trusted signed boot package.
 
-On the Mac, `bash infrastructure/iso/usb.sh list` lists candidates. Preview with
+On the Mac, `bash infrastructure/iso/usb.sh list` lists candidates. On Linux,
+the same writer accepts only a whole-disk `/dev/disk/by-id/usb-…` path, never
+unmounts, and follows ISO.md's Linux procedure; the owner unmounts first. Preview with
 `bash infrastructure/iso/usb.sh write "$ISO_FILE" "$USB_DISK"`. Present the exact
 whole-disk identity, capacity and ISO checksum. The owner alone runs the documented
 `sudo bash infrastructure/iso/usb.sh --execute write "$ISO_FILE" "$USB_DISK"`

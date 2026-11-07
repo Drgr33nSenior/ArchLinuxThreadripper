@@ -387,6 +387,35 @@ mocked OS adapters and regular temporary files. No test unmounts or writes a
 real device. Record physical USB write/readback and target boot results separately
 for each selected release and device.
 
+### Write from Linux
+
+On a Linux host the same writer uses `lsblk`, `udevadm`, `findmnt`, `dd`,
+`blockdev` and `cmp`. Select the disk only by its whole-disk stable path under
+`/dev/disk/by-id/usb-…`; a bare `/dev/sdX`, a partition path or any other name is
+refused because kernel names move between plugs and boots.
+
+```sh
+bash infrastructure/iso/usb.sh list
+ISO_FILE='/absolute/path/to/completed/arch-workstation-VERSION-x86_64.iso'
+USB_DISK='/dev/disk/by-id/usb-REPLACE_WITH_LISTED_NAME'
+bash infrastructure/iso/usb.sh write "$ISO_FILE" "$USB_DISK"
+sudo bash infrastructure/iso/usb.sh --execute write "$ISO_FILE" "$USB_DISK"
+```
+
+The preview shows the current kernel name, USB and drive model and serial,
+capacity, block size and sysfs path. Compare them with the physical drive.
+The Linux path never unmounts anything: unmount the drive's filesystems
+yourself first. It refuses a disk that is mounted, read-only, not on USB,
+undersized, not aligned to the ISO size, held by RAID/LVM/LUKS/device-mapper,
+carrying active swap, backing the running root filesystem, or holding the ISO.
+The typed confirmation names the stable path, capacity and checksum prefix.
+After confirmation it rechecks identity, opens the disk once, rechecks again,
+writes through that descriptor, synchronizes and flushes the device buffers,
+then compares the ISO's exact byte count using direct reads that bypass the
+page cache. It does not eject; remove the drive only after the success message.
+`tests/test_iso_usb_linux.sh` covers these refusals and the copy/readback
+path with mocked adapters and temporary files.
+
 ## If a stage fails
 
 - **Repeated `GPGME error: Inappropriate ioctl for device` during package integrity
