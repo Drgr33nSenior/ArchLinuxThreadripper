@@ -2,6 +2,7 @@
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+import hashlib
 import json
 from pathlib import Path
 import sqlite3
@@ -40,6 +41,8 @@ class SearchTests(unittest.IsolatedAsyncioTestCase):
         self.slow = False
         self.large = False
         self.empty_extract = False
+        self.page_text = "untrusted page " * 1000
+        self.highlights = ["Evidence " * 500]
         self.role = "user"
         async def upstream(request):
             self.calls.append(request)
@@ -63,15 +66,22 @@ class SearchTests(unittest.IsolatedAsyncioTestCase):
             if self.large:
                 return httpx.Response(200, content=b"x" * (2 * 1024 * 1024 + 1))
             if request.url.path == "/search":
-                content = {"highlights": ["Evidence " * 500]} if self.provider == "exa" else {"content": "Evidence " * 500}
+                content = ({"highlights": self.highlights, "id": "exa-doc-1", "publishedDate": "2026-10-30T08:00:00.000Z"}
+                           if self.provider == "exa" else
+                           {"content": "Evidence " * 500, "published_date": "Fri, 30 Oct 2026 08:00:00 GMT"})
                 return httpx.Response(200, json={"results": [
                     {"title": "Upstream docs", "url": "https://docs.sglang.io/", **content},
                     {"title": "Private", "url": "http://127.0.0.1/admin", "content": "private"}], "usage": {"credits": 1}})
             self.assertEqual("/contents" if self.provider == "exa" else "/extract", request.url.path)
-            urls = json.loads(request.content)["ids" if self.provider == "exa" else "urls"]
-            content_field = "text" if self.provider == "exa" else "raw_content"
-            return httpx.Response(200, json={"results": [] if self.empty_extract else [
-                {"url": url, content_field: "untrusted page " * 1000} for url in urls]})
+            body = json.loads(request.content)
+            if self.provider == "exa":
+                # Exa applies text.maxCharacters server-side, like the real API.
+                text = self.page_text[:body["text"]["maxCharacters"]]
+                rows = [{"url": url, "id": url, "title": "Page title", "publishedDate": "2026-10-01", "text": text}
+                        for url in body["ids"]]
+            else:
+                rows = [{"url": url, "raw_content": self.page_text} for url in body["urls"]]
+            return httpx.Response(200, json={"results": [] if self.empty_extract else rows})
         self.upstream = httpx.AsyncClient(transport=httpx.MockTransport(upstream), trust_env=False)
         self.addAsyncCleanup(self.upstream.aclose)
         self.search = self.new_search()
@@ -136,6 +146,76 @@ class SearchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(2, self.search.status()["monthly_reserved"])
         self.empty_extract = True
         self.assertEqual(502, (await self.mcp("read_web_page", {"url": url})).status_code)
+
+    async def test_provider_capped_page_is_never_labelled_complete(self):
+        url = "https://docs.sglang.io/"
+        page = (await self.search.extract([url]))[0]
+        self.assertEqual(self.page_text[:6000], page["page_content"])
+        self.assertEqual(("truncated", True, 0, 6000), tuple(page["metadata"][k] for k in
+                         ("completeness", "truncated", "offset", "next_offset")))
+        if self.provider == "exa":
+            self.assertEqual(6001, json.loads(self.provider_calls()[-1].content)["text"]["maxCharacters"])
+        # A short page cannot be proven complete when the provider caps text.
+        self.page_text = "short public page"
+        meta = (await self.search.extract([url]))[0]["metadata"]
+        expected = ("unknown", True) if self.provider == "exa" else ("complete", False)
+        self.assertEqual(expected, (meta["completeness"], meta["truncated"]))
+        self.assertNotIn("next_offset", meta)
+
+    async def test_bounded_follow_up_section_of_one_page(self):
+        url = "https://docs.sglang.io/"
+        page = (await self.search.extract([url], offset=6000))[0]
+        self.assertEqual(self.page_text[6000:12000], page["page_content"])
+        self.assertEqual((6000, "truncated", 12000), (page["metadata"]["offset"],
+                         page["metadata"]["completeness"], page["metadata"]["next_offset"]))
+        if self.provider == "exa":
+            self.assertEqual(12001, json.loads(self.provider_calls()[-1].content)["text"]["maxCharacters"])
+        last = (await self.search.extract([url], offset=12000))[0]["metadata"]
+        self.assertEqual("unknown" if self.provider == "exa" else "complete", last["completeness"])
+        self.page_text = "x" * 60000
+        self.assertNotIn("next_offset", (await self.search.extract([url], offset=42000))[0]["metadata"])
+        self.assertEqual(3, self.search.status()["monthly_reserved"])
+        with self.assertRaises(Refusal) as caught:
+            await self.search.extract([url], offset=60000 - 6000)
+        self.assertEqual("invalid_page_section", caught.exception.code)
+        for offset, urls in ((-1, [url]), (True, [url]), (1.5, [url]), ("6000", [url]), (42001, [url]),
+                             (6000, [url, "https://www.kernel.org/"])):
+            with self.assertRaises(Refusal) as caught:
+                await self.search.extract(urls, offset=offset)
+            self.assertEqual("invalid_page_section", caught.exception.code)
+        self.assertEqual(3, self.search.status()["monthly_reserved"])
+        self.page_text = "short"
+        with self.assertRaises(Refusal) as caught:
+            await self.search.extract([url], offset=6000)
+        self.assertEqual("web_page_not_available", caught.exception.code)
+
+    async def test_source_identity_retrieval_time_and_whole_highlights(self):
+        self.highlights = ["A" * 700, "B" * 700, "C" * 700]
+        hit = (await self.search.search({"query": "SGLang docs"}))[0]
+        self.assertEqual(("2026-11-02T10:00:00+00:00", "2026-10-30", self.provider, "truncated"),
+                         (hit["retrieved_at"], hit["published_date"], hit["provider"], hit["completeness"]))
+        self.assertEqual(hashlib.sha256(hit["snippet"].encode()).hexdigest(), hit["content_sha256"])
+        if self.provider == "exa":
+            self.assertEqual("A" * 700 + "\n" + "B" * 700, hit["snippet"])
+            self.assertEqual("exa-doc-1", hit["provider_id"])
+        meta = (await self.search.extract(["https://docs.sglang.io/"]))[0]["metadata"]
+        self.assertEqual(hashlib.sha256(self.page_text[:6000].encode()).hexdigest(), meta["content_sha256"])
+        self.assertEqual("2026-11-02T10:00:00+00:00", meta["retrieved_at"])
+        self.assertEqual(("Page title", "2026-10-01", "https://docs.sglang.io/") if self.provider == "exa" else ("", "", ""),
+                         (meta["title"], meta["published_date"], meta["provider_id"]))
+        # WebUI document metadata must stay flat and scalar.
+        self.assertTrue(all(isinstance(v, (str, int, bool)) for v in meta.values()))
+
+    async def test_private_material_queries_are_refused_before_spending(self):
+        for query in ('{"file_id": "abc", "snippet": "internal"}', "untrusted-source-text internal design",
+                      "see https://ai.example.com/api/v1/files/abc123/content", "-----BEGIN OPENSSH PRIVATE KEY----- b3Bl",
+                      "sglang.ai-home-lab.svc.cluster.local timeout", "nas.lan smb error", "build.internal failure"):
+            response = await self.mcp("search_web", {"query": query})
+            self.assertEqual((400, "private_material_in_query"), (response.status_code, response.json()["error"]), query)
+        self.assertEqual([], self.provider_calls())
+        self.assertFalse(self.search.database.exists())
+        for query in ("generate an ssh private key", "mDNS .local names", "SGLang docs.sglang.io radix cache"):
+            self.assertEqual(200, (await self.mcp("search_web", {"query": query})).status_code, query)
 
     async def test_no_unauthenticated_browser_origin_admin_or_unknown_user_spend(self):
         for headers in ({}, {**self.headers, "Origin": "https://evil.example"},
