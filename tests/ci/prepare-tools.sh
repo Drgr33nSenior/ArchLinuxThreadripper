@@ -33,4 +33,8 @@ chart_url=$(awk -F= '$1=="CHART_URL" {print $2}' "$root/infrastructure/gpu-opera
 chart_sha=$(awk -F= '$1=="CHART_SHA256" {print $2}' "$root/infrastructure/gpu-operator/chart.lock")
 curl --fail --silent --show-error --location --max-time 120 "$chart_url" -o "$output/gpu-chart.tgz"
 printf '%s  %s\n' "$chart_sha" "$output/gpu-chart.tgz" | sha256sum --check --status
+nfs_chart_url=$(awk -F= '$1=="CHART_URL" {print $2}' "$root/infrastructure/nfs-csi/chart.lock")
+nfs_chart_sha=$(awk -F= '$1=="CHART_SHA256" {print $2}' "$root/infrastructure/nfs-csi/chart.lock")
+curl --fail --silent --show-error --location --max-time 120 "$nfs_chart_url" -o "$output/nfs-chart.tgz"
+printf '%s  %s\n' "$nfs_chart_sha" "$output/nfs-chart.tgz" | sha256sum --check --status
 printf 'Prepared private, checksum-verified source-check tools.\n'
