@@ -13,11 +13,25 @@ RUN apt-get update \
 RUN --mount=type=bind,source=wheelhouse,target=/wheelhouse \
     python3 -m pip install --no-cache-dir --no-index --find-links /wheelhouse /wheelhouse/*.whl \
  && python3 -m pip check
+# The devel SDK ships as a tarball that rocm-sdk unpacks on first use, which a
+# read-only pod root cannot do; unpack it here (it deletes the tarball).
+RUN rocm-sdk init >/dev/null \
+ && test -d "$(rocm-sdk path --root)/include/hip" \
+ && ! test -e /usr/local/lib/python3.14/site-packages/rocm_sdk_devel/_devel.tar
+# Toolchain for Triton and SGLang JIT: the packaged TheRock SDK, not /opt/rocm.
+# The python3.14 path follows PYTHON_ABI in stack.lock.
+ENV ROCM_HOME=/usr/local/lib/python3.14/site-packages/_rocm_sdk_devel \
+    ROCM_PATH=/usr/local/lib/python3.14/site-packages/_rocm_sdk_devel \
+    LLVM_PATH=/usr/local/lib/python3.14/site-packages/_rocm_sdk_core/lib/llvm \
+    HIP_CLANG_PATH=/usr/local/lib/python3.14/site-packages/_rocm_sdk_core/lib/llvm/bin \
+    HIP_PLATFORM=amd \
+    HIP_COMPILER=clang \
+    PATH=/usr/local/lib/python3.14/site-packages/_rocm_sdk_core/bin:/usr/local/bin:/usr/bin:/bin
 COPY RECEIPT.json /usr/share/ai-stack/sglang-receipt.json
 COPY stack.lock /usr/share/ai-stack/stack.lock
-# Settings carried from the qualified gfx1201 runtime.
+# hipBLASLt for the remaining BF16 GEMMs (PyTorch's gfx1201 default, made
+# explicit); the op234 ROCBLAS_USE_HIPBLASLT=-1 is undocumented and dropped.
 ENV TORCH_BLAS_PREFER_HIPBLASLT=1 \
-    ROCBLAS_USE_HIPBLASLT=-1 \
     HF_HUB_OFFLINE=1
 LABEL org.opencontainers.image.title="sglang-gfx1201" \
       org.opencontainers.image.revision="${STACK_ID}"

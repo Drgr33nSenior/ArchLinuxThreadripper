@@ -46,7 +46,13 @@ grep -Fq 'install -y --no-install-recommends libgomp1 libatomic1 gcc libc6-dev' 
 # shellcheck disable=SC2016 # literal text in build-stage.sh
 grep -Fq -- '-v "$here/image/smoke.py:/smoke.py:ro"' "$dir/build-stage.sh" ||
   fail 'image stage does not run the GPU smoke test before pushing'
-grep -Fq -- '--device /dev/kfd --device /dev/dri' "$dir/build-stage.sh" || fail 'image smoke test runs without GPUs'
+grep -Fq -- '--read-only --tmpfs /tmp --device /dev/kfd --device /dev/dri' "$dir/build-stage.sh" ||
+  fail 'image smoke test does not run with GPUs and a read-only root'
+grep -Fq 'RUN rocm-sdk init' "$dir/image/Containerfile" || fail 'devel SDK is left to unpack at runtime'
+grep -Fq 'ENV ROCM_HOME=/usr/local/lib/python3.14/site-packages/_rocm_sdk_devel' "$dir/image/Containerfile" ||
+  fail 'image does not point ROCM_HOME at the packaged SDK'
+abi=$(awk -F= '$1 == "PYTHON_ABI" {print $2}' "$lock")
+[[ $abi == cp314-cp314 ]] || fail "Containerfile paths assume python3.14; update them for $abi"
 grep -Fq '_use_gfx1201_mxfp4' "$dir/image/smoke.py" || fail 'image smoke test does not check the gfx1201 MXFP4 route'
 python3 -I -m py_compile "$dir/image/smoke.py" || fail 'image smoke test does not compile'
 grep -Eq '^GPU_TARGET=gfx[0-9a-f]+$' "$lock" || fail 'GPU target'

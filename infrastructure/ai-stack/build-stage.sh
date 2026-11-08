@@ -92,7 +92,8 @@ if [[ $stage == image ]]; then
     -f "$here/image/Containerfile" -t "$tag" "$sglang_run/out"
   # HIP-only imports, the MXFP4 route and Triton's runtime compiler show only
   # with a GPU, so smoke-test on the build host's GPUs before pushing.
-  podman run --rm --pull=never --network none --device /dev/kfd --device /dev/dri \
+  # Read-only root and a /tmp tmpfs, as in the pod.
+  podman run --rm --pull=never --network none --read-only --tmpfs /tmp --device /dev/kfd --device /dev/dri \
     --group-add keep-groups --security-opt label=disable -e HOME=/tmp \
     -e SGLANG_USE_AITER=false -e SGLANG_USE_AITER_MHA=false -e SGLANG_USE_AITER_MOE=false \
     -v "$here/image/smoke.py:/smoke.py:ro" --entrypoint python3 "$tag" /smoke.py
