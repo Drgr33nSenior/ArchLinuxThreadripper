@@ -156,6 +156,22 @@ for setting in 'CMAKE_BUILD_PARALLEL_LEVEL=' '-DTHEROCK_BACKGROUND_BUILD_JOBS=1'
   grep -Fq -- "$setting" "$dir/rocm/build.sh" || fail "ROCm build does not bound parallelism: $setting"
 done
 
+# SGLang versions are valid PEP 440 for every shape upstream's describe prints.
+eval "$(sed -n '/^sglang_version() {/,/^}/p' "$dir/sglang/build.sh")"
+c=fcb3274646e43c16d70fd83806ebb3a5134d5e81
+p=a6f33c893a34c8b4b9cbf2e3b70bb351cb24ec96b17ec7960312d8a31035a77d
+[[ $(sglang_version v0.5.23-957-gfcb3274646 $c $p) == 0.5.23.post957+gfcb32746.pa6f33c89 ]] || fail 'sglang version from main'
+[[ $(sglang_version v0.5.23 $c $p) == 0.5.23.post0+gfcb32746.pa6f33c89 ]] || fail 'sglang version on a release'
+[[ $(sglang_version v0.5.6.post2-14260-gfcb3274646 $c $p) == 0.5.6.post2+n14260.gfcb32746.pa6f33c89 ]] ||
+  fail 'sglang version after a post-release'
+[[ $(sglang_version v0.5.24rc0-3-gfcb3274646 $c $p) == 0.5.24rc0.post3+gfcb32746.pa6f33c89 ]] || fail 'sglang version after an rc'
+if sglang_version 'not-a-tag' $c $p >/dev/null; then fail 'malformed describe accepted'; fi
+if python3 -c 'import packaging' 2>/dev/null; then
+  for v in 0.5.23.post957+gfcb32746.pa6f33c89 0.5.6.post2+n14260.gfcb32746.pa6f33c89 0.5.24rc0.post3+gfcb32746.pa6f33c89; do
+    python3 -c 'import sys; from packaging.version import Version; Version(sys.argv[1])' "$v" || fail "invalid version $v"
+  done
+fi
+
 # The driver rejects unknown stages before touching the host.
 if bash "$dir/build-stage.sh" nonsense 2>/dev/null; then fail 'unknown stage accepted'; fi
 for script in "$dir"/*.sh "$dir"/*/build.sh; do bash -n "$script" || fail "syntax: $script"; done
