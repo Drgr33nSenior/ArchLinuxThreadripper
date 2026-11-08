@@ -45,6 +45,8 @@ spec:
       image: docker.io/rocm/gpu-operator-utils@sha256:55e5340839f16661cb818fd67e26bdfa581718ac29929368d50920a7ad3a1e68
 ---
 # Exporter configuration referenced by the DeviceConfig above.
+# POD, NAMESPACE and CONTAINER attribute each card's metrics to the workload
+# holding it, through the kubelet pod-resources API.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -72,7 +74,10 @@ data:
           "GPU_UUID",
           "SERIAL_NUMBER",
           "CARD_MODEL",
-          "HOSTNAME"
+          "HOSTNAME",
+          "POD",
+          "NAMESPACE",
+          "CONTAINER"
         ],
         "Fields": [
           "GPU_NODES_TOTAL",

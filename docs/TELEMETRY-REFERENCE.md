@@ -90,7 +90,10 @@ runtime-suspended, which the sysfs sampler cannot. Its health service and ECC
 fields stay disabled, and the kernel command line keeps `amdgpu.ras_enable=0`:
 with GECC off, the RAS counters return bogus uncorrectable-error counts that the
 exporter's health check turns into unschedulable GPUs. Alloy scrapes it as the
-`amd-gpu` job. `TELEMETRY_GPU_EXPORTER` stays `false`, because the telemetry
+`amd-gpu` job. Its pod, namespace and container labels attribute each card to the workload
+holding it, through the kubelet pod-resources API. Profiler counters (`gpu_prof_*`) stay off
+until tested on gfx1201. AMD's own Grafana dashboards are not imported: their working panels
+duplicate these, and the rest need MI-series fields the R9700 does not report. `TELEMETRY_GPU_EXPORTER` stays `false`, because the telemetry
 render does not deploy a second exporter. Its idle power overhead is not yet
 measured.
 
