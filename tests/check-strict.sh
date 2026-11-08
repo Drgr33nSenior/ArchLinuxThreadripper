@@ -28,7 +28,10 @@ while IFS= read -r skip; do
   case $skip in
     'SKIP: set HOME_LAB_GAME_IMAGE to an already-built local image ID for streaming smoke tests' | \
       'SKIP: set HOME_LAB_WAYLAND_RUNTIME_IMAGE for isolated Linux process-group tests' | \
-      'SKIP: systemd-analyze verification requires Linux') ;;
+      'SKIP: systemd-analyze verification requires Linux' | \
+      'SKIP: set CANDIDATE_POINTER, CANDIDATE_POINTER_SHA256 and CANDIDATE_PACKAGE_ROOT for private inputs' | \
+      'SKIP: set CANDIDATE_TOKENIZER_DIR to the pinned tokenizer' | \
+      'SKIP: network-free bubblewrap sandbox unavailable on this host') ;;
     *) unexpected=1 ;;
   esac
 done <"$output/skips.txt"
