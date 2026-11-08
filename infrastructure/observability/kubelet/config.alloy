@@ -31,6 +31,15 @@ prometheus.relabel "cgroup" {
     action = "keep"
     regex = "(|default|ai-home-lab|workstation-observability|workstation-observability-host|kube-system|kube-amd-gpu|kube-node-lease|kube-public)"
   }
+  // Host cgroups, pod cgroups and pause containers have no container name, so
+  // the labelkeep below would merge them into one series per pod (or one for
+  // the whole host) and remote write rejects the result as out of order.
+  // Dashboards only read named containers.
+  rule {
+    source_labels = ["__name__", "container"]
+    action = "drop"
+    regex = "container_.+;"
+  }
   rule {
     action = "labelkeep"
     regex = "(__name__|instance|job|namespace|pod|container|cpu)"

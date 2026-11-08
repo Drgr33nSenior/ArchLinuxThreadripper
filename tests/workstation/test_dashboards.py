@@ -187,6 +187,15 @@ class DashboardTests(unittest.TestCase):
             self.assertIn(namespace, cgroup)
         self.assertIn('sample_limit = 30000', cgroup)
         self.assertIn('body_size_limit = "16MiB"', cgroup)
+        # Unnamed cgroups are dropped before labelkeep, or they collide.
+        drop = '    source_labels = ["__name__", "container"]\n    action = "drop"\n    regex = "container_.+;"\n'
+        self.assertIn(drop, cgroup)
+        self.assertLess(cgroup.index(drop), cgroup.index('action = "labelkeep"'))
+        for dashboard in self.dashboards.values():
+            for panel in dashboard.get("panels", []):
+                for target in panel.get("targets", []):
+                    if 'job="kubelet-cadvisor"' in target.get("expr", ""):
+                        self.assertIn('container!=""', target["expr"], panel.get("title"))
 
     def test_costs_use_live_tariff_and_do_not_bill_standing_per_workstation(self):
         power = self.dashboards["workstation-power"]
