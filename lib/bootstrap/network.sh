@@ -25,7 +25,7 @@ bootstrap_network_route() {
     bootstrap_die 'network/DNS: empty resolution'
     return 1
   }
-  while read -r address _; do
+  while IFS=$' \t' read -r address _; do
     if [[ $address == *:* ]]; then
       ip -6 route get "$address" >/dev/null 2>&1 && return 0
     else

@@ -108,10 +108,10 @@ def build(inputs, destination):
     baseline = selected[CANDIDATE_FILE]
     require(digest(baseline) == C4_SHA, "selected C4 source changed")
     family = inputs.get("source_family", "extend_attention")
-    require(family in ("extend_attention", "verify_prefetch"), "unknown serving source family")
+    require(family in ("extend_attention", "verify_prefetch", "four_member"), "unknown serving source family")
     experiment_candidate = candidate
     verification = None
-    if family == "verify_prefetch":
+    if family in ("verify_prefetch", "four_member"):
         verification = load(Path(__file__).with_name("verify_serving.py"), "_hyperloom_verify_serving")
         require(digest(candidate) == verification.CANDIDATE_SHA
                 and inputs.get("kind", "serving") == "serving", "exact verified serving candidate required")
@@ -203,10 +203,29 @@ def build(inputs, destination):
          ", 'immutable selected C4 baseline member')\n        return 81\n")
     edit("benchmark_host_transport.py", "len(members) < 80", "len(members) < 81")
     verification_contract = verification.apply(out, experiment_candidate) if verification else None
+    bundle_contract = None
+    if family == "four_member":
+        peer_root = str(Path(__file__).resolve().parent)
+        sys.path.insert(0, peer_root)
+        try:
+            bundle_builder = load(Path(__file__).with_name("build_bundle.py"), "_hyperloom_build_bundle")
+            bundle_contract = bundle_builder.apply(out, m, inputs, donor)
+        finally:
+            sys.path.remove(peer_root)
     profile_request = None
     if kind == "profile":
         profiler_builder = load(Path(__file__).with_name("build_profile.py"), "_hyperloom_build_profile")
         profile_request = profiler_builder.apply(out, m, inputs, donor)
+    shared = None
+    if "shared_diagnostic" in inputs:
+        shared_builder = load(Path(__file__).with_name("build_shared.py"), "_hyperloom_build_shared")
+        shared = shared_builder.apply(out, m, inputs, donor)
+    matched = None
+    if "matched_profile" in inputs:
+        # Matched candidate/control profile composed on the reviewed bundle comparison.
+        require(bundle_contract is not None and shared is None, "matched profile composes the bundle only")
+        matched_builder = load(Path(__file__).with_name("build_matched_profile.py"), "_hyperloom_build_matched_profile")
+        matched = matched_builder.apply(out, m, inputs, donor, bundle_contract)
     for name, raw in out.items():
         if name.endswith(".py"):
             compile(raw, name, "exec", dont_inherit=True)
@@ -214,11 +233,12 @@ def build(inputs, destination):
     (destination / "INPUTS.json").write_bytes(canonical(inputs))
     (destination / "WORKLOAD.json").write_bytes(canonical({"schema": 1, "cases": m["cases"],
         "groups": m["groups"], "requests": count, "samples_per_case": 1 if kind == "profile" else 3,
-        "diagnostic_only": kind == "profile",
+        "diagnostic_only": kind == "profile" or shared is not None or matched is not None,
         "unchanged_prompt_tokens_and_oracles": True, "launch_authorized": False}))
     review = destination / "assembled-review"
     review.mkdir()
-    contract, spec, sizes = c.regenerate_pins(out, review)
+    contract, spec, sizes = (bundle_builder.regenerate_pins(c, out, review) if bundle_contract is not None
+                             else c.regenerate_pins(out, review))
     sys.path.insert(0, str(review))
     try:
         for name in ("mtp_contract", "serving_contract", "benchmark_artifacts"):
@@ -261,7 +281,10 @@ def build(inputs, destination):
         transport = c.load(review / "benchmark_host_transport.py", "_hyperloom_serving_transport")
         observed, members = transport.inspect_archive(Path(result["archive"]), result["archive_sha256"],
                                                        result["manifest_sha256"])
-        require(observed == manifest and len(members) == (83 if kind == "profile" else 81),
+        expected_members = (matched['package_members'] if matched is not None
+                            else 81 + len(bundle_contract['additional_package_members']) if bundle_contract is not None
+                            else 89 if shared is not None else 83 if kind == "profile" else 81)
+        require(observed == manifest and len(members) == expected_members,
                 "generated archive failed existing transport")
         staged = Path(result["archive"]).stat().st_size + sum(map(len, members.values()))
         staged += sum(len(out[n]) for n in donor.PROTECTED[:5])
@@ -270,13 +293,20 @@ def build(inputs, destination):
             qualification=False, selected=False, adoption_authorized=False, automatic_retry=False,
             nonce=target.rsplit(".", 1)[1], target_root=target, session_sha256=session,
             requests_per_start=count, starts=2, caller_seconds=7160, owner_seconds=6360,
-            kind=kind, diagnostic_only=kind == "profile", profile_request=profile_request,
+            kind=kind, diagnostic_only=kind == "profile" or shared is not None or matched is not None,
+            profile_request=profile_request,
             baseline_sha256=verification.BASELINE_SHA if verification else C4_SHA,
             candidate_sha256=digest(experiment_candidate), changed_functions=changed,
             workload_sha256=digest((destination / "WORKLOAD.json").read_bytes()),
             http_bindings=sizes, staged_bytes=staged)
         if verification is not None:
             result.update(source_family=family, verification_attention=verification_contract)
+        if bundle_contract is not None:
+            result.update(four_member=bundle_contract)
+        if shared is not None:
+            result.update(shared_diagnostic=shared)
+        if matched is not None:
+            result.update(matched_profile=matched)
         if trim is not None:
             # Declared runtime-configuration deviation: same selected model, precision,
             # context, pool, power cap and owner limits, but not unchanged selected behavior.

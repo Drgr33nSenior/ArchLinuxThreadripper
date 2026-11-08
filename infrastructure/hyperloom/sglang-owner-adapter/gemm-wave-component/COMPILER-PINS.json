@@ -1,0 +1,188 @@
+{
+  "down-m16": {
+    "baseline": {
+      "hashes": {
+        "amdgcn": "21bb401628f8fc51dfe3a188e65db1f4d93eaf96aa2fa0e397fd5e0a7c9b11ae",
+        "hsaco": "ce4f174a935c50698198f4d3284ed7dff49def98b201816a8c21c7a7d0be2dd0",
+        "llir": "00c5ff571a5a1e62d81eed0bbfcd0f039da7624e25727aec8391c1edacaaa328",
+        "ttgir": "c552f2ca3919e6aa851c848d888bb71c40077e08ad53e2fe83a6c04919c80d30",
+        "ttir": "94227d75e12dd9ff17498f177f7d0d262464df628a62e6c1db5bf8a8bc742571"
+      },
+      "metadata": {
+        "arch": "gfx1201",
+        "global_scratch_size": 0,
+        "name": "_gemm_afp4wfp4_kernel",
+        "num_stages": 1,
+        "num_warps": 4,
+        "profile_scratch_size": 0,
+        "shared": 4096,
+        "warp_size": 32,
+        "waves_per_eu": 1
+      },
+      "resources": {
+        "group_segment_fixed_size": 0,
+        "max_flat_workgroup_size": 128,
+        "private_segment_fixed_size": 0,
+        "sgpr_count": 41,
+        "sgpr_spill_count": 0,
+        "vgpr_count": 109,
+        "vgpr_spill_count": 0,
+        "wavefront_size": 32
+      }
+    },
+    "candidate": {
+      "hashes": {
+        "amdgcn": "d7ab8ab497fe40ce3738ba0d64f2f18b4690d55148ab2e73c43255d8c012cf5e",
+        "hsaco": "42b50c95f1b912ec35ea21d2da96260ab25015b3b67369ed449d073d556e0990",
+        "llir": "2df46697447284429f11498dc8650c10492a8999bd2876ed79cff416a1d70cc8",
+        "ttgir": "c552f2ca3919e6aa851c848d888bb71c40077e08ad53e2fe83a6c04919c80d30",
+        "ttir": "94227d75e12dd9ff17498f177f7d0d262464df628a62e6c1db5bf8a8bc742571"
+      },
+      "metadata": {
+        "arch": "gfx1201",
+        "global_scratch_size": 0,
+        "name": "_gemm_afp4wfp4_kernel",
+        "num_stages": 1,
+        "num_warps": 4,
+        "profile_scratch_size": 0,
+        "shared": 4096,
+        "warp_size": 32,
+        "waves_per_eu": 0
+      },
+      "resources": {
+        "group_segment_fixed_size": 0,
+        "max_flat_workgroup_size": 128,
+        "private_segment_fixed_size": 0,
+        "sgpr_count": 41,
+        "sgpr_spill_count": 0,
+        "vgpr_count": 90,
+        "vgpr_spill_count": 0,
+        "wavefront_size": 32
+      }
+    }
+  },
+  "gate_up-m16": {
+    "baseline": {
+      "hashes": {
+        "amdgcn": "a5f0d5ddbc006e24acbdec13af510dc82e1b1a145caa5360b7fe989d59dd2b23",
+        "hsaco": "98410c916be3f38162c4298e6e5266165ca92b90a7ee87dee2d90abc6a833b26",
+        "llir": "45005e46e48d274410f168fdcef58ca43513adc56fc55124dbac966bdecd4b88",
+        "ttgir": "e94944f8374a9f01553ab9e3ea166f0036f0b9804fd929ed9fe36cf52fe96a5e",
+        "ttir": "ff08a7a5b5d6d559e811284dd978e8aa15b8733b66cd015d09403f48ad9c74a0"
+      },
+      "metadata": {
+        "arch": "gfx1201",
+        "global_scratch_size": 0,
+        "name": "_gemm_afp4wfp4_kernel",
+        "num_stages": 1,
+        "num_warps": 4,
+        "profile_scratch_size": 0,
+        "shared": 4096,
+        "warp_size": 32,
+        "waves_per_eu": 1
+      },
+      "resources": {
+        "group_segment_fixed_size": 0,
+        "max_flat_workgroup_size": 128,
+        "private_segment_fixed_size": 0,
+        "sgpr_count": 41,
+        "sgpr_spill_count": 0,
+        "vgpr_count": 109,
+        "vgpr_spill_count": 0,
+        "wavefront_size": 32
+      }
+    },
+    "candidate": {
+      "hashes": {
+        "amdgcn": "0b213cb0092e87a0240171ff925217c6d278b42e96130906624cc31d6bd920fd",
+        "hsaco": "cd1c508f0c31751865d1be9b384b73ea2558374e701d81a1cef4990506631b10",
+        "llir": "0565699728f7b8ed4c9c952d053d9d1c70817e10ead472f7fd39926300b389db",
+        "ttgir": "e94944f8374a9f01553ab9e3ea166f0036f0b9804fd929ed9fe36cf52fe96a5e",
+        "ttir": "ff08a7a5b5d6d559e811284dd978e8aa15b8733b66cd015d09403f48ad9c74a0"
+      },
+      "metadata": {
+        "arch": "gfx1201",
+        "global_scratch_size": 0,
+        "name": "_gemm_afp4wfp4_kernel",
+        "num_stages": 1,
+        "num_warps": 4,
+        "profile_scratch_size": 0,
+        "shared": 4096,
+        "warp_size": 32,
+        "waves_per_eu": 0
+      },
+      "resources": {
+        "group_segment_fixed_size": 0,
+        "max_flat_workgroup_size": 128,
+        "private_segment_fixed_size": 0,
+        "sgpr_count": 41,
+        "sgpr_spill_count": 0,
+        "vgpr_count": 90,
+        "vgpr_spill_count": 0,
+        "wavefront_size": 32
+      }
+    }
+  },
+  "gate_up-m8": {
+    "baseline": {
+      "hashes": {
+        "amdgcn": "a5f0d5ddbc006e24acbdec13af510dc82e1b1a145caa5360b7fe989d59dd2b23",
+        "hsaco": "98410c916be3f38162c4298e6e5266165ca92b90a7ee87dee2d90abc6a833b26",
+        "llir": "45005e46e48d274410f168fdcef58ca43513adc56fc55124dbac966bdecd4b88",
+        "ttgir": "9e4e723717843e740484baec19f1c88f982fd3256d238602f04b8e7029100bf5",
+        "ttir": "1ab0b397964bf538f91a316bfef2143aac0a37bbaae6d9e3151d7b2531ba8b08"
+      },
+      "metadata": {
+        "arch": "gfx1201",
+        "global_scratch_size": 0,
+        "name": "_gemm_afp4wfp4_kernel",
+        "num_stages": 1,
+        "num_warps": 4,
+        "profile_scratch_size": 0,
+        "shared": 4096,
+        "warp_size": 32,
+        "waves_per_eu": 1
+      },
+      "resources": {
+        "group_segment_fixed_size": 0,
+        "max_flat_workgroup_size": 128,
+        "private_segment_fixed_size": 0,
+        "sgpr_count": 41,
+        "sgpr_spill_count": 0,
+        "vgpr_count": 109,
+        "vgpr_spill_count": 0,
+        "wavefront_size": 32
+      }
+    },
+    "candidate": {
+      "hashes": {
+        "amdgcn": "0b213cb0092e87a0240171ff925217c6d278b42e96130906624cc31d6bd920fd",
+        "hsaco": "cd1c508f0c31751865d1be9b384b73ea2558374e701d81a1cef4990506631b10",
+        "llir": "0565699728f7b8ed4c9c952d053d9d1c70817e10ead472f7fd39926300b389db",
+        "ttgir": "9e4e723717843e740484baec19f1c88f982fd3256d238602f04b8e7029100bf5",
+        "ttir": "1ab0b397964bf538f91a316bfef2143aac0a37bbaae6d9e3151d7b2531ba8b08"
+      },
+      "metadata": {
+        "arch": "gfx1201",
+        "global_scratch_size": 0,
+        "name": "_gemm_afp4wfp4_kernel",
+        "num_stages": 1,
+        "num_warps": 4,
+        "profile_scratch_size": 0,
+        "shared": 4096,
+        "warp_size": 32,
+        "waves_per_eu": 0
+      },
+      "resources": {
+        "group_segment_fixed_size": 0,
+        "max_flat_workgroup_size": 128,
+        "private_segment_fixed_size": 0,
+        "sgpr_count": 41,
+        "sgpr_spill_count": 0,
+        "vgpr_count": 90,
+        "vgpr_spill_count": 0,
+        "wavefront_size": 32
+      }
+    }
+  }
+}

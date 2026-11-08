@@ -13,6 +13,10 @@ from hyperloom_sglang import positive, require
 
 
 ARMS = (("bf16", "control"), ("kv4", "mtp"))
+# Physical owner labels and order never change. A sealed packet whose frozen
+# FINAL-SETTINGS.execution_order is [mtp, control] runs the candidate on the first
+# (bf16) start; its series must then be read through this exact reversed mapping.
+REVERSED_ARMS = (("bf16", "mtp"), ("kv4", "control"))
 
 
 def _ordered(rows, count, label):
@@ -98,8 +102,13 @@ def _arm_rows(summary, answers, frozen_groups, count):
 
 
 def serving_report(*, summaries, decoded, quality, quality_sha256, workload,
-                   request, binding, owner_seal_sha256, observation_id):
-    """Create both paired series from fully replayed, unprofiled serving evidence."""
+                   request, binding, owner_seal_sha256, observation_id, arms=ARMS):
+    """Create both paired series from fully replayed, unprofiled serving evidence.
+
+    arms is the authenticated physical-to-logical mapping; only the selected and the
+    exact reversed mapping exist. The caller derives it from the sealed packet settings.
+    """
+    require(arms in (ARMS, REVERSED_ARMS), "exact physical/logical serving arm mapping required")
     require(request["kind"] == "serving" and request["campaign_sha256"] == binding["campaign_sha256"]
             and request["selection_sha256"] == binding["selection_sha256"], "wrong serving campaign")
     require(isinstance(workload, dict) and workload.get("diagnostic_only") is False
@@ -112,7 +121,7 @@ def serving_report(*, summaries, decoded, quality, quality_sha256, workload,
         exchange._identity(pin, name)
     answers = _quality(quality, decoded, workload["requests"])
     series, physical_throughput = {}, {}
-    for physical, logical in ARMS:
+    for physical, logical in arms:
         rows, groups = _arm_rows(summaries[physical], answers[physical], workload["groups"], workload["requests"])
         cases = []
         measured_ordinals, total_seconds, total_tokens = [], 0.0, 0

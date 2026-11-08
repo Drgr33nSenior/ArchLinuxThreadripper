@@ -55,6 +55,15 @@ class RegistrarTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name).resolve()
         self.plan = op._json(I / "optimization-continuation-v1/verify-serving-registration-v2/PLAN.json")
+        # Retained packet bytes stay frozen. This inert fixture exercises the
+        # current registrar/source closure rather than treating old code pins as
+        # approval for a changed implementation. Execution below is always fake.
+        self.historical_registrar_pin = self.plan['registrar_sha256']
+        self.plan['registrar_sha256'] = op._pin(HERE/'verify_serving_run.py')['sha256']
+        self.plan['controller_sources'] = {name: cq.controller.pin(cq.controller.INFRA/name)['sha256']
+                                           for name in cq.controller.REQUIRED_SOURCES}
+        self.plan['binding']['controller_sha256'] = cq.controller.source_closure(self.plan['controller_sources'])
+        self.plan['binding']['verify_serving_sha256'] = op._pin(HERE/'verify_serving.py')['sha256']
         self.plan["execution_root"] = str(self.root / "run")
         self.plan["binding"].update(requests_root=str(self.root / "run/requests"), replies_root=str(self.root / "run/replies"))
         self.plan["checkpoint_root"] = str(self.root / "checkpoints")
@@ -78,6 +87,11 @@ class RegistrarTests(unittest.TestCase):
         inputs = cq.validate(self.plan, self.plan_ref, self.approval)
         self.assertEqual(inputs["frozen_packet"]["pins"], self.plan["expected_package_pins"])
         self.assertFalse((self.root / "run").exists())
+
+    def test_retained_registrar_pin_cannot_authorize_changed_code(self):
+        plan=dict(self.plan,registrar_sha256=self.historical_registrar_pin)
+        with self.assertRaises(ValueError):cq.validate(plan,self.plan_ref,self.approval)
+        self.assertFalse((self.root/'run').exists())
 
     def test_foreign_or_missing_approval_refuses_before_retention(self):
         for key, value in (("runtime_sha256", "0" * 64), ("owner_inputs_sha256", "0" * 64),

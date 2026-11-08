@@ -281,6 +281,7 @@ ws_kernel_validate_effective_config() {
   [[ -s "$config" ]] || ws_die 'effective kernel configuration is empty'
   for option in \
     CONFIG_X86_NATIVE_CPU=y \
+    CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y \
     CONFIG_SMP=y \
     CONFIG_CPU_MITIGATIONS=y \
     CONFIG_MODULE_SIG=y \
@@ -370,7 +371,10 @@ ws_kernel_build() {
   source_commit="$(ws_read_lock LINUX_GIT_SOURCE_COMMIT "$lock_file")"
   source_tag="$(ws_read_lock LINUX_GIT_SOURCE_TAG "$lock_file")"
   source_tag_object="$(ws_read_lock LINUX_GIT_SOURCE_TAG_OBJECT "$lock_file")"
-  [[ "$source_repo" == torvalds/linux && "$source_commit" =~ ^[a-f0-9]{40}$ && "$source_tag_object" =~ ^[a-f0-9]{40}$ && "$source_tag" =~ ^v[0-9]+\.[0-9]+(-rc[1-9][0-9]*)?$ ]] ||
+  [[ "$source_commit" =~ ^[a-f0-9]{40}$ && "$source_tag_object" =~ ^[a-f0-9]{40}$ ]] ||
+    ws_die 'linux-git source lock is invalid'
+  [[ ( "$source_repo" == torvalds/linux && "$source_tag" =~ ^v[0-9]+\.[0-9]+(-rc[1-9][0-9]*)?$ ) ||
+    ( "$source_repo" == stable/linux && "$source_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ) ]] ||
     ws_die 'linux-git source lock is invalid'
   ws_assert_clean_locked_checkout "$source_dir" "$expected_repo" "$expected_commit"
   command -v makechrootpkg >/dev/null || ws_die 'makechrootpkg is required (devtools)'
@@ -390,6 +394,9 @@ ws_kernel_build() {
     # User-space flags and its ccache are not shared with the clean chroot.
     # The AUR kernel Kconfig, not these variables, supplies native C/Rust flags.
     jobs="$(ws_build_jobs kernel)"
+    [[ -z ${KERNEL_BUILD_REQUIRED_JOBS:-} ||
+      ( $KERNEL_BUILD_REQUIRED_JOBS =~ ^[1-9][0-9]*$ && $jobs == "$KERNEL_BUILD_REQUIRED_JOBS" ) ]] ||
+      ws_die 'kernel build cannot meet KERNEL_BUILD_REQUIRED_JOBS within the measured CPU and memory budgets'
     env -u CFLAGS -u CXXFLAGS -u RUSTFLAGS -u KCFLAGS -u KCPPFLAGS \
       -u CCACHE_DIR -u CCACHE_CONFIGPATH -u CCACHE_BASEDIR -u CCACHE_NAMESPACE MAKEFLAGS="-j$jobs" NPROC="$jobs" \
       makechrootpkg -c -n -r "$chroot_dir" -- --syncdeps

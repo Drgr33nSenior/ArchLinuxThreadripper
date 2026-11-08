@@ -16,7 +16,7 @@ ws_resources_plan() {
   ws_build_config_validate
   ws_detected_gpu_target "$hardware" >/dev/null
   version="$(ws_read_lock K3S_VERSION "$lock")"
-  [[ "$version" =~ ^v1\.35\.[0-9]+\+k3s[0-9]+$ ]] || ws_die 'CPU policy options are qualified only for locked K3s 1.35; reverify other minors'
+  [[ "$version" =~ ^v1\.36\.[0-9]+\+k3s[0-9]+$ ]] || ws_die 'CPU policy options are qualified only for locked K3s 1.36; reverify other minors'
   [[ ! -e "$output" && ! -L "$output" ]] || ws_die 'resource plan output must not already exist'
   # Validate before creating output: unknown or asymmetric topology cannot
   # safely produce a reserved CPU list. Keep the existing `none` policy instead.

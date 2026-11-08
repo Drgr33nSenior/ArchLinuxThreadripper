@@ -1,0 +1,10 @@
+# K3s writes containerd hosts.toml from this file at start. Each upstream maps
+# to its prefix on the mirror; containerd falls back to the upstream endpoint.
+mirrors:
+{% for upstream in lab_registry_upstreams %}
+  {{ upstream | to_json }}:
+    endpoint:
+      - {{ ('https://' ~ lab_registry_mirror) | to_json }}
+    rewrite:
+      "^(.*)$": {{ (upstream ~ '/$1') | to_json }}
+{% endfor %}

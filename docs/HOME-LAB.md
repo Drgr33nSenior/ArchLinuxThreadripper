@@ -277,18 +277,20 @@ tested backups or GPU qualification. See the [architecture](https://docs.k3s.io/
 [RKE2 comparison](https://docs.rke2.io/#how-is-this-different-from-rke-or-k3s).
 
 `infrastructure/packages/k3s/PKGBUILD` reads `K3S_VERSION` and
-`K3S_BINARY_SHA256` from `versions.lock`. The pin is `v1.35.8+k3s1`.
+`K3S_BINARY_SHA256` from `versions.lock`. The pin is `v1.36.6+k3s1`.
 Verify its binary hash against the upstream checksum file and release-asset
 metadata. The package owns
 `/usr/bin/k3s` and `k3s.service`, adapted from that release's service definition.
 It omits uninstall/killall helpers and does not start services. Review, build
 and sign it with makepkg as a non-root user, then install the signed package.
 
-The update includes containerd 2.2.7-k3s1 and Traefik chart v40. Existing
+It includes containerd v2.3.7-k3s1.36 and Traefik chart 40.1.7. Existing
 ingress-nginx migration settings must use `kubernetesIngressNGINX` instead of
-`kubernetesIngressNginx`. Review the [release notes](https://github.com/k3s-io/k3s/releases/tag/v1.35.8%2Bk3s1)
-before upgrading. Complete the existing backup and restore procedure before a
-running-cluster upgrade.
+`kubernetesIngressNginx`. Review the [release notes](https://github.com/k3s-io/k3s/releases/tag/v1.36.6%2Bk3s1)
+before upgrading. AMD GPU Operator v1.5.1 supports Radeon AI PRO on Kubernetes
+1.29–1.36; do not move to 1.37 until a supported operator release exists.
+Complete the existing backup and restore procedure before a running-cluster
+upgrade.
 
 Use a fresh K3s data directory. The role refuses existing `/var/lib/rancher/rke2`
 state. An existing RKE2 installation needs a separate workload/PVC migration and
@@ -304,7 +306,8 @@ addresses. Supply a fresh hardware report from this same host and boot.
 The play checks Arch prerequisites and both GPUs before generating:
 
 - `/etc/rancher/k3s/config.yaml`: systemd cgroups, no swap, encrypted Secrets,
-  DRA feature gates, explicit network binding and the default SQLite datastore.
+  no DRA feature gate (locked on since 1.35, removed in 1.38), explicit network
+  binding and the default SQLite datastore.
 - `config-v3.toml.tmpl`: extends K3s's base rather than copying generated output.
 - `config-v3.toml.d/10-cdi.toml`: CDI directories and systemd runc settings, without
   duplicate TOML tables or globally privileged containers.
@@ -555,7 +558,7 @@ of repository validation.
 ## Primary references inspected
 
 - [K3s advanced configuration and containerd v3](https://docs.k3s.io/advanced)
-- [Pinned K3s release](https://github.com/k3s-io/k3s/releases/tag/v1.35.8%2Bk3s1)
+- [Pinned K3s release](https://github.com/k3s-io/k3s/releases/tag/v1.36.6%2Bk3s1)
 - [AMD GPU Operator v1.5.1 source](https://github.com/ROCm/gpu-operator/tree/v1.5.1)
 - [AMD device-plugin/DRA exclusivity](https://instinct.docs.amd.com/projects/gpu-operator/en/main/device_plugin/device-plugin.html)
 - [systemd cryptenroll PCR syntax](https://github.com/systemd/systemd/blob/main/man/systemd-cryptenroll.xml)

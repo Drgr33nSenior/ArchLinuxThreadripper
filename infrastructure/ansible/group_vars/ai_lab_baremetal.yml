@@ -29,3 +29,7 @@ lab_enable_dkms_signing: false
 lab_module_trust_verified: false
 lab_module_key_path: /etc/kernel/keys/module-signing.key
 lab_module_certificate_path: /etc/kernel/keys/module-signing.der
+# Optional pull-through registry (for example registry.lan.thespry.family).
+# Empty leaves containerd pulling directly from each upstream.
+lab_registry_mirror: ''
+lab_registry_upstreams: [docker.io, ghcr.io, registry.k8s.io, quay.io]

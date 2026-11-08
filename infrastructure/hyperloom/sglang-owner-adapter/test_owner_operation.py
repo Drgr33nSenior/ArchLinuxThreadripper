@@ -163,7 +163,7 @@ class Binder:
         (destination / "cpu").mkdir()
         (destination / "cpu/ACTUAL-INPUT-BINDING.json").write_bytes(exchange.canonical({"fixture": True}))
         seal = ("0" * 64) if self.wrong_seal else request["operation_seal_sha256"]
-        artifacts = {}
+        artifacts = copy.deepcopy(self.evidence.get("serving_references", {}))
         for arm, item in self.evidence.get("bundles", {}).items():
             extracted = destination / "serving-replay" / (arm + "-artifacts")
             extracted.mkdir()
@@ -179,6 +179,64 @@ class Binder:
                         workload=dict(root="/home/developer/fixture", manifest_sha256=request["workload_seal_sha256"], members=165),
                         protected=dict(root="/var/tmp/fixture", manifest_sha256=request["protected_seal_sha256"], members=31),
                         source_author=dict(self.author_seal))))
+
+
+class ServingArmMappingTests(unittest.TestCase):
+    """Use the real owner mapping gate with fresh manifest-pinned settings and replay references."""
+
+    def inputs(self, root, order):
+        author = root / "author"
+        package = author / "package-v2"
+        (package / "review").mkdir(parents=True)
+        raw = exchange.canonical(dict(execution_order=order))
+        (package / "review/FINAL-SETTINGS.json").write_bytes(raw)
+        manifest = exchange.canonical(dict(package_files={"review/FINAL-SETTINGS.json": digest(raw)}))
+        (package / "MANIFEST.json").write_bytes(manifest)
+        verified = dict(author=author, plan=dict(expected_package_pins=dict(manifest_sha256=digest(manifest))))
+        refs = {arm: dict(owner_arm=arm, logical_arm=role, binding=dict(arm=role))
+                for arm, role in zip(("bf16", "kv4"), order)}
+        proof = dict(replay_provenance=dict(artifacts=refs))
+        return verified, proof
+
+    def test_both_frozen_orders_have_matching_replay_references(self):
+        for order in (["control", "mtp"], ["mtp", "control"]):
+            with self.subTest(order=order), tempfile.TemporaryDirectory() as tmp:
+                verified, proof = self.inputs(Path(tmp).resolve(), order)
+                self.assertEqual(operation._serving_arms(verified, proof), tuple(zip(("bf16", "kv4"), order)))
+
+    def test_missing_serving_references_refuse(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            verified, proof = self.inputs(Path(tmp).resolve(), ["control", "mtp"])
+            proof["replay_provenance"]["artifacts"] = {}
+            with self.assertRaisesRegex(ValueError, "replayed logical arms differ"):
+                operation._serving_arms(verified, proof)
+
+    def test_binder_retains_serving_references_for_both_orders(self):
+        for order in (["control", "mtp"], ["mtp", "control"]):
+            with self.subTest(order=order), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp).resolve()
+                verified, expected = self.inputs(root, order)
+                evidence = dict(summaries={"bf16": {}, "kv4": {}}, decoded=dict(answers=[]), bundles={},
+                                serving_references=expected["replay_provenance"]["artifacts"])
+                proof = Binder(evidence, {}, []).bind(destination=str(root / "binding"),
+                    operation_root="/fixture/operation", operation_seal_sha256="1" * 64,
+                    workload_seal_sha256="2" * 64, protected_seal_sha256="3" * 64)
+                self.assertEqual(operation._serving_arms(verified, proof), tuple(zip(("bf16", "kv4"), order)))
+
+    def test_replay_binding_inversion_refuses(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            verified, proof = self.inputs(Path(tmp).resolve(), ["mtp", "control"])
+            proof["replay_provenance"]["artifacts"]["bf16"]["binding"]["arm"] = "control"
+            with self.assertRaisesRegex(ValueError, "replayed logical arms differ"):
+                operation._serving_arms(verified, proof)
+
+    def test_settings_drift_refuses(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            verified, proof = self.inputs(Path(tmp).resolve(), ["control", "mtp"])
+            (verified["author"] / "package-v2/review/FINAL-SETTINGS.json").write_bytes(
+                exchange.canonical(dict(execution_order=["mtp", "control"])))
+            with self.assertRaises(ValueError):
+                operation._serving_arms(verified, proof)
 
 
 class OwnerOperationTests(unittest.TestCase):
@@ -302,6 +360,9 @@ class OwnerOperationTests(unittest.TestCase):
             summaries[physical] = dict(stopped_early=False, paired_error=None, executed_case_count=count,
                                        frozen_case_count=count, rows=rows, groups=groups)
         return dict(summaries=summaries, decoded=decoded, quality=quality,
+                    serving_references={physical: dict(owner_arm=physical, logical_arm=logical, binding=dict(arm=logical))
+                        for physical, logical in (("bf16", "control"), ("kv4", "mtp"))}
+                        if preparation["kind"] == "serving" else {},
                     bundles=profile_bundles(preparation) if preparation["kind"] == "profile" else {})
 
     def caller(self, prop, mode="complete", preparation=None):

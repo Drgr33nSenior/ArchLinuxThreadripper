@@ -163,7 +163,7 @@ checkpoint into a running kubelet. Review other kubelet drop-ins/CLI overrides
 for conflicts as part of qualification.
 
 Cache alignment remains off; `lab_cpu_manager_cache_alignment: true` opts into
-the v1.35 beta uncore-cache preference. A cache group is not a NUMA node or an
+the uncore-cache preference, stable since 1.36 (no feature gate). A cache group is not a NUMA node or an
 inferred CCD. Static CPU Manager does not pin host daemons, interrupts or builds.
 No host affinity or IRQ isolation claim is made by this tranche.
 
@@ -344,7 +344,7 @@ storage stack or automatic cache/data deletion.
 | --- | --- | --- |
 | 1 | Same-model HIP versus Vulkan, then batch/ubatch/FA sweeps using the pinned upstream interfaces above | Repeatable prompt/decode improvement beyond run spread, unchanged outputs/quality and acceptable VRAM/latency |
 | 2 | Two-DIMM versus four-DIMM host bandwidth and preprocessing/build worker sweep; CPU channel capability from AMD, actual population from discovery | Measured throughput rises without host-memory pressure, OOMs or worse game frame-time tails |
-| 3 | Static whole-core baseline versus opt-in uncore-cache alignment on K3s 1.35 | Better p95/p99 latency under the same mixed load with no admission failures or host-service starvation |
+| 3 | Static whole-core baseline versus opt-in uncore-cache alignment on K3s 1.36 | Better p95/p99 latency under the same mixed load with no admission failures or host-service starvation |
 | 4 | Stock versus existing native kernel, then supported TuneD/EPP or GPU power-cap experiments with explicit prior-value restoration | Improved work/joule or latency with stable clocks/temperatures and no correctness/boot regression |
 | 5 | Qualified Sunshine Vulkan versus VAAPI on the real clients, using upstream-supported capture paths | Lower encode latency/drops and good frame-time tails at identical codec/quality settings |
 

@@ -211,7 +211,16 @@ def _serving_surface(bound):
     family = bound.get("serving_source_family", "extend_attention")
     if family == "extend_attention":
         return family, EVALUABLE, C4_SHA
-    require(family == "verify_prefetch", "unknown serving source family")
+    require(family in ("verify_prefetch", "four_member"), "unknown serving source family")
+    if family == 'four_member':
+        _,fixed=_pinned(bound.get('four_member_contract'),'fixed four-member contract')
+        require(fixed.get('schema') == 1 and fixed.get('members') ==
+                ['verify_prefetch','verify_cap32','gatednorm_quant','gate_up_wave'] and
+                fixed.get('model_starts') == 2 and fixed.get('auxiliary_requests_per_start') == 3 and
+                fixed.get('benchmark_menu_requests_per_start') == 30 and
+                fixed.get('total_http_requests') == 66 and fixed.get('power_cap_microwatts') == 235000000 and
+                fixed.get('adoption_authorized') is False and fixed.get('automatic_retry') is False,
+                'exact finite four-member owner contract')
     module = _source(HERE / "verify_serving.py", bound["verify_serving_sha256"], "_owner_verify_serving")
     return family, module.FILE, module.BASELINE_SHA
 
@@ -398,7 +407,13 @@ def prepare(snapshot_root, bound, *, destination, owner_inputs, support_inputs, 
         require(_json(root / "SUPPORT-RESULT.json") == support, "support result receipt differs")
         plan_raw = checked_bytes(root / "launcher/CALLER-PLAN.json", support["caller_plan_sha256"], 1 << 20)
         plan = decoded_json(plan_raw)
-        expected_limits = dict(LIMITS, requests=2 * count, natural_grades=2 * count, native_decodes=2 * count)
+        auxiliary = 3 if snapshot['family'] == 'four_member' else 0
+        expected_limits = dict(LIMITS, requests=2 * (count + auxiliary), natural_grades=2 * count, native_decodes=2 * count)
+        if auxiliary:
+            require(plan.get('qualification_probes') == dict(requests_per_start=3,requests=6,
+                    targeted_c2_aborts=2,abort_all=False,maximum_output_tokens=256,seconds_per_start=400,
+                    scored=False,benchmark_menu_unchanged=True) and support.get('total_http_requests') == 66,
+                    'all numerical probes and targeted cancels must be charged')
         require(plan.get("limits") == expected_limits and plan.get("label") == "hyperloom-" + kind
                 and plan.get("registration") is False and plan.get("physical_operation_authority") is False
                 and plan.get("status") == "PREPARED_NOT_REGISTERED_OR_RUN" and plan.get("nonce") == nonce
@@ -442,7 +457,7 @@ def prepare(snapshot_root, bound, *, destination, owner_inputs, support_inputs, 
                 "fixed observed power cap required; no power-setting changes")
         record["stage"] = "seal"
         binding_doc = dict(schema=1, kind=kind, evaluable_surface=("extend_attention_fwd"
-                           if snapshot["family"] == "extend_attention" else "verify_prefetch"),
+                           if snapshot["family"] == "extend_attention" else snapshot['family']),
                            source_file=row["name"], source=dict(row), candidate_sha256=row["sha256"],
                            baseline_sha256=snapshot["baseline_sha256"], changed_functions=ids["changed_functions"], nonce=nonce,
                            request=request, request_sha256=snapshot["request_sha256"], config_sha256=request["config_sha256"],
@@ -458,6 +473,12 @@ def prepare(snapshot_root, bound, *, destination, owner_inputs, support_inputs, 
         if runtime_configuration is not None:
             binding_doc.update(runtime_configuration=dict(bound["runtime_configuration"]),
                                runtime_config_deviation=dict(deviation))
+        if snapshot['family'] == 'four_member':
+            _,fixed = _pinned(bound['four_member_contract'],'fixed four-member contract')
+            require(ids.get('four_member',{}).get('members') == fixed['members'] and
+                    inputs['four_member']['compiler_pins']['sha256'] == fixed['compiler_pins_sha256'],
+                    'fixed bundle implementation/compile identity')
+            binding_doc['four_member_contract'] = dict(bound['four_member_contract'])
         source_binding = _write(root / "SOURCE-BINDING.json", binding_doc)
         seals_module = sealer(sealer_path)
         author_seal = seals_module.seal(author)
@@ -571,6 +592,16 @@ def propose(preparation, bound, *, campaign_parent, checkpoint_root, mx_root=MX,
                 "existing eligible BF16 verification adapter. Ordinary decode, prefill and fallbacks "
                 "retain their selected paths. Component bitwise equality passed; serving quality, "
                 "equal-work and latency gates remain required. No adoption or selection change.")
+        if ids.get('source_family') == 'four_member':
+            numerical_contract = (runtime_scope + 'Selected C4 extend attention and BF16 KV in both starts. '
+                'Start 1 uses selected computation with common source-bound qualification hooks; start 2 '
+                'adds verification prefetch/private cap32, F1 gated-norm quantizer fusion and the gate/up '
+                'M8/M16 wave-hint removal. Down-M16 is excluded. Three auxiliary requests per start '
+                'qualify every affected layer on real short-prompt inputs and one targeted C2 cancellation; '
+                'then the unchanged 30-request normal-stop menu (three warmups and 27 scored requests) '
+                'checks recovery, quality and latency. 66 generation requests total, no abort-all, no '
+                'numerical shadow operations in scored graphs, no retry or adoption. Component gains '
+                'are not a serving prediction; fixed quality, equal-work, noise and no-regression gates apply.')
         proposal = dict(donor)
         proposal.update(
             label="hyperloom-" + kind, global_gpu_attempt_index=index, previous_global_attempt_index=index - 1,
@@ -586,7 +617,7 @@ def propose(preparation, bound, *, campaign_parent, checkpoint_root, mx_root=MX,
             final_native_cpu_quality=("%d complete wire decodes and natural-answer checks after independent GPU release; "
                                       "320-second CPU envelope (Hyperloom owner grading template derived from the C4 A/B one)"
                                       % (2 * count)),
-            generations=2 * count, owner_seconds=OWNER_SECONDS, caller_total_ceiling_seconds=CALLER_SECONDS,
+            generations=prep['limits']['requests'], owner_seconds=OWNER_SECONDS, caller_total_ceiling_seconds=CALLER_SECONDS,
             worker_seconds=WORKER_SECONDS, client_seconds=CLIENT_SECONDS,
             caller_step_seconds=dict(donor["caller_step_seconds"], launch=LAUNCH_SECONDS + 120),
             local_four_phase_seconds=OWNER_SECONDS + 345,
@@ -602,7 +633,7 @@ def propose(preparation, bound, *, campaign_parent, checkpoint_root, mx_root=MX,
             experiment_contract=dict(prep["source_binding"]),
             schedule_order=1, schedule_total_operations=1, schedule_total_owner_seconds=OWNER_SECONDS,
             schedule_total_caller_seconds=CALLER_SECONDS, schedule_total_cpu_grading_seconds=GRADING_SECONDS,
-            schedule_total_model_starts=MODEL_STARTS, schedule_total_requests=2 * count,
+            schedule_total_model_starts=MODEL_STARTS, schedule_total_requests=prep['limits']['requests'],
             replaces_failed_schedule=False, supersedes_unconsumed_campaigns=[], new_precision_acceptance=False,
             model_starts=MODEL_STARTS, model_starts_allowed=MODEL_STARTS, owner_invocations_allowed=1,
             maximum_invocations=1, no_automatic_retry=True, no_automatic_second_order=True,
@@ -921,6 +952,31 @@ print(json.dumps(proof, sort_keys=True, separators=(',', ':'), allow_nan=False))
     return proof, receipt
 
 
+def _serving_arms(verified, proof):
+    """Bind the physical/logical series mapping to the sealed packet and its replay.
+
+    The frozen FINAL-SETTINGS.execution_order selects the mapping through the packet's own
+    mtp_contract.owner_arm_map(). Its bytes are pinned by the sealed author manifest, whose
+    pin is the plan's expected manifest. The original replay must report the same logical
+    arm for each physical start. Only the selected and the exact reversed mapping exist.
+    """
+    package = verified["author"] / "package-v2"
+    pins = verified["plan"]["expected_package_pins"]
+    manifest = checked_json(package / "MANIFEST.json", pins["manifest_sha256"], 4 << 20)
+    settings = checked_json(package / "review/FINAL-SETTINGS.json",
+                            manifest["package_files"]["review/FINAL-SETTINGS.json"], 256 << 10)
+    order = settings.get("execution_order", ["control", "mtp"])
+    require(order in (["control", "mtp"], ["mtp", "control"]), "frozen logical execution order")
+    arms = tuple(zip(("bf16", "kv4"), order))
+    require(arms in (projection.ARMS, projection.REVERSED_ARMS), "exact physical/logical mapping")
+    artifacts = proof["replay_provenance"]["artifacts"]
+    require(set(artifacts) == {"bf16", "kv4"} and all(
+        artifacts[arm]["owner_arm"] == arm and artifacts[arm]["logical_arm"] == logical and
+        artifacts[arm]["binding"]["arm"] == logical for arm, logical in arms),
+            "replayed logical arms differ from the sealed packet order")
+    return arms
+
+
 def _profile_capture(verified, proof, binding_root):
     """Revalidate the original sealed C2 capture schema and project its bytes.
 
@@ -1154,7 +1210,7 @@ def execute(proposal, authorization, bound, *, checkpoint_root, cancelled, comma
         if kind == "profile":
             report = projection.profile_report(**arguments, capture=_profile_capture(verified, proof, binding_root))
         else:
-            report = projection.serving_report(**arguments)
+            report = projection.serving_report(**arguments, arms=_serving_arms(verified, proof))
         envelope = dict(status="SUCCEEDED", independent_release=True, payload={"benchmark_report": report},
                         owner_seal_sha256=observed["operation_seal_sha256"], request_sha256=binding["request_sha256"])
         require(backend.validate_report(envelope, request, bound) == report, "projected report failed the backend validator")

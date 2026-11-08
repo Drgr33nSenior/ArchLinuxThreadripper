@@ -16,6 +16,30 @@ from hyperloom_workload import _unpack
 import base64
 
 
+# The grading template's two physical/logical joins. They follow the sealed packet's frozen
+# execution order only for the declared reversed-order confirmation; otherwise unchanged.
+CONFIRMATION = "three_member_cap16_reversed_confirmation"
+ROLE_JOINS = (("bind_future.py", " for arm,logical in (('bf16','control'),('kv4','mtp')):\n",
+               " for arm,logical in (('bf16','mtp'),('kv4','control')):\n"),
+              ("producer/final_quality_inputs.py", "    for arm, logical in (('bf16', 'control'), ('kv4', 'mtp')):\n",
+               "    for arm, logical in (('bf16', 'mtp'), ('kv4', 'control')):\n"))
+# Existing caller sampler caps; a replacement sampler must keep them byte for byte.
+SAMPLER_CAPS = b"INTERVAL, SAMPLE_SECONDS, OUTPUT_LIMIT = 10, 8, 16384\n"
+
+
+def logical_order(files, ids):
+    """Read the frozen order from the authenticated package; reversal needs the declared confirmation."""
+    order = json.loads(files["FINAL-SETTINGS.json"]).get("execution_order", ["control", "mtp"])
+    require(order in (["control", "mtp"], ["mtp", "control"]), "frozen logical execution order")
+    if order == ["mtp", "control"]:
+        confirmation = ids.get("four_member", {}).get("confirmation")
+        require(type(confirmation) is dict and confirmation.get("kind") == CONFIRMATION and
+                confirmation.get("execution_order") == order and
+                confirmation.get("owner_arm_map") == {"bf16": "mtp", "kv4": "control"},
+                "reversed order requires the declared three-member confirmation")
+    return order
+
+
 def load(path, name):
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
@@ -91,6 +115,10 @@ def build(inputs, root):
             # descendant rather than the original 352-row endurance template.
             before = before.replace("352", "32").replace("176", "16")
             out[name] = replace(out[name], before.encode(), after.encode(), occurrences)
+    order = logical_order(files, ids)
+    if order == ["mtp", "control"]:
+        for name, before, after in ROLE_JOINS:
+            out[name] = replace(out[name], before.encode(), after.encode())
     rows = []
     for row in bound:
         oracle = row["expected"]["task_grade"]
@@ -128,6 +156,14 @@ def build(inputs, root):
     shutil.copytree(donor / "caller-sources", root / "caller-sources")
     require({p.name for p in (root / "caller-sources").iterdir()} == {"host_sample.py", "host_faults.py"},
             "unexpected caller source")
+    sampler = inputs.get("passive_resource_sampler")
+    if sampler is not None:
+        # Report-only caller-side sampler replacement; the 235 W pre/post observer is unchanged.
+        require(type(sampler) is dict and set(sampler) == {"path", "sha256"}, "closed passive sampler input")
+        raw = checked_bytes(Path(sampler["path"]), sampler["sha256"], 64 << 10)
+        require(raw.count(SAMPLER_CAPS) == 1, "passive sampler must keep the existing interval and output caps")
+        compile(raw, "host_sample.py", "exec", dont_inherit=True)
+        (root / "caller-sources/host_sample.py").write_bytes(raw)
     if "observed_power_cap_microwatts" in inputs:
         cap = inputs["observed_power_cap_microwatts"]
         require(type(cap) is int and cap == 300000000, "only the observed 300 W override is supported")
@@ -151,6 +187,18 @@ def build(inputs, root):
     require(plan["limits"]["requests"] == plan["limits"]["natural_grades"] == 2 * count
             and plan["limits"]["cpu_grading_seconds"] == 320, "finite caller grading bounds changed")
     plan["label"] = "hyperloom-" + ids["kind"]
+    if ids.get('source_family') == 'four_member':
+        bundle=ids.get('four_member',{})
+        require(bundle.get('members') == ['verify_prefetch','verify_cap32','gatednorm_quant','gate_up_wave']
+                and bundle.get('auxiliary_requests_per_start') == 3 and
+                bundle.get('benchmark_menu_requests_per_start') == 30 and count == 30,
+                'exact finite four-member numerical probes')
+        # The old 60-request allowance covered only the benchmark menu. This
+        # explicit new contract counts all six numerical HTTP probes too.
+        plan['limits']['requests'] = 2 * (count + 3)
+        plan['qualification_probes'] = dict(requests_per_start=3, requests=6,
+            targeted_c2_aborts=2, abort_all=False, maximum_output_tokens=256,
+            seconds_per_start=400, scored=False, benchmark_menu_unchanged=True)
     plan_path.write_bytes(canonical(plan))
     caller = root / "launcher/execute_once.py"
     raw = caller.read_bytes()
@@ -162,6 +210,13 @@ def build(inputs, root):
         quality_inventory_sha256=digest((destination / "PROJECTION-INVENTORY.json").read_bytes()),
         natural_grades=2 * count, grading_seconds=320, owner_seconds=6360, caller_seconds=7160,
         automatic_retry=False, adoption_authorized=False)
+    if ids.get('source_family') == 'four_member':
+        result.update(total_http_requests=66,benchmark_menu_requests=60,qualification_probe_requests=6)
+    if order == ["mtp", "control"]:
+        result.update(grading_role_map={"bf16": "mtp", "kv4": "control"}, grading_role_joins=[n for n, _, _ in ROLE_JOINS])
+    if sampler is not None:
+        result.update(passive_resource_sampler=dict(sha256=sampler["sha256"], interval_seconds=10, report_only=True,
+                                                    comparator_input=False, power_guard_unchanged=True))
     (root / "SUPPORT-RESULT.json").write_bytes(canonical(result))
     return result
 

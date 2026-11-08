@@ -200,7 +200,7 @@ setting. The profile records every difference between its configuration and the
 candidate contract. The clean-chroot build, not capture, must close all of those
 differences. Device binding and the captured profile manifest still fail closed.
 
-The AUR packaging commit and the Torvalds-tree commit are independently locked.
+The AUR packaging commit and the upstream kernel commit are independently locked.
 The builder applies the repository's native-CPU Kconfig overlay through the
 locked recipe's `config.user`, then verifies the headers package's effective
 configuration and every required module against the captured profile. The build
@@ -213,21 +213,24 @@ directories and does not change the locked input checkout.
 
 The build applies `templates/workstation/linux-git-packaging.patch` to a
 verified copy of the locked recipe. It pins the recipe's version to the locked
-7.3-rc6 source so makepkg does not reset the package release after configuration.
+7.3.3 stable source so makepkg does not reset the package release after
+configuration.
 Package release 2 added the headers package's required script interpreters,
 cryptography module and tools, and removes its incorrect backup entries.
 Release 3 enables AMD PCIe peer support and omits the four other GPU families
-listed in the target overlay. The source commit remains unchanged.
+listed in the target overlay. These configuration choices are retained for 7.3.3.
 It does not change kernel code or disable package audits. The build retains the
 effective recipe and patch hashes. Audit logs and detached signatures are not
 package archives and are excluded from artifact discovery.
 
-The current experimental source records both the annotated `v7.3-rc6` tag object
-and its exact peeled commit. It is not a released 7.3 kernel or a floating branch.
-AMD documents the R9700/gfx1201, but does
-not list Arch or Linux 7.3 in its supported operating-system kernel matrix. Treat
-this as an experimental daily candidate. A passing profile/build closure proves
-only that the required configuration and module files exist. It does not prove
+The current source records both the annotated `v7.3.3` tag object and its exact
+peeled commit from the upstream `stable/linux` tree. This is a released stable
+kernel, not a floating branch. The AUR package remains named `linux-git` so it
+can coexist with the official stable and LTS recovery packages.
+The native build remains a workstation candidate: upstream stable status does
+not establish vendor support for Arch or qualify this hardware. A passing
+profile/build closure proves only that the required configuration and module
+files exist. It does not prove
 that either GPU initializes, ROCm works, suspend/resume works or performance is
 better. Keep stable and LTS as recovery kernels and do not make the git kernel
 the default until the boot, GPU, storage, network and sustained-workload gates pass.
@@ -258,6 +261,12 @@ The CPU/cgroup and available-memory checks still apply. With the default
 ```sh
 ./bin/workstationctl --config config/workstation.conf build environment kernel
 ```
+
+Set `KERNEL_BUILD_REQUIRED_JOBS=48` when invoking `kernel build` to require all
+48 logical CPUs. The build stops if its measured CPU or memory budget permits
+fewer jobs. Native C and Rust CPU targeting and
+`CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y` retain the kernel's `-O2` performance
+optimisation. The effective package configuration must pass these checks.
 
 These are planning values, not a hard memory quota or a claim that 48 jobs are
 always faster. Run the first build in a maintenance window; retain memory,

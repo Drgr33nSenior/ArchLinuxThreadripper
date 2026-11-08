@@ -1,0 +1,23 @@
+# NFS CSI driver for the single-node host K3s. Images are pinned by manifest-list
+# digest (registry.k8s.io, 2026-11-08). Snapshots are not used: no snapshot
+# controller, snapshotter sidecar or VolumeSnapshot CRDs.
+image:
+  nfs:
+    tag: v4.13.6@sha256:40663419bac36836b8e4ef6929199e35920e28f6a74a46892e1c125ea5f0ce0b
+  csiProvisioner:
+    tag: v6.3.0@sha256:a4b0b1a37605b7b04a293e136edf7006ec1786a8eb3f4e5a945f81d667dcc371
+  csiResizer:
+    tag: v2.2.1@sha256:ea1d25e23479000c7e8eeb92d827df66258df4e482ca054c5e7ce3fc0f5c41a5
+  livenessProbe:
+    tag: v2.19.0@sha256:06da0d5b8908072f2e4522692aee8dc119fba7247a9658497e1153992cd777e9
+  nodeDriverRegistrar:
+    tag: v2.17.0@sha256:f9de845b170155199f2a2a3f9531cf13d78e31235e9db6b6582a8b0db0a50dad
+controller:
+  replicas: 1
+  enableSnapshotter: false
+externalSnapshotter:
+  enabled: false
+  customResourceDefinitions:
+    enabled: false
+storageClass:
+  create: false
