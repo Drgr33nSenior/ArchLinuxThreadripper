@@ -135,6 +135,9 @@ def steps():
              boot_bound=True, needs=("install_config",), tools=("bin/bootstrap-arch",),
              build=lambda o, out: [str(o.root / "bin/bootstrap-arch"), "--config", o.inputs["install_config"],
                                    "verify"]),
+        Step("secure-boot-check", "Firmware PK/KEK/db trust this installation's sbctl keys", run_as="root",
+             boot_bound=True, build=lambda o, out: ws(o, "secure-boot", "check"),
+             note="A reinstall keeps the previous keys in firmware until they are re-enrolled from setup mode."),
         Step("status", "Read-only workstation status", run_as="any", boot_bound=True,
              build=lambda o, out: ws(o, "status")),
         Step("swap-validate", "No-swap policy validation", run_as="any", boot_bound=True,
@@ -196,6 +199,30 @@ def steps():
              uses=("resources-plan", "telemetry-render"), output="dir",
              build=lambda o, out: ws(o, "telemetry", "plan", f"{o.output_of('resources-plan')}/resource-plan.json",
                                      o.output_of("telemetry-render"), out)),
+        Step("telemetry-apply", "Apply the collectors, then install and start the host collector",
+             uses=("telemetry-render",),
+             owner=lambda o: [
+                 "kubectl --context <reviewed-context> apply -f " +
+                 shlex.quote(f"{o.output_of('telemetry-render') or '<telemetry-render output>'}/stack.yaml"),
+                 "sed 's/192\\.0\\.2\\.4/<alloy ClusterIP>/' " +
+                 shlex.quote(f"{o.output_of('telemetry-render') or '<telemetry-render output>'}/host.alloy") +
+                 " > host.alloy.ready",
+                 "sudo install -d -m 0750 -o root -g workstation-alloy /etc/workstation-telemetry",
+                 "sudo install -m 0640 -o root -g workstation-alloy host.alloy.ready /etc/workstation-telemetry/host.alloy",
+                 "sudo systemctl enable --now workstation-telemetry.timer workstation-alloy.service",
+                 "sudo install -d -m 0755 -o \"$USER\" -g \"$USER\" /var/lib/workstation-ai-stack"],
+             reference="docs/TELEMETRY.md#send-telemetry-to-the-nas",
+             note="host.alloy exists in NAS-receiver renders; the ai-stack directory holds build-stage metrics."),
+        Step("tariff-helper", "Enable the electricity tariff helper for the cost panels",
+             owner=lambda o: [
+                 "sudo install -d -o root -g root -m 0755 /etc/workstation-tariff",
+                 "sudo install -o root -g root -m 0644 "
+                 "/usr/lib/bridge/workstation-runtime/infrastructure/observability/host/tariff.json "
+                 "/etc/workstation-tariff/config.json",
+                 "sudo systemctl enable --now workstation-tariff.timer",
+                 "sudo systemctl start workstation-tariff.service"],
+             reference="docs/TELEMETRY.md#flexible-octopus-prices-and-electricity-estimates",
+             note="Without it every Electricity costs panel stays empty; set tariff_code for API prices."),
         Step("service-plan", "Service capacity admission plan (a blocked budget stops here)", run_as="root",
              uses=("resources-plan", "service-render", "telemetry-render"), output="dir",
              build=lambda o, out: ws(o, "service", "plan", f"{o.output_of('resources-plan')}/resource-plan.json",

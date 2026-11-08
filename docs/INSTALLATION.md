@@ -454,6 +454,16 @@ sudo sbctl status
    **Secure Boot: Enabled** and **Setup Mode: Disabled** in the running system.
    Repeat the signature checks and passphrase boot tests for stable, LTS and
    recovery, including the second ESP's entries. Do not add a git kernel yet.
+7. Run `sudo ./bin/workstationctl secure-boot check`. It reads the firmware's
+   PK, KEK and db and requires this installation's sbctl certificates in each;
+   it also reports image hashes in db. Run it before enabling enforcement too.
+
+**After a reinstall, re-enrol.** The firmware keeps the previous installation's
+keys until they are replaced from Setup Mode. `sbctl status` then shows Setup
+Mode disabled and the new UKIs verify against the local certificate, yet the
+firmware refuses every image with a Secure Boot violation. `secure-boot check`
+reports this as a missing certificate. Enrolling image hashes from the firmware
+menu works around it only for those exact files, until the next kernel update.
 
 If firmware refuses an image, stop. Use the established firmware recovery route
 to return enforcement to its previous disabled state, then boot the tested

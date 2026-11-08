@@ -143,7 +143,8 @@ class PostinstallTests(unittest.TestCase):
         self.assertEqual(self.run_as(0), postinstall.STOP_GATE)
         self.assertIn("STOP: owner gate 'packages'", self.out.getvalue())
         self.assertIn("dev setup server", self.out.getvalue())
-        self.assertEqual(self.runner.names(), ["--config {} verify".format(self.config), "status", "swap validate"])
+        self.assertEqual(self.runner.names(), ["--config {} verify".format(self.config), "secure-boot check", "status",
+                                               "swap validate"])
         record = self.record("bootstrap-verify")
         for key in ("step", "argv", "input_sha256", "boot_id", "exit_status", "started_utc", "finished_utc",
                     "log_sha256"):
@@ -157,7 +158,7 @@ class PostinstallTests(unittest.TestCase):
         self.assertEqual(self.runner.calls, [])
         # A new boot reruns only boot-bound checks; the attested gate stays.
         self.assertEqual(self.run_as(0, boot=BOOT_B), postinstall.STOP_GATE)
-        self.assertEqual(len(self.runner.calls), 3)
+        self.assertEqual(len(self.runner.calls), 4)
         # Changed reviewed configuration reruns the dependent verification only.
         self.runner.calls.clear()
         self.config.write_text("HOSTNAME=changed\n")
