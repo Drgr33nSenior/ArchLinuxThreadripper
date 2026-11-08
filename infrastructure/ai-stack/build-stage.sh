@@ -5,7 +5,10 @@
 # persist under $AI_STACK_ROOT across runs.
 # Usage: build-stage.sh rocm|torch|sglang|image
 set -euo pipefail
-stop() { printf 'STOP: %s\n' "$*" >&2; exit 1; }
+stop() {
+  printf 'STOP: %s\n' "$*" >&2
+  exit 1
+}
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 stage=${1:-}
 [[ $stage =~ ^(rocm|torch|sglang|image)$ ]] || stop 'usage: build-stage.sh rocm|torch|sglang|image'

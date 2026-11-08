@@ -4,7 +4,10 @@
 # already running keeps executing the exact scripts it started with.
 # Usage: sync.sh SSH_DESTINATION SERVING_REPOSITORY_ROOT
 set -euo pipefail
-stop() { printf 'STOP: %s\n' "$*" >&2; exit 1; }
+stop() {
+  printf 'STOP: %s\n' "$*" >&2
+  exit 1
+}
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 [[ $# == 2 ]] || stop 'usage: sync.sh SSH_DESTINATION SERVING_REPOSITORY_ROOT'
 destination=$1

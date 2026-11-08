@@ -3,7 +3,10 @@
 set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 dir=$root/infrastructure/nfs-csi
-fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
+fail() {
+  printf 'FAIL: %s\n' "$*" >&2
+  exit 1
+}
 
 grep -Eq '^CHART_VERSION=v[0-9]+\.[0-9]+\.[0-9]+$' "$dir/chart.lock" || fail 'chart version is not exact'
 grep -Eq '^CHART_SHA256=[a-f0-9]{64}$' "$dir/chart.lock" || fail 'chart digest is missing'

@@ -29,7 +29,10 @@ python pytorch_vision_repo.py checkout --checkout-dir /work/run/src/vision \
 python pytorch_triton_repo.py checkout --checkout-dir /work/run/src/triton --torch-dir /work/run/src/pytorch \
   --gitrepo-origin "$TRITON_REPOSITORY"
 [[ $(tr -d '[:space:]' </work/run/src/pytorch/.ci/docker/ci_commit_pins/triton.txt) == "$TRITON_COMMIT" ]] ||
-  { echo 'STOP: PyTorch now pins a different Triton; refresh stack.lock' >&2; exit 1; }
+  {
+    echo 'STOP: PyTorch now pins a different Triton; refresh stack.lock' >&2
+    exit 1
+  }
 
 # Install the SDK from the ROCm stage only. A per-target device wheel exists
 # only when TheRock splits kernel packs, so ask for that extra only if built.

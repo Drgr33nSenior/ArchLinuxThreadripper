@@ -36,8 +36,8 @@ eval "$(python3 build_tools/setup_ccache.py --dir /work/ccache)"
 # sources and LLVM links are the largest jobs. Unbounded, the 2026-11-08 build
 # thrashed at the container memory limit. These settings change scheduling,
 # not compiler flags, so an interrupted build resumes from its objects.
-export CMAKE_BUILD_PARALLEL_LEVEL=$(( JOBS / 2 > 0 ? JOBS / 2 : 1 ))
-flang_jobs=$(( JOBS / 4 > 0 ? JOBS / 4 : 1 ))
+export CMAKE_BUILD_PARALLEL_LEVEL=$((JOBS / 2 > 0 ? JOBS / 2 : 1))
+flang_jobs=$((JOBS / 4 > 0 ? JOBS / 4 : 1))
 cmake -B "$build" -GNinja . \
   -DTHEROCK_AMDGPU_TARGETS="$GPU_TARGET" \
   -DTHEROCK_DIST_AMDGPU_TARGETS="$GPU_TARGET" \

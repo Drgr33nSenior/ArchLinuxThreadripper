@@ -373,8 +373,8 @@ ws_kernel_build() {
   source_tag_object="$(ws_read_lock LINUX_GIT_SOURCE_TAG_OBJECT "$lock_file")"
   [[ "$source_commit" =~ ^[a-f0-9]{40}$ && "$source_tag_object" =~ ^[a-f0-9]{40}$ ]] ||
     ws_die 'linux-git source lock is invalid'
-  [[ ( "$source_repo" == torvalds/linux && "$source_tag" =~ ^v[0-9]+\.[0-9]+(-rc[1-9][0-9]*)?$ ) ||
-    ( "$source_repo" == stable/linux && "$source_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ) ]] ||
+  [[ ("$source_repo" == torvalds/linux && "$source_tag" =~ ^v[0-9]+\.[0-9]+(-rc[1-9][0-9]*)?$) ||
+    ("$source_repo" == stable/linux && "$source_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$) ]] ||
     ws_die 'linux-git source lock is invalid'
   ws_assert_clean_locked_checkout "$source_dir" "$expected_repo" "$expected_commit"
   command -v makechrootpkg >/dev/null || ws_die 'makechrootpkg is required (devtools)'
@@ -395,7 +395,7 @@ ws_kernel_build() {
     # The AUR kernel Kconfig, not these variables, supplies native C/Rust flags.
     jobs="$(ws_build_jobs kernel)"
     [[ -z ${KERNEL_BUILD_REQUIRED_JOBS:-} ||
-      ( $KERNEL_BUILD_REQUIRED_JOBS =~ ^[1-9][0-9]*$ && $jobs == "$KERNEL_BUILD_REQUIRED_JOBS" ) ]] ||
+      ($KERNEL_BUILD_REQUIRED_JOBS =~ ^[1-9][0-9]*$ && $jobs == "$KERNEL_BUILD_REQUIRED_JOBS") ]] ||
       ws_die 'kernel build cannot meet KERNEL_BUILD_REQUIRED_JOBS within the measured CPU and memory budgets'
     env -u CFLAGS -u CXXFLAGS -u RUSTFLAGS -u KCFLAGS -u KCPPFLAGS \
       -u CCACHE_DIR -u CCACHE_CONFIGPATH -u CCACHE_BASEDIR -u CCACHE_NAMESPACE MAKEFLAGS="-j$jobs" NPROC="$jobs" \

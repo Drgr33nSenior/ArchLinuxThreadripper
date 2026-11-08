@@ -4,7 +4,10 @@ set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 dir=$root/infrastructure/ai-stack
 lock=$dir/stack.lock
-fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
+fail() {
+  printf 'FAIL: %s\n' "$*" >&2
+  exit 1
+}
 
 # Every non-comment line is KEY=value, and no key repeats.
 ! grep -v -E '^(#.*|[A-Z][A-Z0-9_]*=.+)$' "$lock" | grep -q . || fail 'stack.lock has a malformed line'
@@ -25,8 +28,10 @@ grep -Eq '^IMAGE_REPOSITORY=registry\.lan\.thespry\.family/local/[a-z0-9-]+$' "$
 work=$(mktemp -d)
 trap 'rm -rf -- "$work"' EXIT
 mkdir "$work/a" "$work/b"
-printf 'one\n' >"$work/a/0001-x.patch"; printf 'two\n' >"$work/a/0002-y.patch"
-printf 'two\n' >"$work/b/0002-y.patch"; printf 'one\n' >"$work/b/0001-x.patch"
+printf 'one\n' >"$work/a/0001-x.patch"
+printf 'two\n' >"$work/a/0002-y.patch"
+printf 'two\n' >"$work/b/0002-y.patch"
+printf 'one\n' >"$work/b/0001-x.patch"
 [[ $(bash "$dir/patchset-hash.sh" "$work/a") == $(bash "$dir/patchset-hash.sh" "$work/b") ]] || fail 'hash depends on creation order'
 printf 'changed\n' >"$work/b/0002-y.patch"
 [[ $(bash "$dir/patchset-hash.sh" "$work/a") != $(bash "$dir/patchset-hash.sh" "$work/b") ]] || fail 'hash ignores content'

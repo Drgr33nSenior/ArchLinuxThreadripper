@@ -5,7 +5,10 @@
 # diff, then run build-all.sh; unchanged stages are reused.
 # Usage: refresh.sh SERVING_REPOSITORY_ROOT
 set -euo pipefail
-stop() { printf 'STOP: %s\n' "$*" >&2; exit 1; }
+stop() {
+  printf 'STOP: %s\n' "$*" >&2
+  exit 1
+}
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 lock=$here/stack.lock
 [[ $# == 1 ]] || stop 'usage: refresh.sh SERVING_REPOSITORY_ROOT'

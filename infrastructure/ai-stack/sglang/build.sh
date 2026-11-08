@@ -16,7 +16,10 @@ git config --global --add safe.directory '*'
 
 # The patch series must be exactly the one stack.lock names.
 [[ $(/pipeline/patchset-hash.sh /patches) == "$SGLANG_PATCHSET_SHA256" ]] ||
-  { echo 'STOP: patch series does not match SGLANG_PATCHSET_SHA256' >&2; exit 1; }
+  {
+    echo 'STOP: patch series does not match SGLANG_PATCHSET_SHA256' >&2
+    exit 1
+  }
 
 "/opt/python/$PYTHON_ABI/bin/python3" -m venv /work/venv
 # shellcheck disable=SC1091
@@ -31,7 +34,10 @@ pip install --quiet "${links[@]}" "rocm[$extras]==$rocm_version" "$torch"/wheels
 # Hold the ROCm and PyTorch builds fixed for everything resolved after this.
 pip list --format=freeze | grep -i -E '^(rocm|rocm[-_]sdk[-_][a-z0-9_-]+|torch|torchvision|triton|pytorch[-_]triton[-_]rocm)==' \
   >"$out/constraints.txt"
-grep -q -i '^torch==' "$out/constraints.txt" || { echo 'STOP: torch is not installed from the torch stage' >&2; exit 1; }
+grep -q -i '^torch==' "$out/constraints.txt" || {
+  echo 'STOP: torch is not installed from the torch stage' >&2
+  exit 1
+}
 pip install --quiet -c "$out/constraints.txt" build wheel 'setuptools>=61' 'setuptools-rust>=1.10' 'setuptools-scm>=8'
 
 # A shared clone keeps tags for versioning; each run checks out a fresh copy.
