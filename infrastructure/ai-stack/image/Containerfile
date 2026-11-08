@@ -1,0 +1,18 @@
+# gfx1201 SGLang serving runtime. Installs exactly the wheelhouse the sglang
+# stage resolved, offline; the ROCm SDK comes from its Python packages, so the
+# image needs no system ROCm. Build context: the sglang stage's out/ directory.
+ARG RUNTIME_BASE_IMAGE
+FROM ${RUNTIME_BASE_IMAGE}
+ARG STACK_ID
+RUN --mount=type=bind,source=wheelhouse,target=/wheelhouse \
+    python3 -m pip install --no-cache-dir --no-index --find-links /wheelhouse /wheelhouse/*.whl \
+ && python3 -m pip check
+COPY RECEIPT.json /usr/share/ai-stack/sglang-receipt.json
+COPY stack.lock /usr/share/ai-stack/stack.lock
+# Settings carried from the qualified gfx1201 runtime.
+ENV TORCH_BLAS_PREFER_HIPBLASLT=1 \
+    ROCBLAS_USE_HIPBLASLT=-1 \
+    HF_HUB_OFFLINE=1
+LABEL org.opencontainers.image.title="sglang-gfx1201" \
+      org.opencontainers.image.revision="${STACK_ID}"
+ENTRYPOINT ["python3", "-m", "sglang.launch_server"]

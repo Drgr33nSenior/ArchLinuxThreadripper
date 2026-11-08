@@ -1,0 +1,120 @@
+{
+  "schema": 1,
+  "alias": "qwen3.8-27b-mxfp4",
+  "served_model_name": "Qwen3.8-27B-MXFP4",
+  "status": "candidate",
+  "notes": "Native 128K candidate (ASSISTANT.md): Quark MXFP4 weights, BF16 target and draft KV, DFlash width 8, TP2. Qualify on the current stack image before routing clients to it.",
+  "model": {
+    "repository": "amd/Qwen3.8-27B-Quark-AWQ-MXFP4",
+    "revision": "5233554c5fa56afda40150556b95573c2d7d29c0",
+    "files": [
+      {
+        "path": ".gitattributes",
+        "size": 1570,
+        "git_sha1": "52373fe24473b1aa44333d318f578ae6bf04b49b"
+      },
+      {
+        "path": "LICENSE",
+        "size": 11544,
+        "git_sha1": "f938136e3adacfd92be087f6e113b5d6d97f678f"
+      },
+      {
+        "path": "README.md",
+        "size": 4455,
+        "git_sha1": "ce7d01ac6a6e44b57ff5c35da2df3eda3564b8a7"
+      },
+      {
+        "path": "chat_template.jinja",
+        "size": 8952,
+        "git_sha1": "c0c686f9c38d70d179fb7b5f5aa7530bc913dda3"
+      },
+      {
+        "path": "config.json",
+        "size": 10905,
+        "git_sha1": "268e8b279b11a891a8f2a8d9cce520a6d765c7b4"
+      },
+      {
+        "path": "config.json.orig_with_algo_config",
+        "size": 10830,
+        "git_sha1": "6297da8f98bc9ef8f98c54f79dec55fded8e73bb"
+      },
+      {
+        "path": "crc32.txt",
+        "size": 238,
+        "git_sha1": "5c8afb250ab0e8f9b4065d4f487fe5fb77b5faf8"
+      },
+      {
+        "path": "generation_config.json",
+        "size": 213,
+        "git_sha1": "a0d4001bad40ed354df8a2fd3a4fd30676635bce"
+      },
+      {
+        "path": "merges.txt",
+        "size": 3353259,
+        "git_sha1": "a494e019ca1502219fd0128658b979e5f05ae8e8"
+      },
+      {
+        "path": "model.safetensors",
+        "size": 19798196184,
+        "sha256": "be1d745bc7312fdf1486059ec57cdeb514cc4d1aa06528c6677a0ebc0a0e1272"
+      },
+      {
+        "path": "preprocessor_config.json",
+        "size": 482,
+        "git_sha1": "be0d97d66db8dcf3e2af39c4eea4fb204b79efa5"
+      },
+      {
+        "path": "processor_config.json",
+        "size": 1300,
+        "git_sha1": "7ad6acdf4203f22b7b990e36ccc3a1fe38563d5e"
+      },
+      {
+        "path": "tokenizer.json",
+        "size": 12809320,
+        "sha256": "0997f410c57a1f4e53b09e4be8f4a172d90edd9564368fb0847030937229b9f3"
+      },
+      {
+        "path": "tokenizer_config.json",
+        "size": 17928,
+        "git_sha1": "5de744b3fca2129d7186979ae47c06be33903243"
+      },
+      {
+        "path": "video_preprocessor_config.json",
+        "size": 385,
+        "git_sha1": "3ba673a5ad7d4d13f54155ecd38b2a94a6dac8fe"
+      },
+      {
+        "path": "vocab.json",
+        "size": 6722759,
+        "git_sha1": "0aa0ce0658d60ac4a5d609f4eadb0e8e43514176"
+      }
+    ]
+  },
+  "draft": {
+    "repository": "incoai/Qwen3.8-27B-DFlash2",
+    "revision": "015e795645c74b1a0eeef3b570031fb62e769bc5",
+    "files": [
+      {
+        "path": "config.json",
+        "size": 1239,
+        "git_sha1": "79279cc5665bced6f3cdaa2095a2ffe819497b2e"
+      },
+      {
+        "path": "model.safetensors",
+        "size": 3848817896,
+        "sha256": "67fc76d68dc5a9415511a4f394ef744d67510cd20e93b37cc2cc7d28e4bab65c"
+      }
+    ]
+  },
+  "serving": {
+    "tp_size": 2,
+    "context_length": 131040,
+    "max_total_tokens": 262144,
+    "max_running_requests": 2,
+    "kv_cache_dtype": "bf16",
+    "speculative_algorithm": "DFLASH",
+    "speculative_num_draft_tokens": 8,
+    "reasoning_parser": "qwen3",
+    "tool_call_parser": "qwen3_coder"
+  }
+}

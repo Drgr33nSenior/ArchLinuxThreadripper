@@ -185,6 +185,91 @@ class TelemetryTests(unittest.TestCase):
         self.assertNotIn("failed_spans", alert_text)
         self.assertNotIn("failed_log_records", alert_text)
 
+    def resolving(self, *addresses):
+        return patch.object(telemetry.socket, "getaddrinfo",
+                            return_value=[(2, 1, 6, "", (a, 8080)) for a in addresses])
+
+    def test_nas_receiver_keeps_collectors_and_uses_the_dns_name(self):
+        for profile, reserve in (("full", 6656), ("metrics", 4864)):
+            with self.subTest(profile=profile), self.resolving("192.168.30.10"):
+                args = self.args(profile, profile=profile, reserve_mib=reserve,
+                                 nas_receiver="microserver.lan.thespry.family")
+                telemetry.render(args)
+                evidence = telemetry.verify(args.output)
+                self.assertEqual(evidence["backend"], {"kind": "nas", "receiver": "microserver.lan.thespry.family",
+                                                       "resolved": ["192.168.30.10/32"]})
+                objects = telemetry.load_objects((Path(args.output) / "stack.yaml").read_text())
+                names = {(o["kind"], o["metadata"]["name"]) for o in objects}
+                for backend in telemetry.BACKENDS:
+                    self.assertFalse({("Deployment", backend), ("Service", backend),
+                                      ("PersistentVolumeClaim", f"{backend}-data")} & names)
+                self.assertEqual({n for k, n in names if k == "PersistentVolumeClaim"}, {"alloy-data"})
+                self.assertFalse(any(o["kind"] == "ConfigMap" and o["metadata"]["name"].startswith(
+                    telemetry.BACKEND_CONFIG_MAPS) for o in objects))
+                for kept in ("alloy", "kube-state-metrics"):
+                    self.assertIn(("Deployment", kept), names)
+                self.assertIn(("DaemonSet", "node-exporter"), names)
+                policy = next(o for o in objects if o["metadata"]["name"] == "alloy-to-nas-receiver-8080")
+                self.assertEqual(policy["spec"]["egress"][0]["to"], [{"ipBlock": {"cidr": "192.168.30.10/32"}}])
+                config = next(o for o in objects if o["kind"] == "ConfigMap" and
+                              o["metadata"]["name"].startswith("alloy-config-"))["data"]["config.alloy"]
+                for local in ("prometheus:9090", "loki:3100", "tempo:4317", "grafana:3000"):
+                    self.assertNotIn(local, config)
+                self.assertIn('"http://microserver.lan.thespry.family:8080/api/v1/write"', config)
+                self.assertIn('"__metrics_path__" = "/metrics/grafana"', config)
+                self.assertNotIn("192.168.30.10", config)
+                host = (Path(args.output) / "host.alloy").read_text()
+                self.assertIn("http://microserver.lan.thespry.family:8080/api/v1/write", host)
+                self.assertNotIn("192.0.2.5", host)
+                self.assertNotIn("192.0.2.3", host)
+                self.assertIn("192.0.2.4:4318", host)
+                if profile == "full":
+                    self.assertIn('otelcol.exporter.otlphttp "tempo"', config)
+                    self.assertIn("http://microserver.lan.thespry.family:8080/loki/api/v1/push", host)
+                (Path(args.output) / "host.alloy").write_text("tampered")
+                with self.assertRaises(telemetry.InvalidTelemetry):
+                    telemetry.verify(args.output)
+
+    def test_ebpf_collector_needs_the_nas_and_is_rendered_complete(self):
+        with self.assertRaises(telemetry.InvalidTelemetry):
+            telemetry.render(self.args("local-ebpf", ebpf="true"))
+        with self.resolving("192.168.30.10"):
+            args = self.args("ebpf", ebpf="true", nas_receiver="microserver.lan.thespry.family")
+            telemetry.render(args)
+        evidence = telemetry.verify(args.output)
+        self.assertTrue(evidence["ebpf"])
+        stack = (Path(args.output) / "stack.yaml").read_text()
+        self.assertNotIn(telemetry.RECEIVER_PLACEHOLDER, stack)
+        objects = telemetry.load_objects(stack)
+        daemon = next(o for o in objects if o["kind"] == "DaemonSet" and o["metadata"]["name"] == "alloy-ebpf")
+        pod = daemon["spec"]["template"]["spec"]
+        self.assertEqual(daemon["metadata"]["namespace"], "workstation-observability-host")
+        self.assertTrue(pod["hostPID"] and pod["hostNetwork"] and pod["containers"][0]["securityContext"]["privileged"])
+        self.assertIn("127.0.0.1:12346", " ".join(pod["containers"][0]["args"]))
+        config = next(o for o in objects if o["kind"] == "ConfigMap" and
+                      o["metadata"]["name"].startswith("alloy-ebpf-config-"))["data"]["config.alloy"]
+        self.assertIn('"http://microserver.lan.thespry.family:8080"', config)
+        self.assertIn('"http://microserver.lan.thespry.family:8080/api/v1/write"', config)
+        self.assertIn('exports = ["metrics"]', config)
+        self.assertNotIn("payload_extraction", config)
+        quota = next(o for o in objects if o["kind"] == "ResourceQuota" and o["metadata"]["name"] == "host-collector-budget")
+        self.assertEqual(quota["spec"]["hard"]["pods"], "3")
+        self.assertGreaterEqual(evidence["component_limits_mib"]["cluster_stack_mib"], 896 + 1024)
+        # The default render has no eBPF collector.
+        with self.resolving("192.168.30.10"):
+            plain = self.args("plain", nas_receiver="microserver.lan.thespry.family")
+            telemetry.render(plain)
+        self.assertNotIn("alloy-ebpf", (Path(plain.output) / "stack.yaml").read_text())
+
+    def test_nas_receiver_requires_a_private_dns_name(self):
+        for name, addresses in (("192.168.30.10", ["192.168.30.10"]),
+                                ("microserver.lan.thespry.family", ["203.0.113.7"])):
+            with self.subTest(name=name), self.resolving(*addresses), self.assertRaises(telemetry.InvalidTelemetry):
+                telemetry.render(self.args(nas_receiver=name))
+        with patch.object(telemetry.socket, "getaddrinfo", side_effect=OSError), \
+                self.assertRaises(telemetry.InvalidTelemetry):
+            telemetry.render(self.args(nas_receiver="missing.lan.thespry.family"))
+
     def test_metrics_profile_rejects_trace_and_insufficient_complete_allowance(self):
         for kwargs in ({"profile": "metrics", "trace": "true"},
                        {"profile": "metrics", "reserve_mib": 4863},
@@ -259,7 +344,15 @@ class TelemetryTests(unittest.TestCase):
                   "gpu_busy_percent": "N/A", "current_link_width": "16", "pp_dpm_sclk": "0: 100Mhz\n1: 2200Mhz *"}
         sample = {"unix_ns": 1000000000, "gpus_by_bdf": {"0000:01:00.0": values, "0000:09:00.0": values},
                   "cpu_power": {"boost": None, "policies": {}}, "host_memory": "DUMMY_SECRET_SENTINEL"}
+        for bdf, state in (("0000:01:00.0", "suspended"), ("0000:09:00.0", "DUMMY_SECRET_SENTINEL")):
+            (self.work / "bus/pci/devices" / bdf / "power").mkdir(parents=True)
+            (self.work / "bus/pci/devices" / bdf / "power/runtime_status").write_text(state + "\n")
         text = telemetry_sample.metrics(sample, self.work)
+        self.assertIn('workstation_gpu_runtime_suspended{pci_bdf="0000:01:00.0"} 1', text)
+        self.assertNotIn('workstation_gpu_runtime_suspended{pci_bdf="0000:09:00.0"}', text)
+        (self.work / "bus/pci/devices/0000:09:00.0/power/runtime_status").write_text("active\n")
+        self.assertIn('workstation_gpu_runtime_suspended{pci_bdf="0000:09:00.0"} 0',
+                      telemetry_sample.metrics(sample, self.work))
         self.assertIn('pci_bdf="0000:01:00.0"', text)
         self.assertIn('pci_bdf="0000:09:00.0"', text)
         self.assertNotIn("workstation_gpu_busy_percent{", text)

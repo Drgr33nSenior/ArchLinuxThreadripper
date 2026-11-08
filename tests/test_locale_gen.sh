@@ -4,7 +4,10 @@ root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 source "$root/lib/bootstrap/common.sh"
 work=$(mktemp -d)
 trap 'rm -rf -- "$work"' EXIT
-fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
+fail() {
+  printf 'FAIL: %s\n' "$*" >&2
+  exit 1
+}
 
 # glibc 2.44 ships entries with two trailing spaces; the old sed missed them.
 write_fixture() {

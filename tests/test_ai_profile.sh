@@ -45,6 +45,8 @@ bootstrap_configure_offline_policy >/dev/null 2>&1
 
 for template in kernel.cmdline kernel-recovery.cmdline; do
   grep -q 'iommu=pt' "$root/templates/arch/$template"
+  # ECC is off on the R9700s; RAS reporting would return false memory errors.
+  grep -q 'amdgpu.ras_enable=0' "$root/templates/arch/$template"
   if grep -Eq 'amd_iommu=on|mitigations=off|pcie_acs_override|nosmt' "$root/templates/arch/$template"; then exit 1; fi
 done
 

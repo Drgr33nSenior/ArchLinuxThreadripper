@@ -1,0 +1,28 @@
+# AI serving stack pins. Every component tracks upstream main: refresh.sh
+# rewrites this file from the current heads, and builds use only these values.
+# This is separate from versions.lock, which pins the host's packaged ROCm.
+# Refreshed 2026-11-08.
+GPU_TARGET=gfx1201
+THEROCK_REPOSITORY=https://github.com/ROCm/TheRock.git
+THEROCK_COMMIT=4c7aaf53cef968be9a7cd2eac4630b474a5446ec
+# TheRock CI's own build container at that commit (manylinux_2_28 based).
+THEROCK_BUILD_IMAGE=ghcr.io/rocm/therock_build_manylinux_x86_64@sha256:f1f9dd9b20404c239f01a02ffec61d6c2e80abcafe7fdac854f06169828e53ce
+# Python for the PyTorch and serving stages (from the build image's /opt/python).
+PYTHON_ABI=cp314-cp314
+PYTORCH_REPOSITORY=https://github.com/pytorch/pytorch.git
+PYTORCH_COMMIT=cba4a42aa487a7222d612ea4f402e857c028d607
+TORCHVISION_REPOSITORY=https://github.com/pytorch/vision.git
+TORCHVISION_COMMIT=4260301135e34180d865426765487113f84e7707
+# Triton is the commit PyTorch pins (.ci/docker/ci_commit_pins/triton.txt),
+# built from ROCm/triton as TheRock does; recorded here for the receipt.
+TRITON_REPOSITORY=https://github.com/ROCm/triton.git
+TRITON_COMMIT=b7ddcf86c095de79527ba3098503e73158bb94bd
+SGLANG_REPOSITORY=https://github.com/sgl-project/sglang.git
+SGLANG_COMMIT=fcb3274646e43c16d70fd83806ebb3a5134d5e81
+# Content hash of the serving repository's serving/patches/sglang-main series
+# (patchset-hash.sh); sync.sh copies that series to the build host.
+SGLANG_PATCHSET_SHA256=abf2008063b5bf09463d4b80e72b3493d42bb0001adfe7fad6b279fbc6d276a3
+# refresh.sh resolves RUNTIME_BASE_TAG to the digest in RUNTIME_BASE_IMAGE.
+RUNTIME_BASE_TAG=docker.io/library/python:3.14-slim-trixie
+RUNTIME_BASE_IMAGE=docker.io/library/python@sha256:9aaa474097d094040649f2162a627c0049b408f52138d980916788d80f04802f
+IMAGE_REPOSITORY=registry.lan.thespry.family/local/sglang-gfx1201

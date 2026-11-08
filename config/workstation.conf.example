@@ -28,6 +28,15 @@ TELEMETRY_PROFILE=full
 # limits. TELEMETRY_RESERVE_MIB can remain higher after owner review.
 TELEMETRY_MARGIN_MIB=768
 TELEMETRY_WORKLOADS=sglang,open-webui
+# DNS name of the NAS telemetry receiver (port 8080). When set, the render keeps
+# only the collectors and sends metrics, logs and traces to the NAS; Grafana,
+# Prometheus, Loki and Tempo run there. Blank keeps the local backends. The
+# name is resolved at render time only for the collector's egress policy.
+TELEMETRY_NAS_RECEIVER=
+# Host-wide eBPF collector: Beyla request rate/error/duration metrics for
+# ai-home-lab services and continuous CPU profiles of host processes, sent to
+# the NAS (Pyroscope). Privileged with host PID; requires TELEMETRY_NAS_RECEIVER.
+TELEMETRY_EBPF=false
 # The sysfs GPU sampler is included. No coherent ROCm10 vendor-exporter artifact
 # was verified; true fails closed until one is reviewed. Trace dependencies need
 # an exact-image import check before this optional SGLang profile is enabled.

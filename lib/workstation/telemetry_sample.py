@@ -43,6 +43,12 @@ def metrics(sample, sysfs=Path("/sys")):
             identity[field] = value if value and re.fullmatch(r"(?:0x)?[a-fA-F0-9]{1,32}", value) else "unknown"
         emit("workstation_gpu_info", 1, identity)
         labels = {"pci_bdf": bdf}
+        # Reading the runtime PM state does not wake the card. A suspended card
+        # refuses activity, clock, temperature and power reads (EBUSY), so this
+        # explains those gaps instead of leaving them ambiguous.
+        state = read(device / "power/runtime_status")
+        if state in {"active", "resuming", "suspended", "suspending"}:
+            emit("workstation_gpu_runtime_suspended", int(state in {"suspended", "suspending"}), labels)
         for key, suffix in (("mem_info_vram_total", "vram_total_bytes"),
                             ("mem_info_vram_used", "vram_used_bytes"),
                             ("gpu_busy_percent", "busy_percent"), ("current_link_width", "pcie_width")):

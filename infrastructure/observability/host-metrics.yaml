@@ -41,6 +41,7 @@ spec:
             - --collector.textfile
             - --collector.textfile.directory=/host/root/var/lib/workstation-telemetry
             - --collector.textfile.directory=/host/root/var/lib/workstation-tariff
+            - --collector.textfile.directory=/host/root/var/lib/workstation-ai-stack
             - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run/credentials|var/lib/kubelet/pods)($|/)
           ports: [{name: metrics, containerPort: 9100}]
           resources:
