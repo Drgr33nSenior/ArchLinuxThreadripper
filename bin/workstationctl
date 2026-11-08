@@ -55,6 +55,7 @@ Commands:
   telemetry verify <rendered-directory>
   telemetry plan <resource-plan.json> <rendered-directory> <new-output-directory>
   telemetry status                      (read-only local monitoring readiness)
+  secure-boot check                     (read-only: firmware trusts this install's sbctl keys; run as root)
   session plan <ai|split|gaming|maintenance>
   session switch <ai|split|gaming|maintenance> <hardware.json> <state-directory> --execute
   session restore <hardware.json> <state-directory> --execute
@@ -230,6 +231,11 @@ main() {
       (($# == 2)) || return 2
       ws_require_arch
       "$(ws_measure_python)" "$repo_root/lib/workstation/monitoring.py"
+      ;;
+    secure-boot:check)
+      (($# == 2)) || return 2
+      ws_require_arch
+      "$(ws_measure_python)" "$repo_root/lib/workstation/secure_boot.py" check
       ;;
     telemetry:verify)
       (($# == 3)) || return 2
