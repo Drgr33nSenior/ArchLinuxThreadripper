@@ -304,6 +304,22 @@ force minimum performance and constrain idle states, increasing power and heat.
 Keep `irqbalance`; do not add manual IRQ, NUMA, SMT, C-state, or mitigation
 settings without repeatable workload evidence.
 
+## GPU memory error reporting
+
+The kernel command line sets `amdgpu.ras_enable=0`. The Radeon AI PRO R9700
+ships with GPU memory ECC (GECC) disabled, but the driver's default (`-1`,
+auto) still enables its error-reporting framework. Anything that then reads the
+memory error counters, such as AMD's device metrics exporter, gets meaningless
+values: the kernel logs about a million "uncorrectable hardware errors" per
+card on every read, and the exporter marks both GPUs unhealthy, which removes
+them from Kubernetes scheduling. With `0`, the counters do not exist, so
+monitoring sees ECC as unsupported rather than failing.
+
+To use ECC, for example for long training runs, set `amdgpu.ras_enable=1`
+in `/etc/kernel/cmdline` and `/etc/kernel/cmdline.recovery`, rebuild and sign
+the UKIs, and reboot. GECC reserves about 2 GB of each card's 32 GB VRAM, so
+re-qualify serving memory limits afterwards.
+
 ## KVM and K3s prerequisites
 
 Enable IOMMU in firmware; the signed kernel command line retains `iommu=pt`
