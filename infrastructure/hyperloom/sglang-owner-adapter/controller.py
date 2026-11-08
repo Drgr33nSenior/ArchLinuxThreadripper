@@ -34,6 +34,9 @@ REQUIRED_SOURCES = frozenset(
     + ["lib/workstation/" + name + ".py" for name in (
         "hyperloom_sglang", "hyperloom_exchange", "hyperloom_exchange_host", "hyperloom_owner_backend",
         "hyperloom_owner_result", "hyperloom_latency", "hyperloom_workload")])
+BUNDLE_SOURCES = REQUIRED_SOURCES | frozenset(ADAPTER+name+'.py' for name in (
+    'build_bundle','bundle_auth','bundle_client','bundle_contract','bundle_entry',
+    'bundle_hooks','bundle_kernels','bundle_readout','bundle_runtime','combined_serving_surfaces'))
 IDENTITIES = ("campaign_sha256", "selection_sha256", "controller_sha256", "runtime_sha256",
               "workload_sha256", "selected_source_set_sha256")
 
@@ -59,7 +62,8 @@ def read(reference):
 
 
 def source_closure(pins):
-    require(isinstance(pins, dict) and set(pins) == REQUIRED_SOURCES, "closed controller and builder sources required")
+    require(isinstance(pins, dict) and (set(pins) == REQUIRED_SOURCES or set(pins) == BUNDLE_SOURCES),
+            "closed controller and builder sources required")
     for name, digest in pins.items():
         checked_bytes(INFRA / name, digest, 1 << 20)
     return exchange.digest(exchange.canonical(pins))

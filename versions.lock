@@ -13,9 +13,9 @@ ALMALINUX_SIGNING_FINGERPRINT=BF18AC2876178908D6E71267D36CB86CB86B3716
 # Same-minor maintenance update reviewed 2026-09-09. No live upgrade performed.
 # Digest matches release checksums and GitHub asset metadata. See audit runbook
 # for bundled Traefik chart v40 migration and restore prerequisites.
-K3S_VERSION=v1.35.8+k3s1
-K3S_BINARY_SHA256=12f81c9bb5b71e098a4f7a2d187e350902a9339a6c3d5e56c20a03f7a417e07f
-K3S_MINOR=1.35
+K3S_VERSION=v1.36.6+k3s1
+K3S_BINARY_SHA256=66ceb8e67edfa547195135d74783bfadc2ecc04a91059e90ae5f70a3dbc98c15
+K3S_MINOR=1.36
 K3S_SELINUX_RPM_VERSION=1.6-1.el9
 K3S_SELINUX_RPM_SHA256=23d0095a766b89317d2bdbe8773825987db7221e48743417930a994ca1096793
 K3S_RPM_GPG_KEY_URL=https://rpm.rancher.io/public.key
@@ -38,12 +38,12 @@ PARU_AUR_REPOSITORY=https://aur.archlinux.org/paru.git
 PARU_AUR_COMMIT=329be2113c590046cb29858c23d9b96a8d7bd586
 LINUX_GIT_AUR_REPOSITORY=https://aur.archlinux.org/linux-git.git
 LINUX_GIT_AUR_COMMIT=c783913866ae402948c9becf6ea60c52a50f8204
-LINUX_GIT_SOURCE_REPOSITORY=torvalds/linux
-# Experimental daily candidate only. v7.3 final is not released. The peeled
-# v7.3-rc6 commit is exact and must pass the hardware-profile and rollback gates.
-LINUX_GIT_SOURCE_TAG=v7.3-rc6
-LINUX_GIT_SOURCE_TAG_OBJECT=4eeccbed21e50c19f97be9d325511f3de6343f2d
-LINUX_GIT_SOURCE_COMMIT=a90ee4305c4a5df72c11b31dacfdc76e00fcf78a
+LINUX_GIT_SOURCE_REPOSITORY=stable/linux
+# Upstream stable release; the native build still requires hardware-profile,
+# package, boot and rollback qualification on this workstation.
+LINUX_GIT_SOURCE_TAG=v7.3.3
+LINUX_GIT_SOURCE_TAG_OBJECT=b7cb9f473aa648c37e68d08cb2f3c154f17f593c
+LINUX_GIT_SOURCE_COMMIT=d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd
 AWS_SSM_AUR_REPOSITORY=https://aur.archlinux.org/aws-session-manager-plugin.git
 AWS_SSM_AUR_COMMIT=aa93839e62d2eb14ebfdd4eb38a538d5172c2674
 # AMD migration source inputs inspected 2026-09-04. These are candidates, not a

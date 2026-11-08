@@ -27,7 +27,7 @@
       - lab_cluster_dns | length > 0
       - lab_network_interface in ansible_facts.interfaces
       - lab_tls_sans | length > 0
-      - lab_k3s_version is match('^v1[.]35[.][0-9]+[+]k3s[0-9]+$')
+      - lab_k3s_version is match('^v1[.]36[.][0-9]+[+]k3s[0-9]+$')
       - lab_cpu_manager_policy in ['none', 'static']
       - lab_cpu_manager_policy != 'static' or ((lab_reserved_system_cpus | length) > 0)
       - lab_cpu_manager_policy == 'static' or ((lab_reserved_system_cpus | length) == 0 and not (lab_cpu_manager_cache_alignment | bool))
@@ -224,6 +224,25 @@
     owner: root
     group: root
     mode: '0600'
+  notify: Restart approved K3s server
+
+- name: Require a DNS name for the optional registry mirror
+  ansible.builtin.assert:
+    that:
+      - lab_registry_mirror is match('^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?[.])+[a-z]{2,63}$')
+      - lab_registry_upstreams | length > 0
+      - lab_registry_upstreams | select('match', '^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?[.])+[a-z]{2,63}$') | list | length == lab_registry_upstreams | length
+    fail_msg: lab_registry_mirror must be a DNS host name served over trusted HTTPS; upstreams are registry host names.
+  when: lab_registry_mirror | length > 0
+
+- name: Mirror upstream registries through the NAS (containerd falls back upstream)
+  ansible.builtin.template:
+    src: registries.yaml.j2
+    dest: /etc/rancher/k3s/registries.yaml
+    owner: root
+    group: root
+    mode: '0600'
+  when: lab_registry_mirror | length > 0
   notify: Restart approved K3s server
 
 - name: Start only when explicitly requested after network and boot qualification

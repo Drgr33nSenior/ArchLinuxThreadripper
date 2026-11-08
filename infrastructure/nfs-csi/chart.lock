@@ -1,0 +1,4 @@
+# Download only; verify SHA256 before rendering. No helm repo mutation needed.
+CHART_VERSION=v4.13.6
+CHART_URL=https://raw.githubusercontent.com/kubernetes-csi/csi-driver-nfs/master/charts/v4.13.6/csi-driver-nfs-4.13.6.tgz
+CHART_SHA256=4b471fb134bfea4fcaa3dc3342a67acd646431b746c673c978327353db5d22da

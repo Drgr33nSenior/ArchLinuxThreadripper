@@ -38,14 +38,15 @@ assert not any(key.startswith('etcd-') for key in config)
 assert 'cgroup-driver=systemd' in config['kubelet-arg']
 assert 'fail-swap-on=true' in config['kubelet-arg']
 assert 'eviction-hard=memory.available<2Gi,nodefs.available<10%,imagefs.available<15%' in config['kubelet-arg']
-for component in ('kubelet', 'kube-apiserver', 'kube-scheduler', 'kube-controller-manager'):
-    assert 'feature-gates=DynamicResourceAllocation=true' in config[f'{component}-arg']
+# DRA is locked on since 1.35 and its gate is removed in 1.38; never set it.
+assert not {'kube-apiserver-arg', 'kube-scheduler-arg', 'kube-controller-manager-arg'} & config.keys()
+assert not any('DynamicResourceAllocation' in arg for arg in config['kubelet-arg'])
 runtime = tomllib.loads((role / 'files/10-cdi.toml').read_text())['plugins']['io.containerd.cri.v1.runtime']
 assert runtime['enable_cdi'] is True
 assert runtime['cdi_spec_dirs'] == ['/etc/cdi', '/var/run/cdi']
 assert runtime['containerd']['runtimes']['runc']['options']['SystemdCgroup'] is True
 
-# CPUManager is an opt-in K3s v1.35 kubelet drop-in. The default leaves the
+# CPUManager is an opt-in K3s v1.36 kubelet drop-in. The default leaves the
 # pre-existing K3s kubelet configuration untouched.
 assert variables['lab_cpu_manager_policy'] == 'none'
 assert variables['lab_reserved_system_cpus'] == ''
@@ -60,7 +61,7 @@ assert cpu_config['cpuManagerPolicyOptions'] == {
 assert cpu_config['reservedSystemCPUs'] == '0,1,4,5,8,9'
 assert cpu_config['topologyManagerPolicy'] == 'restricted'
 assert cpu_config['topologyManagerScope'] == 'pod'
-assert cpu_config['featureGates'] == {'CPUManagerPolicyBetaOptions': True}
+assert 'featureGates' not in cpu_config
 cpu_config_without_alignment = yaml.safe_load(environment.from_string(cpu_template.read_text()).render(**dict(cpu_vars, lab_cpu_manager_cache_alignment=False)))
 assert cpu_config_without_alignment['cpuManagerPolicyOptions'] == {'full-pcpus-only': 'true', 'strict-cpu-reservation': 'true'}
 assert 'featureGates' not in cpu_config_without_alignment
@@ -207,3 +208,13 @@ for invalid_case in ('stale-boot', 'one-gpu', 'duplicate-gpu', 'wrong-gfx'):
         invalid['report']['rocm_agents'][1]['gfx'] = 'gfx0000'
     assert not all(condition(**invalid) for condition in conditions), invalid_case
 print('K3s SQLite/etcd configuration, Pod Security, migration refusal, CDI and hardware checks passed')
+
+# Optional registry mirror: absent by default; when set, every upstream maps to
+# its prefix on the HTTPS mirror (containerd keeps the upstream as fallback).
+assert variables['lab_registry_mirror'] == ''
+registry_vars = dict(variables, lab_registry_mirror='registry.example.invalid')
+registries = yaml.safe_load(environment.from_string((role / 'templates/registries.yaml.j2').read_text()).render(**registry_vars))
+assert set(registries) == {'mirrors'}
+assert list(registries['mirrors']) == ['docker.io', 'ghcr.io', 'registry.k8s.io', 'quay.io']
+for upstream, mirror in registries['mirrors'].items():
+    assert mirror == {'endpoint': ['https://registry.example.invalid'], 'rewrite': {'^(.*)$': upstream + '/$1'}}, upstream

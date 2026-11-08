@@ -8,8 +8,23 @@ trap 'rm -rf -- "$work"' EXIT
 # Every host/network operation is a fixture; no actual DNS, routing or HTTP.
 case_name=ok
 timedatectl() { [[ $case_name != time ]] && printf 'yes\n'; }
-getent() { [[ $case_name != dns ]] && printf '192.0.2.1 STREAM fixture\n'; }
-ip() { [[ $case_name != route ]]; }
+getent() {
+  [[ $case_name != dns ]] || return 1
+  case "$case_name" in
+    ipv6) printf '2001:db8::1 STREAM fixture\n2001:db8::1 DGRAM fixture\n' ;;
+    mixed) printf '2001:db8::1 STREAM fixture\n192.0.2.1 STREAM fixture\n' ;;
+    *) printf '192.0.2.1 STREAM fixture\n192.0.2.1 DGRAM fixture\n' ;;
+  esac
+}
+ip() {
+  # Reject DNS columns accidentally passed as part of the address argument.
+  [[ $# == 4 && $2 == route && $3 == get && $case_name != route ]] || return 1
+  case "$1:$4" in
+    -4:192.0.2.1) return 0 ;;
+    -6:2001:db8::1) [[ $case_name != mixed ]] ;;
+    *) return 1 ;;
+  esac
+}
 pacman-conf() {
   if [[ $1 == --repo-list ]]; then
     [[ $case_name != empty ]] && printf 'core\nextra\n'
@@ -31,6 +46,15 @@ for case_name in ok time dns route empty unsafe mirror tls archive; do
   if [[ $case_name == ok ]]; then [[ $status == 0 ]]; else [[ $status != 0 ]]; fi
 done
 if grep -q 'NOT_A_CREDENTIAL' "$work/unsafe.log"; then exit 1; fi
+# bootstrap-arch excludes spaces from IFS. Route parsing must still split DNS
+# columns, select IPv4/IPv6 correctly and try another address after no route.
+(
+  IFS=$'\n\t'
+  for case_name in ok ipv6 mixed; do
+    bootstrap_network_mirrors >"$work/strict-ifs-$case_name.log" 2>&1
+  done
+  [[ $IFS == $'\n\t' ]]
+)
 case_name=ok
 # Isolate the unauthenticated curl adapter; verify authentication is not implied.
 env() { printf '%s' "$http_code"; }

@@ -195,6 +195,9 @@
     "CONFIG_X86_NATIVE_CPU": [
       "y"
     ],
+    "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE": [
+      "y"
+    ],
     "CONFIG_SMP": [
       "y"
     ],

@@ -186,7 +186,7 @@ bootstrap_write_target_config() {
       sed -i '/^#\[multilib\]$/,/^#Include/ s/^#//' "$BOOTSTRAP_TARGET/etc/pacman.conf" || return 1
     fi
     printf '%s\n' "$HOSTNAME" >"$BOOTSTRAP_TARGET/etc/hostname" || return 1
-    sed -i "s/^#${LOCALE} UTF-8$/${LOCALE} UTF-8/" "$BOOTSTRAP_TARGET/etc/locale.gen" || return 1
+    bootstrap_enable_locale "$BOOTSTRAP_TARGET/etc/locale.gen" "$LOCALE" || return 1
     printf 'LANG=%s\n' "$LOCALE" >"$BOOTSTRAP_TARGET/etc/locale.conf" || return 1
     printf 'KEYMAP=%s\n' "$KEYMAP" >"$BOOTSTRAP_TARGET/etc/vconsole.conf" || return 1
     if [[ -f /etc/arch-workstation-iso/release.lock ]]; then

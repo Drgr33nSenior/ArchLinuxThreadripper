@@ -21,15 +21,10 @@ default-local-storage-path: {{ (lab_k3s_data_dir ~ '/storage') | to_json }}
 secrets-encryption: true
 nonroot-devices: true
 # Single-server SQLite is the default; do not enable cluster-init or etcd flags.
-kube-apiserver-arg:
-  - feature-gates=DynamicResourceAllocation=true
-kube-controller-manager-arg:
-  - feature-gates=DynamicResourceAllocation=true
-kube-scheduler-arg:
-  - feature-gates=DynamicResourceAllocation=true
+# DRA is GA and locked on since Kubernetes 1.35; its gate is removed in 1.38,
+# where setting it would stop K3s from starting. Do not re-add the gate.
 kubelet-arg:
   - cgroup-driver=systemd
-  - feature-gates=DynamicResourceAllocation=true
   - fail-swap-on=true
   - {{ ('system-reserved=cpu=' ~ lab_system_reserved_cpu ~ ',memory=' ~ lab_system_reserved_memory) | to_json }}
   - {{ ('kube-reserved=cpu=' ~ lab_kube_reserved_cpu ~ ',memory=' ~ lab_kube_reserved_memory) | to_json }}

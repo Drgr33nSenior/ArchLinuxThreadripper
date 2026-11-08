@@ -1,0 +1,158 @@
+{
+  "16": {
+    "candidate": {
+      "hashes": {
+        "amdgcn": "5b9d015202415a02c292b414a62fbb24f522a6b547bfc535995c6bad954177b4",
+        "hsaco": "57e0a0b38016e5c1246cca22aa0befe61cb7e993709064b1843bd9e7295f105b",
+        "llir": "b04de6a980c7116b34d16da695ab5d6a1030bca1ee57a8d712ddb5110d9c05b3",
+        "ttgir": "17226cdd248e825e715f7ca0f90b1d8124ff36da40520289aefb10d6b827a468",
+        "ttir": "c1ce842554f2ce17cc90659713c450d8a9924fe417d6b0904b6bb321b5fedfcd"
+      },
+      "resources": {
+        "dynamic_lds_bytes": 0,
+        "max_flat_workgroup_size": 32,
+        "private_segment_fixed_size": 0,
+        "sgpr_count": 31,
+        "sgpr_spill_count": 0,
+        "vgpr_count": 62,
+        "vgpr_spill_count": 0,
+        "wavefront_size": 32
+      }
+    },
+    "gemm": {
+      "hashes": {
+        "amdgcn": "3e83667cfbb77ac2a05e005269b6b484145a35f673abcf0b47a520e44a62e932",
+        "hsaco": "867b02f08dc198509d4ead7ec78a1f5abf9d5cfdf10bd02996aaf7b55c2298da",
+        "llir": "a4d26b944321ae7b9a83a25ce5eb56556c2d6a02095f2a683069d843076c3531",
+        "ttgir": "606a6fe32f7d8970253441c3c6060dfe32c99a1d5d0cae466a4be6a4a31c163a",
+        "ttir": "3b861b31f023886c669f933064e30c9292e5d3cf0506274ae55217fce9a6e6d3"
+      },
+      "resources": {
+        "dynamic_lds_bytes": 4096,
+        "max_flat_workgroup_size": 128,
+        "private_segment_fixed_size": 0,
+        "sgpr_count": 41,
+        "sgpr_spill_count": 0,
+        "vgpr_count": 109,
+        "vgpr_spill_count": 0,
+        "wavefront_size": 32
+      }
+    },
+    "norm": {
+      "hashes": {
+        "amdgcn": "803e9b2593da0ed12758198628ccdb720f3a3f1869ad789fabac28beec1eb4e1",
+        "hsaco": "a62c915dd4b80f0af892e9895d4cb372628d192f3216b638355d8597c29e2d0e",
+        "llir": "52dd627ca5196d4a659d21afdc48e61d5e3bb0648f92430b5a5d13ad5e82ccea",
+        "ttgir": "983016d380f8fb7acff42b30448dc54e96f7652fc568a5fff03aeb72eb58ac28",
+        "ttir": "8c80ac8b7ccbde92dde17c73f53b69483ecacb4399fc5d0238dd97796682b362"
+      },
+      "resources": {
+        "dynamic_lds_bytes": 0,
+        "max_flat_workgroup_size": 32,
+        "private_segment_fixed_size": 0,
+        "sgpr_count": 26,
+        "sgpr_spill_count": 0,
+        "vgpr_count": 93,
+        "vgpr_spill_count": 0,
+        "wavefront_size": 32
+      }
+    },
+    "quantizer": {
+      "hashes": {
+        "amdgcn": "44168c3bfb0cd3c65af4d03850c858e326f0462deeebb1de63b8869b37875a9c",
+        "hsaco": "b3637cf4a2f29af779c30f3f68012a663be415c3a7a20090cc9dc35bd41facc2",
+        "llir": "6acb33e3e99c110c27fd675cb801deb393083fd6c5dae2a61b3c00a004041500",
+        "ttgir": "0360af798cd574ce357a79033930ef26cabde9e5d88da3ca49229f478fd396fa",
+        "ttir": "8d51c293ac51921f722638a801cfed14e27d502298fd86cec1d86e6d09cedbf5"
+      },
+      "resources": {
+        "dynamic_lds_bytes": 0,
+        "max_flat_workgroup_size": 32,
+        "private_segment_fixed_size": 0,
+        "sgpr_count": 53,
+        "sgpr_spill_count": 0,
+        "vgpr_count": 74,
+        "vgpr_spill_count": 0,
+        "wavefront_size": 32
+      }
+    }
+  },
+  "8": {
+    "candidate": {
+      "hashes": {
+        "amdgcn": "5b9d015202415a02c292b414a62fbb24f522a6b547bfc535995c6bad954177b4",
+        "hsaco": "57e0a0b38016e5c1246cca22aa0befe61cb7e993709064b1843bd9e7295f105b",
+        "llir": "b04de6a980c7116b34d16da695ab5d6a1030bca1ee57a8d712ddb5110d9c05b3",
+        "ttgir": "9e6c8b5d05ff244fe9555215ce100a7b3bda29f3d777289bf3591347b3f20fb7",
+        "ttir": "655aa1c8aaacaf2a17b2791be8f8991f2b12daf2c60c814ab08bc4eb66cf1c4e"
+      },
+      "resources": {
+        "dynamic_lds_bytes": 0,
+        "max_flat_workgroup_size": 32,
+        "private_segment_fixed_size": 0,
+        "sgpr_count": 31,
+        "sgpr_spill_count": 0,
+        "vgpr_count": 62,
+        "vgpr_spill_count": 0,
+        "wavefront_size": 32
+      }
+    },
+    "gemm": {
+      "hashes": {
+        "amdgcn": "3e83667cfbb77ac2a05e005269b6b484145a35f673abcf0b47a520e44a62e932",
+        "hsaco": "867b02f08dc198509d4ead7ec78a1f5abf9d5cfdf10bd02996aaf7b55c2298da",
+        "llir": "a4d26b944321ae7b9a83a25ce5eb56556c2d6a02095f2a683069d843076c3531",
+        "ttgir": "4699d4182af3535bb6a54250634750a4e46c4963bc072e8d3c2e0d47ce30ac5c",
+        "ttir": "c326a9694c7bcb04cf50384fb1364f9533064e286219f99f7569a5ea7a285ac4"
+      },
+      "resources": {
+        "dynamic_lds_bytes": 4096,
+        "max_flat_workgroup_size": 128,
+        "private_segment_fixed_size": 0,
+        "sgpr_count": 41,
+        "sgpr_spill_count": 0,
+        "vgpr_count": 109,
+        "vgpr_spill_count": 0,
+        "wavefront_size": 32
+      }
+    },
+    "norm": {
+      "hashes": {
+        "amdgcn": "803e9b2593da0ed12758198628ccdb720f3a3f1869ad789fabac28beec1eb4e1",
+        "hsaco": "a62c915dd4b80f0af892e9895d4cb372628d192f3216b638355d8597c29e2d0e",
+        "llir": "52dd627ca5196d4a659d21afdc48e61d5e3bb0648f92430b5a5d13ad5e82ccea",
+        "ttgir": "983016d380f8fb7acff42b30448dc54e96f7652fc568a5fff03aeb72eb58ac28",
+        "ttir": "8c80ac8b7ccbde92dde17c73f53b69483ecacb4399fc5d0238dd97796682b362"
+      },
+      "resources": {
+        "dynamic_lds_bytes": 0,
+        "max_flat_workgroup_size": 32,
+        "private_segment_fixed_size": 0,
+        "sgpr_count": 26,
+        "sgpr_spill_count": 0,
+        "vgpr_count": 93,
+        "vgpr_spill_count": 0,
+        "wavefront_size": 32
+      }
+    },
+    "quantizer": {
+      "hashes": {
+        "amdgcn": "ab4d6632784aa5d0510d58aa98b71908fa4bdc2aecd47ac891852ee7b214a592",
+        "hsaco": "ae085a4e61d56dfe7b9ced180bc910f88bab9b65fe46dd4a1751a6e8fdb45c05",
+        "llir": "f1d1921a82ebb18586e4b862e8117b25bd0df2326350c8dabae8e8dda1bf6c90",
+        "ttgir": "b3777b2597c0b0d14134f8a79bf3e20b76b78ec7f3e2cbc896ad5bd3fd20418b",
+        "ttir": "71cdc5d4ba66bade1feccb906fabcd1f3185db244c27de38cc929690a02288c5"
+      },
+      "resources": {
+        "dynamic_lds_bytes": 0,
+        "max_flat_workgroup_size": 32,
+        "private_segment_fixed_size": 0,
+        "sgpr_count": 36,
+        "sgpr_spill_count": 0,
+        "vgpr_count": 42,
+        "vgpr_spill_count": 0,
+        "wavefront_size": 32
+      }
+    }
+  }
+}

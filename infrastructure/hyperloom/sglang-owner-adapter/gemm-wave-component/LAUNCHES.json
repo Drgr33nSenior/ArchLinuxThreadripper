@@ -1,0 +1,542 @@
+{
+  "down-m16": {
+    "baseline": {
+      "args": [
+        {
+          "dtype": "uint8",
+          "shape": [
+            16,
+            4352
+          ],
+          "stride": [
+            4352,
+            1
+          ]
+        },
+        {
+          "dtype": "uint8",
+          "shape": [
+            5120,
+            4352
+          ],
+          "stride": [
+            4352,
+            1
+          ]
+        },
+        {
+          "dtype": "bfloat16",
+          "shape": [
+            16,
+            5120
+          ],
+          "stride": [
+            5120,
+            1
+          ]
+        },
+        {
+          "dtype": "uint8",
+          "shape": [
+            16,
+            272
+          ],
+          "stride": [
+            1,
+            16
+          ]
+        },
+        {
+          "dtype": "uint8",
+          "shape": [
+            5120,
+            272
+          ],
+          "stride": [
+            272,
+            1
+          ]
+        },
+        16,
+        5120,
+        4352,
+        4352,
+        1,
+        1,
+        4352,
+        0,
+        5120,
+        1,
+        1,
+        16,
+        272,
+        1
+      ],
+      "grid": [
+        80
+      ],
+      "kwargs": {
+        "BLOCK_SIZE_K": 128,
+        "BLOCK_SIZE_M": 16,
+        "BLOCK_SIZE_N": 64,
+        "GROUP_SIZE_M": 1,
+        "NUM_KSPLIT": 1,
+        "SPLITK_BLOCK_SIZE": 8704,
+        "cache_modifier": null,
+        "matrix_instr_nonkdim": 16,
+        "num_stages": 1,
+        "num_warps": 4,
+        "waves_per_eu": 1
+      }
+    },
+    "candidate": {
+      "args": [
+        {
+          "dtype": "uint8",
+          "shape": [
+            16,
+            4352
+          ],
+          "stride": [
+            4352,
+            1
+          ]
+        },
+        {
+          "dtype": "uint8",
+          "shape": [
+            5120,
+            4352
+          ],
+          "stride": [
+            4352,
+            1
+          ]
+        },
+        {
+          "dtype": "bfloat16",
+          "shape": [
+            16,
+            5120
+          ],
+          "stride": [
+            5120,
+            1
+          ]
+        },
+        {
+          "dtype": "uint8",
+          "shape": [
+            16,
+            272
+          ],
+          "stride": [
+            1,
+            16
+          ]
+        },
+        {
+          "dtype": "uint8",
+          "shape": [
+            5120,
+            272
+          ],
+          "stride": [
+            272,
+            1
+          ]
+        },
+        16,
+        5120,
+        4352,
+        4352,
+        1,
+        1,
+        4352,
+        0,
+        5120,
+        1,
+        1,
+        16,
+        272,
+        1
+      ],
+      "grid": [
+        80
+      ],
+      "kwargs": {
+        "BLOCK_SIZE_K": 128,
+        "BLOCK_SIZE_M": 16,
+        "BLOCK_SIZE_N": 64,
+        "GROUP_SIZE_M": 1,
+        "NUM_KSPLIT": 1,
+        "SPLITK_BLOCK_SIZE": 8704,
+        "cache_modifier": null,
+        "matrix_instr_nonkdim": 16,
+        "num_stages": 1,
+        "num_warps": 4,
+        "waves_per_eu": 0
+      }
+    }
+  },
+  "gate_up-m16": {
+    "baseline": {
+      "args": [
+        {
+          "dtype": "uint8",
+          "shape": [
+            16,
+            2560
+          ],
+          "stride": [
+            2560,
+            1
+          ]
+        },
+        {
+          "dtype": "uint8",
+          "shape": [
+            17408,
+            2560
+          ],
+          "stride": [
+            2560,
+            1
+          ]
+        },
+        {
+          "dtype": "bfloat16",
+          "shape": [
+            16,
+            17408
+          ],
+          "stride": [
+            17408,
+            1
+          ]
+        },
+        {
+          "dtype": "uint8",
+          "shape": [
+            16,
+            160
+          ],
+          "stride": [
+            1,
+            16
+          ]
+        },
+        {
+          "dtype": "uint8",
+          "shape": [
+            17408,
+            160
+          ],
+          "stride": [
+            160,
+            1
+          ]
+        },
+        16,
+        17408,
+        2560,
+        2560,
+        1,
+        1,
+        2560,
+        0,
+        17408,
+        1,
+        1,
+        16,
+        160,
+        1
+      ],
+      "grid": [
+        272
+      ],
+      "kwargs": {
+        "BLOCK_SIZE_K": 128,
+        "BLOCK_SIZE_M": 16,
+        "BLOCK_SIZE_N": 64,
+        "GROUP_SIZE_M": 1,
+        "NUM_KSPLIT": 1,
+        "SPLITK_BLOCK_SIZE": 5120,
+        "cache_modifier": null,
+        "matrix_instr_nonkdim": 16,
+        "num_stages": 1,
+        "num_warps": 4,
+        "waves_per_eu": 1
+      }
+    },
+    "candidate": {
+      "args": [
+        {
+          "dtype": "uint8",
+          "shape": [
+            16,
+            2560
+          ],
+          "stride": [
+            2560,
+            1
+          ]
+        },
+        {
+          "dtype": "uint8",
+          "shape": [
+            17408,
+            2560
+          ],
+          "stride": [
+            2560,
+            1
+          ]
+        },
+        {
+          "dtype": "bfloat16",
+          "shape": [
+            16,
+            17408
+          ],
+          "stride": [
+            17408,
+            1
+          ]
+        },
+        {
+          "dtype": "uint8",
+          "shape": [
+            16,
+            160
+          ],
+          "stride": [
+            1,
+            16
+          ]
+        },
+        {
+          "dtype": "uint8",
+          "shape": [
+            17408,
+            160
+          ],
+          "stride": [
+            160,
+            1
+          ]
+        },
+        16,
+        17408,
+        2560,
+        2560,
+        1,
+        1,
+        2560,
+        0,
+        17408,
+        1,
+        1,
+        16,
+        160,
+        1
+      ],
+      "grid": [
+        272
+      ],
+      "kwargs": {
+        "BLOCK_SIZE_K": 128,
+        "BLOCK_SIZE_M": 16,
+        "BLOCK_SIZE_N": 64,
+        "GROUP_SIZE_M": 1,
+        "NUM_KSPLIT": 1,
+        "SPLITK_BLOCK_SIZE": 5120,
+        "cache_modifier": null,
+        "matrix_instr_nonkdim": 16,
+        "num_stages": 1,
+        "num_warps": 4,
+        "waves_per_eu": 0
+      }
+    }
+  },
+  "gate_up-m8": {
+    "baseline": {
+      "args": [
+        {
+          "dtype": "uint8",
+          "shape": [
+            8,
+            2560
+          ],
+          "stride": [
+            2560,
+            1
+          ]
+        },
+        {
+          "dtype": "uint8",
+          "shape": [
+            17408,
+            2560
+          ],
+          "stride": [
+            2560,
+            1
+          ]
+        },
+        {
+          "dtype": "bfloat16",
+          "shape": [
+            8,
+            17408
+          ],
+          "stride": [
+            17408,
+            1
+          ]
+        },
+        {
+          "dtype": "uint8",
+          "shape": [
+            8,
+            160
+          ],
+          "stride": [
+            1,
+            8
+          ]
+        },
+        {
+          "dtype": "uint8",
+          "shape": [
+            17408,
+            160
+          ],
+          "stride": [
+            160,
+            1
+          ]
+        },
+        8,
+        17408,
+        2560,
+        2560,
+        1,
+        1,
+        2560,
+        0,
+        17408,
+        1,
+        1,
+        8,
+        160,
+        1
+      ],
+      "grid": [
+        272
+      ],
+      "kwargs": {
+        "BLOCK_SIZE_K": 128,
+        "BLOCK_SIZE_M": 16,
+        "BLOCK_SIZE_N": 64,
+        "GROUP_SIZE_M": 1,
+        "NUM_KSPLIT": 1,
+        "SPLITK_BLOCK_SIZE": 5120,
+        "cache_modifier": null,
+        "matrix_instr_nonkdim": 16,
+        "num_stages": 1,
+        "num_warps": 4,
+        "waves_per_eu": 1
+      }
+    },
+    "candidate": {
+      "args": [
+        {
+          "dtype": "uint8",
+          "shape": [
+            8,
+            2560
+          ],
+          "stride": [
+            2560,
+            1
+          ]
+        },
+        {
+          "dtype": "uint8",
+          "shape": [
+            17408,
+            2560
+          ],
+          "stride": [
+            2560,
+            1
+          ]
+        },
+        {
+          "dtype": "bfloat16",
+          "shape": [
+            8,
+            17408
+          ],
+          "stride": [
+            17408,
+            1
+          ]
+        },
+        {
+          "dtype": "uint8",
+          "shape": [
+            8,
+            160
+          ],
+          "stride": [
+            1,
+            8
+          ]
+        },
+        {
+          "dtype": "uint8",
+          "shape": [
+            17408,
+            160
+          ],
+          "stride": [
+            160,
+            1
+          ]
+        },
+        8,
+        17408,
+        2560,
+        2560,
+        1,
+        1,
+        2560,
+        0,
+        17408,
+        1,
+        1,
+        8,
+        160,
+        1
+      ],
+      "grid": [
+        272
+      ],
+      "kwargs": {
+        "BLOCK_SIZE_K": 128,
+        "BLOCK_SIZE_M": 16,
+        "BLOCK_SIZE_N": 64,
+        "GROUP_SIZE_M": 1,
+        "NUM_KSPLIT": 1,
+        "SPLITK_BLOCK_SIZE": 5120,
+        "cache_modifier": null,
+        "matrix_instr_nonkdim": 16,
+        "num_stages": 1,
+        "num_warps": 4,
+        "waves_per_eu": 0
+      }
+    }
+  }
+}

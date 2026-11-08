@@ -61,13 +61,13 @@ git -C "$source_dir" add PKGBUILD config config.extra config.user remote patches
 git -C "$source_dir" -c user.name=Test -c user.email=test@example.invalid commit -qm initial
 git -C "$source_dir" remote add origin https://example.invalid/linux-git.git
 aur_commit="$(git -C "$source_dir" rev-parse HEAD)"
-kernel_commit=a90ee4305c4a5df72c11b31dacfdc76e00fcf78a
+kernel_commit=d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd
 cat >"$lock_file" <<EOF
 LINUX_GIT_AUR_REPOSITORY=https://example.invalid/linux-git.git
 LINUX_GIT_AUR_COMMIT=$aur_commit
-LINUX_GIT_SOURCE_REPOSITORY=torvalds/linux
-LINUX_GIT_SOURCE_TAG=v7.3-rc6
-LINUX_GIT_SOURCE_TAG_OBJECT=4eeccbed21e50c19f97be9d325511f3de6343f2d
+LINUX_GIT_SOURCE_REPOSITORY=stable/linux
+LINUX_GIT_SOURCE_TAG=v7.3.3
+LINUX_GIT_SOURCE_TAG_OBJECT=b7cb9f473aa648c37e68d08cb2f3c154f17f593c
 LINUX_GIT_SOURCE_COMMIT=$kernel_commit
 EOF
 
@@ -187,7 +187,7 @@ ws_kernel_stage_packaging "$source_dir" "$aur_commit" "$stage_dir" "$repo_root/t
   # shellcheck disable=SC1091
   source "$stage_dir/PKGBUILD"
   [[ $pkgrel == 3 && ${#backup[@]} == 3 ]]
-  [[ $pkgver == 7.3.rc6.r0.a90ee4305c4a.torvalds.linux ]]
+  [[ $pkgver == 7.3.3.r0.d50d994bffa3.stable.linux ]]
   _package-headers
   [[ ${#backup[@]} == 0 ]]
   for dependency in python python-cryptography perl sed make gawk; do
@@ -206,6 +206,27 @@ fi
 [[ ! -e $KERNEL_BUILD_LOG ]]
 rm -- "$chroot_dir/root/etc/linux-git/remote"
 
+# Stable patch releases must use the upstream stable tree. Unknown trees,
+# mainline patch tags and release candidates in the stable tree stay rejected.
+for invalid in 'unknown/linux v7.3.3' 'torvalds/linux v7.3.3' 'stable/linux v7.3-rc6'; do
+  read -r invalid_repo invalid_tag <<<"$invalid"
+  sed -e "s|^LINUX_GIT_SOURCE_REPOSITORY=.*|LINUX_GIT_SOURCE_REPOSITORY=$invalid_repo|" \
+    -e "s|^LINUX_GIT_SOURCE_TAG=.*|LINUX_GIT_SOURCE_TAG=$invalid_tag|" "$lock_file" >"$work/invalid.lock"
+  if (ws_kernel_build "$source_dir" "$chroot_dir" "$profile_dir" "$work/invalid-output" "$work/invalid.lock") >/dev/null 2>&1; then
+    printf 'kernel build accepted invalid source identity: %s\n' "$invalid" >&2
+    exit 1
+  fi
+  [[ ! -e $KERNEL_BUILD_LOG && ! -e $work/invalid-output ]]
+done
+
+for required_jobs in 48 invalid; do
+  if (KERNEL_BUILD_REQUIRED_JOBS=$required_jobs ws_kernel_build "$source_dir" "$chroot_dir" "$profile_dir" "$work/required-jobs-output" "$lock_file") >/dev/null 2>&1; then
+    printf 'kernel build accepted a required job count different from its measured seven jobs\n' >&2
+    exit 1
+  fi
+  [[ ! -e $KERNEL_BUILD_LOG && ! -e $work/required-jobs-output ]]
+done
+
 missing_output="$work/new-artifacts/missing-module"
 if (KERNEL_DROP_MODULE=amdgpu ws_kernel_build "$source_dir" "$chroot_dir" "$profile_dir" "$missing_output" "$lock_file") >/dev/null 2>&1; then
   printf 'kernel build accepted a package without the profiled amdgpu module\n' >&2
@@ -219,7 +240,7 @@ if (ws_kernel_module_inventory "$work/broken-inventory.txt" "$work/broken.pkg.ta
   exit 1
 fi
 
-CCACHE_DIR="$work/shared-ccache" ws_kernel_build "$source_dir" "$chroot_dir" "$profile_dir" "$output_dir" "$lock_file" >/dev/null
+KERNEL_BUILD_REQUIRED_JOBS=7 CCACHE_DIR="$work/shared-ccache" ws_kernel_build "$source_dir" "$chroot_dir" "$profile_dir" "$output_dir" "$lock_file" >/dev/null
 grep -Fxq 'MAKEFLAGS=-j7' "$KERNEL_BUILD_LOG"
 grep -Fxq 'NPROC=7' "$KERNEL_BUILD_LOG"
 grep -Fxq "ARGS=-c -n -r $chroot_dir -- --syncdeps" "$KERNEL_BUILD_LOG"
@@ -229,14 +250,17 @@ grep -Fxq 'RUSTFLAGS=unset' "$KERNEL_BUILD_LOG"
 grep -Fxq 'CCACHE_DIR=unset' "$KERNEL_BUILD_LOG"
 grep -Fq -- 'linux-git-headers-synthetic-x86_64.pkg.tar.zst' "$KERNEL_NAMCAP_LOG"
 grep -Fxq 'CONFIG_X86_NATIVE_CPU=y' "$output_dir/linux-git.effective.config"
+grep -Fxq 'CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y' "$output_dir/linux-git.effective.config"
 grep -Fq -- 'CONFIG_X86_NATIVE_CPU=y' "$output_dir/linux-git.config.delta"
 grep -Fxq 'gcc=15.1.0-1' "$output_dir/linux-git.chroot-toolchain.txt"
 grep -Fxq 'clang=absent-from-package-buildinfo' "$output_dir/linux-git.chroot-toolchain.txt"
 grep -Fxq 'installed = rust-1.90.0-1' "$output_dir/linux-git.headers.BUILDINFO"
 grep -Fxq 'W: synthetic warning retained for review' "$output_dir/linux-git.namcap.txt"
 grep -Fxq "AUR_COMMIT=$aur_commit" "$output_dir/linux-git.build-lock"
-grep -Fxq 'KERNEL_SOURCE_TAG=v7.3-rc6' "$output_dir/linux-git.build-lock"
-grep -Fxq 'KERNEL_SOURCE_TAG_OBJECT=4eeccbed21e50c19f97be9d325511f3de6343f2d' "$output_dir/linux-git.build-lock"
+grep -Fxq 'KERNEL_SOURCE_REPOSITORY=stable/linux' "$output_dir/linux-git.build-lock"
+grep -Fxq 'KERNEL_SOURCE_TAG=v7.3.3' "$output_dir/linux-git.build-lock"
+grep -Fxq 'KERNEL_SOURCE_TAG_OBJECT=b7cb9f473aa648c37e68d08cb2f3c154f17f593c' "$output_dir/linux-git.build-lock"
+grep -Fxq "KERNEL_SOURCE_COMMIT=$kernel_commit" "$output_dir/linux-git.build-lock"
 grep -Eq '^HARDWARE_POLICY_SHA256=[a-f0-9]{64}$' "$output_dir/linux-git.build-lock"
 grep -Eq '^PACKAGING_PATCH_SHA256=[a-f0-9]{64}$' "$output_dir/linux-git.build-lock"
 grep -Eq '^EFFECTIVE_PKGBUILD_SHA256=[a-f0-9]{64}$' "$output_dir/linux-git.build-lock"
@@ -260,6 +284,11 @@ fi
 sed '/^CONFIG_DMA_SHARED_BUFFER=/d' "$fixture_config" >"$work/missing-dmabuf.config"
 if (ws_kernel_validate_effective_config "$work/missing-dmabuf.config") >/dev/null 2>&1; then
   printf 'kernel without DMA buffer sharing passed the effective configuration gate\n' >&2
+  exit 1
+fi
+sed '/^CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=/d' "$fixture_config" >"$work/missing-optimization.config"
+if (ws_kernel_validate_effective_config "$work/missing-optimization.config") >/dev/null 2>&1; then
+  printf 'kernel without the reviewed performance optimization passed validation\n' >&2
   exit 1
 fi
 grep -Eq '^[a-f0-9]{64}  linux-git-headers-synthetic-x86_64\.pkg\.tar\.zst$' "$output_dir/linux-git.package-sha256"

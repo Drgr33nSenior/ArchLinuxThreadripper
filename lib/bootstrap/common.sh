@@ -184,3 +184,22 @@ bootstrap_render_template() {
     -e "s|@MD_UUID@|$MD_UUID|g" \
     "$template" >"$destination"
 }
+
+# Uncomment "<locale> UTF-8" in locale.gen. glibc entries can carry trailing
+# whitespace, so compare text rather than whole lines; fail if it is not listed.
+bootstrap_enable_locale() {
+  local file=$1 locale=$2 staged
+  staged=$(mktemp "$file.XXXXXX") || return 1
+  if ! awk -v wanted="$locale UTF-8" '
+    { text = $0; sub(/[[:space:]]+$/, "", text) }
+    text == "#" wanted { print wanted; found = 1; next }
+    text == wanted { found = 1 }
+    { print }
+    END { exit !found }
+  ' "$file" >"$staged"; then
+    rm -f -- "$staged"
+    bootstrap_die "locale is not listed in $file: $locale UTF-8"
+    return 1
+  fi
+  cat -- "$staged" >"$file" && rm -f -- "$staged"
+}

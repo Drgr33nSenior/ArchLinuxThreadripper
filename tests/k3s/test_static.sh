@@ -101,12 +101,18 @@ k3s_load_config "$config_file" "$repo_root/versions.lock"
 KWIN_DEBIAN_VERSION=invalid
 k3s_load_config "$config_file" "$repo_root/versions.lock"
 [ "$KWIN_DEBIAN_VERSION" = '4:6.3.6-1' ]
-[ "$K3S_VERSION" = 'v1.35.8+k3s1' ]
+[ "$K3S_VERSION" = 'v1.36.6+k3s1' ]
 [ "$K3S_SELINUX_RPM_VERSION" = '1.6-1.el9' ]
-[ "$LINUX_GIT_SOURCE_TAG" = 'v7.3-rc6' ]
-[ "$LINUX_GIT_SOURCE_TAG_OBJECT" = '4eeccbed21e50c19f97be9d325511f3de6343f2d' ]
+[ "$LINUX_GIT_SOURCE_TAG" = 'v7.3.3' ]
+[ "$LINUX_GIT_SOURCE_TAG_OBJECT" = 'b7cb9f473aa648c37e68d08cb2f3c154f17f593c' ]
 [ "$VM_VCPUS" = 8 ]
-for invalid in latest v7.3-rc0 7.3-rc6; do
+for valid in v7.3 v7.3-rc6 v7.3.3; do
+  (k3s_validate_value LINUX_GIT_SOURCE_TAG "$valid") >/dev/null 2>&1 || {
+    echo "valid kernel source tag was rejected: $valid" >&2
+    exit 1
+  }
+done
+for invalid in latest v7.3-rc0 7.3-rc6 v7.3.3-rc1 v7.3.3.1; do
   if (k3s_validate_value LINUX_GIT_SOURCE_TAG "$invalid") >/dev/null 2>&1; then
     echo 'invalid kernel source tag was accepted' >&2
     exit 1

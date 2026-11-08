@@ -21,17 +21,19 @@ exchange, backend, latency = op.exchange, op.backend, op.latency
 host, require = controller.host, op.require
 SECONDS = 7660
 KIND = "one-verify-prefetch-serving-ab"
+FOUR_KIND = 'one-four-member-serving-qualification-ab'
 
 
 def validate(plan, plan_ref, approval):
     """No writes, network or owner admission before explicit exact approval."""
-    require(plan.get("schema") == 1 and plan.get("kind") == KIND and plan.get("seconds") == SECONDS
+    kind=plan.get('kind')
+    require(plan.get("schema") == 1 and kind in (KIND,FOUR_KIND) and plan.get("seconds") == SECONDS
             and plan.get("automatic_retry") is False and plan.get("adoption_authorized") is False
             and plan.get("optimizer_start_authorized") is False, "one finite verification serving A/B plan required")
     op.checked_bytes(HERE / "verify_serving_run.py", plan["registrar_sha256"], 1 << 20)
     require(controller.source_closure(plan["controller_sources"]) == plan["binding"]["controller_sha256"],
             "owner seam source closure changed")
-    require(approval.get("schema") == 1 and approval.get("kind") == KIND
+    require(approval.get("schema") == 1 and approval.get("kind") == kind
             and approval.get("plan_sha256") == plan_ref["sha256"]
             and approval.get("runtime_sha256") == plan["binding"]["runtime_sha256"]
             and approval.get("owner_inputs_sha256") == plan["owner_inputs"]["sha256"]
@@ -47,10 +49,11 @@ def validate(plan, plan_ref, approval):
             "approval names another owner decision")
     op.checked_bytes(Path(decision["path"]), decision["sha256"], 1 << 20)
     inputs = controller.read(plan["owner_inputs"])
+    family='four_member' if kind==FOUR_KIND else verify.FAMILY
     require(inputs.get("frozen_packet") == dict(nonce=plan["nonce"], pins=plan["expected_package_pins"])
             and inputs.get("candidate_sha256") == verify.CANDIDATE_SHA
-            and inputs.get("source_family") == verify.FAMILY
-            and plan["binding"].get("serving_source_family") == verify.FAMILY
+            and inputs.get("source_family") == family
+            and plan["binding"].get("serving_source_family") == family
             and plan["binding"].get("verify_serving_sha256") == op._pin(HERE / "verify_serving.py")["sha256"],
             "reviewed frozen verification packet inputs differ")
     op._runtime_configuration(plan["binding"], inputs)
@@ -61,8 +64,25 @@ def validate(plan, plan_ref, approval):
                               (baseline, verify.BASELINE_SHA, plan["binding"]["selected_source_set_sha256"])):
         require(exchange.digest(exchange.canonical([dict(name=verify.FILE, bytes=len(raw), sha256=pin)])) == expected,
                 "baseline or candidate source-set identity differs")
-    require(plan["binding"].get("observed_power_cap_microwatts") == 300000000,
-            "both starts must retain the observed 300 W caps")
+    cap=235000000 if kind==FOUR_KIND else 300000000
+    require(plan["binding"].get("observed_power_cap_microwatts") == cap,
+            "both starts must retain their exact source-bound observed power caps")
+    if kind==FOUR_KIND:
+        # The primary source-set eligibility key remains the prefetch file.
+        # Every other member is bound by the full frozen package and this exact
+        # fixed-contract reference; no optimizer may supply or change those files.
+        require(set(plan['controller_sources'])==controller.BUNDLE_SOURCES,'complete fixed-bundle source closure')
+        op._serving_surface(plan['binding'])
+        outer=plan['outer_packet']
+        op.sealer().verify(Path(outer['root']),outer['manifest_sha256'])
+        review=plan['independent_review']
+        require(set(review)=={'path','sha256'}, 'one pinned independent review')
+        op.checked_bytes(Path(review['path']),review['sha256'],1<<20)
+        require(Path(plan['reference_preparation']['root']).is_relative_to(Path(outer['root'])),
+                'reference preparation must belong to the bound outer packet')
+        _,fixed=op._pinned(plan['binding']['four_member_contract'],'fixed four-member contract')
+        require(inputs['four_member']['compiler_pins']['sha256']==fixed['compiler_pins_sha256'],
+                'four-member compiler identity differs')
     require(op._pin(op.R2 / "CANDIDATE-POINTER.json")["sha256"] == plan["binding"]["selection_sha256"],
             "selected pointer changed")
     reference = plan["reference_preparation"]
@@ -101,7 +121,7 @@ def run(plan_ref, approval_ref, *, operation=op):
     bound = dict(plan["binding"], campaign_deadline_unix_ms=started + SECONDS * 1000)
     operation._bound(bound)
     root.mkdir(mode=0o700)
-    result = dict(schema=1, status="FAILED_PARKED", kind=KIND, plan=dict(plan_ref), approval=dict(approval_ref),
+    result = dict(schema=1, status="FAILED_PARKED", kind=plan['kind'], plan=dict(plan_ref), approval=dict(approval_ref),
         started_unix_ms=started, deadline_unix_ms=bound["campaign_deadline_unix_ms"],
         automatic_retry=False, adoption_authorized=False, optimizer_started=False,
         hyperloom_campaign_qualified=False, original_campaign_extended=False, gpu_owner_started=False)
@@ -142,7 +162,8 @@ def run(plan_ref, approval_ref, *, operation=op):
                 and outcome["grading_performed"] is True, "owner operation did not complete quality and release")
         result["comparison"] = ab_report(outcome, request, bound)
         require(int(time.time() * 1000) <= bound["campaign_deadline_unix_ms"], "standalone envelope expired")
-        result["status"] = "VERIFY_SERVING_MEASURED_PARKED"
+        result["status"] = ('FOUR_MEMBER_SERVING_MEASURED_PARKED' if plan['kind']==FOUR_KIND
+                            else "VERIFY_SERVING_MEASURED_PARKED")
     except Exception as error:
         result["reason"] = op._error(error)
     finally:
@@ -158,7 +179,7 @@ def main():
     args = parser.parse_args()
     result = run(dict(path=args.plan, sha256=args.plan_sha256), dict(path=args.approval, sha256=args.approval_sha256))
     print(json.dumps(result, sort_keys=True))
-    return 0 if result["status"] == "VERIFY_SERVING_MEASURED_PARKED" else 1
+    return 0 if result["status"] in ("VERIFY_SERVING_MEASURED_PARKED",'FOUR_MEMBER_SERVING_MEASURED_PARKED') else 1
 
 
 if __name__ == "__main__":

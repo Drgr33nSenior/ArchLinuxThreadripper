@@ -1,0 +1,656 @@
+{
+  "16": {
+    "candidate": {
+      "args": [
+        {
+          "dtype": "bfloat16",
+          "shape": [
+            384,
+            128
+          ],
+          "stride": [
+            128,
+            1
+          ]
+        },
+        {
+          "dtype": "uint8",
+          "shape": [
+            16,
+            1536
+          ],
+          "stride": [
+            1536,
+            1
+          ]
+        },
+        {
+          "dtype": "uint8",
+          "shape": [
+            16,
+            96
+          ],
+          "stride": [
+            1,
+            16
+          ]
+        },
+        16,
+        24,
+        {
+          "dtype": "bfloat16",
+          "shape": [
+            128
+          ],
+          "stride": [
+            1
+          ]
+        },
+        null,
+        {
+          "dtype": "bfloat16",
+          "shape": [
+            384,
+            128
+          ],
+          "stride": [
+            128,
+            1
+          ]
+        },
+        null,
+        {
+          "dtype": "float32",
+          "shape": [
+            384
+          ],
+          "stride": [
+            1
+          ]
+        },
+        128,
+        128,
+        128,
+        0,
+        0,
+        384,
+        128,
+        1e-06
+      ],
+      "grid": [
+        96,
+        1
+      ],
+      "kwargs": {
+        "ACTIVATION": "swish",
+        "BLOCK_N": 128,
+        "HAS_BIAS": false,
+        "HAS_Z": true,
+        "IS_RMS_NORM": true,
+        "NORM_BEFORE_GATE": true,
+        "ROWS_PER_BLOCK": 4,
+        "USE_GDC": false,
+        "Z_HEADS": 1,
+        "Z_IS_3D": false,
+        "num_warps": 1
+      }
+    },
+    "gemm": {
+      "args": [
+        {
+          "dtype": "uint8",
+          "shape": [
+            16,
+            1536
+          ],
+          "stride": [
+            1536,
+            1
+          ]
+        },
+        {
+          "dtype": "uint8",
+          "shape": [
+            5120,
+            1536
+          ],
+          "stride": [
+            1536,
+            1
+          ]
+        },
+        {
+          "dtype": "bfloat16",
+          "shape": [
+            16,
+            5120
+          ],
+          "stride": [
+            5120,
+            1
+          ]
+        },
+        {
+          "dtype": "uint8",
+          "shape": [
+            16,
+            96
+          ],
+          "stride": [
+            1,
+            16
+          ]
+        },
+        {
+          "dtype": "uint8",
+          "shape": [
+            5120,
+            96
+          ],
+          "stride": [
+            96,
+            1
+          ]
+        },
+        16,
+        5120,
+        1536,
+        1536,
+        1,
+        1,
+        1536,
+        0,
+        5120,
+        1,
+        1,
+        16,
+        96,
+        1
+      ],
+      "grid": [
+        80
+      ],
+      "kwargs": {
+        "BLOCK_SIZE_K": 128,
+        "BLOCK_SIZE_M": 16,
+        "BLOCK_SIZE_N": 64,
+        "GROUP_SIZE_M": 1,
+        "NUM_KSPLIT": 1,
+        "SPLITK_BLOCK_SIZE": 3072,
+        "cache_modifier": null,
+        "matrix_instr_nonkdim": 16,
+        "num_stages": 1,
+        "num_warps": 4,
+        "waves_per_eu": 1
+      }
+    },
+    "norm": {
+      "args": [
+        {
+          "dtype": "bfloat16",
+          "shape": [
+            384,
+            128
+          ],
+          "stride": [
+            128,
+            1
+          ]
+        },
+        {
+          "dtype": "bfloat16",
+          "shape": [
+            384,
+            128
+          ],
+          "stride": [
+            128,
+            1
+          ]
+        },
+        {
+          "dtype": "bfloat16",
+          "shape": [
+            128
+          ],
+          "stride": [
+            1
+          ]
+        },
+        null,
+        {
+          "dtype": "bfloat16",
+          "shape": [
+            384,
+            128
+          ],
+          "stride": [
+            128,
+            1
+          ]
+        },
+        null,
+        {
+          "dtype": "float32",
+          "shape": [
+            384
+          ],
+          "stride": [
+            1
+          ]
+        },
+        128,
+        128,
+        128,
+        0,
+        0,
+        384,
+        128,
+        1e-06
+      ],
+      "grid": [
+        96,
+        1
+      ],
+      "kwargs": {
+        "ACTIVATION": "swish",
+        "BLOCK_N": 128,
+        "HAS_BIAS": false,
+        "HAS_Z": true,
+        "IS_RMS_NORM": true,
+        "NORM_BEFORE_GATE": true,
+        "ROWS_PER_BLOCK": 4,
+        "Z_HEADS": 1,
+        "Z_IS_3D": false,
+        "num_warps": 1
+      }
+    },
+    "quantizer": {
+      "args": [
+        {
+          "dtype": "bfloat16",
+          "shape": [
+            16,
+            3072
+          ],
+          "stride": [
+            3072,
+            1
+          ]
+        },
+        {
+          "dtype": "uint8",
+          "shape": [
+            16,
+            1536
+          ],
+          "stride": [
+            1536,
+            1
+          ]
+        },
+        {
+          "dtype": "uint8",
+          "shape": [
+            16,
+            96
+          ],
+          "stride": [
+            1,
+            16
+          ]
+        },
+        3072,
+        1,
+        1536,
+        1,
+        1,
+        16
+      ],
+      "grid": [
+        1,
+        96
+      ],
+      "kwargs": {
+        "BLOCK_SIZE_M": 16,
+        "BLOCK_SIZE_N": 32,
+        "M": 16,
+        "MXFP4_QUANT_BLOCK_SIZE": 32,
+        "N": 3072,
+        "NUM_ITER": 1,
+        "NUM_STAGES": 1,
+        "SCALING_MODE": 0,
+        "num_stages": 1,
+        "num_warps": 1,
+        "waves_per_eu": 0
+      }
+    }
+  },
+  "8": {
+    "candidate": {
+      "args": [
+        {
+          "dtype": "bfloat16",
+          "shape": [
+            192,
+            128
+          ],
+          "stride": [
+            128,
+            1
+          ]
+        },
+        {
+          "dtype": "uint8",
+          "shape": [
+            8,
+            1536
+          ],
+          "stride": [
+            1536,
+            1
+          ]
+        },
+        {
+          "dtype": "uint8",
+          "shape": [
+            8,
+            96
+          ],
+          "stride": [
+            1,
+            8
+          ]
+        },
+        8,
+        24,
+        {
+          "dtype": "bfloat16",
+          "shape": [
+            128
+          ],
+          "stride": [
+            1
+          ]
+        },
+        null,
+        {
+          "dtype": "bfloat16",
+          "shape": [
+            192,
+            128
+          ],
+          "stride": [
+            128,
+            1
+          ]
+        },
+        null,
+        {
+          "dtype": "float32",
+          "shape": [
+            192
+          ],
+          "stride": [
+            1
+          ]
+        },
+        128,
+        128,
+        128,
+        0,
+        0,
+        192,
+        128,
+        1e-06
+      ],
+      "grid": [
+        48,
+        1
+      ],
+      "kwargs": {
+        "ACTIVATION": "swish",
+        "BLOCK_N": 128,
+        "HAS_BIAS": false,
+        "HAS_Z": true,
+        "IS_RMS_NORM": true,
+        "NORM_BEFORE_GATE": true,
+        "ROWS_PER_BLOCK": 4,
+        "USE_GDC": false,
+        "Z_HEADS": 1,
+        "Z_IS_3D": false,
+        "num_warps": 1
+      }
+    },
+    "gemm": {
+      "args": [
+        {
+          "dtype": "uint8",
+          "shape": [
+            8,
+            1536
+          ],
+          "stride": [
+            1536,
+            1
+          ]
+        },
+        {
+          "dtype": "uint8",
+          "shape": [
+            5120,
+            1536
+          ],
+          "stride": [
+            1536,
+            1
+          ]
+        },
+        {
+          "dtype": "bfloat16",
+          "shape": [
+            8,
+            5120
+          ],
+          "stride": [
+            5120,
+            1
+          ]
+        },
+        {
+          "dtype": "uint8",
+          "shape": [
+            8,
+            96
+          ],
+          "stride": [
+            1,
+            8
+          ]
+        },
+        {
+          "dtype": "uint8",
+          "shape": [
+            5120,
+            96
+          ],
+          "stride": [
+            96,
+            1
+          ]
+        },
+        8,
+        5120,
+        1536,
+        1536,
+        1,
+        1,
+        1536,
+        0,
+        5120,
+        1,
+        1,
+        8,
+        96,
+        1
+      ],
+      "grid": [
+        80
+      ],
+      "kwargs": {
+        "BLOCK_SIZE_K": 128,
+        "BLOCK_SIZE_M": 16,
+        "BLOCK_SIZE_N": 64,
+        "GROUP_SIZE_M": 1,
+        "NUM_KSPLIT": 1,
+        "SPLITK_BLOCK_SIZE": 3072,
+        "cache_modifier": null,
+        "matrix_instr_nonkdim": 16,
+        "num_stages": 1,
+        "num_warps": 4,
+        "waves_per_eu": 1
+      }
+    },
+    "norm": {
+      "args": [
+        {
+          "dtype": "bfloat16",
+          "shape": [
+            192,
+            128
+          ],
+          "stride": [
+            128,
+            1
+          ]
+        },
+        {
+          "dtype": "bfloat16",
+          "shape": [
+            192,
+            128
+          ],
+          "stride": [
+            128,
+            1
+          ]
+        },
+        {
+          "dtype": "bfloat16",
+          "shape": [
+            128
+          ],
+          "stride": [
+            1
+          ]
+        },
+        null,
+        {
+          "dtype": "bfloat16",
+          "shape": [
+            192,
+            128
+          ],
+          "stride": [
+            128,
+            1
+          ]
+        },
+        null,
+        {
+          "dtype": "float32",
+          "shape": [
+            192
+          ],
+          "stride": [
+            1
+          ]
+        },
+        128,
+        128,
+        128,
+        0,
+        0,
+        192,
+        128,
+        1e-06
+      ],
+      "grid": [
+        48,
+        1
+      ],
+      "kwargs": {
+        "ACTIVATION": "swish",
+        "BLOCK_N": 128,
+        "HAS_BIAS": false,
+        "HAS_Z": true,
+        "IS_RMS_NORM": true,
+        "NORM_BEFORE_GATE": true,
+        "ROWS_PER_BLOCK": 4,
+        "Z_HEADS": 1,
+        "Z_IS_3D": false,
+        "num_warps": 1
+      }
+    },
+    "quantizer": {
+      "args": [
+        {
+          "dtype": "bfloat16",
+          "shape": [
+            8,
+            3072
+          ],
+          "stride": [
+            3072,
+            1
+          ]
+        },
+        {
+          "dtype": "uint8",
+          "shape": [
+            8,
+            1536
+          ],
+          "stride": [
+            1536,
+            1
+          ]
+        },
+        {
+          "dtype": "uint8",
+          "shape": [
+            8,
+            96
+          ],
+          "stride": [
+            1,
+            8
+          ]
+        },
+        3072,
+        1,
+        1536,
+        1,
+        1,
+        8
+      ],
+      "grid": [
+        1,
+        96
+      ],
+      "kwargs": {
+        "BLOCK_SIZE_M": 8,
+        "BLOCK_SIZE_N": 32,
+        "M": 8,
+        "MXFP4_QUANT_BLOCK_SIZE": 32,
+        "N": 3072,
+        "NUM_ITER": 1,
+        "NUM_STAGES": 1,
+        "SCALING_MODE": 0,
+        "num_stages": 1,
+        "num_warps": 1,
+        "waves_per_eu": 0
+      }
+    }
+  }
+}

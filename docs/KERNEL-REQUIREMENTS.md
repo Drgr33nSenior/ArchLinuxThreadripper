@@ -27,10 +27,10 @@ they are now explicit requirements rather than incidental Arch defaults.
 Every loaded module is also required by the fresh profile's package closure.
 
 AMD also lists `CONFIG_DMABUF_MOVE_NOTIFY`. That historical switch does not
-exist in the pinned Linux 7.3-rc6 source. The
-[DMA-buffer Kconfig](https://github.com/torvalds/linux/blob/a90ee4305c4a5df72c11b31dacfdc76e00fcf78a/drivers/dma-buf/Kconfig)
+exist in the pinned Linux 7.3.3 source. The
+[DMA-buffer Kconfig](https://github.com/gregkh/linux/blob/d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd/drivers/dma-buf/Kconfig)
 has no such option, and amdgpu registers
-[`amdgpu_dma_buf_move_notify` as its `invalidate_mappings` callback](https://github.com/torvalds/linux/blob/a90ee4305c4a5df72c11b31dacfdc76e00fcf78a/drivers/gpu/drm/amd/amdgpu/amdgpu_dma_buf.c)
+[`amdgpu_dma_buf_move_notify` as its `invalidate_mappings` callback](https://github.com/gregkh/linux/blob/d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd/drivers/gpu/drm/amd/amdgpu/amdgpu_dma_buf.c)
 without that conditional. Require `CONFIG_DMA_SHARED_BUFFER=y`,
 `CONFIG_PCI_P2PDMA=y` and `CONFIG_HSA_AMD_P2P=y` in the effective configuration.
 The policy, build overlay and package gate enforce these available symbols.
@@ -74,7 +74,7 @@ unsupported access or promote numerical/performance results from an old boot.
 - [Kbuild inventory definitions](https://docs.kernel.org/kbuild/kbuild.html): use both packaged modules and `modules.builtin` when validating coverage.
 - [K3s requirements](https://docs.k3s.io/installation/requirements): runtime configuration checks complement, but do not replace, the project's workload and network-policy tests.
 
-The retained deployed Linux source at
-`a90ee4305c4a5df72c11b31dacfdc76e00fcf78a` and the package's effective `.config`
+The selected Linux 7.3.3 source at
+`d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd` and the package's effective `.config`
 resolve actual symbol names. Rolling documentation is not a reason to introduce
 unknown options or unrelated upgrades.
