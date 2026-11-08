@@ -147,6 +147,10 @@ bash -c 'here=$1; metrics_dir=$2; stage=sglang
   track /dev/null; false' _ "$dir" "$metrics" && fail 'trap fixture should fail'
 grep -q '^workstation_ai_stack_stage_last_result{stage="sglang"} 0$' "$metrics/ai-stack.prom" || fail 'trap did not record failure'
 
+# The ROCm build compiles only for the GPU target, including RCCL and tests.
+for list in THEROCK_AMDGPU_TARGETS THEROCK_DIST_AMDGPU_TARGETS THEROCK_TEST_AMDGPU_TARGETS; do
+  grep -Fq -- "-D$list=\"\$GPU_TARGET\"" "$dir/rocm/build.sh" || fail "ROCm build does not limit $list to the GPU target"
+done
 # The ROCm build bounds sub-build, Flang, link and background parallelism.
 for setting in 'CMAKE_BUILD_PARALLEL_LEVEL=' '-DTHEROCK_BACKGROUND_BUILD_JOBS=1' '-DFLANG_PARALLEL_COMPILE_JOBS=' '-DLLVM_PARALLEL_LINK_JOBS=2'; do
   grep -Fq -- "$setting" "$dir/rocm/build.sh" || fail "ROCm build does not bound parallelism: $setting"

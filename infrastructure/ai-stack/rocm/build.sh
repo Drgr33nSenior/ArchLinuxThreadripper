@@ -38,9 +38,12 @@ eval "$(python3 build_tools/setup_ccache.py --dir /work/ccache)"
 # not compiler flags, so an interrupted build resumes from its objects.
 export CMAKE_BUILD_PARALLEL_LEVEL=$((JOBS / 2 > 0 ? JOBS / 2 : 1))
 flang_jobs=$((JOBS / 4 > 0 ? JOBS / 4 : 1))
+# Every target list names the one GPU. An empty test list means every target
+# TheRock knows (25 on 2026-11-08); RCCL and the test components build with it.
 cmake -B "$build" -GNinja . \
   -DTHEROCK_AMDGPU_TARGETS="$GPU_TARGET" \
   -DTHEROCK_DIST_AMDGPU_TARGETS="$GPU_TARGET" \
+  -DTHEROCK_TEST_AMDGPU_TARGETS="$GPU_TARGET" \
   -DTHEROCK_BACKGROUND_BUILD_JOBS=1 \
   -DFLANG_PARALLEL_COMPILE_JOBS="$flang_jobs" \
   -DLLVM_PARALLEL_LINK_JOBS=2 \
