@@ -41,10 +41,14 @@ if bash "$dir/patchset-hash.sh" "$work/empty" 2>/dev/null; then fail 'empty seri
 # The runtime image installs only the resolved wheelhouse, offline, and checks it.
 grep -Fq -- '--no-index --find-links /wheelhouse /wheelhouse/*.whl' "$dir/image/Containerfile" || fail 'runtime install is not offline'
 grep -Fq 'pip check' "$dir/image/Containerfile" || fail 'runtime install is not dependency-checked'
-grep -Fq 'install -y --no-install-recommends libgomp1 libatomic1' "$dir/image/Containerfile" ||
-  fail 'runtime image lacks the GCC runtime libraries torch needs'
-grep -Fq 'import torch, sgl_kernel, xgrammar, sglang.srt.server_args' "$dir/build-stage.sh" ||
-  fail 'image stage does not check imports before pushing'
+grep -Fq 'install -y --no-install-recommends libgomp1 libatomic1 gcc libc6-dev' "$dir/image/Containerfile" ||
+  fail 'runtime image lacks the GCC runtime libraries or the C compiler Triton needs'
+# shellcheck disable=SC2016 # literal text in build-stage.sh
+grep -Fq -- '-v "$here/image/smoke.py:/smoke.py:ro"' "$dir/build-stage.sh" ||
+  fail 'image stage does not run the GPU smoke test before pushing'
+grep -Fq -- '--device /dev/kfd --device /dev/dri' "$dir/build-stage.sh" || fail 'image smoke test runs without GPUs'
+grep -Fq '_use_gfx1201_mxfp4' "$dir/image/smoke.py" || fail 'image smoke test does not check the gfx1201 MXFP4 route'
+python3 -I -m py_compile "$dir/image/smoke.py" || fail 'image smoke test does not compile'
 grep -Eq '^GPU_TARGET=gfx[0-9a-f]+$' "$lock" || fail 'GPU target'
 grep -Eq '^PYTHON_ABI=cp[0-9]+-cp[0-9]+t?$' "$lock" || fail 'Python ABI'
 
