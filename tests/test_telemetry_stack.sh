@@ -124,7 +124,10 @@ check(psu_panels[3]['targets'][0]['expr'].include?('energy_covered_seconds_total
 %w[prometheus.yaml alerts.yaml loki.yaml tempo.yaml datasources.yaml datasources.metrics.yaml dashboards.yaml].each do |name|
   YAML.load_file("#{root}/config/#{name}")
 end
-check(JSON.parse(File.read("#{root}/versions.json"))['deferred_amd_exporter']['status'] == 'deferred-not-deployed', 'AMD qualification silently promoted')
+amd = JSON.parse(File.read("#{root}/versions.json"))['amd_exporter']
+check(amd['status'] == 'deployed-by-gpu-operator' && amd['image'].match?(/@sha256:[a-f0-9]{64}\z/), 'AMD exporter record is not a pinned operator deployment')
+device_config = YAML.load_stream(File.read("#{root}/../gpu-operator/deviceconfig.yaml")).first
+check(device_config['spec']['metricsExporter']['image'] == amd['image'], 'DeviceConfig and versions.json pin different AMD exporters')
 host = File.read("#{root}/host/config.alloy")
 check(host.include?('matches = "SYSLOG_IDENTIFIER=workstation-install"'), 'unbounded journal collection')
 check(host.include?('stage.static_labels'), 'journal source overwrites job before schema filtering')

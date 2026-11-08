@@ -30,6 +30,36 @@ spec:
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
+metadata: {name: alloy-to-amd-gpu-exporter-5000, namespace: workstation-observability}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: alloy}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kube-amd-gpu}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: metrics-exporter}
+      ports: [{protocol: TCP, port: 5000}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: alloy-to-gateway-4000, namespace: workstation-observability}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: alloy}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: ai-home-lab}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: litellm}
+      ports: [{protocol: TCP, port: 4000}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
 metadata: {name: default-deny, namespace: workstation-observability}
 spec:
   podSelector: {}

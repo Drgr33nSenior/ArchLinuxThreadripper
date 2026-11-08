@@ -21,8 +21,18 @@ spec:
     kubeletSocketPath: /var/lib/kubelet/device-plugins
   draDriver:
     enable: false
+  # AMD device metrics exporter: power, temperatures, clocks, activity, VRAM
+  # and PCIe for each R9700, readable while the card is runtime-suspended.
+  # Its health service and ECC fields stay off: ECC (GECC) is disabled on these
+  # cards, and the kernel command line sets amdgpu.ras_enable=0 so no counters
+  # report bogus "uncorrectable" errors that would mark the GPUs unschedulable.
   metricsExporter:
-    enable: false
+    enable: true
+    image: docker.io/rocm/device-metrics-exporter:v1.5.3@sha256:bdfc644bb8d4d07d9a0c31dda3e0d463101f48170548c5a7e7f7066c253fa813
+    serviceType: ClusterIP
+    port: 5000
+    config:
+      name: amd-metrics-exporter-config
   testRunner:
     enable: false
   configManager:
@@ -33,3 +43,64 @@ spec:
     initContainerImage: docker.io/library/busybox:1.37.0@sha256:9db7b59979c38555a39def84a31fb98b5296952f9e3afd4f6f11f05b07adfab0
     utilsContainer:
       image: docker.io/rocm/gpu-operator-utils@sha256:55e5340839f16661cb818fd67e26bdfa581718ac29929368d50920a7ad3a1e68
+---
+# Exporter configuration referenced by the DeviceConfig above.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: amd-metrics-exporter-config
+  namespace: kube-amd-gpu
+data:
+  config.json: |
+    {
+      "ServerPort": 5000,
+      "CommonConfig": {
+        "MetricsFieldPrefix": "",
+        "HealthService": {
+          "Enable": false
+        },
+        "Logging": {
+          "Level": "info",
+          "MaxFileSizeMB": 10,
+          "MaxBackups": 3,
+          "MaxAgeDays": 7
+        }
+      },
+      "GPUConfig": {
+        "Labels": [
+          "GPU_ID",
+          "GPU_UUID",
+          "SERIAL_NUMBER",
+          "CARD_MODEL",
+          "HOSTNAME"
+        ],
+        "Fields": [
+          "GPU_NODES_TOTAL",
+          "GPU_AVERAGE_PACKAGE_POWER",
+          "GPU_EDGE_TEMPERATURE",
+          "GPU_JUNCTION_TEMPERATURE",
+          "GPU_MEMORY_TEMPERATURE",
+          "GPU_CLOCK",
+          "GPU_MAX_CLOCK",
+          "GPU_MIN_CLOCK",
+          "GPU_GFX_ACTIVITY",
+          "GPU_UMC_ACTIVITY",
+          "GPU_MMA_ACTIVITY",
+          "GPU_VCN_ACTIVITY",
+          "GPU_TOTAL_VRAM",
+          "GPU_USED_VRAM",
+          "GPU_FREE_VRAM",
+          "GPU_TOTAL_VISIBLE_VRAM",
+          "GPU_USED_VISIBLE_VRAM",
+          "GPU_FREE_VISIBLE_VRAM",
+          "GPU_TOTAL_GTT",
+          "GPU_USED_GTT",
+          "GPU_FREE_GTT",
+          "GPU_VOLTAGE",
+          "GPU_GFX_VOLTAGE",
+          "GPU_MEMORY_VOLTAGE",
+          "PCIE_SPEED",
+          "PCIE_MAX_SPEED"
+        ]
+      }
+    }

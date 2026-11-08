@@ -81,13 +81,18 @@ does not provide an individual span-link transform context. The collector
 therefore supports the fail-closed rule that drops spans with links. The local
 fixture checks the selected pinned image behavior with synthetic data only.
 
-Do not infer exporter support from similar R9700/R9700S names. The
-`deferred_amd_exporter` entry in `versions.json` records the reviewed artifact,
-its older AMD-SMI/profiler inputs and the chart's broad device privileges.
-`TELEMETRY_GPU_EXPORTER=true` therefore fails explicitly. The sysfs sampler
-does not need it and does not claim unsupported counters. A future candidate
-needs an available immutable image, actual R9700 driver/API checks, minimal
-device access and measured overhead.
+The GPU Operator deploys AMD's device metrics exporter (v1.5.3, AMD-SMI from
+TheRock 10.0) from `infrastructure/gpu-operator/deviceconfig.yaml`; the
+`amd_exporter` entry in `versions.json` records the same pinned image. It was
+qualified on both R9700s on 2026-11-08. It reads power, temperatures, clocks,
+activity, VRAM, voltages and PCIe speed, including while a card is
+runtime-suspended, which the sysfs sampler cannot. Its health service and ECC
+fields stay disabled, and the kernel command line keeps `amdgpu.ras_enable=0`:
+with GECC off, the RAS counters return bogus uncorrectable-error counts that the
+exporter's health check turns into unschedulable GPUs. Alloy scrapes it as the
+`amd-gpu` job. `TELEMETRY_GPU_EXPORTER` stays `false`, because the telemetry
+render does not deploy a second exporter. Its idle power overhead is not yet
+measured.
 
 The exact locked AMD image source supports
 `--enable-metrics`, and optionally `--enable-trace --trace-modules request

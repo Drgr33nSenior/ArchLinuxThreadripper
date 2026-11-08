@@ -165,6 +165,9 @@ infrastructure/observability/host/config.metrics.alloy
 infrastructure/observability/kubelet/access.yaml
 infrastructure/observability/kubelet/config.alloy
 infrastructure/observability/kubelet/kustomization.yaml
+infrastructure/observability/ebpf/collector.yaml
+infrastructure/observability/ebpf/config.alloy
+infrastructure/observability/ebpf/kustomization.yaml
 infrastructure/observability/kustomization.yaml
 infrastructure/observability/namespaces.yaml
 infrastructure/observability/network-policy.yaml

@@ -71,13 +71,14 @@
     "Single workstation loses telemetry availability when the machine or K3s is down.",
     "Prometheus rules are available in its UI; external notification routing remains owner-configured."
   ],
-  "deferred_amd_exporter": {
-    "version": "1.5.1",
-    "image": "docker.io/rocm/device-metrics-exporter:v1.5.1@sha256:cbef5772c435d648ebd6de705517c4978efdb4b5650952c6797cc2bf15af747a",
-    "source": "https://github.com/ROCm/device-metrics-exporter/blob/v1.5.1/assets/version.yaml",
-    "schema_source": "https://github.com/ROCm/device-metrics-exporter/blob/v1.5.1/example/config-gpu.json",
-    "status": "deferred-not-deployed",
-    "reason": "Source asset manifest selects AMD-SMI7.13.0 and profiler7.13; R9700/ROCm10 qualification missing. Official chart requires privileged full /dev access. Claimed1.5.2 release was not found in GitHub or Docker registry on review date. Do not infer support from R9700S name or fabricate unavailable counters."
+  "amd_exporter": {
+    "version": "1.5.3",
+    "image": "docker.io/rocm/device-metrics-exporter:v1.5.3@sha256:bdfc644bb8d4d07d9a0c31dda3e0d463101f48170548c5a7e7f7066c253fa813",
+    "source": "https://github.com/ROCm/device-metrics-exporter/blob/v1.5.3/assets/version.yaml",
+    "schema_source": "https://github.com/ROCm/device-metrics-exporter/blob/v1.5.3/example/config-gpu.json",
+    "status": "deployed-by-gpu-operator",
+    "qualified": "2026-11-08 on 2x Radeon AI PRO R9700: AMD-SMI from TheRock 10.0; power, temperature, clock, activity, VRAM, voltage and PCIe fields read, including while runtime-suspended",
+    "constraints": "Deployed by infrastructure/gpu-operator/deviceconfig.yaml with the health service and ECC fields disabled. Requires amdgpu.ras_enable=0: with GECC off, RAS counters return bogus uncorrectable errors that mark the GPUs unhealthy and unschedulable. Idle power overhead not yet measured."
   },
   "primary_configuration_sources": [
     "https://grafana.com/docs/alloy/latest/reference/components/otelcol/otelcol.processor.transform/",

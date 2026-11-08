@@ -1,0 +1,116 @@
+// Host-wide eBPF collector (optional ebpf component). It runs privileged in
+// the host PID namespace and sends directly to the NAS telemetry receiver.
+// It exports RED metrics for ai-home-lab services and CPU profiles of host
+// processes. It does not export traces, request payloads, command lines or
+// working directories. The renderer replaces nas-receiver.invalid.
+logging {
+  level = "warn"
+  format = "json"
+}
+
+// HTTP/gRPC/SQL/Redis request rate, errors and duration for ai-home-lab pods.
+// GenAI payload extraction stays disabled: it can read prompt content.
+beyla.ebpf "services" {
+  attributes {
+    kubernetes {
+      enable = "true"
+    }
+  }
+  discovery {
+    instrument {
+      kubernetes {
+        namespace = "ai-home-lab"
+      }
+      exports = ["metrics"]
+    }
+  }
+  routes {
+    // Collapse identifiers in paths so routes stay low-cardinality.
+    unmatched = "heuristic"
+  }
+  metrics {
+    features = ["application"]
+    instrumentations = ["http", "grpc", "sql", "redis"]
+  }
+  output { }
+}
+
+prometheus.scrape "beyla" {
+  targets = beyla.ebpf.services.targets
+  honor_labels = true
+  scrape_interval = "30s"
+  scrape_timeout = "10s"
+  sample_limit = 20000
+  label_limit = 40
+  label_value_length_limit = 256
+  forward_to = [prometheus.relabel.ebpf.receiver]
+}
+
+prometheus.scrape "self" {
+  targets = [{"__address__" = "127.0.0.1:12346", "job" = "alloy-ebpf"}]
+  scrape_interval = "30s"
+  scrape_timeout = "10s"
+  sample_limit = 12000
+  forward_to = [prometheus.relabel.ebpf.receiver]
+}
+
+prometheus.relabel "ebpf" {
+  // Per-pod identities churn on every restart; the pod and service names remain.
+  rule {
+    action = "labeldrop"
+    regex = "(k8s_pod_uid|k8s_pod_start_time|request_id|session_id|user_id|prompt|completion|token|authorization|cookie)"
+  }
+  forward_to = [prometheus.remote_write.nas.receiver]
+}
+
+prometheus.remote_write "nas" {
+  endpoint {
+    url = "http://nas-receiver.invalid:8080/api/v1/write"
+    queue_config {
+      capacity = 2500
+      max_shards = 2
+      max_samples_per_send = 500
+      batch_send_deadline = "5s"
+    }
+  }
+  wal {
+    truncate_frequency = "15m"
+    min_keepalive_time = "5m"
+    max_keepalive_time = "2h"
+  }
+}
+
+// Continuous CPU profiles of every host process, including builds. Only the
+// executable's base name becomes the service name.
+discovery.process "host" {
+  refresh_interval = "60s"
+}
+
+discovery.relabel "profiles" {
+  targets = discovery.process.host.targets
+  rule {
+    action = "replace"
+    source_labels = ["__meta_process_exe"]
+    regex = ".*/([^/]+)$"
+    target_label = "service_name"
+    replacement = "host/$1"
+  }
+  rule {
+    action = "keep"
+    source_labels = ["service_name"]
+    regex = "host/.+"
+  }
+}
+
+pyroscope.ebpf "host" {
+  targets = discovery.relabel.profiles.output
+  forward_to = [pyroscope.write.nas.receiver]
+  collect_interval = "15s"
+  demangle = "simplified"
+}
+
+pyroscope.write "nas" {
+  endpoint {
+    url = "http://nas-receiver.invalid:8080"
+  }
+}

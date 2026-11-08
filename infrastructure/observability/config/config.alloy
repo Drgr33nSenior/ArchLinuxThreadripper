@@ -16,6 +16,10 @@ prometheus.scrape "workstation" {
     {"__address__" = "grafana:3000", "job" = "grafana"},
     {"__address__" = "127.0.0.1:12345", "job" = "alloy"},
     {"__address__" = "sglang.ai-home-lab.svc:30000", "job" = "sglang"},
+    // AMD device metrics exporter, deployed by the GPU Operator DeviceConfig.
+    {"__address__" = "ai-home-lab-metrics-exporter.kube-amd-gpu.svc:5000", "job" = "amd-gpu"},
+    // Fixed-label gateway boundary metrics (phase, active requests, results).
+    {"__address__" = "litellm.ai-home-lab.svc:4000", "__metrics_path__" = "/_service/metrics", "job" = "gateway"},
   ]
   scrape_interval = "30s"
   scrape_timeout = "10s"

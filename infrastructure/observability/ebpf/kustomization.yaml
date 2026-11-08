@@ -1,0 +1,23 @@
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+# Optional. Selected by TELEMETRY_EBPF=true; requires TELEMETRY_NAS_RECEIVER,
+# because profiles go to the NAS Pyroscope.
+resources:
+  - collector.yaml
+configMapGenerator:
+  - name: alloy-ebpf-config
+    namespace: workstation-observability-host
+    files: [config.alloy]
+patches:
+  # Room for the collector beside node-exporter in the host namespace.
+  - target:
+      kind: ResourceQuota
+      name: host-collector-budget
+      namespace: workstation-observability-host
+    patch: |-
+      - op: replace
+        path: /spec/hard/limits.memory
+        value: 1536Mi
+      - op: replace
+        path: /spec/hard/pods
+        value: '3'

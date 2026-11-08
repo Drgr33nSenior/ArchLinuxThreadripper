@@ -15,15 +15,65 @@ For installation and collector internals, use the
 [configuration reference](TELEMETRY-REFERENCE.md). All paths below refer to a
 reviewed checkout unless they explicitly name an installed runtime.
 
-The commissioned workstation now sends telemetry to the MicroServer. Its local
-Grafana, Prometheus, Loki and Tempo replicas were retired after NAS readback;
-their five PVCs retain local history. Use the private NAS HTTPS address for
-Grafana. The port-forward below applies to installations with a local backend.
-Before rebuilding this workstation, preserve the qualified collector
-destinations and retired replica counts. The generic local-stack renderer does
-not encode that private cutover and must not be applied unchanged. See the NAS
-repository's `docs/WORKSTATION-TELEMETRY.md` and `docs/READINESS.md` for acceptance
-and remaining storage work.
+The workstation sends telemetry to the MicroServer, which runs Grafana,
+Prometheus, Loki and Tempo. Use the private NAS HTTPS address for Grafana. The
+port-forward below applies only to installations with local backends. See the
+NAS repository's `docs/WORKSTATION-TELEMETRY.md` for the receiver.
+
+## Send telemetry to the NAS
+
+Set `TELEMETRY_NAS_RECEIVER=microserver.lan.thespry.family` in the private
+`workstation.conf`. The render then keeps only Alloy, kube-state-metrics and
+node-exporter. Alloy sends metrics, logs and traces to the receiver on TCP 8080
+and scrapes the NAS backends' self-metrics through it, so dashboards keep their
+job labels. Collector configurations use the DNS name. The name is resolved
+once at render time, because the collector's egress NetworkPolicy can only
+match addresses; `evidence.json` records the resolved address. Re-render if
+the NAS address changes.
+
+The receiver admits one workstation source address
+(`microserver_telemetry_client_address` in the NAS profile). Confirm that this
+host reaches it from that address before applying:
+
+```sh
+curl -fsS -o /dev/null -w '%{http_code}\n' http://microserver.lan.thespry.family:8080/ready
+```
+
+The owner applies the render and starts the host collector:
+
+```sh
+workstationctl --config /private/workstation.conf telemetry render ./telemetry-nas
+workstationctl telemetry verify ./telemetry-nas
+kubectl apply -f ./telemetry-nas/stack.yaml
+kubectl -n workstation-observability rollout status deployment/alloy --timeout=300s
+```
+
+The render also writes `host.alloy`, already pointed at the receiver. Replace
+its one remaining placeholder, `192.0.2.4`, with the cluster Alloy Service
+ClusterIP (`kubectl -n workstation-observability get svc alloy`); the host
+resolver cannot resolve cluster Service names. Then install it as
+`/etc/workstation-telemetry/host.alloy` and start the collectors as described in
+[Host forwarding and Bridge access](TELEMETRY-REFERENCE.md#host-forwarding-and-bridge-access).
+No Grafana credentials are created on the workstation in this mode.
+
+## Host-wide eBPF collector
+
+With the NAS receiver set, `TELEMETRY_EBPF=true` adds the `alloy-ebpf`
+DaemonSet in `workstation-observability-host`. It runs privileged with the
+host PID and network namespaces, by owner decision for this lab, and sends
+directly to the NAS receiver:
+
+- **Request metrics (Beyla).** Request rate, errors and duration for every
+  HTTP, gRPC, SQL and Redis service in `ai-home-lab`, measured in the kernel
+  without application changes. Routes are grouped heuristically; URL paths,
+  client addresses, payloads and GenAI content are not collected, and no
+  traces are exported.
+- **Continuous CPU profiles (Pyroscope).** Every host process, including the
+  AI-stack builds, labelled only by executable name (`host/<exe>`). Command
+  lines and working directories are not exported.
+
+Profiles need the NAS Pyroscope backend (the receiver's profiles component).
+The collector's own health uses the `alloy-ebpf` job.
 
 ## Open Grafana
 
@@ -52,9 +102,9 @@ these views and preserve the selected time range and matching filters:
 | Overview | Does the workstation have headroom? | CPU, available RAM, root filesystem, PSU DC power, serving availability, alerts and separate GPU bars |
 | Kubernetes cluster | Is K3s ready to run work? | Node readiness/pressure, active Pod counts, deployment desired/available replicas, regular-container requests versus node allocatable, GPU requests and PVC state/capacity |
 | Kubernetes Pods | Why is a Pod waiting, restarting or slow? | Namespace, Pod and phase filters; readiness, unschedulable/waiting reasons, last termination, restarts, actual CPU/memory, budgets and throttling |
-| GPUs | What is happening on each card? | PCI-address filter; VRAM capacity, activity, temperature channels, reported power, clocks, link width and sensor availability |
-| Host & storage | Is CPU, RAM or storage limiting work? | CPU and memory trends, pressure stalls, filesystem capacity, block-device I/O filter, CPU/NVMe temperatures, reported CPU frequency and exposed ECC counters |
-| Workloads | Are requests waiting, and what resources do containers use? | Serving queue, KV token-pool usage, generation rate, TTFT/inter-token latency, namespace filter, actual container memory/CPU, budgets, throttling and restarts |
+| GPUs | What is happening on each card? | PCI-address filter; runtime power state (active or suspended), VRAM capacity, activity, temperature channels, reported power, clocks, link width and sensor availability |
+| Host & storage | Is CPU, RAM or storage limiting work? | Continuous CPU flame graph of host processes (eBPF), CPU and memory trends, pressure stalls, filesystem capacity, block-device I/O filter, CPU/NVMe temperatures, reported CPU frequency and exposed ECC counters |
+| Workloads | Are requests waiting, and what resources do containers use? | Gateway phase, active requests and results; eBPF request rate and p95 duration per service; AI-stack build stage state, duration and compiler-cache hit ratio; serving queue, KV token-pool usage, generation rate, TTFT/inter-token latency, speculative acceptance, prefix-cache hit rate, p95 end-to-end and queue latency, retracted/aborted requests, namespace filter, actual container memory/CPU, budgets, throttling and restarts |
 | Power & energy | How do power, heat, energy and electricity costs change together? | PSU DC power/rail history, GPU power/temperature, cumulative energy and coverage; collapsible Electricity costs section with current cost/hour, projections, selected-window estimates, separate household standing charge and API/cache/manual status |
 | Monitoring health | Can these observations be trusted? | Scrape targets, alerts, sample age, collector failures and filtered installation/kernel logs; Explore links for logs and traces |
 
@@ -64,7 +114,9 @@ PCI address, rather than an index that can change. The dashboards refresh every
 
 An empty panel means missing observations or a stopped workload, not measured
 zero. A GPU can expose VRAM and identity while other channels are unavailable;
-check **Available sensor channels** before interpreting an empty chart. An
+check **Available sensor channels** before interpreting an empty chart.
+The **Runtime power state** panel reads the kernel's runtime PM state without
+waking the card; **Suspended (idle)** explains empty activity and power panels. An
 idle card can be runtime-suspended: this host's driver then returns EBUSY for
 activity, clock, temperature and power reads while identity and VRAM remain
 readable. The GPU dashboard's **Activity / clock sensor availability** row

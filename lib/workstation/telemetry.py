@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -21,6 +22,13 @@ from model_kernels import image_contract, validate_profile_contract
 FILES = ("stack.yaml", "workloads.yaml", "evidence.json")
 PROFILES = ("full", "metrics")
 METRICS_ONLY_COMPONENTS = {"loki", "tempo"}
+# Backends that a NAS receiver replaces; collectors stay on the workstation.
+BACKENDS = ("prometheus", "loki", "tempo", "grafana")
+BACKEND_PORTS = {"prometheus": 9090, "loki": 3100, "tempo": 3200, "grafana": 3000}
+BACKEND_CONFIG_MAPS = ("grafana-", "prometheus-config-", "loki-config-", "tempo-config-", "workstation-dashboard-")
+RECEIVER_PORT = 8080
+HOST_CONFIG = "host.alloy"
+RECEIVER_PLACEHOLDER = "nas-receiver.invalid"
 PRIVATE_NETS = tuple(ipaddress.ip_network(n) for n in (
     "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7"
 ))
@@ -50,6 +58,99 @@ def private_address(value):
     require(any(address in net for net in PRIVATE_NETS if net.version == address.version),
             "select actual private numeric API/node addresses, not public, loopback or example addresses")
     return f"{address}/{address.max_prefixlen}"
+
+
+def resolve_receiver(name):
+    """Resolve the NAS receiver's DNS name to the private IPv4 addresses that the
+    egress NetworkPolicy needs; collector configurations keep using the name."""
+    require(re.fullmatch(r"(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}", name or ""),
+            "TELEMETRY_NAS_RECEIVER must be a DNS name")
+    try:
+        found = socket.getaddrinfo(name, RECEIVER_PORT, socket.AF_INET, socket.SOCK_STREAM)
+    except OSError:
+        raise InvalidTelemetry("TELEMETRY_NAS_RECEIVER does not resolve") from None
+    addresses = sorted({entry[4][0] for entry in found})
+    require(addresses, "TELEMETRY_NAS_RECEIVER does not resolve")
+    return [private_address(address) for address in addresses]
+
+
+def replace_once(text, old, new):
+    require(text.count(old) == 1, "reviewed collector configuration changed; NAS rewrite refused")
+    return text.replace(old, new, 1)
+
+
+def configure_nas(stage, profile, receiver):
+    """Point the cluster collector at the NAS receiver before Kustomize hashes it.
+
+    Mirrors the qualified 5 November cutover: remote write, logs and traces go to
+    the receiver, and backend self-metrics are scraped through its fixed paths.
+    """
+    base = f"http://{receiver}:{RECEIVER_PORT}"
+    config = stage / "config" / "config.alloy"
+    text = config.read_text()
+    present = BACKENDS if profile == "full" else ("prometheus", "grafana")
+    for name in present:
+        text = replace_once(text,
+            '{"__address__" = "' + f'{name}:{BACKEND_PORTS[name]}' + '", "job" = "' + name + '"}',
+            '{"__address__" = "' + f'{receiver}:{RECEIVER_PORT}' + '", "__metrics_path__" = "/metrics/' + name +
+            '", "job" = "' + name + '"}')
+    text = replace_once(text, "http://prometheus:9090/api/v1/write", f"{base}/api/v1/write")
+    if profile == "full":
+        text = replace_once(text, "http://loki:3100/otlp", f"{base}/otlp")
+        text = replace_once(text, "traces = [otelcol.exporter.otlp.tempo.input]",
+                            "traces = [otelcol.exporter.otlphttp.tempo.input]")
+        text = replace_once(text, '''otelcol.exporter.otlp "tempo" {
+  timeout = "10s"
+  client {
+    endpoint = "tempo:4317"
+    tls {
+      // Private in-cluster transport only; no public receiver/Ingress.
+      insecure = true
+    }
+  }''', f'''otelcol.exporter.otlphttp "tempo" {{
+  client {{
+    endpoint = "{base}"
+    timeout = "10s"
+  }}''')
+    config.write_text(text)
+    host = stage / "host" / ("config.alloy" if profile == "full" else "config.metrics.alloy")
+    text = replace_once(host.read_text(), "http://192.0.2.5:9090/api/v1/write", f"{base}/api/v1/write")
+    if profile == "full":
+        text = replace_once(text, "http://192.0.2.3:3100/loki/api/v1/push", f"{base}/loki/api/v1/push")
+    note = (f"// Rendered for the NAS telemetry receiver {receiver}: logs and metrics go to it\n"
+            "// directly. Replace only 192.0.2.4 with the cluster Alloy Service ClusterIP\n"
+            "// (kubectl -n workstation-observability get svc alloy); host DNS cannot resolve it.\n")
+    if profile == "full":
+        return replace_once(text, """// Replace 192.0.2.3 with the discovered Loki ClusterIP, 192.0.2.4 with Alloy's
+// ClusterIP and 192.0.2.5 with Prometheus's ClusterIP. The documentation-range
+// addresses are deliberately unusable.
+""", note)
+    return replace_once(text, "// or trace pipeline. Replace the documentation address only in an owner review.\n",
+                        "// or trace pipeline.\n" + note)
+
+
+def nas_stack(objects, addresses):
+    """Drop the local backends and allow the collector to reach the receiver."""
+    selected = []
+    for obj in objects:
+        kind, name = obj.get("kind"), obj.get("metadata", {}).get("name", "")
+        if kind in {"Deployment", "Service"} and name in BACKENDS:
+            continue
+        if kind == "PersistentVolumeClaim" and name in {f"{backend}-data" for backend in BACKENDS}:
+            continue
+        if kind == "ConfigMap" and name.startswith(BACKEND_CONFIG_MAPS):
+            continue
+        if kind == "NetworkPolicy" and any(backend in name for backend in BACKENDS):
+            continue
+        selected.append(obj)
+    selected.append({
+        "apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy",
+        "metadata": {"name": f"alloy-to-nas-receiver-{RECEIVER_PORT}", "namespace": "workstation-observability"},
+        "spec": {"podSelector": {"matchLabels": {"app.kubernetes.io/name": "alloy"}},
+                 "policyTypes": ["Egress"],
+                 "egress": [{"to": [{"ipBlock": {"cidr": cidr}} for cidr in addresses],
+                             "ports": [{"protocol": "TCP", "port": RECEIVER_PORT}]}]}})
+    return selected
 
 
 def load_objects(text):
@@ -199,7 +300,14 @@ def configure_profile(stage, profile):
         for panel in dashboard.get("panels", []):
             if panel.get("title") == "Investigate logs and traces":
                 continue
-            if panel.get("datasource", {}).get("uid") in {"loki", "tempo"}:
+            uid = panel.get("datasource", {}).get("uid")
+            if uid == "pyroscope":
+                panel = {"id": panel["id"], "title": "Profiles are unavailable",
+                         "type": "text", "gridPos": dict(panel["gridPos"], h=4),
+                         "options": {"mode": "markdown", "content":
+                             "Continuous profiles need the **full** profile with `TELEMETRY_EBPF` "
+                             "and the NAS Pyroscope. Other dashboards remain available."}}
+            elif uid in {"loki", "tempo"}:
                 panel = {"id": panel["id"], "title": "Logs and traces are disabled",
                          "type": "text", "gridPos": dict(panel["gridPos"], h=4),
                          "options": {"mode": "markdown", "content":
@@ -217,9 +325,17 @@ def render(args):
     require(args.profile in PROFILES, "unsupported telemetry profile")
     require(args.reserve_mib > 0, "reserve must be positive")
     require(args.margin_mib > 0, "telemetry margin must be positive")
+    receiver = getattr(args, "nas_receiver", "") or ""
+    receiver_addresses, host_config = [], None
+    if receiver:
+        require(enabled, "a NAS receiver requires enabled telemetry")
+        receiver_addresses = resolve_receiver(receiver)
+    ebpf = getattr(args, "ebpf", "false") == "true"
+    # Profiles have no local backend; the eBPF collector sends to the NAS.
+    require(not ebpf or receiver, "TELEMETRY_EBPF requires TELEMETRY_NAS_RECEIVER")
     if enabled:
         api, host = private_address(args.api_address), private_address(args.host_address)
-        require(args.gpu_exporter == "false", "no verified coherent ROCm10 exporter artifact; use the packaged read-only sysfs sampler")
+        require(args.gpu_exporter == "false", "the GPU Operator DeviceConfig deploys the AMD exporter; keep TELEMETRY_GPU_EXPORTER=false")
         replacements = {"192.0.2.1/32": api, "192.0.2.2/32": host,
                         "192.0.2.2:10250": (f"[{args.host_address}]:10250" if ":" in args.host_address else f"{args.host_address}:10250"),
                         "review-required-node": args.node_name}
@@ -227,6 +343,14 @@ def render(args):
             stage = Path(temp) / "source"
             shutil.copytree(root / "infrastructure/observability", stage)
             configure_profile(stage, args.profile)
+            if receiver:
+                host_config = configure_nas(stage, args.profile, receiver)
+                replacements[RECEIVER_PLACEHOLDER] = receiver
+            if ebpf:
+                path = stage / "kustomization.yaml"
+                config = yaml.safe_load(path.read_text())
+                config.setdefault("components", []).append("ebpf")
+                path.write_text(yaml.safe_dump(config, sort_keys=False))
             if args.kubelet == "true":
                 require(re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", args.node_name), "set the actual Kubernetes node name")
                 path = stage / "kustomization.yaml"
@@ -242,8 +366,11 @@ def render(args):
                         value = value.replace(old, new)
                     path.write_text(value)
             stack = kustomize(stage)
+            require(RECEIVER_PLACEHOLDER not in yaml.safe_dump_all(stack), "unresolved NAS receiver placeholder")
             if args.profile == "metrics":
                 stack = metrics_stack(stack)
+            if receiver:
+                stack = nas_stack(stack, receiver_addresses)
         require(all(re.search(r"@sha256:[a-f0-9]{64}$", image) for image in images(stack)),
                 "every telemetry image needs an immutable digest")
         overlay = Path(args.overlay)
@@ -289,6 +416,9 @@ def render(args):
                 "gpu_exporter": args.gpu_exporter == "true", "sglang_trace": args.trace == "true",
                 "kubelet": args.kubelet == "true", "node_name": args.node_name,
                 "api_address": args.api_address, "workstation_address": args.host_address,
+                "backend": ({"kind": "nas", "receiver": receiver, "resolved": receiver_addresses}
+                            if receiver else {"kind": "local"}),
+                "ebpf": ebpf,
                 "reserve_mib": args.reserve_mib, "stack_limit_mib": total,
                 "component_limits_mib": component_limits, "margin_mib": args.margin_mib,
                 "calculated_allowance_mib": calculated_allowance,
@@ -300,7 +430,13 @@ def render(args):
     for name, objects in (("stack.yaml", stack), ("workloads.yaml", workloads)):
         (output / name).write_text(yaml.safe_dump_all(objects, sort_keys=False))
     (output / "evidence.json").write_text(json.dumps(evidence, indent=2) + "\n")
-    (output / "SHA256SUMS").write_text("".join(f"{sha(output / name)}  {name}\n" for name in FILES))
+    names = FILES
+    if host_config is not None:
+        # Host collector for /etc/workstation-telemetry/host.alloy; only the
+        # in-cluster Alloy OTLP address (192.0.2.4) remains to be filled in.
+        (output / HOST_CONFIG).write_text(host_config)
+        names = (*FILES, HOST_CONFIG)
+    (output / "SHA256SUMS").write_text("".join(f"{sha(output / name)}  {name}\n" for name in names))
     print(f"{evidence['status']}: {output}; no credentials, cluster writes or hardware qualification")
 
 
@@ -335,16 +471,21 @@ def validate_evidence(evidence):
 
 def verify(directory):
     directory = Path(directory)
-    require(not directory.is_symlink() and not any((directory / name).is_symlink() for name in (*FILES, "SHA256SUMS")),
+    require(not directory.is_symlink() and not any((directory / name).is_symlink()
+                                                   for name in (*FILES, HOST_CONFIG, "SHA256SUMS")),
             "evidence files must not be symlinks")
     expected = {}
     for line in (directory / "SHA256SUMS").read_text().splitlines():
         match = re.fullmatch(r"([a-f0-9]{64})  ([a-zA-Z0-9.-]+)", line)
-        require(match is not None and match[2] in FILES and match[2] not in expected, "invalid evidence manifest")
+        require(match is not None and match[2] in (*FILES, HOST_CONFIG) and match[2] not in expected,
+                "invalid evidence manifest")
         expected[match[2]] = match[1]
-    require(set(expected) == set(FILES) and all(sha(directory / n) == h for n, h in expected.items()),
+    require(set(expected) - {HOST_CONFIG} == set(FILES) and all(sha(directory / n) == h for n, h in expected.items()),
             "generated evidence changed or is incomplete; regenerate and review")
-    return validate_evidence(json.loads((directory / "evidence.json").read_text()))
+    evidence = json.loads((directory / "evidence.json").read_text())
+    nas = evidence.get("backend", {}).get("kind") == "nas"
+    require(nas == (HOST_CONFIG in expected), "NAS renders carry exactly one host collector configuration")
+    return validate_evidence(evidence)
 
 
 def plan(args):
@@ -401,6 +542,10 @@ def main():
     for name in ("api-address", "host-address", "workloads", "node-name"):
         render_parser.add_argument("--" + name, required=True)
     render_parser.add_argument("--profile", choices=PROFILES, default="full")
+    render_parser.add_argument("--ebpf", choices=("true", "false"), default="false",
+                               help="host-wide eBPF RED metrics and CPU profiles; requires --nas-receiver")
+    render_parser.add_argument("--nas-receiver", default="",
+                               help="DNS name of the NAS telemetry receiver; omit for local backends")
     render_parser.add_argument("--tariff", choices=("true", "false"), default="false",
                                help="include the optional 64 MiB public tariff refresher allowance")
     render_parser.add_argument("--reserve-mib", type=int, required=True)
