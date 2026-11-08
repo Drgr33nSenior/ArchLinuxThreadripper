@@ -4,6 +4,11 @@
 ARG RUNTIME_BASE_IMAGE
 FROM ${RUNTIME_BASE_IMAGE}
 ARG STACK_ID
+# The wheels bundle ROCm but not the GCC runtime libraries: torch needs
+# libgomp (OpenMP) and part of the wheelhouse needs libatomic.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends libgomp1 libatomic1 \
+ && rm -rf /var/lib/apt/lists/*
 RUN --mount=type=bind,source=wheelhouse,target=/wheelhouse \
     python3 -m pip install --no-cache-dir --no-index --find-links /wheelhouse /wheelhouse/*.whl \
  && python3 -m pip check

@@ -34,10 +34,13 @@ python pytorch_triton_repo.py checkout --checkout-dir /work/run/src/triton --tor
     exit 1
   }
 
-# Install the SDK from the ROCm stage only. A per-target device wheel exists
-# only when TheRock splits kernel packs, so ask for that extra only if built.
+# Install the SDK from the ROCm stage only. The device extra's name depends on
+# how TheRock split the SDK ("device" for one target, "device-<target>"
+# otherwise); use the one the package declares, if any.
 extras=()
-compgen -G "$rocm/packages/dist/rocm_sdk_device_${GPU_TARGET}-*.whl" >/dev/null && extras=(--rocm-extras "device-$GPU_TARGET")
+device=$(tar -xOzf "$(compgen -G "$rocm/packages/dist/rocm-[0-9]*.tar.gz")" --wildcards '*/PKG-INFO' |
+  awk -v t="device-$GPU_TARGET" '$1 == "Provides-Extra:" && ($2 == t || $2 == "device") {print $2}' | sort -r | head -n 1)
+[[ -z $device ]] || extras=(--rocm-extras "$device")
 export MAX_JOBS=$JOBS CMAKE_BUILD_PARALLEL_LEVEL=$JOBS CCACHE_DIR=/work/ccache
 ! command -v ccache >/dev/null || ccache --zero-stats >/dev/null
 python build_prod_wheels.py build \

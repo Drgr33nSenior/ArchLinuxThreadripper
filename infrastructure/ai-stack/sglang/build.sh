@@ -28,7 +28,12 @@ pip install --quiet --upgrade pip
 read -r rocm_version < <(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["package_version"])' "$rocm/RECEIPT.json")
 links=(--find-links "$rocm/packages/dist" --find-links "$torch/wheels")
 extras=libraries,devel
-compgen -G "$rocm/packages/dist/rocm_sdk_device_${GPU_TARGET}-*.whl" >/dev/null && extras+=",device-$GPU_TARGET"
+# The device extra's name depends on how TheRock split the SDK ("device" for
+# one target, "device-<target>" otherwise); use the one the package declares.
+device=$(tar -xOzf "$(compgen -G "$rocm/packages/dist/rocm-[0-9]*.tar.gz")" --wildcards '*/PKG-INFO' |
+  awk -v t="device-$GPU_TARGET" '$1 == "Provides-Extra:" && ($2 == t || $2 == "device") {print $2}' | sort -r | head -n 1)
+[[ -z $device ]] || extras+=",$device"
+echo "ROCM_EXTRAS=$extras"
 pip install --quiet "${links[@]}" "rocm[$extras]==$rocm_version" "$torch"/wheels/*.whl
 
 # Hold the ROCm and PyTorch builds fixed for everything resolved after this.

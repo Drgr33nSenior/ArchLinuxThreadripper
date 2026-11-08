@@ -41,6 +41,10 @@ if bash "$dir/patchset-hash.sh" "$work/empty" 2>/dev/null; then fail 'empty seri
 # The runtime image installs only the resolved wheelhouse, offline, and checks it.
 grep -Fq -- '--no-index --find-links /wheelhouse /wheelhouse/*.whl' "$dir/image/Containerfile" || fail 'runtime install is not offline'
 grep -Fq 'pip check' "$dir/image/Containerfile" || fail 'runtime install is not dependency-checked'
+grep -Fq 'install -y --no-install-recommends libgomp1 libatomic1' "$dir/image/Containerfile" ||
+  fail 'runtime image lacks the GCC runtime libraries torch needs'
+grep -Fq 'import torch, sgl_kernel, xgrammar, sglang.srt.server_args' "$dir/build-stage.sh" ||
+  fail 'image stage does not check imports before pushing'
 grep -Eq '^GPU_TARGET=gfx[0-9a-f]+$' "$lock" || fail 'GPU target'
 grep -Eq '^PYTHON_ABI=cp[0-9]+-cp[0-9]+t?$' "$lock" || fail 'Python ABI'
 
@@ -171,6 +175,19 @@ if python3 -c 'import packaging' 2>/dev/null; then
     python3 -c 'import sys; from packaging.version import Version; Version(sys.argv[1])' "$v" || fail "invalid version $v"
   done
 fi
+
+# Both build stages use the device extra the ROCm package declares,
+# preferring the target-specific name, and skip it when there is none.
+# shellcheck disable=SC2016 # awk program, expanded by awk.
+pick='$1 == "Provides-Extra:" && ($2 == t || $2 == "device") {print $2}'
+for stage in sglang torch; do
+  grep -Fq -- "$pick" "$dir/$stage/build.sh" || fail "$stage stage does not detect the ROCm device extra"
+done
+pick_from() { printf '%s\n' "$@" | awk -v t=device-gfx1201 "$pick" | sort -r | head -n 1; }
+[[ $(pick_from 'Provides-Extra: libraries' 'Provides-Extra: device') == device ]] || fail 'single-target device extra'
+[[ $(pick_from 'Provides-Extra: device' 'Provides-Extra: device-gfx1201') == device-gfx1201 ]] ||
+  fail 'target-specific device extra'
+[[ -z $(pick_from 'Provides-Extra: libraries' 'Provides-Extra: device-gfx942') ]] || fail 'another target accepted'
 
 # The driver rejects unknown stages before touching the host.
 if bash "$dir/build-stage.sh" nonsense 2>/dev/null; then fail 'unknown stage accepted'; fi
