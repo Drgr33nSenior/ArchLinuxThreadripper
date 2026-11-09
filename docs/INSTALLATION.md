@@ -996,14 +996,11 @@ connection. Put this in the ignored `inventory.local.ini`:
 ```ini
 [ai_lab_baremetal]
 CHOSEN_LAB_ALIAS ansible_connection=local
-
-[ai_lab_baremetal:vars]
-lab_environment=dev
 ```
 
 Then use the [bare-metal K3s](HOME-LAB.md#3-package-and-configure-bare-metal-k3s)
 command with the same `--limit CHOSEN_LAB_ALIAS`. `--ask-become-pass` prompts
-locally for sudo. `lab_environment` must be `dev`, `tst` or `int`.
+locally for sudo.
 
 ## Continuity and interrupted installation
 

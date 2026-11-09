@@ -189,11 +189,9 @@ RESOURCE_EVICTION_MIB=2048
 # `session plan` is offline. switch/restore require the actual host, a qualified
 # workload, current hardware evidence, root and --execute; loading config does not
 # contact K3s. See docs/AI-PERFORMANCE.md for migration and restore procedures.
-# Uncomment and set all three: exact kube-context, actual node name, and the
-# reviewed environment classification (dev, tst or int; production is rejected).
+# Uncomment and set both: exact kube-context and actual node name.
 # SESSION_CONTEXT=reviewed-kube-context
 # SESSION_NODE=actual-node-name
-# SESSION_ENVIRONMENT=dev
 # Namespace containing both managed Deployments.
 SESSION_NAMESPACE=ai-home-lab
 # Exact Deployment names from the selected overlay, not model names or pod names.

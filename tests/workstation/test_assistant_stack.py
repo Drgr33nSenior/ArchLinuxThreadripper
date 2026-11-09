@@ -153,7 +153,7 @@ class AssistantTests(unittest.TestCase):
                     load_image_profile(directory)
 
     def test_site_renderer_records_experience_and_preserves_legacy_default(self):
-        site = {"environment": "tst", "context": "test", "node": "threadripper-ai",
+        site = {"context": "test", "node": "threadripper-ai",
                 "node_address": "192.168.2.15", "management_cidr": "192.168.2.0/24",
                 "client_cidrs": ["192.168.2.0/24"], "webui_host": "chat.test.local",
                 "api_host": "api.test.local", "tls_secret": "owner-tls"}

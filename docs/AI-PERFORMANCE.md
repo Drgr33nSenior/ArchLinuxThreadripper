@@ -186,7 +186,6 @@ target; the example values below are not discovered node/context identities:
 ```ini
 SESSION_CONTEXT=reviewed-kube-context
 SESSION_NODE=actual-node-name
-SESSION_ENVIRONMENT=dev
 SESSION_NAMESPACE=ai-home-lab
 SESSION_AI_DEPLOYMENT=sglang
 SESSION_GAME_DEPLOYMENT=parent-steam-headless

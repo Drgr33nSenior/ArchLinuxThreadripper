@@ -180,7 +180,7 @@ cli_warm_status() {
   local state=$1 output=$2
   FIXTURE_POD_STATE=$state PATH="$work/cli-bin:$PATH" WORKSTATION_PYTHON="$HOME_LAB_PYTHON" \
     SESSION_CONTEXT=fixture SESSION_NODE=fixture-node SESSION_NAMESPACE=fixture \
-    SESSION_AI_DEPLOYMENT=sglang SESSION_GAME_DEPLOYMENT=gaming SESSION_ENVIRONMENT=dev \
+    SESSION_AI_DEPLOYMENT=sglang SESSION_GAME_DEPLOYMENT=gaming \
     FIXTURE_EXEC_MARKER="$output.exec" \
     bash "$root/bin/workstationctl" rocm serving-warm-status sglang-fixture - "$output" \
     >"$output.stdout" 2>"$output.stderr"
