@@ -97,18 +97,37 @@ The Job downloads into the `ai-models` volume at
 
 ## Serving
 
-`render-serve.py` turns a catalog entry and an image into a Deployment and
-stable Service named `sglang`, which clients and the telemetry collector use
-whichever model is loaded. It mounts the verified revision read-only,
-claims `tp_size` GPUs, and replaces the old pod before starting the new one
-(`Recreate`), because one server owns both GPUs. The API key comes from the
-`sglang-api-key` Secret, which is created on the host and never rendered:
+A serving profile in [`serving/`](serving) is the single record of the
+server's flags and environment for one model on this hardware. Each setting
+carries its value, reason, source (usually a file in SGLang at the pinned
+commit) and confidence, and says whether a GPU measurement still has to settle
+it. Settings deliberately left out, and variables that must stay unset, are
+recorded too. The research behind the current profile is in
+[`serving/RESEARCH-20261108.md`](serving/RESEARCH-20261108.md); the op234
+runtime it replaces is guidance there, not a target. The model catalog keeps
+only model and draft identity.
+
+A profile has arms for the A/B decisions that need measurement; one is the
+default. For `qwen3.8-27b-mxfp4-tp2`, arm B (`extra_buffer_lazy` with the
+overlap scheduler) is the candidate and arm A (`no_buffer`, overlap off) is the
+op234-compatible fallback.
+
+`serving/render.py` renders a profile:
 
 ```sh
-infrastructure/ai-stack/models/render-serve.py \
-  infrastructure/ai-stack/models/<alias>.json registry.lan.thespry.family/local/sglang-gfx1201:<key> |
-  kubectl apply -f -
+# The server command line for an arm.
+infrastructure/ai-stack/serving/render.py argv infrastructure/ai-stack/serving/<profile>.json --arm B
+# A qualification Job (and its probe ConfigMap) for an image pinned by digest.
+infrastructure/ai-stack/serving/render.py job infrastructure/ai-stack/serving/<profile>.json \
+  registry.lan.thespry.family/local/sglang-gfx1201@sha256:<digest> --arm B > qualify-b.json
+kubectl apply -f qualify-b.json
+kubectl -n ai-home-lab logs -f job/<name>
 ```
 
-Rolling back means applying the previous image key or catalog entry. Both stay
-in the registry and on the NAS.
+The Job runs the server and `serving/qualify.py` in one pod on both GPUs, with
+the verified model revision from the `ai-models` volume, a read-only root and
+restricted pod security. The probe checks the served name, reasoning output, a
+streamed decode, tool-call parsing, a long-context prefill and prefix-cache
+reuse, prints one `QUALIFY_RESULT` line and sets the Job's result. The startup
+log records the memory pools. Only one Job (or server) can hold both GPUs at a
+time. Record each measured result in the profile before changing its status.

@@ -64,7 +64,8 @@ for entry in "$dir"/models/*.json; do
 import json, pathlib, re, sys
 e = json.loads(pathlib.Path(sys.argv[1]).read_text())
 assert e["schema"] == 1 and re.fullmatch(r"[a-z0-9][a-z0-9.-]+", e["alias"])
-assert isinstance(e["serving"]["tp_size"], int) and e["serving"]["context_length"] > 0
+# Serving settings belong to serving/*.json profiles, not the catalog.
+assert "serving" not in e and "served_model_name" not in e
 for key in ("model", "draft"):
     if key not in e:
         continue
@@ -104,38 +105,72 @@ python3 -I "$dir/models/fetch.py" "$work/entry.json" "$work/models" >/dev/null |
 if python3 -I "$dir/models/fetch.py" "$work/unsafe.json" "$work/models" 2>/dev/null; then fail 'unsafe path accepted'; fi
 [[ ! -e $work/models/o/escape ]] || fail 'unsafe path escaped the revision directory'
 
-# Rendered manifests pin images by digest, keep secrets out of the output and
-# map every catalog serving setting to a server flag.
+# The fetch Job pins its image by digest and mounts no service-account token.
 entry=$dir/models/qwen3.8-27b-mxfp4.json
 python3 -I "$dir/models/render-fetch.py" "$entry" "$lock" >"$work/fetch.json" || fail 'fetch render failed'
-python3 -I "$dir/models/render-serve.py" "$entry" registry.lan.thespry.family/local/sglang-gfx1201:abc >"$work/serve.json" ||
-  fail 'serve render failed'
-if python3 -I "$dir/models/render-serve.py" "$entry" docker.io/library/sglang:latest >/dev/null 2>&1; then
-  fail 'non-lab image accepted'
-fi
-python3 -I - "$entry" "$work/fetch.json" "$work/serve.json" <<'PY' || fail 'rendered manifests'
+python3 -I - "$work/fetch.json" <<'PY' || fail 'fetch manifest'
 import json, sys
-entry, fetch, serve = (json.load(open(p)) for p in sys.argv[1:])
-job = fetch["items"][1]["spec"]["template"]["spec"]
+job = json.load(open(sys.argv[1]))["items"][1]["spec"]["template"]["spec"]
 assert "@sha256:" in job["containers"][0]["image"] and job["automountServiceAccountToken"] is False
-deploy = serve["items"][0]
-pod = deploy["spec"]["template"]["spec"]
-args = pod["containers"][0]["args"]
-assert deploy["spec"]["strategy"]["type"] == "Recreate"
-assert pod["securityContext"]["runAsNonRoot"] and pod["containers"][0]["securityContext"]["readOnlyRootFilesystem"]
-for key, value in entry["serving"].items():
-    flag = "--" + key.replace("_", "-")
-    assert flag in args and args[args.index(flag) + 1] == str(value), flag
-assert args[args.index("--api-key") + 1] == "$(SGLANG_API_KEY)" and "--enable-metrics" in args
-service = serve["items"][1]
-assert service["metadata"]["name"] == "sglang" and service["spec"]["ports"][0]["port"] == 30000
-pod_labels = deploy["spec"]["template"]["metadata"]["labels"]
-assert service["spec"]["selector"].items() <= pod_labels.items()
-assert args[args.index("--model-path") + 1].endswith(entry["model"]["revision"])
-assert args[args.index("--speculative-draft-model-path") + 1].endswith(entry["draft"]["revision"])
-gpus = pod["containers"][0]["resources"]["limits"]["amd.com/gpu"]
-assert gpus == str(entry["serving"]["tp_size"])
 PY
+
+# Serving profiles: every setting records its reason, source and confidence;
+# arms render the qualified flags, and the qualification Job is restricted-PSA,
+# digest-pinned, read-only and on the verified ai-models volume.
+render=$dir/serving/render.py
+digest=registry.lan.thespry.family/local/sglang-gfx1201@sha256:$(printf '0%.0s' {1..64})
+python3 -I -m py_compile "$render" "$dir/serving/qualify.py" || fail 'serving scripts do not compile'
+for profile in "$dir"/serving/*.json; do
+  for arm in A B; do
+    python3 -I "$render" argv "$profile" --arm "$arm" >"$work/argv-$arm.json" || fail "argv render: $profile $arm"
+    python3 -I "$render" job "$profile" "$digest" --arm "$arm" >"$work/job-$arm.json" || fail "job render: $profile $arm"
+  done
+  if python3 -I "$render" job "$profile" registry.lan.thespry.family/local/sglang-gfx1201:tag >/dev/null 2>&1; then
+    fail 'qualification Job accepted an image without a digest'
+  fi
+  python3 -I - "$profile" "$work" "$dir" <<'PY' || fail "serving profile: $profile"
+import json, pathlib, sys
+profile, work, root = json.load(open(sys.argv[1])), pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3])
+assert profile["schema"] == 1 and profile["status"] in ("unqualified", "qualified")
+assert (root / "models" / f"{profile['model']}.json").exists()
+assert (root / "serving" / profile["research"]).exists()
+for e in profile["args"]:
+    assert e["flag"].startswith("--") and isinstance(e["value"], list), e
+    assert e["reason"] and e["source"] and e["confidence"] in ("H", "M", "L") and isinstance(e["measure"], bool), e
+for e in profile["env"]:
+    assert e["reason"] and e["source"] and e["confidence"] in ("H", "M", "L"), e
+assert sum(1 for arm in profile["arms"].values() if arm["default"]) == 1
+flags = [e["flag"] for e in profile["args"]]
+assert len(flags) == len(set(flags)), "duplicate flag"
+unset = {e["name"] for e in profile["must_unset_env"]}
+forbidden = {e["flag"] for e in profile["not_set"]}
+argv = {arm: json.loads((work / f"argv-{arm}.json").read_text()) for arm in "AB"}
+for arm, a in argv.items():
+    assert not forbidden & set(a), (arm, forbidden & set(a))
+    assert a[a.index("--attention-backend") + 1] == "triton" and "--disable-custom-all-reduce" in a
+assert argv["A"][argv["A"].index("--mamba-radix-cache-strategy") + 1] == "no_buffer"
+assert "--disable-overlap-schedule" in argv["A"]
+assert argv["B"][argv["B"].index("--mamba-radix-cache-strategy") + 1] == "extra_buffer_lazy"
+assert "--disable-overlap-schedule" not in argv["B"]
+for arm in "AB":
+    items = json.loads((work / f"job-{arm}.json").read_text())["items"]
+    config, job = items
+    pod = job["spec"]["template"]["spec"]
+    c = pod["containers"][0]
+    assert config["data"]["qualify.py"] == (root / "serving" / "qualify.py").read_text()
+    assert c["args"] == argv[arm] and "@sha256:" in c["image"]
+    assert pod["securityContext"]["runAsNonRoot"] and pod["securityContext"]["seccompProfile"]["type"] == "RuntimeDefault"
+    assert pod["automountServiceAccountToken"] is False
+    assert c["securityContext"] == {"allowPrivilegeEscalation": False, "readOnlyRootFilesystem": True,
+                                    "capabilities": {"drop": ["ALL"]}}
+    assert c["resources"]["requests"] == c["resources"]["limits"] and c["resources"]["limits"]["amd.com/gpu"] == "2"
+    models = next(v for v in pod["volumes"] if v["name"] == "models")
+    assert models["persistentVolumeClaim"] == {"claimName": "ai-models", "readOnly": True}
+    names = {e["name"] for e in c["env"]}
+    assert not unset & names, unset & names
+    assert job["spec"]["backoffLimit"] == 0 and job["metadata"]["namespace"] == "ai-home-lab"
+PY
+done
 
 # Stage metrics: start/finish states, failure, ccache ratio, and a missing
 # directory never failing the build.
