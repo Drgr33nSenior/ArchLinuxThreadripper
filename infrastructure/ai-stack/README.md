@@ -253,7 +253,8 @@ variables, which the Job adds to the profile's.
 | `F` | `SGLANG_GFX1201_FP8_LM_HEAD=1` (FP8 target and draft heads; lossy) |
 | `G` | `--enable-linear-replayssm-spec` (GDN ReplaySSM for DFLASH) |
 | `I` | `SGLANG_GFX1201_GDN_NORM_QUANT=1` (fused GDN gated-norm MXFP4 quantization) |
-| `H` | `D`, `E`, `F` and `I` together, the candidate default (not `G`) |
+| `H` | `D`, `E`, `F` and `I` together (not `G`) |
+| `J` | `H` plus `SGLANG_GFX1201_VERIFY_ATTENTION=1` (split-KV verify attention), the candidate default |
 
 Enable an item in arm A only after its arm matches arm A's quality result and
 greedy acceptance.
@@ -269,7 +270,20 @@ server's one-request decode windows; quality relative to arm A):
 | `F` | 40.04 ms | -1.6 ms | 104.8 / 184.2 | same |
 | `G` | 43.58 ms | +1.9 ms | 89.9 / 170.7 | one case ends with no answer |
 
-Arm `I` was added after this run.
+Results on 2026-11-09 (image `sha256:0c30a932`, series `a97349f2`; long-context
+step is the median gap between streamed updates):
+
+| Arm | Verify step | C1 / C2 tokens/s | Step at 23.5k / 47k / 88k prompt | Quality |
+| --- | --- | --- | --- | --- |
+| `A` | 42.07 ms | 94.5 / 156.7 | 109 / 177 / 295 ms | 9 passed, 3 known format failures |
+| `I` | 42.18 ms | 96.0 / 175.6 | 110 / 177 / 296 ms | same |
+| `H` | 38.18 ms | 109.4 / 192.9 | 105.5 / 173.8 / 292 ms | same |
+
+Arm `I` showed no gain and 0010 logged nothing, so 0011 adds route markers.
+Verify cost grows about 2.9 ms per 1k tokens of context because target verify
+ran `extend_attention_fwd`; arm `J` adds the split-KV verify kernel (0012).
+The long-context phase requests `min_tokens`, but the 88k requests of `A` and
+`I` stopped after 560 and 168 tokens, so its output length is not guaranteed.
 
 After BetterBench, the Job runs the assistant acceptance menu
 ([`assistant-quality.json`](../sglang/assistant-quality.json) through

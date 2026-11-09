@@ -9,8 +9,9 @@ compiles a HIP C++ kernel the way SGLang's JIT kernels are built (hipcc,
 C++20, standard headers), which needs g++ and the device bitcode path. It also
 calls the opt-in verify-path ports directly: split-K down/out within the op234
 limits, the packed GDN projection bitwise equal to the separate projections,
-the FP8 LM head route on a small synthetic head, and the fused GDN gated-norm
-MXFP4 quantization bitwise equal to norm then quantize.
+the FP8 LM head route on a small synthetic head, the fused GDN gated-norm
+MXFP4 quantization bitwise equal to norm then quantize, and the split-KV verify
+attention within BF16 rounding of extend_attention_fwd.
 """
 
 import os
@@ -109,6 +110,30 @@ p0, s0 = mxfp4.dynamic_mxfp4_quant(gnorm(xn, zn).reshape(8, 24 * 128))
 p1, s1 = f1.gated_norm_mxfp4(xn, zn, gnorm.weight, gnorm.eps, 24)
 if not (torch.equal(p0, p1) and torch.equal(s0, s1) and s0.stride() == s1.stride()):
     raise SystemExit("IMAGE_SMOKE=fail: fused GDN norm quantization differs from norm then quantize")
+
+# Split-KV verify attention (serving patch 0012) against extend_attention_fwd:
+# TP2 Qwen3.8 shapes, 8 draft tokens whose K/V are already in the cache.
+import math
+
+from sglang.kernels.ops.attention import verify_attention_gfx1151 as va
+from sglang.kernels.ops.attention.extend_attention import extend_attention_fwd
+
+hq, hkv, hd, tv, pv = 12, 2, 256, 8, 2048
+kc = torch.randn(pv + tv + 1, hkv, hd, device="cuda", dtype=torch.bfloat16)
+vc = torch.randn_like(kc)
+r2t = torch.zeros(2, pv + tv, dtype=torch.int32, device="cuda")
+r2t[1] = torch.randperm(pv + tv, device="cuda").to(torch.int32) + 1
+qv = torch.randn(tv, hq, hd, device="cuda", dtype=torch.bfloat16)
+ov, oe = torch.empty_like(qv), torch.empty_like(qv)
+va.verify_attention_gfx1151(qv, ov, kc, vc, r2t, torch.tensor([1], device="cuda"), torch.tensor([pv], device="cuda"),
+                            tv, 1 / math.sqrt(hd), nsplit=va.NSPLIT_GFX1201)
+blk = r2t[1, pv:].long()
+extend_attention_fwd(qv, kc[blk].contiguous(), vc[blk].contiguous(), oe, kc, vc,
+                     torch.tensor([0, tv], device="cuda", dtype=torch.int32),
+                     torch.tensor([0, pv], device="cuda", dtype=torch.int32), r2t[1, :pv].contiguous(), None, True,
+                     torch.zeros(2, device="cuda", dtype=torch.int64), tv, 1.0, 1.0, sm_scale=1 / math.sqrt(hd))
+if not (ov.float() - oe.float()).abs().max().item() < 1e-2:
+    raise SystemExit("IMAGE_SMOKE=fail: split-KV verify attention differs from extend_attention_fwd")
 
 if shutil.which("c++") is None:
     raise SystemExit("IMAGE_SMOKE=fail: no c++ for SGLang JIT compiler fingerprinting")
