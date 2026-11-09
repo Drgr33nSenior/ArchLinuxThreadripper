@@ -233,6 +233,10 @@ assert ([e["name"] for e in profile["arms"]["M"]["env"]] ==
 assert argv["N"] == argv["M"]
 assert ([e["name"] for e in profile["arms"]["N"]["env"]] ==
         [e["name"] for e in profile["arms"]["M"]["env"]] + ["SGLANG_GFX1201_P1_PREFILL"])
+# O is N with 8-warp prefill attention: same flags, one env switch added.
+assert argv["O"] == argv["N"]
+assert ([e["name"] for e in profile["arms"]["O"]["env"]] ==
+        [e["name"] for e in profile["arms"]["N"]["env"]] + ["SGLANG_GFX1201_EXTEND_WARPS8"])
 for arm in profile["arms"]:
     items = json.loads((work / f"job-{arm}.json").read_text())["items"]
     config, job, service = items
