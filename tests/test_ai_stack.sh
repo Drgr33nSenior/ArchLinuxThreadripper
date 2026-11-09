@@ -238,6 +238,10 @@ assert ([e["name"] for e in profile["arms"]["N"]["env"]] ==
 assert argv["O"] == argv["N"]
 assert ([e["name"] for e in profile["arms"]["O"]["env"]] ==
         [e["name"] for e in profile["arms"]["N"]["env"]] + ["SGLANG_GFX1201_EXTEND_WARPS8"])
+# P is O with the FP8 draft (as L is K) and fused KV kept for it.
+assert argv["P"] == argv["O"][:-4] + ["--speculative-draft-model-quantization", "fp8"] + argv["O"][-4:]
+assert ([e["name"] for e in profile["arms"]["P"]["env"]] ==
+        [e["name"] for e in profile["arms"]["O"]["env"]] + ["SGLANG_DFLASH_FUSED_KV_FP8"])
 for arm in profile["arms"]:
     items = json.loads((work / f"job-{arm}.json").read_text())["items"]
     config, job, service = items
