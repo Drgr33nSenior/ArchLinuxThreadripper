@@ -186,6 +186,10 @@ default. For `qwen3.8-27b-mxfp4-tp2`, arm K is the default: arm A's flags
 switched on. Arm A stays as the baseline that every other arm is compared
 with. Arm B (`extra_buffer_lazy` with the overlap scheduler) is an experiment.
 
+An arm may list base flags under `drop` (arm `M` drops
+`--disable-custom-all-reduce`); `render.py` stops if a dropped flag is not in
+the profile.
+
 `serving/render.py` renders a profile:
 
 ```sh
@@ -258,6 +262,7 @@ variables, which the Job adds to the profile's.
 | `J` | `H` plus `SGLANG_GFX1201_VERIFY_ATTENTION=1` (split-KV verify attention) |
 | `K` | `J` plus `SGLANG_GFX1201_SPLITK_WIDE=1` (split-K for QKV, GDN input and gate/up), **the default** |
 | `L` | `K` with the draft quantized to FP8 at load (`--speculative-draft-model-quantization fp8`); not adopted |
+| `M` | `K` with SGLang's custom all-reduce for verify/decode reductions (`SGLANG_GFX1201_PCIE_CUSTOM_AR=1`, `--disable-custom-all-reduce` dropped; serving patch 0014) |
 
 Enable an item in arm A only after its arm matches arm A's quality result and
 greedy acceptance.

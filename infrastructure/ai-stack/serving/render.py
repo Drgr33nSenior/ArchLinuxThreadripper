@@ -64,7 +64,12 @@ def server_argv(profile, catalog, arm):
             "--served-model-name", profile["served_model_name"],
             "--speculative-draft-model-path", f"/models/{draft['repository']}/{draft['revision']}",
             "--speculative-draft-model-revision", draft["revision"]]
-    for entry in profile["args"] + spec["args"]:
+    # An arm may drop base flags (e.g. a disable switch) before adding its own.
+    drop = set(spec.get("drop", []))
+    unknown = drop - {entry["flag"] for entry in profile["args"]}
+    if unknown:
+        raise SystemExit(f"STOP: arm {arm} drops flags the profile does not set: {sorted(unknown)}")
+    for entry in [e for e in profile["args"] if e["flag"] not in drop] + spec["args"]:
         argv += [entry["flag"], *entry["value"]]
     return argv + ["--host", "0.0.0.0", "--port", str(PORT)]
 
