@@ -12,8 +12,9 @@ split-K (QKV) within the op234 limits, the packed GDN projection bitwise equal t
 the FP8 LM head route on a small synthetic head, the fused GDN gated-norm
 MXFP4 quantization bitwise equal to norm then quantize, and the split-KV verify
 attention within BF16 rounding of extend_attention_fwd. It runs the P1 prefill
-route on one shard (exact FP8 expansion, error against an FP32 reference). With
-two GPUs it runs the PCIe custom all-reduce in two processes against the exact sum.
+route on one shard (exact FP8 expansion, error against an FP32 reference) and
+8-warp prefill attention against the 4-warp kernel. With two GPUs it runs the
+PCIe custom all-reduce in two processes against the exact sum.
 """
 
 import os
@@ -172,6 +173,26 @@ if not torch.equal(pexp.float() * pbs.repeat_interleave(128, 0).repeat_interleav
 pref = px.float() @ pref_w.T
 if not (py - pref).norm().item() / pref.norm().item() < 0.05:
     raise SystemExit("IMAGE_SMOKE=fail: P1 prefill GEMM differs from the FP32 reference")
+
+# 8-warp prefill attention (serving patch 0016) against the 4-warp kernel:
+# 256 new tokens after a 2048-token prefix, TP2 Qwen3.8 shapes.
+ep, ee = 2048, 256
+ekc = torch.randn(ep + ee + 1, hkv, hd, device="cuda", dtype=torch.bfloat16)
+evc = torch.randn_like(ekc)
+eq = torch.randn(ee, hq, hd, device="cuda", dtype=torch.bfloat16)
+eouts = []
+for warps8 in ("0", "1"):
+    os.environ["SGLANG_GFX1201_EXTEND_WARPS8"] = warps8
+    eo = torch.empty_like(eq)
+    extend_attention_fwd(eq, ekc[ep + 1:].contiguous(), evc[ep + 1:].contiguous(), eo, ekc, evc,
+                         torch.tensor([0, ee], device="cuda", dtype=torch.int32),
+                         torch.tensor([0, ep], device="cuda", dtype=torch.int32),
+                         torch.arange(1, ep + 1, device="cuda", dtype=torch.int64), None, True,
+                         torch.zeros(2, device="cuda", dtype=torch.int64), ee, 1.0, 1.0, sm_scale=1 / math.sqrt(hd))
+    eouts.append(eo.float())
+del os.environ["SGLANG_GFX1201_EXTEND_WARPS8"]
+if not (eouts[0] - eouts[1]).abs().max().item() < 1e-2:
+    raise SystemExit("IMAGE_SMOKE=fail: 8-warp prefill attention differs from the 4-warp kernel")
 
 # PCIe custom all-reduce (serving patch 0014) on both GPUs: the AOT-built kernel
 # must give the exact fixed-order sum on both ranks. The stock kernel gave wrong,
