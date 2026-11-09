@@ -75,6 +75,10 @@ If a patch in the series stops applying, the `sglang` stage stops at
 `git apply --check`. Port the patch in the serving repository, or delete it if
 upstream absorbed the change, then refresh again to pick up the new series hash.
 
+The `image` stage is keyed by the sglang stage plus `stack.lock`,
+`image/Containerfile` and `image/smoke.py`, so a change to any of them builds,
+smoke-tests and (with push) publishes a new tag.
+
 Set `AI_STACK_PUSH=1` for the `image` stage to push it to the lab registry.
 This needs a one-time `podman login registry.lan.thespry.family` as the
 publisher account.
@@ -84,7 +88,7 @@ publisher account.
 With `AI_STACK_PUSH=1` the `image` stage, after its GPU smoke test:
 
 1. Scans the image with Trivy (`TRIVY_IMAGE` in `stack.lock`) and writes, under
-   the sglang stage's `out/scan/`, the full report (`vulns.json`), a CycloneDX
+   the image stage's `builds/image-<key>/out/scan/`, the full report (`vulns.json`), a CycloneDX
    SBOM, a cosign vulnerability predicate and the scanner/database versions.
 2. Applies [`image/scan-policy.py`](image/scan-policy.py): the push stops for a
    CRITICAL finding with a fixed version available unless
