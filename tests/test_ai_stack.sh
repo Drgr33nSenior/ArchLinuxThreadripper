@@ -206,6 +206,10 @@ assert ([e["name"] for e in profile["arms"]["J"]["env"]] ==
 assert argv["K"] == argv["A"]
 assert ([e["name"] for e in profile["arms"]["K"]["env"]] ==
         [e["name"] for e in profile["arms"]["J"]["env"]] + ["SGLANG_GFX1201_SPLITK_WIDE"])
+# L is K with the draft quantized to FP8; the later flag overrides the base unquant.
+assert argv["L"] == argv["A"][:-4] + ["--speculative-draft-model-quantization", "fp8"] + argv["A"][-4:]
+assert argv["A"].index("unquant") < argv["L"].index("fp8")
+assert profile["arms"]["L"]["env"] == profile["arms"]["K"]["env"]
 for arm in profile["arms"]:
     items = json.loads((work / f"job-{arm}.json").read_text())["items"]
     config, job, service = items

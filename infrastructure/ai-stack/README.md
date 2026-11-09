@@ -256,6 +256,7 @@ variables, which the Job adds to the profile's.
 | `H` | `D`, `E`, `F` and `I` together (not `G`) |
 | `J` | `H` plus `SGLANG_GFX1201_VERIFY_ATTENTION=1` (split-KV verify attention) |
 | `K` | `J` plus `SGLANG_GFX1201_SPLITK_WIDE=1` (split-K for QKV, GDN input and gate/up), the candidate default |
+| `L` | `K` with the draft quantized to FP8 at load (`--speculative-draft-model-quantization fp8`); changes acceptance only |
 
 Enable an item in arm A only after its arm matches arm A's quality result and
 greedy acceptance.
