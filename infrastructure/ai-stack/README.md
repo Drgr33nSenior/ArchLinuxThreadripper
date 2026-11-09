@@ -181,12 +181,13 @@ runtime it replaces is guidance there, not a target. The model catalog keeps
 only model and draft identity.
 
 A profile has arms for the A/B decisions that need measurement; one is the
-default. For `qwen3.8-27b-mxfp4-tp2`, arm N is the default: arm A's flags
+default. For `qwen3.8-27b-mxfp4-tp2`, arm O is the default: arm A's flags
 (`no_buffer`, overlap off, as op234) with the six qualified gfx1201 ports
 switched on, SGLang's custom all-reduce in place of RCCL for verify and
-decode reductions, and the P1 FP8 route for prefill GEMMs. Arm A stays as the
-baseline that every other arm is compared with; arm K is arm M without the
-custom all-reduce and arm M is arm N without P1. Arm B
+decode reductions, the P1 FP8 route for prefill GEMMs and 8-warp prefill
+attention. Arm A stays as the baseline that every other arm is compared with;
+arm K is arm M without the custom all-reduce, arm M is arm N without P1 and
+arm N is arm O without 8-warp prefill attention. Arm B
 (`extra_buffer_lazy` with the overlap scheduler) is an experiment.
 
 An arm may list base flags under `drop` (arm `M` drops
@@ -266,8 +267,8 @@ variables, which the Job adds to the profile's.
 | `K` | `J` plus `SGLANG_GFX1201_SPLITK_WIDE=1` (split-K for QKV, GDN input and gate/up); the RCCL comparison for `M` |
 | `L` | `K` with the draft quantized to FP8 at load (`--speculative-draft-model-quantization fp8`); not adopted |
 | `M` | `K` with SGLang's custom all-reduce for verify/decode reductions (`SGLANG_GFX1201_PCIE_CUSTOM_AR=1`, `--disable-custom-all-reduce` dropped; serving patch 0014); the comparison for `N` |
-| `N` | `M` plus `SGLANG_GFX1201_P1_PREFILL=1` (prefill chunks of 1024-2048 rows on the P1 FP8 GEMM route; serving patch 0015), **the default** |
-| `O` | `N` plus `SGLANG_GFX1201_EXTEND_WARPS8=1` (8-warp prefill attention for head dim 256, C4; serving patch 0016) |
+| `N` | `M` plus `SGLANG_GFX1201_P1_PREFILL=1` (prefill chunks of 1024-2048 rows on the P1 FP8 GEMM route; serving patch 0015); the comparison for `O` |
+| `O` | `N` plus `SGLANG_GFX1201_EXTEND_WARPS8=1` (8-warp prefill attention for head dim 256, C4; serving patch 0016), **the default** |
 
 Enable an item in arm A only after its arm matches arm A's quality result and
 greedy acceptance.
@@ -353,6 +354,21 @@ step and quality unchanged. Both cards logged `P1_PREFILL_READY` (every
 admitted shard validated) and a route for all five shapes; the KV pool stayed
 at 262,144 tokens. The gain falls with prompt length because attention, which
 P1 does not change, grows with the prefix; arm `O` (0016) targets it.
+
+Results on 2026-11-09 (image `sha256:8852c5aa`, series `b9250b93`, run back to
+back):
+
+| Arm | Prefill at 2K / 8K / 16K | First token at 23.5K / 47K / 88K | Verify step | C1 / C2 tokens/s | Quality |
+| --- | --- | --- | --- | --- | --- |
+| `N` | 2,664 / 3,746 / 3,457 tokens/s | 7.81 / 19.75 / 49.89 s | 34.11 / 33.78 ms | 112.2 / 201.2 | 10 passed, 1 failed (`k8s-troubleshoot`) |
+| `O` | 3,830 / 3,776 / 3,549 tokens/s | 7.96 / 18.08 / 44.70 s | 34.05 / 33.80 ms | 110.2 / 191.2 | same |
+
+Arm `O` became the default: 8-warp prefill attention saves 1.7 s at a 47K
+prompt and 5.2 s at 88K, as the component measurement predicts (the saving
+grows with the square of the prompt length), with the verify step and quality
+unchanged. Arm N's 2K figure is a low outlier (3,778 tokens/s in the previous
+run). Arm O's lower C2 figure comes from shorter sampled outputs (7,982
+against 8,953 tokens in that phase) at a higher per-request decode rate.
 
 After BetterBench, the Job runs the assistant acceptance menu
 ([`assistant-quality.json`](../sglang/assistant-quality.json) through
