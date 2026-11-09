@@ -306,8 +306,11 @@ endpoint. No speed change is read without a quality result. Code tasks need
 the bubblewrap sandbox, which the pod lacks, and long-context cases need a
 tokenizer budget. The runner reports both as NOT RUN, never as passed.
 `QUALITY_RESULT` lists the pass rate, the tool round-trip, grounded and
-abstention rates, and any failed task. The Job fails if an executed task
-fails.
+abstention rates, and any failed task.
+
+The bench Job fails only when the bench does: a failed BetterBench or
+long-context request, or a quality runner error. Graded quality failures are
+results in `QUALITY_RESULT`, not Job failures; compare them with arm `A`.
 
 ```sh
 infrastructure/ai-stack/serving/render.py bench infrastructure/ai-stack/serving/<profile>.json \
