@@ -46,7 +46,10 @@ grep -Fq 'install -y --no-install-recommends libgomp1 libatomic1 gcc g++ libc6-d
 grep -Fq 'HIP_DEVICE_LIB_PATH=/usr/local/lib/python3.14/site-packages/_rocm_sdk_devel/amdgcn/bitcode' "$dir/image/Containerfile" ||
   fail 'runtime image does not point hipcc at the device bitcode (SGLang JIT kernels fail to build)'
 grep -Fq 'HIP C++ JIT compile failed' "$dir/image/smoke.py" || fail 'image smoke test does not compile a HIP C++ JIT kernel'
-for check in 'split-K down/out GEMM outside the op234 limits' 'packed GDN projection differs' 'FP8 LM head route missing'; do
+grep -Fq 'LONG_CONTEXT_DEPTHS = (32000, 64000, 120000)' "$dir/serving/bench.py" || fail 'bench has no long-context decode phase'
+grep -Fq 'min_tokens=LONG_CONTEXT_OUTPUT' "$dir/serving/bench.py" || fail 'long-context phase does not fix its output length'
+for check in 'split-K down/out GEMM outside the op234 limits' 'packed GDN projection differs' 'FP8 LM head route missing' \
+  'fused GDN norm quantization differs'; do
   grep -Fq "$check" "$dir/image/smoke.py" || fail "image smoke test does not cover: $check"
 done
 # shellcheck disable=SC2016 # literal text in build-stage.sh
@@ -188,11 +191,11 @@ assert "--disable-overlap-schedule" not in argv["B"]
 # Arm C is arm A plus block verification, nothing else.
 assert argv["C"] == argv["A"][:-4] + ["--speculative-use-block-verification"] + argv["A"][-4:]
 # Verify-path arms: D/E/F change only the environment, G adds ReplaySSM, H is all of them.
-for arm in "DEF":
+for arm in "DEFI":
     assert argv[arm] == argv["A"] and len(profile["arms"][arm]["env"]) == 1, arm
 assert argv["G"] == argv["H"] == argv["A"][:-4] + ["--enable-linear-replayssm-spec"] + argv["A"][-4:]
 assert ({e["name"] for e in profile["arms"]["H"]["env"]} ==
-        {profile["arms"][a]["env"][0]["name"] for a in "DEF"})
+        {profile["arms"][a]["env"][0]["name"] for a in "DEFI"})
 for arm in profile["arms"]:
     items = json.loads((work / f"job-{arm}.json").read_text())["items"]
     config, job = items

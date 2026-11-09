@@ -18,6 +18,11 @@ tasks need the bubblewrap sandbox, which the pod lacks, and long-context
 cases need a tokenizer budget; the runner reports both NOT RUN rather than
 passing them.
 
+A long-context phase follows (not part of op233's profile): one request at
+each of 32K, 64K and 120K prompt tokens over a unique filler document, with
+exactly 1024 generated tokens, recording time to first token, decode rate and
+tokens per verify at depth.
+
 Prints one BENCH_RESULT JSON summary line and BENCH_RAW with the full
 results (zlib + base64), then QUALITY_RESULT and QUALITY_RAW likewise.
 Exits 0 when every BetterBench request succeeded and no executed quality
@@ -43,6 +48,12 @@ import urllib.request
 import zlib
 
 REQUEST_TIMEOUT_SECONDS = 300  # op233 used 120; a timeout only fails a request, it never changes a rate
+# Long-context decode: one request per depth over a unique filler document,
+# exactly LONG_CONTEXT_OUTPUT generated tokens so every arm decodes the same
+# amount. Not part of op233's profile; added to measure verify cost at depth.
+LONG_CONTEXT_DEPTHS = (32000, 64000, 120000)
+LONG_CONTEXT_OUTPUT = 1024
+LONG_CONTEXT_TIMEOUT_SECONDS = 900
 
 
 def get(base, path, timeout=10):
@@ -132,6 +143,32 @@ def main():
         raw[phase] = asyncio.run(call())
         phases[phase] = dict(delta(before, counters(base)), seconds=round(time.monotonic() - started, 1))
 
+    from betterbench.prefill import _filler
+
+    raw["long_context"], long_context = [], {}
+    for depth in LONG_CONTEXT_DEPTHS:
+        nonce = f"{salt}long-{depth}"
+        document = _filler(depth * 4, nonce)
+        messages = [{"role": "user", "content": (
+            f"[bb:{nonce}] Read the following notes on distributed systems.\n\n{document}\n\n"
+            "Write a detailed explanation of the consistency and availability trade-offs these notes "
+            "discuss, with concrete examples for each tool they mention.")}]
+        before, started = counters(base), time.monotonic()
+        result = asyncio.run(original(
+            endpoint, model, messages, max_tokens=LONG_CONTEXT_OUTPUT, temperature=cfg.effective_temp(),
+            top_p=cfg.top_p, top_k=cfg.top_k, seed=cfg.seed, category="long_context", prompt_id=str(depth),
+            timeout=LONG_CONTEXT_TIMEOUT_SECONDS,
+            extra_body=dict(profile["request_body"], cache_salt=nonce, min_tokens=LONG_CONTEXT_OUTPUT)))
+        if not result.ok:
+            failures.append({"category": "long_context", "error": str(result.error)[:200]})
+        row = result.as_dict()
+        raw["long_context"].append(row)
+        long_context[str(depth)] = dict(
+            delta(before, counters(base)), seconds=round(time.monotonic() - started, 1),
+            prompt_tokens=row.get("prompt_tokens"), completion_tokens=row.get("completion_tokens"),
+            ttft_ms=round(row["ttft_ms"], 1) if row.get("ttft_ms") else None,
+            decode_tps=round(row["decode_tps"], 2) if row.get("decode_tps") else None)
+
     single = {cat: {"decode_tps_median": median(r.get("decode_tps") for r in rows),
                     "completion_tokens_median": median(r.get("completion_tokens") for r in rows)}
               for cat, rows in raw["single_stream"].items()}
@@ -146,6 +183,7 @@ def main():
     summary = {"model": model, "startup_seconds": startup, "profile": profile["name"],
                "requests": next(ordinal), "failures": failures, "phases": phases,
                "single_stream": single, "concurrency": concurrency, "prefill_pp_tps_median": prefill,
+               "long_context": long_context,
                "reference_op233_op234": {"C1_tps": "96.3-104.3", "C2_tps": "172.8-194.5", "cap_w": 235}}
     print("BENCH_RESULT " + json.dumps(summary), flush=True)
     print("BENCH_RAW " + base64.b64encode(zlib.compress(json.dumps(raw).encode(), 9)).decode(), flush=True)

@@ -9,7 +9,8 @@ compiles a HIP C++ kernel the way SGLang's JIT kernels are built (hipcc,
 C++20, standard headers), which needs g++ and the device bitcode path. It also
 calls the opt-in verify-path ports directly: split-K down/out within the op234
 limits, the packed GDN projection bitwise equal to the separate projections,
-and the FP8 LM head route on a small synthetic head.
+the FP8 LM head route on a small synthetic head, and the fused GDN gated-norm
+MXFP4 quantization bitwise equal to norm then quantize.
 """
 
 import os
@@ -95,6 +96,19 @@ if logits is None or not torch.isfinite(logits).all() or (
     raise SystemExit("IMAGE_SMOKE=fail: FP8 LM head route missing or outside 5% of the logit range")
 if fp8_head.project(torch.randn(9, 5120, device="cuda", dtype=torch.bfloat16), head, torch.float32) is not None:
     raise SystemExit("IMAGE_SMOKE=fail: FP8 LM head route took rows it does not cover")
+
+from sglang.kernels.ops.attention.fla.layernorm_gated import RMSNorm as RMSNormGated
+from sglang.srt.layers.quantization.quark.schemes import gfx1201_gdn_norm_quant as f1
+
+gnorm = RMSNormGated(128, eps=1e-6, group_size=None, norm_before_gate=True, dtype=torch.bfloat16).cuda()
+with torch.no_grad():
+    gnorm.weight.copy_(torch.rand(128, device="cuda", dtype=torch.bfloat16) + 0.5)
+xn = torch.randn(8 * 24, 128, device="cuda", dtype=torch.bfloat16)
+zn = torch.randn(8 * 24, 128, device="cuda", dtype=torch.bfloat16)
+p0, s0 = mxfp4.dynamic_mxfp4_quant(gnorm(xn, zn).reshape(8, 24 * 128))
+p1, s1 = f1.gated_norm_mxfp4(xn, zn, gnorm.weight, gnorm.eps, 24)
+if not (torch.equal(p0, p1) and torch.equal(s0, s1) and s0.stride() == s1.stride()):
+    raise SystemExit("IMAGE_SMOKE=fail: fused GDN norm quantization differs from norm then quantize")
 
 if shutil.which("c++") is None:
     raise SystemExit("IMAGE_SMOKE=fail: no c++ for SGLang JIT compiler fingerprinting")
