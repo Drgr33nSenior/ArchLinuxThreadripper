@@ -41,8 +41,11 @@ if bash "$dir/patchset-hash.sh" "$work/empty" 2>/dev/null; then fail 'empty seri
 # The runtime image installs only the resolved wheelhouse, offline, and checks it.
 grep -Fq -- '--no-index --find-links /wheelhouse /wheelhouse/*.whl' "$dir/image/Containerfile" || fail 'runtime install is not offline'
 grep -Fq 'pip check' "$dir/image/Containerfile" || fail 'runtime install is not dependency-checked'
-grep -Fq 'install -y --no-install-recommends libgomp1 libatomic1 gcc libc6-dev' "$dir/image/Containerfile" ||
-  fail 'runtime image lacks the GCC runtime libraries or the C compiler Triton needs'
+grep -Fq 'install -y --no-install-recommends libgomp1 libatomic1 gcc g++ libc6-dev' "$dir/image/Containerfile" ||
+  fail 'runtime image lacks the GCC runtime libraries or the C/C++ compilers Triton and SGLang JIT need'
+grep -Fq 'HIP_DEVICE_LIB_PATH=/usr/local/lib/python3.14/site-packages/_rocm_sdk_devel/amdgcn/bitcode' "$dir/image/Containerfile" ||
+  fail 'runtime image does not point hipcc at the device bitcode (SGLang JIT kernels fail to build)'
+grep -Fq 'HIP C++ JIT compile failed' "$dir/image/smoke.py" || fail 'image smoke test does not compile a HIP C++ JIT kernel'
 # shellcheck disable=SC2016 # literal text in build-stage.sh
 grep -Fq -- '-v "$here/image/smoke.py:/smoke.py:ro"' "$dir/build-stage.sh" ||
   fail 'image stage does not run the GPU smoke test before pushing'

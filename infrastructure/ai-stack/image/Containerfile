@@ -6,9 +6,11 @@ FROM ${RUNTIME_BASE_IMAGE}
 ARG STACK_ID
 # The wheels bundle ROCm but not the GCC runtime libraries: torch needs
 # libgomp (OpenMP) and part of the wheelhouse needs libatomic. Triton compiles
-# its HIP launcher with the system C compiler at runtime (gcc, libc6-dev).
+# its HIP launcher with the system C compiler at runtime (gcc, libc6-dev);
+# SGLang's JIT kernels (e.g. the KV-cache store) are HIP C++ and need the C++
+# standard headers and `c++` (g++).
 RUN apt-get update \
- && apt-get install -y --no-install-recommends libgomp1 libatomic1 gcc libc6-dev \
+ && apt-get install -y --no-install-recommends libgomp1 libatomic1 gcc g++ libc6-dev \
  && rm -rf /var/lib/apt/lists/*
 RUN --mount=type=bind,source=wheelhouse,target=/wheelhouse \
     python3 -m pip install --no-cache-dir --no-index --find-links /wheelhouse /wheelhouse/*.whl \
@@ -19,9 +21,12 @@ RUN rocm-sdk init >/dev/null \
  && test -d "$(rocm-sdk path --root)/include/hip" \
  && ! test -e /usr/local/lib/python3.14/site-packages/rocm_sdk_devel/_devel.tar
 # Toolchain for Triton and SGLang JIT: the packaged TheRock SDK, not /opt/rocm.
-# The python3.14 path follows PYTHON_ABI in stack.lock.
+# The python3.14 path follows PYTHON_ABI in stack.lock. hipcc runs the core
+# SDK's clang, which looks for device bitcode beside itself rather than under
+# ROCM_PATH, so name the devel SDK's bitcode explicitly.
 ENV ROCM_HOME=/usr/local/lib/python3.14/site-packages/_rocm_sdk_devel \
     ROCM_PATH=/usr/local/lib/python3.14/site-packages/_rocm_sdk_devel \
+    HIP_DEVICE_LIB_PATH=/usr/local/lib/python3.14/site-packages/_rocm_sdk_devel/amdgcn/bitcode \
     LLVM_PATH=/usr/local/lib/python3.14/site-packages/_rocm_sdk_core/lib/llvm \
     HIP_CLANG_PATH=/usr/local/lib/python3.14/site-packages/_rocm_sdk_core/lib/llvm/bin \
     HIP_PLATFORM=amd \
