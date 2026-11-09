@@ -102,26 +102,24 @@ these views and preserve the selected time range and matching filters:
 | Overview | Does the workstation have headroom? | CPU, available RAM, root filesystem, PSU DC power, serving availability, alerts and separate GPU bars |
 | Kubernetes cluster | Is K3s ready to run work? | Node readiness/pressure, active Pod counts, deployment desired/available replicas, regular-container requests versus node allocatable, GPU requests and PVC state/capacity |
 | Kubernetes Pods | Why is a Pod waiting, restarting or slow? | Namespace, Pod and phase filters; readiness, unschedulable/waiting reasons, last termination, restarts, actual CPU/memory, budgets and throttling |
-| GPUs | What is happening on each card? | PCI-address filter; runtime power state; per-card package power, junction, memory and edge temperatures, compute activity and clocks from the AMD exporter (readable while a card sleeps); VRAM capacity, PCIe width, sensor availability and identity from the sysfs sampler |
+| GPUs | What is happening on each card? | GPU filter; per-card package power, junction, memory and edge temperatures, compute activity, clocks, VRAM and identity from the AMD exporter (readable while a card sleeps); runtime power state and PCIe link width and speed from node-exporter's `pcidevice` collector |
 | Host & storage | Is CPU, RAM or storage limiting work? | Continuous CPU flame graph of host processes (eBPF), CPU and memory trends, pressure stalls, filesystem capacity, block-device I/O filter, CPU/NVMe temperatures, reported CPU frequency and exposed ECC counters |
 | Workloads | Are requests waiting, and what resources do containers use? | Sections for model serving (queue, KV pool, generation rate, TTFT/inter-token, speculative acceptance, prefix cache, p95 end-to-end and queue latency, retractions), gateway and eBPF service requests, containers (namespace filter, working set, CPU, budgets, throttling, restarts, GPU activity and VRAM by pod) and AI-stack builds (stage state, duration, compiler-cache hit ratio) |
 | Power & energy | How do power, heat, energy and electricity costs change together? | PSU DC power/rail history, GPU power/temperature, cumulative energy and coverage; collapsible Electricity costs section with current cost/hour, projections, selected-window estimates, separate household standing charge and API/cache/manual status |
 | Monitoring health | Can these observations be trusted? | Scrape targets, alerts, sample age, collector failures and filtered installation/kernel logs; Explore links for logs and traces |
 
-Click an overview GPU bar to open that card's drilldown. GPU identity uses its
-PCI address, rather than an index that can change. The dashboards refresh every
-30 seconds. Use the same time range when comparing views.
+Click an overview GPU bar to open that card's drilldown. Cards are named by the
+AMD exporter's GPU id, which follows PCI order: GPU 0 is `0000:23:00.0` and GPU 1
+is `0000:c3:00.0`. The PCI link and power-state panels are keyed by PCI address.
+The dashboards refresh every 30 seconds. Use the same time range when comparing
+views.
 
 An empty panel means missing observations or a stopped workload, not measured
-zero. A GPU can expose VRAM and identity while other channels are unavailable;
-check **Available sensor channels** before interpreting an empty chart.
-The **Runtime power state** panel reads the kernel's runtime PM state without
-waking the card; **Suspended (idle)** explains empty activity and power panels. An
-idle card can be runtime-suspended: this host's driver then returns EBUSY for
-activity, clock, temperature and power reads while identity and VRAM remain
-readable. The GPU dashboard's **Activity / clock sensor availability** row
-reports channel readability; it does not prove power state or hardware health.
-Missing measurements remain gaps, rather than substituted zero activity.
+zero. The AMD exporter keeps reading a runtime-suspended (idle) card, so GPU
+charts continue while a card sleeps. The **PCI runtime power state** panel shows
+the kernel's PCI power state for each GPU display function: D0 is active, D3hot
+is runtime-suspended. It is not a power reading. Missing measurements remain
+gaps, rather than substituted zero activity.
 An offline SGLang endpoint leaves its latency and throughput panels empty. The
 generation-token counter measures server work and is not the benchmark's
 delivered-output throughput. Container working set is separate from memory
@@ -156,7 +154,7 @@ short-lived extra Pod count as a new workload.
 ```promql
 node_memory_MemAvailable_bytes{job="node"} / 1024^3
 rate(node_pressure_memory_waiting_seconds_total{job="node"}[5m])
-workstation_gpu_vram_used_bytes / workstation_gpu_vram_total_bytes
+max by (gpu_id) (gpu_used_vram{job="amd-gpu"}) / max by (gpu_id) (gpu_total_vram{job="amd-gpu"})
 time() - workstation_hardware_sample_timestamp_seconds
 sum(sglang:num_queue_reqs{job="sglang",priority=""})
 histogram_quantile(0.95, sum by (le) (rate(sglang:time_to_first_token_seconds_bucket{job="sglang"}[5m])))

@@ -39,7 +39,7 @@ class DashboardTests(unittest.TestCase):
         gpu_links = [link for panel in panels
                      for link in panel.get("fieldConfig", {}).get("defaults", {}).get("links", [])]
         self.assertEqual(len(gpu_links), 2)
-        self.assertTrue(all("var-gpu=${__field.labels.pci_bdf}" in link["url"]
+        self.assertTrue(all("var-gpu=${__field.labels.gpu_id}" in link["url"]
                             and "${__url_time_range}" in link["url"] for link in gpu_links))
 
     def test_panels_have_unique_ids_and_nonoverlapping_grid(self):
@@ -66,7 +66,7 @@ class DashboardTests(unittest.TestCase):
                     self.assertTrue(variables <= declared)
         gpu = self.dashboards["workstation-gpus"]["templating"]["list"][0]
         self.assertEqual(gpu["name"], "gpu")
-        self.assertIn("pci_bdf", gpu["definition"])
+        self.assertEqual(gpu["definition"], 'label_values(gpu_total_vram{job="amd-gpu"}, gpu_id)')
         self.assertTrue(gpu["includeAll"] and gpu["multi"])
 
     def test_missing_sensors_are_not_zero_and_energy_scope_is_preserved(self):
@@ -149,20 +149,30 @@ class DashboardTests(unittest.TestCase):
                     self.assertIn("${pod:regex}", expr)
                     self.assertIn("${phase:regex}", expr)
 
-    def test_gpu_sleeping_sensor_gaps_are_explained_without_zero_activity(self):
+    def test_gpu_views_use_the_amd_exporter_and_pcidevice_not_the_sysfs_sampler(self):
+        for dashboard in self.dashboards.values():
+            for panel in dashboard["panels"]:
+                for target in panel.get("targets", []):
+                    self.assertNotIn("workstation_gpu_", target.get("expr", ""), (dashboard["uid"], panel["title"]))
         gpu = self.dashboards["workstation-gpus"]
-        intro = next(p for p in gpu["panels"] if p["type"] == "text")
-        self.assertIn("runtime-suspended", intro["options"]["content"])
-        status = next(p for p in gpu["panels"] if p["title"] == "Activity / clock sensor availability")
-        expr = status["targets"][0]["expr"]
-        self.assertIn("workstation_gpu_sensor_available", expr)
-        self.assertIn("<= 90", expr)
-        self.assertIn("- time() <= 10", expr)
-        self.assertNotIn("or vector(0)", expr)
-        options = status["fieldConfig"]["defaults"]["mappings"][0]["options"]
-        self.assertIn("may be asleep", options["0"]["text"])
-        self.assertEqual(options["1"]["text"], "Readable")
-        self.assertEqual(status["fieldConfig"]["defaults"]["noValue"], "Telemetry unavailable")
+        intro = next(p for p in gpu["panels"] if p["type"] == "text")["options"]["content"]
+        self.assertIn("runtime-suspended", intro)
+        self.assertIn("GPU 0 is PCI 0000:23:00.0", intro)
+        titles = {p["title"] for p in gpu["panels"]}
+        self.assertFalse({"Activity / clock sensor availability", "Available sensor channels"} & titles)
+        for title in ("PCI runtime power state", "Negotiated PCIe link · width and speed"):
+            panel = next(p for p in gpu["panels"] if p["title"] == title)
+            for target in panel["targets"]:
+                self.assertIn("node_pcidevice_", target["expr"])
+                self.assertIn('class_id="0x030000"', target["expr"])
+                self.assertIn('vendor_id="0x1002"', target["expr"])
+                self.assertNotIn("or vector(0)", target["expr"])
+            self.assertEqual(panel["fieldConfig"]["defaults"]["noValue"], "Telemetry unavailable")
+        for title in ("Package power · each card", "VRAM used and capacity", "Core and memory clock · each card"):
+            panel = next(p for p in gpu["panels"] if p["title"] == title)
+            for target in panel["targets"]:
+                self.assertIn('job="amd-gpu"', target["expr"])
+                self.assertIn("max by (gpu_id)", target["expr"])
         for uid in ("workstation-overview", "workstation-power"):
             text = " ".join(p.get("options", {}).get("content", "") for p in self.dashboards[uid]["panels"])
             self.assertIn("runtime-suspended", text)

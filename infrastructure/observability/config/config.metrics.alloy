@@ -40,6 +40,12 @@ prometheus.relabel "bounded" {
     action = "labeldrop"
     regex = "(request_id|session_id|turn_id|user_id|prompt|completion|token|authorization|cookie)"
   }
+  // node-exporter pcidevice: keep link, power-state and identity series only.
+  rule {
+    action = "drop"
+    source_labels = ["__name__"]
+    regex = "node_pcidevice_(sriov_.*|d3cold_allowed|numa_node)"
+  }
   forward_to = [prometheus.remote_write.local.receiver]
 }
 

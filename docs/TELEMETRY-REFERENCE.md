@@ -15,7 +15,7 @@ and recovery review. Source fixtures do not activate or qualify a live stack.
 | Tempo | Sampled Bridge and optional SGLang spans | Single binary; local storage; 72-hour retention; no Kafka |
 | Cluster Alloy | Static scrapes, OTLP filtering, batching and forwarding | Local cursor/WAL PVC; bounded queues; no cloud destination |
 | Host Alloy | Filtered journald collection; loopback Bridge OTLP receiver | Private local state; unprivileged, with journal-read group access |
-| node-exporter | CPU, RAM, pressure, filesystem, disk and textfile metrics | Read-only host paths, separate admission namespace; no GPU device mounts |
+| node-exporter | CPU, RAM, pressure, filesystem, disk, PCI device (`pcidevice`) and textfile metrics | Read-only host paths, separate admission namespace; no GPU device mounts |
 | kube-state-metrics | Pod/deployment state, requests and limits | Read-only Kubernetes RBAC; not actual resource utilisation |
 | Optional kubelet scrape | Actual pod memory, CPU time and throttling | Verified TLS and node-specific `nodes/metrics` RBAC |
 | Host sysfs sampler | GPU sensors, CPU power-policy state and supported Corsair PSU output power | Atomic textfile and private sampled-energy state; unprivileged timer; no ROCm library injection |
@@ -85,8 +85,12 @@ The GPU Operator deploys AMD's device metrics exporter (v1.5.3, AMD-SMI from
 TheRock 10.0) from `infrastructure/gpu-operator/deviceconfig.yaml`; the
 `amd_exporter` entry in `versions.json` records the same pinned image. It was
 qualified on both R9700s on 2026-11-08. It reads power, temperatures, clocks,
-activity, VRAM, voltages and PCIe speed, including while a card is
-runtime-suspended, which the sysfs sampler cannot. Its health service and ECC
+activity, VRAM and voltages, including while a card is runtime-suspended,
+which the sysfs sampler cannot. Its PCIe fields are MI2xx/MI3xx-only (on the
+R9700 `PCIE_SPEED` read 2 GT/s on a 32 GT/s link), so they are not collected;
+node-exporter's `pcidevice` collector supplies the PCIe link width and speed and
+the runtime power state instead. Alloy drops its SR-IOV, `d3cold_allowed` and
+`numa_node` series. Its health service and ECC
 fields stay disabled, and the kernel command line keeps `amdgpu.ras_enable=0`:
 with GECC off, the RAS counters return bogus uncorrectable-error counts that the
 exporter's health check turns into unschedulable GPUs. Alloy scrapes it as the
