@@ -26,3 +26,7 @@ SGLANG_PATCHSET_SHA256=1d67505625e4b7a466d925ba36214b47cad8d001d04dd97cf4471dfb3
 RUNTIME_BASE_TAG=docker.io/library/python:3.14-slim-trixie
 RUNTIME_BASE_IMAGE=docker.io/library/python@sha256:9aaa474097d094040649f2162a627c0049b408f52138d980916788d80f04802f
 IMAGE_REPOSITORY=registry.lan.thespry.family/local/sglang-gfx1201
+# Supply-chain tools, pinned by digest and upgraded by review (refresh.sh
+# leaves them unchanged). Releases at least two weeks old when pinned.
+COSIGN_IMAGE=ghcr.io/sigstore/cosign/cosign:v3.1.4@sha256:0f06154836d2de34f887a5c273506d52ca43edaa1d9e53e6510fa78a48f69c2d
+TRIVY_IMAGE=ghcr.io/aquasecurity/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c
