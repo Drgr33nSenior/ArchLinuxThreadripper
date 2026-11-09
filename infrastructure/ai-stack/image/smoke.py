@@ -11,8 +11,9 @@ calls the opt-in verify-path ports directly: split-K down/out and the wide
 split-K (QKV) within the op234 limits, the packed GDN projection bitwise equal to the separate projections,
 the FP8 LM head route on a small synthetic head, the fused GDN gated-norm
 MXFP4 quantization bitwise equal to norm then quantize, and the split-KV verify
-attention within BF16 rounding of extend_attention_fwd. With two GPUs it runs
-the PCIe custom all-reduce in two processes against the exact sum.
+attention within BF16 rounding of extend_attention_fwd. It runs the P1 prefill
+route on one shard (exact FP8 expansion, error against an FP32 reference). With
+two GPUs it runs the PCIe custom all-reduce in two processes against the exact sum.
 """
 
 import os
@@ -149,6 +150,28 @@ extend_attention_fwd(qv, kc[blk].contiguous(), vc[blk].contiguous(), oe, kc, vc,
                      torch.zeros(2, device="cuda", dtype=torch.int64), tv, 1.0, 1.0, sm_scale=1 / math.sqrt(hd))
 if not (ov.float() - oe.float()).abs().max().item() < 1e-2:
     raise SystemExit("IMAGE_SMOKE=fail: split-KV verify attention differs from extend_attention_fwd")
+
+# P1 prefill route (serving patch 0015) on one 5120x3072 shard at 1024 rows: the
+# FP8 expansion must equal the dequantized MXFP4 weight exactly, and the output
+# must be within FP8 error of an FP32 reference (MXFP4 activations give ~11%).
+from sglang.srt.layers.quantization.quark.schemes import gfx1201_p1_prefill as p1
+
+pn, pk = 5120, 3072
+pw, ps = g.dynamic_mxfp4_quant(torch.randn(pn, pk, device="cuda", dtype=torch.bfloat16) * 0.02)
+player = torch.nn.Module()
+player.weight = torch.nn.Parameter(pw.contiguous(), requires_grad=False)
+player.weight_scale = torch.nn.Parameter(ps.contiguous(), requires_grad=False)
+route = p1.PrefillRoute(torch, p1.SETTING)
+route.validate_layer(player, pn, pk)
+px = torch.randn(1024, pk, device="cuda", dtype=torch.bfloat16)
+py = route.apply(player, px, pn, pk).float()
+pref_w = mxfp4._dequant_mxfp4_to_bf16(player.weight, player.weight_scale).float()
+pexp, pbs = route._views(torch.cuda.current_device(), 1024, pn, pk)[:2]
+if not torch.equal(pexp.float() * pbs.repeat_interleave(128, 0).repeat_interleave(128, 1), pref_w):
+    raise SystemExit("IMAGE_SMOKE=fail: P1 FP8 weight expansion is not exact")
+pref = px.float() @ pref_w.T
+if not (py - pref).norm().item() / pref.norm().item() < 0.05:
+    raise SystemExit("IMAGE_SMOKE=fail: P1 prefill GEMM differs from the FP32 reference")
 
 # PCIe custom all-reduce (serving patch 0014) on both GPUs: the AOT-built kernel
 # must give the exact fixed-order sum on both ranks. The stock kernel gave wrong,

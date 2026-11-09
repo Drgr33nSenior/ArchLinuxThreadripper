@@ -229,6 +229,10 @@ assert argv["M"] == [a for a in argv["A"] if a != "--disable-custom-all-reduce"]
 assert "--disable-custom-all-reduce" in argv["K"]
 assert ([e["name"] for e in profile["arms"]["M"]["env"]] ==
         [e["name"] for e in profile["arms"]["K"]["env"]] + ["SGLANG_GFX1201_PCIE_CUSTOM_AR"])
+# N is M with the P1 prefill route: same flags, one env switch added.
+assert argv["N"] == argv["M"]
+assert ([e["name"] for e in profile["arms"]["N"]["env"]] ==
+        [e["name"] for e in profile["arms"]["M"]["env"]] + ["SGLANG_GFX1201_P1_PREFILL"])
 for arm in profile["arms"]:
     items = json.loads((work / f"job-{arm}.json").read_text())["items"]
     config, job, service = items
