@@ -181,10 +181,12 @@ runtime it replaces is guidance there, not a target. The model catalog keeps
 only model and draft identity.
 
 A profile has arms for the A/B decisions that need measurement; one is the
-default. For `qwen3.8-27b-mxfp4-tp2`, arm K is the default: arm A's flags
+default. For `qwen3.8-27b-mxfp4-tp2`, arm M is the default: arm A's flags
 (`no_buffer`, overlap off, as op234) with the six qualified gfx1201 ports
-switched on. Arm A stays as the baseline that every other arm is compared
-with. Arm B (`extra_buffer_lazy` with the overlap scheduler) is an experiment.
+switched on and SGLang's custom all-reduce in place of RCCL for verify and
+decode reductions. Arm A stays as the baseline that every other arm is
+compared with, and arm K is the same without the custom all-reduce. Arm B
+(`extra_buffer_lazy` with the overlap scheduler) is an experiment.
 
 An arm may list base flags under `drop` (arm `M` drops
 `--disable-custom-all-reduce`); `render.py` stops if a dropped flag is not in
@@ -260,9 +262,9 @@ variables, which the Job adds to the profile's.
 | `I` | `SGLANG_GFX1201_GDN_NORM_QUANT=1` (fused GDN gated-norm MXFP4 quantization) |
 | `H` | `D`, `E`, `F` and `I` together (not `G`) |
 | `J` | `H` plus `SGLANG_GFX1201_VERIFY_ATTENTION=1` (split-KV verify attention) |
-| `K` | `J` plus `SGLANG_GFX1201_SPLITK_WIDE=1` (split-K for QKV, GDN input and gate/up), **the default** |
+| `K` | `J` plus `SGLANG_GFX1201_SPLITK_WIDE=1` (split-K for QKV, GDN input and gate/up); the RCCL comparison for `M` |
 | `L` | `K` with the draft quantized to FP8 at load (`--speculative-draft-model-quantization fp8`); not adopted |
-| `M` | `K` with SGLang's custom all-reduce for verify/decode reductions (`SGLANG_GFX1201_PCIE_CUSTOM_AR=1`, `--disable-custom-all-reduce` dropped; serving patch 0014) |
+| `M` | `K` with SGLang's custom all-reduce for verify/decode reductions (`SGLANG_GFX1201_PCIE_CUSTOM_AR=1`, `--disable-custom-all-reduce` dropped; serving patch 0014), **the default** |
 
 Enable an item in arm A only after its arm matches arm A's quality result and
 greedy acceptance.
@@ -318,6 +320,21 @@ Nothing that passed in `J` failed in `K` or `L`. Arm `K` became the default.
 Arm `L`'s FP8 draft saved 0.1 ms: quantizing the draft disables DFLASH's fused
 KV materialization. C1 varies with acceptance and output length between runs
 (106-119 tokens/s at almost the same step time); compare the verify step.
+
+Results on 2026-11-09 (image `sha256:a5ef9601`, series `3bed3db3`, run back to
+back; median and 25th percentile verify step):
+
+| Arm | Verify step | C1 / C2 tokens/s | Step at 23.5k / 47k / 88k prompt | Quality |
+| --- | --- | --- | --- | --- |
+| `K` | 34.55 / 34.31 ms | 112.9 / 207.6 | 37.0 / 38.5 / 41.6 ms | 10 passed, 1 failed (`k8s-troubleshoot`) |
+| `M` | 33.96 / 33.73 ms | 118.7 / 179.6 | 36.2 / 37.9 / 40.9 ms | same |
+
+Arm `M` became the default: 0.6 ms faster per verify step, the same quality
+result and no GPU page faults. Its C2 figure comes from one request with a
+2.7 s time to first token, which coincided with a Triton compile of the
+extend-attention kernel after the server was ready; the two-request verify
+step was 36.48 ms against arm K's 36.77 ms. Prefill reductions (over
+512 KiB) stay on RCCL, so prefill throughput is unchanged.
 
 After BetterBench, the Job runs the assistant acceptance menu
 ([`assistant-quality.json`](../sglang/assistant-quality.json) through

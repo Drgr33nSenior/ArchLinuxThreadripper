@@ -178,8 +178,9 @@ for e in profile["args"]:
 for e in profile["env"]:
     assert e["reason"] and e["source"] and e["confidence"] in ("H", "M", "L"), e
 assert sum(1 for arm in profile["arms"].values() if arm["default"]) == 1
-# Arm K (the qualified ports) is the default; arm A stays as the baseline arm.
-assert profile["arms"]["K"]["default"] and not profile["arms"]["A"]["default"]
+# Arm M (the qualified ports and the PCIe custom all-reduce) is the default;
+# arm A stays as the baseline arm and arm K as the RCCL comparison.
+assert profile["arms"]["M"]["default"] and not profile["arms"]["A"]["default"]
 flags = [e["flag"] for e in profile["args"]]
 assert len(flags) == len(set(flags)), "duplicate flag"
 unset = {e["name"] for e in profile["must_unset_env"]}
@@ -254,7 +255,8 @@ for arm in profile["arms"]:
 # The bench Job is the qualification pod running bench.py with the vendored
 # BetterBench client, corpus and profile; --greedy only changes the profile.
 import base64, io, tarfile
-qualify = json.loads((work / "job-A.json").read_text())["items"][1]
+default_arm = next(name for name, spec in profile["arms"].items() if spec["default"])
+qualify = json.loads((work / f"job-{default_arm}.json").read_text())["items"][1]
 bundles = {}
 for variant in ("bench", "bench-greedy"):
     config, job, service = json.loads((work / f"{variant}.json").read_text())["items"]
