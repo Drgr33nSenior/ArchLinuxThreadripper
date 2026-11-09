@@ -198,6 +198,10 @@ assert argv["G"] == argv["A"][:-4] + ["--enable-linear-replayssm-spec"] + argv["
 assert argv["H"] == argv["A"]
 assert ({e["name"] for e in profile["arms"]["H"]["env"]} ==
         {profile["arms"][a]["env"][0]["name"] for a in "DEFI"})
+# J is H plus split-KV verify attention, environment only.
+assert argv["J"] == argv["A"]
+assert ([e["name"] for e in profile["arms"]["J"]["env"]] ==
+        [e["name"] for e in profile["arms"]["H"]["env"]] + ["SGLANG_GFX1201_VERIFY_ATTENTION"])
 for arm in profile["arms"]:
     items = json.loads((work / f"job-{arm}.json").read_text())["items"]
     config, job, service = items
