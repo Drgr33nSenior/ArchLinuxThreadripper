@@ -108,9 +108,9 @@ runtime it replaces is guidance there, not a target. The model catalog keeps
 only model and draft identity.
 
 A profile has arms for the A/B decisions that need measurement; one is the
-default. For `qwen3.8-27b-mxfp4-tp2`, arm B (`extra_buffer_lazy` with the
-overlap scheduler) is the candidate and arm A (`no_buffer`, overlap off) is the
-op234-compatible fallback.
+default. For `qwen3.8-27b-mxfp4-tp2`, arm A (`no_buffer`, overlap off, as
+op234) is the default for the bring-up baseline. Arm B (`extra_buffer_lazy`
+with the overlap scheduler) is the first experiment once A serves correctly.
 
 `serving/render.py` renders a profile:
 
