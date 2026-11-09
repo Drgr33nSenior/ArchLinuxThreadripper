@@ -11,12 +11,14 @@ calls the opt-in verify-path ports directly: split-K down/out and the wide
 split-K (QKV) within the op234 limits, the packed GDN projection bitwise equal to the separate projections,
 the FP8 LM head route on a small synthetic head, the fused GDN gated-norm
 MXFP4 quantization bitwise equal to norm then quantize, and the split-KV verify
-attention within BF16 rounding of extend_attention_fwd.
+attention within BF16 rounding of extend_attention_fwd. With two GPUs it runs
+the PCIe custom all-reduce in two processes against the exact sum.
 """
 
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 
 import torch
@@ -147,6 +149,50 @@ extend_attention_fwd(qv, kc[blk].contiguous(), vc[blk].contiguous(), oe, kc, vc,
                      torch.zeros(2, device="cuda", dtype=torch.int64), tv, 1.0, 1.0, sm_scale=1 / math.sqrt(hd))
 if not (ov.float() - oe.float()).abs().max().item() < 1e-2:
     raise SystemExit("IMAGE_SMOKE=fail: split-KV verify attention differs from extend_attention_fwd")
+
+# PCIe custom all-reduce (serving patch 0014) on both GPUs: the AOT-built kernel
+# must give the exact fixed-order sum on both ranks. The stock kernel gave wrong,
+# rank-divergent sums here.
+_CAR_RANK = """
+import os, sys, torch, torch.distributed as dist
+rank = int(sys.argv[1])
+os.environ.update(MASTER_ADDR="127.0.0.1", MASTER_PORT="29599", SGLANG_GFX1201_PCIE_CUSTOM_AR="1")
+torch.cuda.set_device(rank)
+dist.init_process_group("gloo", rank=rank, world_size=2)
+from sglang.srt.distributed.device_communicators.custom_all_reduce import CustomAllreduce
+ca = CustomAllreduce(group=dist.group.WORLD, device=rank)
+if ca.disabled or not ca.pcie_two_gpu:
+    sys.exit(3)
+gens = [torch.Generator(device=f"cuda:{rank}").manual_seed(41 + r) for r in (0, 1)]
+base = [torch.randn(16, 5120, device=f"cuda:{rank}", generator=g) for g in gens]
+bad = 0
+for it in range(500):
+    s = 0.5 + it * 0.003
+    out = ca.custom_all_reduce((base[rank] * s).to(torch.bfloat16))
+    want = ((base[0] * s).to(torch.bfloat16).float() + (base[1] * s).to(torch.bfloat16).float()).to(torch.bfloat16)
+    bad += int((out != want).sum())
+ca.close()
+dist.destroy_process_group()
+sys.exit(0 if bad == 0 else 4)
+"""
+if torch.cuda.device_count() == 2:
+    # stderr goes to files: SGLang's import logging could fill a pipe and block a rank.
+    logs = [tempfile.TemporaryFile(mode="w+") for _ in (0, 1)]
+    ranks = [subprocess.Popen([sys.executable, "-c", _CAR_RANK, str(r)], stdout=subprocess.DEVNULL, stderr=logs[r])
+             for r in (0, 1)]
+    codes = []
+    for proc in ranks:
+        try:
+            proc.wait(timeout=180)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+        codes.append(proc.returncode)
+    if codes != [0, 0]:
+        for log in logs:
+            log.seek(0)
+        tail = " | ".join(log.read().strip()[-300:] for log in logs)
+        raise SystemExit(f"IMAGE_SMOKE=fail: PCIe custom all-reduce exit codes {codes} (3 not enabled, 4 wrong sums): {tail}")
 
 if shutil.which("c++") is None:
     raise SystemExit("IMAGE_SMOKE=fail: no c++ for SGLang JIT compiler fingerprinting")
