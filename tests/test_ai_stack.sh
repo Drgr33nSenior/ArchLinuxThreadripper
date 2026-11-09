@@ -154,6 +154,12 @@ for profile in "$dir"/serving/*.json; do
   if python3 -I "$render" bench "$profile" "$digest" --serving "$work/serving-repo" --top-p 0 >/dev/null 2>&1; then
     fail 'bench accepted top-p 0'
   fi
+  # An arm may only drop flags the profile sets.
+  python3 -I -c 'import json,sys; p=json.load(open(sys.argv[1])); a=next(iter(p["arms"])); p["arms"][a]["drop"]=["--not-a-profile-flag"]; json.dump(p, open(sys.argv[2], "w"))' \
+    "$profile" "$work/bad-drop.json"
+  if python3 -I "$render" argv "$work/bad-drop.json" --arm "$(python3 -I -c 'import json,sys; print(next(iter(json.load(open(sys.argv[1]))["arms"])))' "$profile")" >/dev/null 2>&1; then
+    fail 'an arm dropped a flag the profile does not set'
+  fi
   if python3 -I "$render" bench "$profile" "$digest" >/dev/null 2>&1; then
     fail 'bench rendered without the serving repository'
   fi
@@ -185,7 +191,12 @@ for name, spec in profile["arms"].items():
         assert e["name"] not in {x["name"] for x in profile["env"]}, (name, e["name"])
 for arm, a in argv.items():
     assert not forbidden & set(a), (arm, forbidden & set(a))
-    assert a[a.index("--attention-backend") + 1] == "triton" and "--disable-custom-all-reduce" in a
+    assert a[a.index("--attention-backend") + 1] == "triton"
+    # Custom all-reduce stays off unless an arm drops the flag for 0014's corrected PCIe path.
+    spec = profile["arms"][arm]
+    pcie_car = "SGLANG_GFX1201_PCIE_CUSTOM_AR" in {e["name"] for e in spec.get("env", [])}
+    assert ("--disable-custom-all-reduce" in a) == ("--disable-custom-all-reduce" not in spec.get("drop", [])), arm
+    assert ("--disable-custom-all-reduce" in a) or pcie_car, arm
 assert argv["A"][argv["A"].index("--mamba-radix-cache-strategy") + 1] == "no_buffer"
 assert "--disable-overlap-schedule" in argv["A"]
 assert argv["B"][argv["B"].index("--mamba-radix-cache-strategy") + 1] == "extra_buffer_lazy"
@@ -212,6 +223,11 @@ assert ([e["name"] for e in profile["arms"]["K"]["env"]] ==
 assert argv["L"] == argv["A"][:-4] + ["--speculative-draft-model-quantization", "fp8"] + argv["A"][-4:]
 assert argv["A"].index("unquant") < argv["L"].index("fp8")
 assert profile["arms"]["L"]["env"] == profile["arms"]["K"]["env"]
+# M is K with the PCIe custom all-reduce: the base disable flag dropped, one env switch added.
+assert argv["M"] == [a for a in argv["A"] if a != "--disable-custom-all-reduce"]
+assert "--disable-custom-all-reduce" in argv["K"]
+assert ([e["name"] for e in profile["arms"]["M"]["env"]] ==
+        [e["name"] for e in profile["arms"]["K"]["env"]] + ["SGLANG_GFX1201_PCIE_CUSTOM_AR"])
 for arm in profile["arms"]:
     items = json.loads((work / f"job-{arm}.json").read_text())["items"]
     config, job, service = items
