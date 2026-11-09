@@ -31,8 +31,14 @@ a refresh that only moves SGLang rebuilds only the SGLang stage and the image.
 Each stage also records its progress for monitoring: `stage-metrics.py` writes
 `/var/lib/workstation-ai-stack/ai-stack.prom`, which node-exporter reads. The
 Workloads dashboard shows each stage as building, succeeded or failed, with its
-duration and compiler-cache hit ratio, and the NAS alerts on a failed or stuck
-stage. Create the directory once, owned by the build user:
+duration and compiler-cache hit ratio. The alert rule for a failed or stuck
+stage lives in the NAS repository,
+[HP-ProliantGen10-DebianNAS](https://github.com/Drgr33nSenior/HP-ProliantGen10-DebianNAS),
+not here. node-exporter reads the directory through
+`--collector.textfile.directory` in
+[`host-metrics.yaml`](../observability/host-metrics.yaml); the series are named
+`workstation_ai_stack_*`. Create the directory once, owned by the build
+user (the postinstall `telemetry-apply` gate prints the same command):
 
 ```sh
 sudo install -d -m 0755 -o "$USER" -g "$USER" /var/lib/workstation-ai-stack
@@ -75,21 +81,39 @@ publisher account.
 
 ## Models
 
-Each catalog entry pins a model, an optional draft and its serving settings.
-To add one, for example a Qwen4 checkpoint:
+Each catalog entry pins a model and an optional draft: repository, revision and
+every file's hash. It holds no serving settings; those go in a profile under
+[`serving/`](serving). To add one, for example a Qwen4 checkpoint:
 
 ```sh
 infrastructure/ai-stack/models/inventory.py OWNER/NAME FULL_COMMIT > /tmp/inventory.json
 ```
 
 Copy the inventory into a new `models/<alias>.json` beside the existing entry,
-set the serving settings, and run the tests. To stage it on the NAS:
+add a `serving/<profile>.json` for it, and run the tests. To stage it on the
+NAS:
 
 ```sh
 kubectl apply -f infrastructure/ai-stack/k8s/models.yaml      # once
 infrastructure/ai-stack/models/render-fetch.py \
   infrastructure/ai-stack/models/<alias>.json infrastructure/ai-stack/stack.lock | kubectl apply -f -
 ```
+
+**Namespace conflict.** `k8s/models.yaml` also defines the `ai-home-lab`
+Namespace with `enforce: restricted`. The `apps/` layer defines the same
+Namespace in [`apps/base/namespace.yaml`](../../apps/base/namespace.yaml) with
+`enforce: baseline` (audit and warn `restricted`). Whichever is applied last
+sets enforcement, without warning: applying the `apps/` layer after this file
+relaxes the namespace to baseline, and applying this file after the `apps/`
+layer makes the namespace reject new Pods that meet only baseline. The live
+namespace enforces restricted from this file; the `apps/` layer has not been
+applied since the reinstall. The owner must choose one source for the
+Namespace and one enforcement level before both layers are applied. Until
+then, apply only one of them.
+
+The `ai-models` claim uses the `nas-nfs` StorageClass from
+[`infrastructure/nfs-csi/`](../nfs-csi); install it first
+([NAS-backed volumes](../../docs/HOME-LAB.md#nas-backed-volumes-nfs-csi)).
 
 The Job downloads into the `ai-models` volume at
 `<owner>/<name>/<revision>/`, checks each file's size and hash, and writes
@@ -115,13 +139,27 @@ with the overlap scheduler) is the first experiment once A serves correctly.
 `serving/render.py` renders a profile:
 
 ```sh
-# The server command line for an arm.
-infrastructure/ai-stack/serving/render.py argv infrastructure/ai-stack/serving/<profile>.json --arm B
+# The server command line for the default arm (add --arm B for the experiment).
+infrastructure/ai-stack/serving/render.py argv infrastructure/ai-stack/serving/<profile>.json
 # A qualification Job (and its probe ConfigMap) for an image pinned by digest.
 infrastructure/ai-stack/serving/render.py job infrastructure/ai-stack/serving/<profile>.json \
-  registry.lan.thespry.family/local/sglang-gfx1201@sha256:<digest> --arm B > qualify-b.json
-kubectl apply -f qualify-b.json
+  registry.lan.thespry.family/local/sglang-gfx1201@sha256:<digest> > qualify-a.json
+kubectl apply -f qualify-a.json
 kubectl -n ai-home-lab logs -f job/<name>
+```
+
+Before applying the Job:
+
+- Free both GPUs. Only one Job or server can hold them, so stop any gaming
+  session and any other SGLang server or GPU Job first.
+- Stage the model with `render-fetch.py` and wait for its `VERIFIED.json`.
+- The `apps/` layer is not required; the Job needs only the namespace, the
+  `ai-models` claim and the image.
+
+To clean up a run, including its probe ConfigMap:
+
+```sh
+kubectl -n ai-home-lab delete job,configmap -l app.kubernetes.io/name=sglang-qualify
 ```
 
 The Job runs the server and `serving/qualify.py` in one pod on both GPUs, with

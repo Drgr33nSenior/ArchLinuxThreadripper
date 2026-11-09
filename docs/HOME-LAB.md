@@ -39,10 +39,18 @@ Swarm image adapter. It remains gated at zero until the stated acceptance checks
 Host configuration, TPM enrollment planning, K3s packaging/configuration,
 operator rendering, and workload scaffolding are implemented. They are not a
 qualified installation. Application replicas default to zero. Replace every
-remaining `UNQUALIFIED` image with an audited digest before enabling it. SGLang
-now selects a digest-pinned AMD ROCm 10 candidate; it still requires target and
-model validation. Gaming has a pinned-input build recipe but still requires
-promotion of the built image and display/input/security qualification.
+remaining `UNQUALIFIED` image with an audited digest before enabling it. The
+`apps/` SGLang Deployment selects a digest-pinned AMD ROCm 10 candidate; it
+still requires target and model validation. Gaming has a pinned-input build
+recipe but still requires promotion of the built image and
+display/input/security qualification.
+
+Status, 9 November 2026: the `apps/` SGLang Deployment, its FP8 default and its
+`llm-models` volume are legacy and have not been applied since the 2026-11
+reinstall. The current serving path is the
+[AI serving stack pipeline](../infrastructure/ai-stack/README.md): a built
+image, a model staged on the NAS and a qualification Job for one serving
+profile. See [NAS-backed volumes](#nas-backed-volumes-nfs-csi) for its storage.
 
 K3s documents general Linux prerequisites. This Arch/ROCm/GPU Operator
 combination still requires target-hardware qualification.
@@ -413,7 +421,51 @@ policy removes volume data when a claim is deleted. Review retention first; the
 separate VM profile's `Retain` policy does not apply here. Neither policy provides
 backups, and local-path volume size requests do not enforce disk quotas.
 
+### NAS-backed volumes (nfs-csi)
+
+[`infrastructure/nfs-csi/`](../infrastructure/nfs-csi) adds the NFS CSI driver
+and the `nas-nfs` StorageClass for ReadWriteMany volumes on the NAS. The
+AI-stack model store (`ai-models`) uses it. `local-path` stays the default
+class for databases, indexes and other latency-sensitive state.
+
+`chart.lock` pins csi-driver-nfs v4.13.6 and its chart SHA256. Download that
+exact URL, then render and apply:
+
+```sh
+bash infrastructure/nfs-csi/render.sh /path/to/csi-driver-nfs-4.13.6.tgz > nfs-csi.yaml
+kubectl --context <reviewed-context> apply -f nfs-csi.yaml
+kubectl --context <reviewed-context> apply -f infrastructure/nfs-csi/storageclass.yaml
+```
+
+The renderer verifies the chart digest, refuses a K3s minor other than 1.36,
+renders into `kube-system` without Helm hooks and does not create the
+StorageClass. All five images are pinned by digest. Snapshots are disabled: no
+snapshot controller, sidecar or CRDs. `bash tests/test_nfs_csi.sh` checks the
+pins offline; set `HOME_LAB_NFS_CHART` to the archive to check the render too.
+
+The StorageClass provisions each claim as `<namespace>/<claim>` under
+`192.168.30.10:/srv/microserver/k8s`. It uses `reclaimPolicy: Retain` and
+`onDelete: retain`, so deleting a claim or volume leaves the directory and its
+data on the NAS. Remove released volumes and directories by hand after review.
+Mounts are NFS 4.2 over TCP with `hard`: I/O waits while the NAS is
+unreachable instead of failing.
+
+For rollback, first delete or move every workload and claim that uses
+`nas-nfs`, then delete the StorageClass and the rendered driver objects. The
+NAS data stays in place. Do not remove the driver while volumes are mounted;
+their Pods could not then unmount them.
+
+Security: NAS volumes are not on the workstation's encrypted NVMe root, and
+the mount options set no Kerberos or TLS security, so NFS traffic crosses the
+LAN unencrypted. Export access is controlled on the NAS, not here. Place only
+data that may cross the LAN in clear text, such as public model weights, on
+`nas-nfs`.
+
 ### ROCm 10 SGLang candidate
+
+Status, 9 November 2026: this section describes the legacy `apps/` overlays
+only. The current serving image, model and profile are in
+[`infrastructure/ai-stack/`](../infrastructure/ai-stack/README.md).
 
 `versions.lock` records AMD's SGLang 0.5.15.post1 / Python 3.14 / ROCm 10.0.0
 image, its registry index and configuration digest. The Deployment selects the
@@ -461,6 +513,10 @@ validation, keep replicas at zero and the qualification marker pending. Do not
 attempt recovery by applying the destructive OS installer.
 
 ### Workload choices
+
+These are the legacy `apps/` overlays. Their SGLang profiles, including the
+FP8 default, are not the current serving path; see the status note in
+[deployment status](#deployment-status-and-boundaries).
 
 | Profile | GPU use | Notes |
 | --- | --- | --- |

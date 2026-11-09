@@ -5,6 +5,14 @@ Reviewed 7 November 2026. The latest published serving source is
 There are no published release tags or GitHub releases. Track the exact commit
 and evidence bytes, not a release version inferred from SGLang.
 
+Status, 9 November 2026: the 2026-11 reinstall wiped the op234 runtime and its
+owner package. The workstation now builds the serving image itself with the
+[AI serving stack](../infrastructure/ai-stack/README.md), applying the serving
+repository's
+[`serving/patches/sglang-main`](https://github.com/Drgr33nSenior/Spry.ai-rdna4-serving/blob/main/serving/patches/sglang-main)
+series to SGLang main. The package/owner integration steps below are
+superseded; the evidence imports remain the historical record.
+
 The workstation's machine-readable record is
 [serving-project.json](../infrastructure/sglang/serving-project.json). It keeps
 each import separately, with its own revision, check date and record hashes,
@@ -59,11 +67,12 @@ Do not add gains or treat those rates as a controlled power comparison.
 
 | Surface | Current state | Next required integration |
 | --- | --- | --- |
+| AI serving stack (current) | [stack.lock](../infrastructure/ai-stack/stack.lock) pins SGLang main `fcb32746…` with the serving patch series, PyTorch 2.16.0a0 and TheRock ROCm 10.3.0.dev20261108; the [serving profile](../infrastructure/ai-stack/serving/qwen3.8-27b-mxfp4-tp2.json) is unqualified | Build and push the image, stage the model, run the arm A qualification Job, then the arm B experiment; record results in the profile |
 | Serving source/results | This checkout tracks `3f5ba24` (current) and `d3f0db8` (historical) with their record hashes | Add a new import when upstream evidence changes; keep older imports |
-| Application images | `versions.lock` still selects the retained ROCm 10.0 dual-GPU and 10.1 single-GPU images | A complete reviewable runtime/image artifact, model inventory and package contract are needed before replacing pins |
-| Native 10.2 contract | [sglang-rocm102.json](../infrastructure/hyperloom/sglang-rocm102.json) is the existing expected SGLang/Torch/HIP contract | A version match alone does not bind the newer MXFP4 model, operators or complete loaded source |
-| Hyperloom owner adapter | Authenticates the older 4/30-request schedules and delegates existing owner controls | W5 has 176 requests/start and a changed evidence ABI; it is not admitted by this adapter |
-| Model/service profiles | Public FP8 selection remains unchanged; upstream reports no deployment | Preserve existing model IDs, context limits, resource budgets, user access and rollback until a full packaged profile is qualified |
+| Application images | `versions.lock` still selects the retained ROCm 10.0 dual-GPU and 10.1 single-GPU images (legacy `apps/` overlays, not applied since the reinstall) | Superseded by the AI serving stack image |
+| Native 10.2 contract (historical) | [sglang-rocm102.json](../infrastructure/hyperloom/sglang-rocm102.json) describes the op234-era 10.2 runtime, wiped by the reinstall | None; superseded by the AI serving stack |
+| Hyperloom owner adapter (historical) | Authenticates the older 4/30-request schedules and delegates op234 owner controls | Superseded with the op234 runtime |
+| Model/service profiles | Public FP8 selection in the legacy `apps/` overlays remains unchanged; upstream reports no deployment | Preserve existing model IDs, context limits, resource budgets, user access and rollback until a full packaged profile is qualified |
 | Cleanup/config refactor | Newer local `serving/` code is active, uncommitted work | Do not package that changing tree or treat CPU source-review bundles as deployable launch packets |
 
 The serving repository's newer local cleanup work contains fail-open observation,
@@ -78,6 +87,13 @@ its observed `main` head was `502f41a2ca38d657a13f905d37a95febc2246eb8` from
 14 September. It is not proof of the complete current private serving runtime.
 
 ## Next integration and rollback
+
+Status, 9 November 2026: the next steps are those of the
+[AI serving stack](../infrastructure/ai-stack/README.md): build the image (the
+`image` stage runs a GPU smoke test before push), stage the model with
+`render-fetch.py`, then qualify the profile's default arm A and record the
+result before trying arm B. The numbered steps below describe the op234
+package/owner integration and are superseded.
 
 1. Finish the serving owner's cleanup/configuration gates and obtain its complete
    runtime, model, source and image identities. Keep stock/C4 and production/

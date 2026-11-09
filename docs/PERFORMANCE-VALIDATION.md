@@ -39,7 +39,10 @@ earlier unexplained failure.
 Keep the exact accepted baseline for the campaign being compared. The checked-in
 dual-GPU overlay retains AMD SGLang `0.5.15.post1` / ROCm `10.0.0`; the single-GPU
 overlay selects local SGLang `0.5.18` / ROCm `10.1`. The separately selected native
-campaign uses SGLang `0.5.21` / ROCm `10.2` dev. These are distinct configurations,
+campaign used SGLang `0.5.21` / ROCm `10.2` dev (historical: wiped by the 2026-11
+reinstall). The current serving image is built by the
+[AI serving stack](../infrastructure/ai-stack/README.md) from SGLang main and
+TheRock ROCm 10.3 dev, pinned in its `stack.lock`. These are distinct configurations,
 not interchangeable upgrade instructions. Preserve each one's settings, image,
 source/model identities and caches. Record `torch.version.hip`, installed packages,
 allocated devices, model hashes and actual allowlisted launch arguments with

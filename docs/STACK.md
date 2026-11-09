@@ -48,6 +48,9 @@ outputs. Edit the source and regenerate both previews; do not edit them separate
 - Node-local PVCs, native caches and files use the encrypted NVMe-backed root.
   PVC size requests are not filesystem quotas. RAID0 has no data redundancy;
   the second ESP provides another boot copy, not another copy of root data.
+- `nas-nfs` volumes, such as the AI-stack `ai-models` store, live on the NAS,
+  not on that encrypted disk, and NFS traffic is not encrypted. See
+  [NAS-backed volumes](HOME-LAB.md#nas-backed-volumes-nfs-csi).
 - Host Restic is supplemented by [service capture and isolated recovery](SERVICE-RECOVERY.md).
   Application writers are quiesced before SQLite/token/PVC capture. Off-array
   credentials and a real restore acceptance remain required.

@@ -15,6 +15,9 @@ approval. Versions belong to the linked locks and runtime manifests.
 | Configure bare-metal K3s and GPU ownership | [Home lab](HOME-LAB.md) | [Resource and session policy](AI-PERFORMANCE.md) |
 | Track the latest serving project and its integration gaps | [Serving integration](SERVING-INTEGRATION.md) | [Models](MODELS.md), [Hyperloom](HYPERLOOM.md) |
 | Select or stage a model | [Models](MODELS.md) | [Retrieval](RAG.md), [IDE agents](AGENT-HARNESSES.md) |
+| Build or refresh the AI serving image | [AI serving stack](../infrastructure/ai-stack/README.md#routine-update) | [stack.lock](../infrastructure/ai-stack/stack.lock), [stages](../infrastructure/ai-stack/README.md#stages) |
+| Stage a model on the NAS | [AI-stack models](../infrastructure/ai-stack/README.md#models) | [NAS-backed volumes](HOME-LAB.md#nas-backed-volumes-nfs-csi) |
+| Qualify a serving profile | [AI-stack serving](../infrastructure/ai-stack/README.md#serving) | [Profile research](../infrastructure/ai-stack/serving/RESEARCH-20261108.md) |
 | Connect local chat, web research and document retrieval | [Assistant](ASSISTANT.md) | [Web search](WEB-SEARCH.md), [RAG](RAG.md) |
 | Preserve context between browser and coding sessions | [Session memory](MEMORY.md) | Primary Graphiti pilot, native-memory baseline and resource/quality gates |
 | Check what passed and what remains open | [Verification record](VERIFICATION.md) | Dated component results, source identity and test limits |
@@ -57,7 +60,8 @@ source snapshot and fixture/platform limits without publishing protected data.
 | Host graphics/compute | Arch packages; [ROCm provider settings](ROCM.md#host-sdk-selection-remains-separate) | Host `amdgpu` and native tools; do not inject these libraries into containers |
 | Checked-in single-GPU serving overlay | `SGLANG_SINGLE_ROCM_IMAGE` in [versions.lock](../versions.lock) | Locally built SGLang 0.5.18 / ROCm 10.1 candidate, Qwen3.5-9B |
 | Checked-in dual-GPU serving overlay | `SGLANG_ROCM_IMAGE` in [versions.lock](../versions.lock) | Retained AMD SGLang 0.5.15.post1 / ROCm 10.0 candidate, Qwen3.8-27B-FP8 |
-| Owner-selected native serving campaign | [sglang-rocm102.json](../infrastructure/hyperloom/sglang-rocm102.json) plus owner package | SGLang 0.5.21, source-built ROCm 10.2 dev, Torch 2.14, HIP 7.17.26416; separate from application overlay defaults |
+| AI serving stack (current) | [stack.lock](../infrastructure/ai-stack/stack.lock); the qualification Job pins the built image by digest | SGLang main `fcb32746…` (≈ v0.5.23 + 957) with the serving patch series, Python 3.14, PyTorch 2.16.0a0, TheRock ROCm 10.3.0.dev20261108 (HIP 7.18), Triton 3.9.0; no AITER. See the [pipeline](../infrastructure/ai-stack/README.md) |
+| Owner-selected native serving campaign (historical, op234) | [sglang-rocm102.json](../infrastructure/hyperloom/sglang-rocm102.json) plus owner package | SGLang 0.5.21, source-built ROCm 10.2 dev, Torch 2.14, HIP 7.17.26416. Wiped by the 2026-11 reinstall; superseded by the AI serving stack |
 | Creative candidate | [runtime.json](../infrastructure/creative/runtime.json) | Standalone ROCm 10.2 / Torch 2.14 environment inside a ROCm 10.1-labelled parent image |
 
 The production-stack choice does not automatically update these overlays or

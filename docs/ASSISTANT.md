@@ -84,7 +84,19 @@ them to obtain admission. Shared UI configuration is not physical GPU ownership.
 
 ## Native candidate integration
 
-### Current selection
+Status, 9 November 2026: the 2026-11 reinstall wiped the op234 runtime
+(SGLang 0.5.21, Torch 2.14, TheRock SDK 10.2.0.dev20261020, owner sandbox,
+private package, `/home/developer` trees, base image `1d3ebef7…`). Its
+successor is the [AI serving stack](../infrastructure/ai-stack/README.md):
+the image built from [`stack.lock`](../infrastructure/ai-stack/stack.lock)
+(SGLang main `fcb32746…` with the serving patch series, PyTorch 2.16.0a0,
+TheRock ROCm 10.3.0.dev20261108), the
+[serving profile](../infrastructure/ai-stack/serving/qwen3.8-27b-mxfp4-tp2.json)
+(unqualified) and its qualification Job. The op234 material below, including
+the `SELECTED-PACKAGE-V2` planner commands and the composition-image blocker,
+is historical.
+
+### op234 selection (historical)
 
 The serving project records the owner's interim selection until Qwen4 work
 resumes. The workstation imports it through
@@ -113,16 +125,17 @@ cleanup packet (operation 207). The selected arm has only BetterBench results,
 which have no answer-quality oracle. Neither qualifies the browser or
 coding-agent workflow; the acceptance suite below does that.
 
-### Runtime identity
+### op234 runtime identity (historical)
 
-The measured runtime is SGLang 0.5.21 at `e00930c5`, ROCm SDK 10.1.0 and
-Python 3.14.4. Its launch overlays separately built site-packages, devel and
-composition trees on the base image `1d3ebef7…`, so a version tag cannot
-identify it. The contract records the package manifest, model and tokenizer
-digests, the composition argv digest and the runtime environment instead.
+The measured runtime was SGLang 0.5.21 at `e00930c5`, Torch 2.14, TheRock
+SDK 10.2.0.dev20261020 and Python 3.14.4. Its launch overlaid separately
+built site-packages, devel and composition trees on the base image
+`1d3ebef7…`, so a version tag cannot identify it. The contract records the
+package manifest, model and tokenizer digests, the composition argv digest and
+the runtime environment instead.
 
-The checkpoint has no separate `chat_template.jinja`. Its template is in
-`tokenizer_config.json` (`b11349aa…`). The template:
+The checkpoint revision op234 used has no separate `chat_template.jinja`. Its
+template is in `tokenizer_config.json` (`b11349aa…`). The template:
 
 - opens the thinking block in the generation prompt, so raw output has no
   opening `<think>` tag;
@@ -132,7 +145,14 @@ The checkpoint has no separate `chat_template.jinja`. Its template is in
 - renders tool calls as `<tool_call><function=…><parameter=…>` XML and tool
   results as `<tool_response>` blocks.
 
-### Prepare the integration plan
+The AI-stack revision `5233554c…` ships `chat_template.jinja`, listed in the
+[model catalog](../infrastructure/ai-stack/models/qwen3.8-27b-mxfp4.json).
+The serving research found that it renders identically to Qwen's template and
+reads `enable_thinking`, `reasoning_effort` and `preserve_thinking`. The
+accepted `reasoning_effort` values above, and therefore the gateway's `high`
+to `xhigh` mapping, need re-verification against `5233554c…`.
+
+### Prepare the integration plan (historical)
 
 The planner is offline. It authenticates the pointer against the imported
 selection, then the package files through the pointer's manifest digest:
@@ -191,6 +211,11 @@ concurrent requests, and the native runtime runs two. With four active
 requests, two wait in the native queue and count against the client deadline.
 
 ### Persistent endpoint blockers
+
+These rows describe the op234 package (historical). For the successor, the
+AI-stack image replaces the composition image, `render-fetch.py` stages and
+verifies the model, and the serving profile records what still needs a GPU
+measurement.
 
 | Missing artifact or capability | Affected step |
 | --- | --- |
