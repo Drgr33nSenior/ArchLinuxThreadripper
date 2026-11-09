@@ -13,9 +13,10 @@ the FP8 LM head route on a small synthetic head, the fused GDN gated-norm
 MXFP4 quantization bitwise equal to norm then quantize, and the split-KV verify
 attention within BF16 rounding of extend_attention_fwd. It runs the P1 prefill
 route on one shard (exact FP8 expansion, error against an FP32 reference) and
-8-warp prefill attention against the 4-warp kernel, and the FP8-draft fused KV
-weight against the FP8 layer. With two GPUs it runs the PCIe custom all-reduce
-in two processes against the exact sum.
+8-warp prefill attention against the 4-warp kernel, the FP8-draft fused KV
+weight against the FP8 layer, and the fused split-K reduce against the
+two-kernel path (bitwise, with its compiled-code ordering check). With two GPUs
+it runs the PCIe custom all-reduce in two processes against the exact sum.
 """
 
 import os
@@ -223,6 +224,24 @@ fdense = (fx @ _dense_kv_rows(flayer, fq, fq + 2 * fkv, torch.bfloat16).T).float
 flayer_kv = fmethod.apply(flayer, fx)[:, fq:].float()
 if not (fdense - flayer_kv).norm().item() / flayer_kv.norm().item() < 0.08:
     raise SystemExit("IMAGE_SMOKE=fail: FP8 draft fused KV weight differs from the FP8 layer")
+
+# Fused split-K reduce (serving patch 0018): bitwise equal to GEMM + reduce kernel on
+# an out-projection shard at M8, and the compiled variant passes the ordering check
+# (store drain before the barrier, device-scope atomic and reloads).
+sn, sk = 5120, 3072
+swq, sws = g.dynamic_mxfp4_quant(torch.randn(sn, sk, device="cuda", dtype=torch.bfloat16) * 0.05)
+sxq, sxs = g.dynamic_mxfp4_quant(torch.randn(8, sk, device="cuda", dtype=torch.bfloat16))
+souts = []
+for fused in (False, True):
+    g.SPLITK_FUSED_REDUCE = fused
+    sy = torch.empty(8, sn, device="cuda", dtype=torch.bfloat16)
+    g.gemm_afp4wfp4(sxq, swq, sxs, sws.contiguous(), torch.bfloat16, sy, splitk_downout=True)
+    souts.append(sy)
+g.SPLITK_FUSED_REDUCE = False
+if not g._fused_asm_checked.get((torch.cuda.current_device(), 8, sn, sk, 4)):
+    raise SystemExit("IMAGE_SMOKE=fail: fused split-K reduce failed its compiled-code ordering check")
+if not torch.equal(souts[0], souts[1]):
+    raise SystemExit("IMAGE_SMOKE=fail: fused split-K reduce differs from the two-kernel path")
 
 # PCIe custom all-reduce (serving patch 0014) on both GPUs: the AOT-built kernel
 # must give the exact fixed-order sum on both ranks. The stock kernel gave wrong,
