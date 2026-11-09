@@ -1,5 +1,6 @@
 """Offline fixtures: no cluster, hardware, credentials or model requests."""
 import argparse
+import importlib.util
 import json
 import shutil
 import subprocess
@@ -211,6 +212,17 @@ class TelemetryTests(unittest.TestCase):
                 self.assertIn(("DaemonSet", "node-exporter"), names)
                 policy = next(o for o in objects if o["metadata"]["name"] == "alloy-to-nas-receiver-8080")
                 self.assertEqual(policy["spec"]["egress"][0]["to"], [{"ipBlock": {"cidr": "192.168.30.10/32"}}])
+                # Alloy may scrape the AI-stack bench/qualification server that the
+                # rendered sglang Service selects, not only the apps-layer Deployment.
+                serving = importlib.util.spec_from_file_location(
+                    "ai_stack_render", ROOT / "infrastructure/ai-stack/serving/render.py")
+                render = importlib.util.module_from_spec(serving)
+                serving.loader.exec_module(render)
+                egress = next(o for o in objects if o["metadata"]["name"] == "alloy-to-sglang")["spec"]["egress"]
+                self.assertEqual(egress[0]["ports"], [{"protocol": "TCP", "port": render.PORT}])
+                selectors = [peer["podSelector"]["matchLabels"] for peer in egress[0]["to"]]
+                self.assertIn({"app.kubernetes.io/name": "sglang"}, selectors)
+                self.assertIn({render.SERVER_LABEL: "true"}, selectors)
                 config = next(o for o in objects if o["kind"] == "ConfigMap" and
                               o["metadata"]["name"].startswith("alloy-config-"))["data"]["config.alloy"]
                 for local in ("prometheus:9090", "loki:3100", "tempo:4317", "grafana:3000"):
