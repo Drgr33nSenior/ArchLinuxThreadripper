@@ -99,8 +99,56 @@ if [[ $stage == image ]]; then
     -v "$here/image/smoke.py:/smoke.py:ro" --entrypoint python3 "$tag" /smoke.py
   printf 'IMAGE=%s\n' "$tag"
   if [[ ${AI_STACK_PUSH:-0} == 1 ]]; then
-    podman push --digestfile "$sglang_run/out/image.digest" "$tag"
-    printf 'PUSHED=%s@%s\n' "${tag%:*}" "$(<"$sglang_run/out/image.digest")"
+    # Scan before push, then sign and attest; image.digest is written only once
+    # the pushed image verifies, so a failed step is retried on the next run.
+    keys=${AI_STACK_SIGNING_DIR:-$HOME/.config/ai-stack/signing}
+    [[ -s $here/signing/cosign.pub && -s $keys/cosign.key && -s $keys/cosign_password.cred ]] ||
+      stop 'image signing is not set up: run signing/init-key.sh and commit signing/cosign.pub'
+    authfile=${REGISTRY_AUTH_FILE:-${XDG_RUNTIME_DIR:-/run/user/$UID}/containers/auth.json}
+    [[ -s $authfile ]] || stop "no registry login at $authfile; run podman login first"
+    cosign_image=$(digest_image COSIGN_IMAGE)
+    trivy_image=$(digest_image TRIVY_IMAGE)
+    scan=$sglang_run/out/scan
+    mkdir -p "$scan" "$root/scan" "$root/trivy-cache"
+    rm -f -- "$scan/pushed.digest"
+    podman save --format docker-archive -o "$root/scan/image.tar" "$tag"
+    trivy() {
+      podman run --rm --pull=missing --network host --user 0:0 -v "$root/scan:/scan:ro" \
+        -v "$root/trivy-cache:/cache" -v "$scan:/out" "$trivy_image" image --cache-dir /cache \
+        --input /scan/image.tar --scanners vuln --quiet "$@"
+    }
+    if ! { trivy --format json --output /out/vulns.json &&
+      trivy --format cyclonedx --output /out/sbom.cdx.json &&
+      trivy --format cosign-vuln --output /out/vuln.cosign.json; }; then
+      rm -f -- "$root/scan/image.tar"
+      stop 'vulnerability scan failed'
+    fi
+    rm -f -- "$root/scan/image.tar"
+    # Record the scanner and vulnerability-database versions the reports used.
+    podman run --rm --pull=never --network none --user 0:0 -v "$root/trivy-cache:/cache:ro" "$trivy_image" \
+      version --cache-dir /cache --format json >"$scan/trivy-version.json"
+    python3 "$here/image/scan-policy.py" "$scan/vulns.json" "$here/image/scan-allowlist.json" >"$scan/policy.json" ||
+      stop "vulnerability policy blocks this image; see $scan/policy.json"
+    podman push --digestfile "$scan/pushed.digest" "$tag"
+    ref=${tag%:*}@$(<"$scan/pushed.digest")
+    COSIGN_PASSWORD=$(systemd-creds --user decrypt --name=cosign_password "$keys/cosign_password.cred" -)
+    export COSIGN_PASSWORD
+    # signing-config.json lists no transparency log or timestamp service, so
+    # nothing is uploaded to Rekor; signatures live beside the image in Zot.
+    cosign() {
+      podman run --rm --pull=missing --network host --user 0:0 -e COSIGN_PASSWORD -e DOCKER_CONFIG=/auth \
+        -v "$keys:/keys:ro" -v "$authfile:/auth/config.json:ro" -v "$scan:/scan:ro" -v "$here/signing:/signing:ro" \
+        "$cosign_image" "$@"
+    }
+    cosign sign --key /keys/cosign.key --signing-config /signing/signing-config.json --yes "$ref" >/dev/null
+    cosign attest --key /keys/cosign.key --signing-config /signing/signing-config.json --yes \
+      --type cyclonedx --predicate /scan/sbom.cdx.json "$ref" >/dev/null
+    cosign attest --key /keys/cosign.key --signing-config /signing/signing-config.json --yes \
+      --type vuln --predicate /scan/vuln.cosign.json "$ref" >/dev/null
+    unset COSIGN_PASSWORD
+    bash "$here/signing/verify-image.sh" "$ref"
+    mv -- "$scan/pushed.digest" "$sglang_run/out/image.digest"
+    printf 'PUSHED=%s\nSIGNED=%s\n' "$ref" "$ref"
   fi
   exit 0
 fi
