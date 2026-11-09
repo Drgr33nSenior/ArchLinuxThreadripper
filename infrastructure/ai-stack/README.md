@@ -181,9 +181,10 @@ runtime it replaces is guidance there, not a target. The model catalog keeps
 only model and draft identity.
 
 A profile has arms for the A/B decisions that need measurement; one is the
-default. For `qwen3.8-27b-mxfp4-tp2`, arm A (`no_buffer`, overlap off, as
-op234) is the default for the bring-up baseline. Arm B (`extra_buffer_lazy`
-with the overlap scheduler) is the first experiment once A serves correctly.
+default. For `qwen3.8-27b-mxfp4-tp2`, arm K is the default: arm A's flags
+(`no_buffer`, overlap off, as op234) with the six qualified gfx1201 ports
+switched on. Arm A stays as the baseline that every other arm is compared
+with. Arm B (`extra_buffer_lazy` with the overlap scheduler) is an experiment.
 
 `serving/render.py` renders a profile:
 
@@ -255,8 +256,8 @@ variables, which the Job adds to the profile's.
 | `I` | `SGLANG_GFX1201_GDN_NORM_QUANT=1` (fused GDN gated-norm MXFP4 quantization) |
 | `H` | `D`, `E`, `F` and `I` together (not `G`) |
 | `J` | `H` plus `SGLANG_GFX1201_VERIFY_ATTENTION=1` (split-KV verify attention) |
-| `K` | `J` plus `SGLANG_GFX1201_SPLITK_WIDE=1` (split-K for QKV, GDN input and gate/up), the candidate default |
-| `L` | `K` with the draft quantized to FP8 at load (`--speculative-draft-model-quantization fp8`); changes acceptance only |
+| `K` | `J` plus `SGLANG_GFX1201_SPLITK_WIDE=1` (split-K for QKV, GDN input and gate/up), **the default** |
+| `L` | `K` with the draft quantized to FP8 at load (`--speculative-draft-model-quantization fp8`); not adopted |
 
 Enable an item in arm A only after its arm matches arm A's quality result and
 greedy acceptance.
@@ -297,8 +298,21 @@ back):
 | `J` | 35.31 ms | 108.8 / 190.2 | 37.6 / 39.3 / 42.4 ms | 10 passed, 1 failed; nothing that passed in `A` failed |
 
 Arm `J`'s split-KV verify attention makes long-context decode 3-7 times
-faster (73 tokens/s at an 88k prompt, against 10). Arm `K` was added after
-this run.
+faster (73 tokens/s at an 88k prompt, against 10).
+
+Results on 2026-11-09 (image `sha256:0d2cc0e7`, series `97629063`, run back to
+back; median and 25th percentile verify step):
+
+| Arm | Verify step | Acceptance | C1 / C2 tokens/s | Step at 23.5k / 47k / 88k prompt | Quality |
+| --- | --- | --- | --- | --- | --- |
+| `J` | 35.31 / 34.98 ms | 4.45 | 118.8 / 202.9 | 37.5 / 39.3 / 42.3 ms | 10 passed, 1 failed |
+| `K` | 34.61 / 34.30 ms | 4.50 | 113.8 / 207.5 | 37.0 / 38.6 / 41.6 ms | same |
+| `L` | 34.52 / 34.26 ms | 4.50 | 106.0 / 201.4 | 36.9 / 38.5 / 41.5 ms | 10 passed, 2 failed (`python-bugfix`, a known format failure) |
+
+Nothing that passed in `J` failed in `K` or `L`. Arm `K` became the default.
+Arm `L`'s FP8 draft saved 0.1 ms: quantizing the draft disables DFLASH's fused
+KV materialization. C1 varies with acceptance and output length between runs
+(106-119 tokens/s at almost the same step time); compare the verify step.
 
 After BetterBench, the Job runs the assistant acceptance menu
 ([`assistant-quality.json`](../sglang/assistant-quality.json) through

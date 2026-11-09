@@ -172,6 +172,8 @@ for e in profile["args"]:
 for e in profile["env"]:
     assert e["reason"] and e["source"] and e["confidence"] in ("H", "M", "L"), e
 assert sum(1 for arm in profile["arms"].values() if arm["default"]) == 1
+# Arm K (the qualified ports) is the default; arm A stays as the baseline arm.
+assert profile["arms"]["K"]["default"] and not profile["arms"]["A"]["default"]
 flags = [e["flag"] for e in profile["args"]]
 assert len(flags) == len(set(flags)), "duplicate flag"
 unset = {e["name"] for e in profile["must_unset_env"]}
