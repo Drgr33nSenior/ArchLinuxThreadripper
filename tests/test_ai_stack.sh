@@ -193,7 +193,9 @@ assert argv["C"] == argv["A"][:-4] + ["--speculative-use-block-verification"] + 
 # Verify-path arms: D/E/F change only the environment, G adds ReplaySSM, H is all of them.
 for arm in "DEFI":
     assert argv[arm] == argv["A"] and len(profile["arms"][arm]["env"]) == 1, arm
-assert argv["G"] == argv["H"] == argv["A"][:-4] + ["--enable-linear-replayssm-spec"] + argv["A"][-4:]
+assert argv["G"] == argv["A"][:-4] + ["--enable-linear-replayssm-spec"] + argv["A"][-4:]
+# H is the qualified ports only: arm A's flags (no ReplaySSM) with D, E, F and I's environment.
+assert argv["H"] == argv["A"]
 assert ({e["name"] for e in profile["arms"]["H"]["env"]} ==
         {profile["arms"][a]["env"][0]["name"] for a in "DEFI"})
 for arm in profile["arms"]:

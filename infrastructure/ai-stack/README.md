@@ -247,10 +247,23 @@ variables, which the Job adds to the profile's.
 | `F` | `SGLANG_GFX1201_FP8_LM_HEAD=1` (FP8 target and draft heads; lossy) |
 | `G` | `--enable-linear-replayssm-spec` (GDN ReplaySSM for DFLASH) |
 | `I` | `SGLANG_GFX1201_GDN_NORM_QUANT=1` (fused GDN gated-norm MXFP4 quantization) |
-| `H` | all of the above |
+| `H` | `D`, `E`, `F` and `I` together, the candidate default (not `G`) |
 
 Enable an item in arm A only after its arm matches arm A's quality result and
 greedy acceptance.
+
+Results on 2026-11-09 (image `sha256:044646c4`, median verify step from the
+server's one-request decode windows; quality relative to arm A):
+
+| Arm | Verify step | vs A | C1 / C2 tokens/s | Quality |
+| --- | --- | --- | --- | --- |
+| `A` | 41.65 ms | | 92.9 / 163.6 | 9 passed, 3 known format failures |
+| `D` | 40.68 ms | -1.0 ms | 93.7 / 157.6 | same |
+| `E` | 41.21 ms | -0.4 ms | 93.1 / 179.1 | same |
+| `F` | 40.04 ms | -1.6 ms | 104.8 / 184.2 | same |
+| `G` | 43.58 ms | +1.9 ms | 89.9 / 170.7 | one case ends with no answer |
+
+Arm `I` was added after this run.
 
 After BetterBench, the Job runs the assistant acceptance menu
 ([`assistant-quality.json`](../sglang/assistant-quality.json) through
