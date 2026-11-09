@@ -202,6 +202,10 @@ assert ({e["name"] for e in profile["arms"]["H"]["env"]} ==
 assert argv["J"] == argv["A"]
 assert ([e["name"] for e in profile["arms"]["J"]["env"]] ==
         [e["name"] for e in profile["arms"]["H"]["env"]] + ["SGLANG_GFX1201_VERIFY_ATTENTION"])
+# K is J plus split-K for the remaining verify GEMMs, environment only.
+assert argv["K"] == argv["A"]
+assert ([e["name"] for e in profile["arms"]["K"]["env"]] ==
+        [e["name"] for e in profile["arms"]["J"]["env"]] + ["SGLANG_GFX1201_SPLITK_WIDE"])
 for arm in profile["arms"]:
     items = json.loads((work / f"job-{arm}.json").read_text())["items"]
     config, job, service = items
