@@ -21,8 +21,10 @@ spec:
     kubeletSocketPath: /var/lib/kubelet/device-plugins
   draDriver:
     enable: false
-  # AMD device metrics exporter: power, temperatures, clocks, activity, VRAM
-  # and PCIe for each R9700, readable while the card is runtime-suspended.
+  # AMD device metrics exporter: power, temperatures, clocks, activity and VRAM
+  # for each R9700, readable while the card is runtime-suspended. Its PCIe
+  # fields are MI2xx/MI3xx-only (PCIE_SPEED read 2 GT/s on a 32 GT/s link), so
+  # node-exporter's pcidevice collector supplies the PCIe link and power state.
   # Its health service and ECC fields stay off: ECC (GECC) is disabled on these
   # cards, and the kernel command line sets amdgpu.ras_enable=0 so no counters
   # report bogus "uncorrectable" errors that would mark the GPUs unschedulable.
@@ -103,9 +105,7 @@ data:
           "GPU_FREE_GTT",
           "GPU_VOLTAGE",
           "GPU_GFX_VOLTAGE",
-          "GPU_MEMORY_VOLTAGE",
-          "PCIE_SPEED",
-          "PCIE_MAX_SPEED"
+          "GPU_MEMORY_VOLTAGE"
         ]
       }
     }
