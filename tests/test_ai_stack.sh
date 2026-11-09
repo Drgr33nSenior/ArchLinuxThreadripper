@@ -178,10 +178,10 @@ for e in profile["args"]:
 for e in profile["env"]:
     assert e["reason"] and e["source"] and e["confidence"] in ("H", "M", "L"), e
 assert sum(1 for arm in profile["arms"].values() if arm["default"]) == 1
-# Arm O (the qualified ports, the PCIe custom all-reduce, P1 prefill and 8-warp
-# prefill attention) is the default; arm A stays as the baseline arm, and K, M
-# and N as the comparisons for the custom all-reduce, P1 and C4.
-assert profile["arms"]["O"]["default"] and not profile["arms"]["A"]["default"]
+# Arm Q (the qualified ports, the PCIe custom all-reduce, P1 prefill, 8-warp
+# prefill attention and the fused split-K reduce) is the default; arm A stays as
+# the baseline arm, and K, M, N and O as the comparisons for each addition.
+assert profile["arms"]["Q"]["default"] and not profile["arms"]["A"]["default"]
 flags = [e["flag"] for e in profile["args"]]
 assert len(flags) == len(set(flags)), "duplicate flag"
 unset = {e["name"] for e in profile["must_unset_env"]}
