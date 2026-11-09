@@ -181,13 +181,13 @@ runtime it replaces is guidance there, not a target. The model catalog keeps
 only model and draft identity.
 
 A profile has arms for the A/B decisions that need measurement; one is the
-default. For `qwen3.8-27b-mxfp4-tp2`, arm O is the default: arm A's flags
+default. For `qwen3.8-27b-mxfp4-tp2`, arm Q is the default: arm A's flags
 (`no_buffer`, overlap off, as op234) with the six qualified gfx1201 ports
 switched on, SGLang's custom all-reduce in place of RCCL for verify and
-decode reductions, the P1 FP8 route for prefill GEMMs and 8-warp prefill
-attention. Arm A stays as the baseline that every other arm is compared with;
-arm K is arm M without the custom all-reduce, arm M is arm N without P1 and
-arm N is arm O without 8-warp prefill attention. Arm B
+decode reductions, the P1 FP8 route for prefill GEMMs, 8-warp prefill
+attention and the fused split-K reduce. Arm A stays as the baseline that every
+other arm is compared with; arms K, M, N and O each lack one later addition
+(the custom all-reduce, P1, 8-warp prefill attention, the fused reduce). Arm B
 (`extra_buffer_lazy` with the overlap scheduler) is an experiment.
 
 An arm may list base flags under `drop` (arm `M` drops
@@ -268,9 +268,9 @@ variables, which the Job adds to the profile's.
 | `L` | `K` with the draft quantized to FP8 at load (`--speculative-draft-model-quantization fp8`); not adopted |
 | `M` | `K` with SGLang's custom all-reduce for verify/decode reductions (`SGLANG_GFX1201_PCIE_CUSTOM_AR=1`, `--disable-custom-all-reduce` dropped; serving patch 0014); the comparison for `N` |
 | `N` | `M` plus `SGLANG_GFX1201_P1_PREFILL=1` (prefill chunks of 1024-2048 rows on the P1 FP8 GEMM route; serving patch 0015); the comparison for `O` |
-| `O` | `N` plus `SGLANG_GFX1201_EXTEND_WARPS8=1` (8-warp prefill attention for head dim 256, C4; serving patch 0016), **the default** |
+| `O` | `N` plus `SGLANG_GFX1201_EXTEND_WARPS8=1` (8-warp prefill attention for head dim 256, C4; serving patch 0016); the comparison for `Q` |
 | `P` | `O` with the draft quantized to FP8 at load (as `L`) and `SGLANG_DFLASH_FUSED_KV_FP8=1`, which keeps DFLASH's fused KV materialization for it (serving patch 0017) |
-| `Q` | `O` plus `SGLANG_GFX1201_SPLITK_FUSED_REDUCE=1` (split-K verify GEMMs as one kernel with the reduce fused, bitwise equal; serving patch 0018) |
+| `Q` | `O` plus `SGLANG_GFX1201_SPLITK_FUSED_REDUCE=1` (split-K verify GEMMs as one kernel with the reduce fused, bitwise equal; serving patch 0018), **the default** |
 
 Enable an item in arm A only after its arm matches arm A's quality result and
 greedy acceptance.
@@ -371,6 +371,21 @@ grows with the square of the prompt length), with the verify step and quality
 unchanged. Arm N's 2K figure is a low outlier (3,778 tokens/s in the previous
 run). Arm O's lower C2 figure comes from shorter sampled outputs (7,982
 against 8,953 tokens in that phase) at a higher per-request decode rate.
+
+Results on 2026-11-09 (image `sha256:fb839951`, series `b0323183`, run back to
+back; median and 25th percentile verify step):
+
+| Arm | Verify step | Two-request step | Prefill at 2K / 8K / 16K | First token at 23.5K / 47K / 88K | Quality |
+| --- | --- | --- | --- | --- | --- |
+| `O` | 34.00 / 33.74 ms | 36.41 ms | 3,809 / 3,771 / 3,550 tokens/s | 7.50 / 18.07 / 44.67 s | 10 passed, 1 failed (`k8s-troubleshoot`) |
+| `Q` | 33.15 / 32.78 ms | 35.53 ms | 3,825 / 3,771 / 3,545 tokens/s | 7.54 / 18.08 / 44.61 s | same |
+
+Arm `Q` became the default: the fused split-K reduce removes 256 kernel
+launches per verify round (about 2.2 us of dispatch each inside a graph) for
+0.85 ms per step, with bitwise-equal output. All ten fused routes engaged and
+none was disabled. Because the arithmetic is identical, the runs also measure
+sampling noise: accepted length 4.59 against 4.41 and C2 204 against 187
+tokens/s from the same computation.
 
 After BetterBench, the Job runs the assistant acceptance menu
 ([`assistant-quality.json`](../sglang/assistant-quality.json) through
