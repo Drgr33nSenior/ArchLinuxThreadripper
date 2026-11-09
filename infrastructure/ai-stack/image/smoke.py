@@ -13,8 +13,9 @@ the FP8 LM head route on a small synthetic head, the fused GDN gated-norm
 MXFP4 quantization bitwise equal to norm then quantize, and the split-KV verify
 attention within BF16 rounding of extend_attention_fwd. It runs the P1 prefill
 route on one shard (exact FP8 expansion, error against an FP32 reference) and
-8-warp prefill attention against the 4-warp kernel. With two GPUs it runs the
-PCIe custom all-reduce in two processes against the exact sum.
+8-warp prefill attention against the 4-warp kernel, and the FP8-draft fused KV
+weight against the FP8 layer. With two GPUs it runs the PCIe custom all-reduce
+in two processes against the exact sum.
 """
 
 import os
@@ -193,6 +194,35 @@ for warps8 in ("0", "1"):
 del os.environ["SGLANG_GFX1201_EXTEND_WARPS8"]
 if not (eouts[0] - eouts[1]).abs().max().item() < 1e-2:
     raise SystemExit("IMAGE_SMOKE=fail: 8-warp prefill attention differs from the 4-warp kernel")
+
+# DFLASH fused KV for an FP8 draft (serving patch 0017): an online-FP8 QKV layer
+# (non-square, so the (K, N) storage cannot pass by accident) is admitted only
+# with the switch, and its dequantized K/V rows match the FP8 layer's K/V output.
+from sglang.kernels.ops.speculative.fused_kv_materialize import _dense_kv_rows
+from sglang.srt.layers.quantization.fp8 import Fp8Config, Fp8LinearMethod
+from sglang.srt.speculative import dflash_utils
+
+fq, fkv, fk = 1024, 256, 2048
+fmethod = Fp8LinearMethod(Fp8Config(is_checkpoint_fp8_serialized=False))
+flayer = torch.nn.Module()
+fmethod.create_weights(flayer, input_size_per_partition=fk, output_partition_sizes=[fq, fkv, fkv], input_size=fk,
+                       output_size=fq + 2 * fkv, params_dtype=torch.bfloat16, weight_loader=None)
+flayer.weight.data = (torch.randn(fq + 2 * fkv, fk, device="cuda", dtype=torch.bfloat16) * 0.02)
+flayer = flayer.cuda()
+flayer.quant_method, flayer.output_size_per_partition, flayer.bias = fmethod, fq + 2 * fkv, None
+fmethod.process_weights_after_loading(flayer)
+os.environ["SGLANG_DFLASH_FUSED_KV_FP8"] = "0"
+fkv_off = dflash_utils.can_dflash_use_fused_qkv_proj(flayer)[0]
+os.environ["SGLANG_DFLASH_FUSED_KV_FP8"] = "1"
+fkv_on = dflash_utils.can_dflash_use_fused_qkv_proj(flayer)[0]
+del os.environ["SGLANG_DFLASH_FUSED_KV_FP8"]
+if fkv_off or not fkv_on:
+    raise SystemExit(f"IMAGE_SMOKE=fail: FP8 draft fused KV eligibility off={fkv_off} on={fkv_on}")
+fx = torch.randn(32, fk, device="cuda", dtype=torch.bfloat16)
+fdense = (fx @ _dense_kv_rows(flayer, fq, fq + 2 * fkv, torch.bfloat16).T).float()
+flayer_kv = fmethod.apply(flayer, fx)[:, fq:].float()
+if not (fdense - flayer_kv).norm().item() / flayer_kv.norm().item() < 0.08:
+    raise SystemExit("IMAGE_SMOKE=fail: FP8 draft fused KV weight differs from the FP8 layer")
 
 # PCIe custom all-reduce (serving patch 0014) on both GPUs: the AOT-built kernel
 # must give the exact fixed-order sum on both ranks. The stock kernel gave wrong,

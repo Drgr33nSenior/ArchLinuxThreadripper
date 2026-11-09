@@ -269,6 +269,7 @@ variables, which the Job adds to the profile's.
 | `M` | `K` with SGLang's custom all-reduce for verify/decode reductions (`SGLANG_GFX1201_PCIE_CUSTOM_AR=1`, `--disable-custom-all-reduce` dropped; serving patch 0014); the comparison for `N` |
 | `N` | `M` plus `SGLANG_GFX1201_P1_PREFILL=1` (prefill chunks of 1024-2048 rows on the P1 FP8 GEMM route; serving patch 0015); the comparison for `O` |
 | `O` | `N` plus `SGLANG_GFX1201_EXTEND_WARPS8=1` (8-warp prefill attention for head dim 256, C4; serving patch 0016), **the default** |
+| `P` | `O` with the draft quantized to FP8 at load (as `L`) and `SGLANG_DFLASH_FUSED_KV_FP8=1`, which keeps DFLASH's fused KV materialization for it (serving patch 0017) |
 
 Enable an item in arm A only after its arm matches arm A's quality result and
 greedy acceptance.
