@@ -262,6 +262,10 @@ done
 ! grep -q -- '--tlog-upload' "$stage" || fail 'cosign v3 has no --tlog-upload; use the signing config'
 grep -Fq 'systemd-creds --user decrypt --name=cosign_password' "$stage" || fail 'signing passphrase is not read from the sealed credential'
 grep -Fq "systemd-creds --user encrypt --name=cosign_password -" "$dir/signing/init-key.sh" || fail 'init-key.sh does not seal the passphrase via stdin'
+pub=$dir/signing/cosign.pub
+[[ $(head -n 1 "$pub") == "-----BEGIN PUBLIC KEY-----" && $(tail -n 1 "$pub") == "-----END PUBLIC KEY-----" ]] ||
+  fail 'signing/cosign.pub is not a PEM public key'
+! grep -q 'PRIVATE' "$pub" || fail 'signing/cosign.pub contains private key material'
 grep -Fq -- '--insecure-ignore-tlog=true' "$dir/signing/verify-image.sh" || fail 'verify-image.sh would require a transparency log'
 for type in cyclonedx vuln; do grep -Fq "$type" "$dir/signing/verify-image.sh" || fail "verify-image.sh skips the $type attestation"; done
 # The scan policy blocks only fixable CRITICAL findings that are not allowlisted
