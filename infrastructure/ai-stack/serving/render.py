@@ -11,9 +11,9 @@ repository (benchmarks/betterbench/native-v2), so results compare with the
 op233/op234 measurements. Output is JSON that `kubectl apply -f -` accepts;
 this script never contacts a cluster.
 
-Usage: render.py argv PROFILE [--arm A|B|C]
-       render.py job PROFILE IMAGE [--arm A|B|C]
-       render.py bench PROFILE IMAGE --serving SERVING_REPOSITORY_ROOT [--arm A|B|C] [--greedy] [--top-p P]
+Usage: render.py argv PROFILE [--arm ARM]
+       render.py job PROFILE IMAGE [--arm ARM]
+       render.py bench PROFILE IMAGE --serving SERVING_REPOSITORY_ROOT [--arm ARM] [--greedy] [--top-p P]
 """
 import argparse
 import base64
@@ -68,8 +68,9 @@ def server_argv(profile, catalog, arm):
     return argv + ["--host", "0.0.0.0", "--port", str(PORT)]
 
 
-def environment(profile):
-    env = [{"name": e["name"], "value": e["value"]} for e in profile["env"]]
+def environment(profile, arm=None):
+    _, spec = arm_of(profile, arm)
+    env = [{"name": e["name"], "value": e["value"]} for e in profile["env"] + spec.get("env", [])]
     # Writable locations: the root filesystem is read-only.
     env += [{"name": "HOME", "value": "/tmp"}, {"name": "TMPDIR", "value": "/tmp"},
             {"name": "PYTHONDONTWRITEBYTECODE", "value": "1"},
@@ -137,7 +138,7 @@ def job(profile, catalog, image, arm, bench=None):
         "imagePullPolicy": "IfNotPresent",
         "command": ["bash", "-c", script, f"sglang-{kind}"],
         "args": argv,
-        "env": environment(profile) + [{"name": "SERVED_MODEL_NAME", "value": profile["served_model_name"]}],
+        "env": environment(profile, arm) + [{"name": "SERVED_MODEL_NAME", "value": profile["served_model_name"]}],
         "resources": {"requests": {"cpu": "16", "memory": "38Gi", "amd.com/gpu": "2"},
                       "limits": {"cpu": "16", "memory": "38Gi", "amd.com/gpu": "2"}},
         "securityContext": {"allowPrivilegeEscalation": False, "readOnlyRootFilesystem": True,
