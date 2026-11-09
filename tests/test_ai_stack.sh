@@ -193,12 +193,19 @@ assert argv["C"] == argv["A"][:-4] + ["--speculative-use-block-verification"] + 
 # Verify-path arms: D/E/F change only the environment, G adds ReplaySSM, H is all of them.
 for arm in "DEFI":
     assert argv[arm] == argv["A"] and len(profile["arms"][arm]["env"]) == 1, arm
-assert argv["G"] == argv["H"] == argv["A"][:-4] + ["--enable-linear-replayssm-spec"] + argv["A"][-4:]
+assert argv["G"] == argv["A"][:-4] + ["--enable-linear-replayssm-spec"] + argv["A"][-4:]
+# H is the qualified ports only: arm A's flags (no ReplaySSM) with D, E, F and I's environment.
+assert argv["H"] == argv["A"]
 assert ({e["name"] for e in profile["arms"]["H"]["env"]} ==
         {profile["arms"][a]["env"][0]["name"] for a in "DEFI"})
 for arm in profile["arms"]:
     items = json.loads((work / f"job-{arm}.json").read_text())["items"]
-    config, job = items
+    config, job, service = items
+    # The Service gives telemetry's fixed sglang target to the running server.
+    assert service["kind"] == "Service" and service["metadata"]["name"] == "sglang"
+    assert service["spec"]["ports"] == [{"name": "http", "port": 30000, "targetPort": 30000}]
+    for key, value in service["spec"]["selector"].items():
+        assert job["spec"]["template"]["metadata"]["labels"][key] == value
     pod = job["spec"]["template"]["spec"]
     c = pod["containers"][0]
     assert config["data"]["qualify.py"] == (root / "serving" / "qualify.py").read_text()
@@ -220,7 +227,8 @@ import base64, io, tarfile
 qualify = json.loads((work / "job-A.json").read_text())["items"][1]
 bundles = {}
 for variant in ("bench", "bench-greedy"):
-    config, job = json.loads((work / f"{variant}.json").read_text())["items"]
+    config, job, service = json.loads((work / f"{variant}.json").read_text())["items"]
+    assert service["metadata"]["name"] == "sglang"
     assert config["data"] == {"bench.py": (root / "serving" / "bench.py").read_text()}
     archive = tarfile.open(fileobj=io.BytesIO(base64.b64decode(config["binaryData"]["betterbench.tar.gz"])))
     names = archive.getnames()

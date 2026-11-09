@@ -33,6 +33,7 @@ QUALITY_FILES = ["lib/workstation/assistant_acceptance.py", "lib/workstation/ass
 QUALITY_TASKS = "infrastructure/sglang/assistant-tasks"
 NAMESPACE = "ai-home-lab"
 PORT = 30000
+SERVER_LABEL = "ai-stack/sglang-server"
 # Host groups of /dev/kfd and /dev/dri/renderD* (render) and /dev/dri/card* (video).
 GPU_GROUPS = [987, 983]
 IMAGE_RE = r"registry\.lan\.thespry\.family/local/[a-z0-9-]+@sha256:[a-f0-9]{64}"
@@ -162,11 +163,19 @@ def job(profile, catalog, image, arm, bench=None):
                     {"name": "shm", "emptyDir": {"medium": "Memory", "sizeLimit": "16Gi"}}],
     }
     meta = {"name": name, "namespace": NAMESPACE, "labels": labels}
+    # Telemetry scrapes sglang.ai-home-lab.svc:30000 (job "sglang"); this Service
+    # points it at whichever qualification or bench server is running. Only one
+    # Job (or the serving Deployment) can hold the GPUs, so only one matches.
+    service = {"apiVersion": "v1", "kind": "Service",
+               "metadata": {"name": "sglang", "namespace": NAMESPACE, "labels": labels},
+               "spec": {"type": "ClusterIP", "selector": {SERVER_LABEL: "true"},
+                        "ports": [{"name": "http", "port": PORT, "targetPort": PORT}]}}
     return {"apiVersion": "v1", "kind": "List", "items": [
         {"apiVersion": "v1", "kind": "ConfigMap", "metadata": meta, "data": data, **({"binaryData": binary} if binary else {})},
         {"apiVersion": "batch/v1", "kind": "Job", "metadata": meta,
          "spec": {"backoffLimit": 0, "activeDeadlineSeconds": 4500, "ttlSecondsAfterFinished": 172800,
-                  "template": {"metadata": {"labels": labels}, "spec": pod}}},
+                  "template": {"metadata": {"labels": {**labels, SERVER_LABEL: "true"}}, "spec": pod}}},
+        service,
     ]}
 
 
