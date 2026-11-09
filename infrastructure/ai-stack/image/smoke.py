@@ -7,8 +7,8 @@ and that Triton can compile and run the quantizer and FP4 GEMM, which also
 proves the image has the C compiler Triton needs for its launcher. Finally it
 compiles a HIP C++ kernel the way SGLang's JIT kernels are built (hipcc,
 C++20, standard headers), which needs g++ and the device bitcode path. It also
-calls the opt-in verify-path ports directly: split-K down/out within the op234
-limits, the packed GDN projection bitwise equal to the separate projections,
+calls the opt-in verify-path ports directly: split-K down/out and the wide
+split-K (QKV) within the op234 limits, the packed GDN projection bitwise equal to the separate projections,
 the FP8 LM head route on a small synthetic head, the fused GDN gated-norm
 MXFP4 quantization bitwise equal to norm then quantize, and the split-KV verify
 attention within BF16 rounding of extend_attention_fwd.
@@ -70,6 +70,19 @@ g.gemm_afp4wfp4(xq8, dq, xs8, ds, torch.bfloat16, split, splitk_downout=True)
 diff = (split.float() - one.float()).abs()
 if not (diff.max() <= one.float().abs().max() * 2**-7 and (diff > 0).float().mean() <= 0.05):
     raise SystemExit("IMAGE_SMOKE=fail: split-K down/out GEMM outside the op234 limits")
+
+# Wide split-K (serving patch 0013) on the attention QKV shard at 8 rows.
+qkv = torch.randn(7168, 5120, device="cuda", dtype=torch.bfloat16) * 0.05
+qq, qs = mxfp4.dynamic_mxfp4_quant(qkv)
+qs = qs.contiguous()
+xq5, xs5 = mxfp4.dynamic_mxfp4_quant(torch.randn(8, 5120, device="cuda", dtype=torch.bfloat16))
+one, split = (torch.empty(8, 7168, device="cuda", dtype=torch.bfloat16) for _ in range(2))
+g.gemm_afp4wfp4(xq5, qq, xs5, qs, torch.bfloat16, one, splitk_wide=False)
+g.gemm_afp4wfp4(xq5, qq, xs5, qs, torch.bfloat16, split, splitk_wide=True)
+diff = (split.float() - one.float()).abs()
+if not (g._splitk_parts(7168, 5120, None, True) == 4
+        and diff.max() <= one.float().abs().max() * 2**-7 and (diff > 0).float().mean() <= 0.05):
+    raise SystemExit("IMAGE_SMOKE=fail: wide split-K QKV GEMM outside the op234 limits")
 
 qkvz = torch.randn(256, 5120, device="cuda", dtype=torch.bfloat16) * 0.05
 ba = torch.randn(48, 5120, device="cuda", dtype=torch.bfloat16) * 0.05
