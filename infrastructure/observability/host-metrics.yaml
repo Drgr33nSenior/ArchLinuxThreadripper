@@ -47,9 +47,12 @@ spec:
             - --collector.textfile.directory=/host/root/var/lib/workstation-ai-stack
             - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run/credentials|var/lib/kubelet/pods)($|/)
           ports: [{name: metrics, containerPort: 9100}]
+          # Idle between scrapes; each 30 s scrape is a ~30 ms CPU burst (pcidevice
+          # and hwmon ~50 ms each in parallel). 250m allowed 25 ms per 100 ms period,
+          # so a scrape was throttled into the next period. 500m fits one scrape.
           resources:
             requests: {cpu: 50m, memory: 192Mi}
-            limits: {cpu: 250m, memory: 192Mi}
+            limits: {cpu: 500m, memory: 192Mi}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
