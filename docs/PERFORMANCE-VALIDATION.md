@@ -73,8 +73,8 @@ threads; do not infer CCDs from NUMA nodes.
 
 ## Prepare target evidence
 
-Configure `SESSION_CONTEXT`, `SESSION_NODE`, `SESSION_NAMESPACE` and
-`SESSION_ENVIRONMENT=dev` through the existing literal workstation config.
+Configure `SESSION_CONTEXT`, `SESSION_NODE` and `SESSION_NAMESPACE` through
+the existing literal workstation config.
 Names and paths below are owner-selected examples, not discovery results.
 Replace `sglang-EXACT-POD` with the current named Pod. The serving benchmark
 requires the local host boot to match that Pod's node and verifies both physical

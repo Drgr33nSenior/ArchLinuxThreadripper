@@ -8,7 +8,6 @@ ws_session_config_validate() {
     value="${!key:-}"
     [[ "$value" =~ ^[a-zA-Z0-9][a-zA-Z0-9._:/@-]*$ ]] || ws_die "$key must explicitly identify the reviewed target"
   done
-  case "${SESSION_ENVIRONMENT:-}" in dev | tst | int) ;; *) ws_die 'SESSION_ENVIRONMENT must explicitly classify a non-production target: dev, tst or int' ;; esac
   [[ "$SESSION_AI_DEPLOYMENT" != "$SESSION_GAME_DEPLOYMENT" ]] || ws_die 'AI and gaming deployments must differ'
   [[ "${SESSION_TIMEOUT_SECONDS:-300}" =~ ^[1-9][0-9]*$ ]] || ws_die 'SESSION_TIMEOUT_SECONDS must be positive'
   [[ "${SESSION_AI_STARTUP_TIMEOUT_SECONDS:-2100}" =~ ^[1-9][0-9]{0,4}$ ]] || ws_die 'SESSION_AI_STARTUP_TIMEOUT_SECONDS must be a bounded positive integer'

@@ -10,13 +10,12 @@ work="$(mktemp -d)"
 trap 'rm -rf -- "$work"' EXIT
 SESSION_CONTEXT=fixture-context
 SESSION_NODE=fixture-node
-SESSION_ENVIRONMENT=dev
 SESSION_NAMESPACE='ai-home-lab'
 SESSION_AI_DEPLOYMENT=sglang
 SESSION_GAME_DEPLOYMENT='parent-steam-headless'
 SESSION_TIMEOUT_SECONDS=1
 SESSION_STREAMING_PATH=sunshine
-export SESSION_CONTEXT SESSION_NODE SESSION_ENVIRONMENT SESSION_NAMESPACE SESSION_AI_DEPLOYMENT SESSION_GAME_DEPLOYMENT SESSION_TIMEOUT_SECONDS SESSION_STREAMING_PATH
+export SESSION_CONTEXT SESSION_NODE SESSION_NAMESPACE SESSION_AI_DEPLOYMENT SESSION_GAME_DEPLOYMENT SESSION_TIMEOUT_SECONDS SESSION_STREAMING_PATH
 mkdir "$work/api"
 fixture_node='{"status":{"allocatable":{"cpu":"42","memory":"48234496Ki","amd.com/gpu":"2"}}}'
 printf '{"items":[]}\n' >"$work/api/pods.json"
@@ -136,7 +135,8 @@ printf '{"items":[]}\n' >"$work/api/rs.json"
 # From here only the host holder probe is mocked, including a failed release.
 ws_session_gpu_free() { [[ ! -e "$work/gpu-held" ]] || ws_die 'fixture GPU still held'; }
 ws_session_plan gaming | jq -e '.status=="plan-only-no-cluster-contact"' >/dev/null
-SESSION_ENVIRONMENT=prd expect_failure ws_session_plan ai
+# A retired lifecycle label is ignored rather than gating the plan.
+SESSION_ENVIRONMENT=prd ws_session_plan ai | jq -e '.status=="plan-only-no-cluster-contact"' >/dev/null
 set_document "$work/api/parent-steam-headless.json" '.metadata.annotations["workstation.ai/qualification"]="pending"'
 expect_failure ws_session_switch gaming "$work/fixture.json" "$work/state" --execute
 [[ ! -e "$work/scale.log" && ! -e "$work/state/state.json" ]]

@@ -665,10 +665,13 @@ class ResourceTests(unittest.TestCase):
     def test_site_renderer_keeps_secrets_out_and_refuses_public_network(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            site = {"environment": "tst", "context": "fixture", "node": "fixture", "node_address": "192.168.77.9",
+            site = {"context": "fixture", "node": "fixture", "node_address": "192.168.77.9",
                 "management_cidr": "192.168.77.0/24", "client_cidrs": ["192.168.77.0/24"],
                 "webui_host": "chat.fixture.test", "api_host": "api.fixture.test", "tls_secret": "fixture-tls"}
             path = root / "site.json"
+            # Older private site files still carry the retired lifecycle label.
+            path.write_text(json.dumps(dict(site, environment="prd")))
+            self.assertEqual(service.site_values(path)["context"], "fixture")
             path.write_text(json.dumps(site))
             service.render(SimpleNamespace(site=path, output=root / "render", mode="large"))
             objects = service.load_objects((root / "render/workloads.yaml").read_text())

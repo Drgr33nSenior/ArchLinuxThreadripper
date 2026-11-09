@@ -561,9 +561,10 @@ def protected(path):
 
 def site_values(path):
     site = json.loads(Path(path).read_text())
-    require(set(site) == {"environment", "context", "node", "node_address", "management_cidr",
-                          "client_cidrs", "webui_host", "api_host", "tls_secret"}, "unexpected/missing site keys")
-    require(site["environment"] in {"dev", "tst", "int"}, "explicit non-production classification required")
+    # "environment" is no longer used; older private site files may still carry it.
+    require(set(site) - {"environment"} == {"context", "node", "node_address", "management_cidr",
+                                            "client_cidrs", "webui_host", "api_host", "tls_secret"},
+            "unexpected/missing site keys")
     address = ipaddress.ip_address(site["node_address"])
     management = ipaddress.ip_network(site["management_cidr"])
     private = [ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")]

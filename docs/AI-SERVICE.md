@@ -138,11 +138,11 @@ composition fits. Builds and VMs must share the same CPU/RAM allowance.
 
 Run source preparation from the reviewed checkout. Commands that contact a cluster
 below are owner-run rollout steps, **NOT RUN** by this change. Use the actual
-classified context, node and new output paths; placeholders are not site values.
+context, node and new output paths; placeholders are not site values.
 
 1. Complete `config/service-site.example.json` outside Git. Supply actual private
    IPv4 address, management/client CIDRs, distinct browser/API DNS names, TLS
-   Secret name, node, context and `dev`/`tst`/`int` classification. Confirm that the
+   Secret name, node and context. Confirm that the
    K3s NodePort address range includes the chosen address. Review the host firewall
    to allow TCP 32443 only from approved clients; keep 6443 management-only.
 2. Render the service and existing telemetry, then plan admission:

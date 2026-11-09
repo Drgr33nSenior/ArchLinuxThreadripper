@@ -482,8 +482,9 @@ class Capture:
     def __init__(self, policy, baseline=False, local_first=False):
         self.policy_path = str(Path(policy).resolve())
         self.policy = json.loads(private_file(policy).read_text())
-        require(set(self.policy) - {"local_repository"} == {"context", "node", "kubeconfig", "session_config", "hardware",
-                                    "state_directory", "staging", "environment", "model_inventories", "scope"}, "invalid backup policy keys")
+        # "environment" is no longer used; older private policies may still carry it.
+        require(set(self.policy) - {"local_repository", "environment"} == {"context", "node", "kubeconfig", "session_config",
+                "hardware", "state_directory", "staging", "model_inventories", "scope"}, "invalid backup policy keys")
         local_policy(self.policy)
         require(not local_first or self.policy.get("local_repository") is not None, "local-first policy required")
         require(self.policy["scope"] in {"baseline", "service"}, "explicit backup scope required")
@@ -492,7 +493,6 @@ class Capture:
                 1 <= len(self.policy["model_inventories"]) <= 2, "provide inventories for staged inference models")
         self.models = [model_inventory(path) for path in self.policy["model_inventories"]]
         require(len({m["model"] for m in self.models}) == len(self.models), "duplicate model inventory")
-        require(self.policy["environment"] in {"dev", "tst", "int"}, "explicit non-production target required")
         for name in ("context", "node"):
             require(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:@/-]{0,200}", self.policy[name]), "invalid target")
         private_file(self.policy["kubeconfig"])

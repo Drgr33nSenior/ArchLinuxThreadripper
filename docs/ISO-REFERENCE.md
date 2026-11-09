@@ -20,7 +20,7 @@ Do not run these lower-level steps in addition to the release coordinator.
 - `infrastructure/iso/docker/`: pinned builder image and fixed container actions.
 - `infrastructure/iso/docker.sh`: dry-run wrapper for image creation, userspace
   checks, package builds and ISO assembly. It only accepts a local Docker Desktop
-  context, classified as a development builder. It never changes the active context.
+  context. It never changes the active context.
 - `infrastructure/iso/release.sh`: coordinates those stages with a fresh source
   snapshot and one run directory. It never signs artifacts or deletes old jobs.
 - `infrastructure/iso/prepare.sh`: verifies local signed inputs and creates a

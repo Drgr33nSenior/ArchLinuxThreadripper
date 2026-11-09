@@ -147,8 +147,8 @@ Before a K3s update:
    the external port boundary.
 7. Revert the overlay and restore etcd if any gate fails.
 
-Do not run Kubernetes or Helm validation against an unclassified remote
-cluster. Repository tests render source locally only.
+Repository tests render Kubernetes and Helm source locally only; they never
+contact a cluster.
 
 ## Backups
 
