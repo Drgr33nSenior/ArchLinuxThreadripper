@@ -41,6 +41,10 @@ if bash "$dir/patchset-hash.sh" "$work/empty" 2>/dev/null; then fail 'empty seri
 # The runtime image installs only the resolved wheelhouse, offline, and checks it.
 grep -Fq -- '--no-index --find-links /wheelhouse /wheelhouse/*.whl' "$dir/image/Containerfile" || fail 'runtime install is not offline'
 grep -Fq 'pip check' "$dir/image/Containerfile" || fail 'runtime install is not dependency-checked'
+grep -Fq 'install -y --no-install-recommends libgomp1 libatomic1' "$dir/image/Containerfile" ||
+  fail 'runtime image lacks the GCC runtime libraries torch needs'
+grep -Fq 'import torch, sgl_kernel, xgrammar, sglang.srt.server_args' "$dir/build-stage.sh" ||
+  fail 'image stage does not check imports before pushing'
 grep -Eq '^GPU_TARGET=gfx[0-9a-f]+$' "$lock" || fail 'GPU target'
 grep -Eq '^PYTHON_ABI=cp[0-9]+-cp[0-9]+t?$' "$lock" || fail 'Python ABI'
 
@@ -155,6 +159,35 @@ done
 for setting in 'CMAKE_BUILD_PARALLEL_LEVEL=' '-DTHEROCK_BACKGROUND_BUILD_JOBS=1' '-DFLANG_PARALLEL_COMPILE_JOBS=' '-DLLVM_PARALLEL_LINK_JOBS=2'; do
   grep -Fq -- "$setting" "$dir/rocm/build.sh" || fail "ROCm build does not bound parallelism: $setting"
 done
+
+# SGLang versions are valid PEP 440 for every shape upstream's describe prints.
+eval "$(sed -n '/^sglang_version() {/,/^}/p' "$dir/sglang/build.sh")"
+c=fcb3274646e43c16d70fd83806ebb3a5134d5e81
+p=a6f33c893a34c8b4b9cbf2e3b70bb351cb24ec96b17ec7960312d8a31035a77d
+[[ $(sglang_version v0.5.23-957-gfcb3274646 $c $p) == 0.5.23.post957+gfcb32746.pa6f33c89 ]] || fail 'sglang version from main'
+[[ $(sglang_version v0.5.23 $c $p) == 0.5.23.post0+gfcb32746.pa6f33c89 ]] || fail 'sglang version on a release'
+[[ $(sglang_version v0.5.6.post2-14260-gfcb3274646 $c $p) == 0.5.6.post2+n14260.gfcb32746.pa6f33c89 ]] ||
+  fail 'sglang version after a post-release'
+[[ $(sglang_version v0.5.24rc0-3-gfcb3274646 $c $p) == 0.5.24rc0.post3+gfcb32746.pa6f33c89 ]] || fail 'sglang version after an rc'
+if sglang_version 'not-a-tag' $c $p >/dev/null; then fail 'malformed describe accepted'; fi
+if python3 -c 'import packaging' 2>/dev/null; then
+  for v in 0.5.23.post957+gfcb32746.pa6f33c89 0.5.6.post2+n14260.gfcb32746.pa6f33c89 0.5.24rc0.post3+gfcb32746.pa6f33c89; do
+    python3 -c 'import sys; from packaging.version import Version; Version(sys.argv[1])' "$v" || fail "invalid version $v"
+  done
+fi
+
+# Both build stages use the device extra the ROCm package declares,
+# preferring the target-specific name, and skip it when there is none.
+# shellcheck disable=SC2016 # awk program, expanded by awk.
+pick='$1 == "Provides-Extra:" && ($2 == t || $2 == "device") {print $2}'
+for stage in sglang torch; do
+  grep -Fq -- "$pick" "$dir/$stage/build.sh" || fail "$stage stage does not detect the ROCm device extra"
+done
+pick_from() { printf '%s\n' "$@" | awk -v t=device-gfx1201 "$pick" | sort -r | head -n 1; }
+[[ $(pick_from 'Provides-Extra: libraries' 'Provides-Extra: device') == device ]] || fail 'single-target device extra'
+[[ $(pick_from 'Provides-Extra: device' 'Provides-Extra: device-gfx1201') == device-gfx1201 ]] ||
+  fail 'target-specific device extra'
+[[ -z $(pick_from 'Provides-Extra: libraries' 'Provides-Extra: device-gfx942') ]] || fail 'another target accepted'
 
 # The driver rejects unknown stages before touching the host.
 if bash "$dir/build-stage.sh" nonsense 2>/dev/null; then fail 'unknown stage accepted'; fi

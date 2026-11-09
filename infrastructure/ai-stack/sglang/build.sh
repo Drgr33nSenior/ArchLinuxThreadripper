@@ -28,7 +28,12 @@ pip install --quiet --upgrade pip
 read -r rocm_version < <(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["package_version"])' "$rocm/RECEIPT.json")
 links=(--find-links "$rocm/packages/dist" --find-links "$torch/wheels")
 extras=libraries,devel
-compgen -G "$rocm/packages/dist/rocm_sdk_device_${GPU_TARGET}-*.whl" >/dev/null && extras+=",device-$GPU_TARGET"
+# The device extra's name depends on how TheRock split the SDK ("device" for
+# one target, "device-<target>" otherwise); use the one the package declares.
+device=$(tar -xOzf "$(compgen -G "$rocm/packages/dist/rocm-[0-9]*.tar.gz")" --wildcards '*/PKG-INFO' |
+  awk -v t="device-$GPU_TARGET" '$1 == "Provides-Extra:" && ($2 == t || $2 == "device") {print $2}' | sort -r | head -n 1)
+[[ -z $device ]] || extras+=",$device"
+echo "ROCM_EXTRAS=$extras"
 pip install --quiet "${links[@]}" "rocm[$extras]==$rocm_version" "$torch"/wheels/*.whl
 
 # Hold the ROCm and PyTorch builds fixed for everything resolved after this.
@@ -53,10 +58,32 @@ for patch in /patches/*.patch; do
   echo "APPLIED=${patch##*/}"
 done
 
-# Version names the upstream base, the commit and the patch series.
-tag=$(git -C "$src" describe --tags --abbrev=0 --match 'v[0-9]*' "$SGLANG_COMMIT")
-count=$(git -C "$src" rev-list --count "$tag..$SGLANG_COMMIT")
-export SETUPTOOLS_SCM_PRETEND_VERSION="${tag#v}.post${count}+g${SGLANG_COMMIT:0:8}.p${SGLANG_PATCHSET_SHA256:0:8}"
+# Version names the upstream base, the commit and the patch series. Upstream
+# tags releases on release branches, so `git describe` from main finds a stale
+# tag; its own describe script (pyproject's git_describe_command) finds the
+# newest release. It prints a bare tag on a release commit.
+sglang_version() {
+  local describe=$1 commit=$2 series=$3 base count label
+  [[ $describe =~ ^v([0-9][0-9a-z.]*)(-([0-9]+)-g[0-9a-f]+)?$ ]] || return 1
+  base=${BASH_REMATCH[1]} count=${BASH_REMATCH[3]:-0}
+  label=g${commit:0:8}.p${series:0:8}
+  # A post-release base cannot take a second .post; its count joins the label.
+  if [[ $base == *post* ]]; then
+    printf '%s+n%s.%s\n' "$base" "$count" "$label"
+  else
+    printf '%s.post%s+%s\n' "$base" "$count" "$label"
+  fi
+}
+describe=$(cd "$src" && python3 scripts/release/get_version_tag.py)
+SETUPTOOLS_SCM_PRETEND_VERSION=$(sglang_version "$describe" "$SGLANG_COMMIT" "$SGLANG_PATCHSET_SHA256") || {
+  echo "STOP: unexpected SGLang version tag $describe" >&2
+  exit 1
+}
+python3 -c 'import sys; from packaging.version import Version; Version(sys.argv[1])' "$SETUPTOOLS_SCM_PRETEND_VERSION" || {
+  echo "STOP: $SETUPTOOLS_SCM_PRETEND_VERSION is not a valid Python package version" >&2
+  exit 1
+}
+export SETUPTOOLS_SCM_PRETEND_VERSION
 echo "SGLANG_VERSION=$SETUPTOOLS_SCM_PRETEND_VERSION"
 
 # The packaged SDK, not /opt/rocm, is the toolchain for kernels and runtime JIT.
