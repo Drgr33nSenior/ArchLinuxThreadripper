@@ -79,6 +79,51 @@ Set `AI_STACK_PUSH=1` for the `image` stage to push it to the lab registry.
 This needs a one-time `podman login registry.lan.thespry.family` as the
 publisher account.
 
+### Scanning and signing
+
+With `AI_STACK_PUSH=1` the `image` stage, after its GPU smoke test:
+
+1. Scans the image with Trivy (`TRIVY_IMAGE` in `stack.lock`) and writes, under
+   the sglang stage's `out/scan/`, the full report (`vulns.json`), a CycloneDX
+   SBOM, a cosign vulnerability predicate and the scanner/database versions.
+2. Applies [`image/scan-policy.py`](image/scan-policy.py): the push stops for a
+   CRITICAL finding with a fixed version available unless
+   [`image/scan-allowlist.json`](image/scan-allowlist.json) covers it. Every
+   allowlist entry needs `id` (and optionally `package`), `reason`, `reviewed`
+   and `expires`; expired entries stop applying. Other findings are recorded,
+   not blocking.
+3. Pushes the image, then signs it and attests the SBOM and the vulnerability
+   report with cosign (`COSIGN_IMAGE`), and verifies all three against
+   [`signing/cosign.pub`](signing/cosign.pub). The stage writes `image.digest`
+   only after verification, so a failed step reruns next time.
+
+[`signing/signing-config.json`](signing/signing-config.json) lists no
+transparency log or timestamp service, so nothing is uploaded to Rekor or any
+other public service; signatures and attestations are stored beside the image
+in the lab registry. Verification therefore uses `--insecure-ignore-tlog`.
+
+One-time setup on the build host, in an interactive terminal:
+
+```sh
+infrastructure/ai-stack/signing/init-key.sh   # prompts for a new passphrase
+```
+
+It writes the passphrase-encrypted private key to
+`~/.config/ai-stack/signing/cosign.key` and seals the passphrase for this user
+with `systemd-creds --user`, so unattended builds can sign. Keep a copy of the
+passphrase in your password manager: the sealed copy is bound to this host and
+user. Commit the printed public key as `signing/cosign.pub`. Pushing stops with
+a message until all three exist.
+
+Before deploying an image, verify it:
+
+```sh
+infrastructure/ai-stack/signing/verify-image.sh registry.lan.thespry.family/local/sglang-gfx1201@sha256:<digest>
+```
+
+A cluster admission policy that rejects unsigned `local/` images is a planned
+follow-up; until then this check is the enforcement point.
+
 ## Models
 
 Each catalog entry pins a model and an optional draft: repository, revision and
@@ -144,6 +189,7 @@ infrastructure/ai-stack/serving/render.py argv infrastructure/ai-stack/serving/<
 # A qualification Job (and its probe ConfigMap) for an image pinned by digest.
 infrastructure/ai-stack/serving/render.py job infrastructure/ai-stack/serving/<profile>.json \
   registry.lan.thespry.family/local/sglang-gfx1201@sha256:<digest> > qualify-a.json
+infrastructure/ai-stack/signing/verify-image.sh registry.lan.thespry.family/local/sglang-gfx1201@sha256:<digest>
 kubectl apply -f qualify-a.json
 kubectl -n ai-home-lab logs -f job/<name>
 ```

@@ -234,6 +234,65 @@ pick_from() { printf '%s\n' "$@" | awk -v t=device-gfx1201 "$pick" | sort -r | h
   fail 'target-specific device extra'
 [[ -z $(pick_from 'Provides-Extra: libraries' 'Provides-Extra: device-gfx942') ]] || fail 'another target accepted'
 
+# Pushed images are scanned before push, then signed, attested and verified
+# offline (no transparency log) before the stage records image.digest.
+for image in COSIGN_IMAGE TRIVY_IMAGE; do
+  grep -Eq "^$image=ghcr\.io/[a-z0-9./_-]+:[A-Za-z0-9._-]+@sha256:[a-f0-9]{64}$" "$lock" || fail "$image is not pinned by digest"
+done
+python3 -I - "$dir/signing/signing-config.json" <<'PY' || fail 'signing config would upload to a transparency log or service'
+import json, sys
+c = json.load(open(sys.argv[1]))
+assert c["mediaType"] == "application/vnd.dev.sigstore.signingconfig.v0.2+json"
+for key in ("caUrls", "oidcUrls", "rekorTlogUrls", "tsaUrls"):
+    assert not c.get(key), key
+PY
+stage=$dir/build-stage.sh
+order() { grep -n -F -- "$1" "$stage" | head -n 1 | cut -d: -f1; }
+# shellcheck disable=SC2016 # literal text in build-stage.sh
+for step in 'trivy --format json' 'scan-policy.py' 'podman push --digestfile "$scan/pushed.digest"' \
+  'cosign sign --key' 'cosign attest --key' 'signing/verify-image.sh' 'mv -- "$scan/pushed.digest"'; do
+  [[ -n $(order "$step") ]] || fail "image stage lacks: $step"
+done
+(($(order 'scan-policy.py') < $(order 'podman push --digestfile'))) || fail 'image is pushed before the scan policy'
+# shellcheck disable=SC2016 # literal text in build-stage.sh
+(($(order 'cosign sign --key') < $(order 'mv -- "$scan/pushed.digest"'))) || fail 'image.digest is recorded before signing'
+# shellcheck disable=SC2016 # literal text in build-stage.sh
+(($(order 'signing/verify-image.sh') < $(order 'mv -- "$scan/pushed.digest"'))) || fail 'image.digest is recorded before verification'
+[[ $(grep -c -- '--signing-config /signing/signing-config.json' "$stage") == 3 ]] || fail 'a cosign signing step lacks the local signing config'
+! grep -q -- '--tlog-upload' "$stage" || fail 'cosign v3 has no --tlog-upload; use the signing config'
+grep -Fq 'systemd-creds --user decrypt --name=cosign_password' "$stage" || fail 'signing passphrase is not read from the sealed credential'
+grep -Fq "systemd-creds --user encrypt --name=cosign_password -" "$dir/signing/init-key.sh" || fail 'init-key.sh does not seal the passphrase via stdin'
+pub=$dir/signing/cosign.pub
+[[ $(head -n 1 "$pub") == "-----BEGIN PUBLIC KEY-----" && $(tail -n 1 "$pub") == "-----END PUBLIC KEY-----" ]] ||
+  fail 'signing/cosign.pub is not a PEM public key'
+! grep -q 'PRIVATE' "$pub" || fail 'signing/cosign.pub contains private key material'
+grep -Fq -- '--insecure-ignore-tlog=true' "$dir/signing/verify-image.sh" || fail 'verify-image.sh would require a transparency log'
+for type in cyclonedx vuln; do grep -Fq "$type" "$dir/signing/verify-image.sh" || fail "verify-image.sh skips the $type attestation"; done
+# The scan policy blocks only fixable CRITICAL findings that are not allowlisted
+# and unexpired; every finding is still counted.
+policy=$dir/image/scan-policy.py
+cat >"$work/trivy.json" <<'JSON'
+{"Results": [{"Target": "t", "Vulnerabilities": [
+  {"VulnerabilityID": "CVE-1", "PkgName": "a", "Severity": "CRITICAL", "FixedVersion": "2"},
+  {"VulnerabilityID": "CVE-2", "PkgName": "b", "Severity": "CRITICAL"},
+  {"VulnerabilityID": "CVE-3", "PkgName": "c", "Severity": "HIGH", "FixedVersion": "2"}]}]}
+JSON
+printf '[]\n' >"$work/allow-none.json"
+if python3 -I "$policy" "$work/trivy.json" "$work/allow-none.json" 2026-11-09 >"$work/p1.json"; then
+  fail 'a fixable CRITICAL finding did not block'
+fi
+python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); assert [b["id"] for b in d["blocking"]] == ["CVE-1"] and d["counts"] == {"CRITICAL": 2, "HIGH": 1}' "$work/p1.json" ||
+  fail 'policy blocked the wrong findings or lost counts'
+printf '[{"id": "CVE-1", "package": "a", "reason": "r", "reviewed": "2026-11-09", "expires": "2026-12-01"}]\n' >"$work/allow.json"
+python3 -I "$policy" "$work/trivy.json" "$work/allow.json" 2026-11-09 >/dev/null || fail 'an allowlisted finding still blocked'
+if python3 -I "$policy" "$work/trivy.json" "$work/allow.json" 2026-12-02 >/dev/null; then fail 'an expired allowlist entry still applied'; fi
+printf '[{"id": "CVE-1"}]\n' >"$work/allow-bad.json"
+if python3 -I "$policy" "$work/trivy.json" "$work/allow-bad.json" 2026-11-09 >/dev/null 2>&1; then
+  fail 'an allowlist entry without reason, review and expiry was accepted'
+fi
+python3 -I -c 'import json,sys; assert json.load(open(sys.argv[1])) == []' "$dir/image/scan-allowlist.json" ||
+  fail 'the committed allowlist must be reviewed; start empty'
+
 # The driver rejects unknown stages before touching the host.
 if bash "$dir/build-stage.sh" nonsense 2>/dev/null; then fail 'unknown stage accepted'; fi
 for script in "$dir"/*.sh "$dir"/*/build.sh; do bash -n "$script" || fail "syntax: $script"; done
