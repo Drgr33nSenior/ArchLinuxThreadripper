@@ -243,6 +243,20 @@ if not g._fused_asm_checked.get((torch.cuda.current_device(), 8, sn, sk, 4)):
 if not torch.equal(souts[0], souts[1]):
     raise SystemExit("IMAGE_SMOKE=fail: fused split-K reduce differs from the two-kernel path")
 
+# Fused add + Gemma RMSNorm + MXFP4 (serving patch 0019): bitwise equal to the add+norm
+# kernel followed by the MXFP4 quantizer, residual included.
+from sglang.kernels.ops.layernorm.minimax_m3_rmsnorm import gemma_fused_add_rmsnorm
+from sglang.srt.layers.quantization.quark.schemes.gfx1201_add_norm_mxfp4 import gemma_add_rmsnorm_mxfp4
+
+nw = (torch.randn(5120, device="cuda") * 0.1).to(torch.bfloat16)
+nh = torch.randn(16, 5120, device="cuda").to(torch.bfloat16)
+nr = torch.randn(16, 5120, device="cuda").to(torch.bfloat16)
+nout, nres = gemma_fused_add_rmsnorm(nh, nr, nw, 1e-6, round_sum=True)
+nq, ns = g.dynamic_mxfp4_quant(nout)
+(fq, fs), fres = gemma_add_rmsnorm_mxfp4(nh, nr, nw, 1e-6)
+if not (torch.equal(nq, fq) and torch.equal(ns, fs) and torch.equal(nres, fres) and ns.stride() == fs.stride()):
+    raise SystemExit("IMAGE_SMOKE=fail: fused add+norm+MXFP4 differs from add+norm then quantize")
+
 # PCIe custom all-reduce (serving patch 0014) on both GPUs: the AOT-built kernel
 # must give the exact fixed-order sum on both ranks. The stock kernel gave wrong,
 # rank-divergent sums here.
