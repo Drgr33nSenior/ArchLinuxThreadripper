@@ -265,6 +265,7 @@ variables, which the Job adds to the profile's.
 | `K` | `J` plus `SGLANG_GFX1201_SPLITK_WIDE=1` (split-K for QKV, GDN input and gate/up); the RCCL comparison for `M` |
 | `L` | `K` with the draft quantized to FP8 at load (`--speculative-draft-model-quantization fp8`); not adopted |
 | `M` | `K` with SGLang's custom all-reduce for verify/decode reductions (`SGLANG_GFX1201_PCIE_CUSTOM_AR=1`, `--disable-custom-all-reduce` dropped; serving patch 0014), **the default** |
+| `N` | `M` plus `SGLANG_GFX1201_P1_PREFILL=1` (prefill chunks of 1024-2048 rows on the P1 FP8 GEMM route; serving patch 0015) |
 
 Enable an item in arm A only after its arm matches arm A's quality result and
 greedy acceptance.

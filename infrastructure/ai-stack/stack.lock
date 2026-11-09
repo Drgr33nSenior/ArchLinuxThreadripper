@@ -21,7 +21,7 @@ SGLANG_REPOSITORY=https://github.com/sgl-project/sglang.git
 SGLANG_COMMIT=fcb3274646e43c16d70fd83806ebb3a5134d5e81
 # Content hash of the serving repository's serving/patches/sglang-main series
 # (patchset-hash.sh); sync.sh copies that series to the build host.
-SGLANG_PATCHSET_SHA256=3bed3db3a4fb32d13e3dd97b936f3faa7e6f42f40b5380911976121877f4c4af
+SGLANG_PATCHSET_SHA256=af2dfb7231c7096a42eb05a3198ee3bd5d1fd404f948ed4e9e73f918ee6595a8
 # refresh.sh resolves RUNTIME_BASE_TAG to the digest in RUNTIME_BASE_IMAGE.
 RUNTIME_BASE_TAG=docker.io/library/python:3.14-slim-trixie
 RUNTIME_BASE_IMAGE=docker.io/library/python@sha256:9aaa474097d094040649f2162a627c0049b408f52138d980916788d80f04802f
