@@ -219,3 +219,49 @@ streamed decode, tool-call parsing, a long-context prefill and prefix-cache
 reuse, prints one `QUALIFY_RESULT` line and sets the Job's result. The startup
 log records the memory pools. Only one Job (or server) can hold both GPUs at a
 time. Record each measured result in the profile before changing its status.
+
+The probe's timings are single measurements. For throughput and DFlash
+acceptance, use the bench Job. It runs the same pod with `serving/bench.py`,
+which replays the BetterBench v0.6.1 profile the op233/op234 selection was
+measured with. The client, corpus and profile come unchanged from the serving
+repository's `benchmarks/betterbench/native-v2`. The profile is 53 requests:
+
+- eight categories × (one warm-up + three measured), capped at 4096 tokens;
+- prefill at 2K, 8K and 16K tokens;
+- six requests each at concurrency 1 and 2;
+- sampling at temperature 0.7, top-p 0.95, top-k 20 and seed 1729, with
+  thinking at low effort and a unique cache salt per request.
+
+`--greedy` runs the same profile at temperature 0, which separates sampling
+effects from draft or target defects. `--top-p P` changes only the client's
+top-p. Arm `C` is arm A plus `--speculative-use-block-verification`.
+
+After BetterBench, the Job runs the assistant acceptance menu
+([`assistant-quality.json`](../sglang/assistant-quality.json) through
+`lib/workstation/assistant_acceptance.py`, both unchanged) against the native
+endpoint. No speed change is read without a quality result. Code tasks need
+the bubblewrap sandbox, which the pod lacks, and long-context cases need a
+tokenizer budget. The runner reports both as NOT RUN, never as passed.
+`QUALITY_RESULT` lists the pass rate, the tool round-trip, grounded and
+abstention rates, and any failed task. The Job fails if an executed task
+fails.
+
+```sh
+infrastructure/ai-stack/serving/render.py bench infrastructure/ai-stack/serving/<profile>.json \
+  registry.lan.thespry.family/local/sglang-gfx1201@sha256:<digest> --serving <serving-repo> > bench-a.json
+kubectl apply -f bench-a.json
+kubectl -n ai-home-lab logs job/<name> | grep '^BENCH_RESULT'
+kubectl -n ai-home-lab delete job,configmap -l app.kubernetes.io/name=sglang-bench
+```
+
+`BENCH_RESULT` gives these results:
+
+- the median decode rate for each category;
+- C1 and C2 aggregate throughput;
+- the median prefill rate at each depth;
+- for each phase, the server's generated tokens per verify call (its
+  `generation_tokens_total` and `spec_verify_calls_total` counters).
+
+op233/op234 measured C1 96.3–104.3 and C2 172.8–194.5 tokens/s at a 235 W cap
+per card. Compare only at a matched cap. `BENCH_RAW` holds the full BetterBench
+results, compressed.
