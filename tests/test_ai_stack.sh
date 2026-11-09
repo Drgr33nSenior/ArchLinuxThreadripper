@@ -242,6 +242,10 @@ assert ([e["name"] for e in profile["arms"]["O"]["env"]] ==
 assert argv["P"] == argv["O"][:-4] + ["--speculative-draft-model-quantization", "fp8"] + argv["O"][-4:]
 assert ([e["name"] for e in profile["arms"]["P"]["env"]] ==
         [e["name"] for e in profile["arms"]["O"]["env"]] + ["SGLANG_DFLASH_FUSED_KV_FP8"])
+# Q is O with the fused split-K reduce: same flags, one env switch added.
+assert argv["Q"] == argv["O"]
+assert ([e["name"] for e in profile["arms"]["Q"]["env"]] ==
+        [e["name"] for e in profile["arms"]["O"]["env"]] + ["SGLANG_GFX1201_SPLITK_FUSED_REDUCE"])
 for arm in profile["arms"]:
     items = json.loads((work / f"job-{arm}.json").read_text())["items"]
     config, job, service = items
