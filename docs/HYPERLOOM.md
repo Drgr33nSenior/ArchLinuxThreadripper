@@ -36,6 +36,10 @@ licences. No provider credentials are needed for the offline commands below.
 
 ## Install on the Linux workstation
 
+Status, 9 November 2026: the `/home/developer` paths in this guide are examples
+from the runtime wiped by the 2026-11 reinstall. Substitute fresh paths under
+the current user's private parent directory.
+
 Use an existing CPython 3.14 SDK with `venv` and `ensurepip`, as the normal
 user. Choose fresh absolute paths under a private, caller-owned parent. Do not
 run the Linux installer on the Mac controller.
@@ -167,6 +171,11 @@ runner or authorize GPU work. Runtime qualification and new benchmark results
 remain separate requirements. Existing offline commands retain their guards.
 
 ## Use the SGLang owner adapter
+
+Status, 9 November 2026: the owner workflow and bwrap launch path this adapter
+binds to belonged to the op234 runtime, which the 2026-11 reinstall wiped. It
+is historical; the current serving path is the
+[AI serving stack](../infrastructure/ai-stack/README.md).
 
 The [newer MXFP4/W5 serving direction](SERVING-INTEGRATION.md) is tracked separately.
 This adapter still accepts only the historical 4/30-request schedules; tracking

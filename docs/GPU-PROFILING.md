@@ -66,6 +66,10 @@ still requires its approved smoke operation.
 
 ## Kineto profiling twin
 
+Status, 9 November 2026: this twin and the `/home/developer` prefix below
+belong to the op234 ROCm 10.2 / Torch 2.14 runtime, which the 2026-11
+reinstall wiped. The record is historical.
+
 Select `route='kineto'` and supply the **host** path of the independently
 verified twin's site-packages. The adapter adds a read-only bind of its `torch`
 directory over Torch inside the component sandbox. The serving files remain

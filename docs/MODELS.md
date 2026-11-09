@@ -23,7 +23,32 @@ evidence; it does not change the selections below.
 The published serving source and package/admission gaps are tracked in
 [Serving integration](SERVING-INTEGRATION.md).
 
-## Selected defaults
+## Current serving model
+
+Status, 9 November 2026: the
+[AI serving stack pipeline](../infrastructure/ai-stack/README.md) builds the
+serving image, stages the model and qualifies the server. It replaces the
+FP8 container default and the `llm-models` staging procedure below, which
+apply to the legacy `apps/` overlays only.
+
+| Item | Value |
+| --- | --- |
+| Model | `amd/Qwen3.8-27B-Quark-AWQ-MXFP4` at `5233554c…` |
+| Draft | `incoai/Qwen3.8-27B-DFlash2` at `015e7956…` |
+| Served name | `Qwen3.8-27B-MXFP4`, TP2, context 131,040 |
+| Catalog | [`models/qwen3.8-27b-mxfp4.json`](../infrastructure/ai-stack/models/qwen3.8-27b-mxfp4.json): model and draft identity and file hashes only |
+| Serving profile | [`serving/qwen3.8-27b-mxfp4-tp2.json`](../infrastructure/ai-stack/serving/qwen3.8-27b-mxfp4-tp2.json): flags and environment; status unqualified |
+
+To stage a model, follow
+[Models](../infrastructure/ai-stack/README.md#models): `render-fetch.py`
+renders a Job that downloads into the NAS `ai-models` volume at
+`/models/<owner>/<name>/<revision>/` and writes `VERIFIED.json`. To qualify a
+profile, follow [Serving](../infrastructure/ai-stack/README.md#serving).
+
+## Selected defaults (legacy `apps/` overlays)
+
+These container profiles are legacy. They have not been applied since the
+2026-11 reinstall.
 
 | Profile | Chat model | Allocation | Configured context / concurrent requests |
 | --- | --- | --- | --- |
@@ -97,19 +122,27 @@ or enable remote model code. General framework support is not a tested
 Qwen3.8/R9700/Arch result. A matching architecture does not prove all FP8/GDN
 kernel paths, model outputs or tool-call parsing work correctly.
 
-The pinned image rejects its automatically selected `extra_buffer` hybrid-state
-cache on ROCm. Both Qwen profiles therefore explicitly use
-`--mamba-radix-cache-strategy no_buffer --disable-overlap-schedule`, as required
-by that image's `server_args.py` validation. This is a compatibility setting,
-not a tuning result. Do not enable `extra_buffer` or overlap scheduling from
-instructions for another image or GPU platform. Requalify startup, prefix-cache
-behavior, numerical outputs and request latency after a reviewed image change.
+This paragraph applies to the old pinned `apps/` image only. At the AI-stack
+SGLang pin, upstream supports `extra_buffer` on HIP; the serving profile tests
+it as arm B. The old pinned image rejects its automatically selected
+`extra_buffer` hybrid-state cache on ROCm. Both legacy Qwen profiles therefore
+explicitly use
+`--mamba-radix-cache-strategy no_buffer --disable-overlap-schedule`, as
+required by that image's `server_args.py` validation. This is a compatibility
+setting, not a tuning result. With that image, do not enable `extra_buffer` or
+overlap scheduling from instructions for another image or GPU platform.
+Requalify startup, prefix-cache behavior, numerical outputs and request latency
+after a reviewed image change.
 
 `MODEL_REVISION` and the revision directory identify intended inputs. SGLang's
 `--revision` does not checksum an arbitrary local directory. Verify transferred
 files independently; never qualify a workload from its path or model name alone.
 
-## Stage chat weights explicitly
+## Stage chat weights explicitly (legacy)
+
+This procedure stages weights into the `llm-models` volume of the legacy
+`apps/` overlays. For the current model, use the
+[AI-stack model catalog](../infrastructure/ai-stack/README.md#models).
 
 Use an already reviewed Hugging Face CLI environment on a machine with storage
 and network access. No CLI installation or model download occurs in CI. The
@@ -177,9 +210,10 @@ to generate measured-input candidates. Count other Pods and actual discovered
 RAM before admission. No swap or CPU offload is enabled to hide an OOM. Stop
 unrelated compilation during qualification.
 
-Check `/v1/models` from an authorized internal client: the default must report
-`Qwen3.8-27B-FP8`. Test thinking/non-thinking responses, streamed reasoning and
-tool-call JSON, including a second turn containing tool results. Tool parsing
+Check `/v1/models` from an authorized internal client: the legacy default must
+report `Qwen3.8-27B-FP8` (the AI-stack profile serves `Qwen3.8-27B-MXFP4`).
+Test thinking/non-thinking responses, streamed reasoning and tool-call JSON,
+including a second turn containing tool results. Tool parsing
 does not grant an agent file, shell, database or cluster permissions. Inspect
 context accounting before exposing the service to an IDE client.
 

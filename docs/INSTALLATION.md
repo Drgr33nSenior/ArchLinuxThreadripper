@@ -968,7 +968,7 @@ Add `--with-memory` to render the opt-in Graphiti memory profile
 | Order | Stage | Existing command or owner gate | Runs as |
 | --- | --- | --- | --- |
 | 1 | Secure Boot and unlock | Gate: sections 5 and 6 (6A for `tpm2-pin`) | Owner |
-| 2 | Verification | `bootstrap-arch --config FILE verify`, `workstationctl status`, `swap validate` | Root |
+| 2 | Verification | `bootstrap-arch --config FILE verify`, `secure-boot check`, `workstationctl status`, `swap validate` | Root |
 | 3 | Packages | Gate: `sudo ./bin/workstationctl dev setup server templates/workstation/packages.pacman` | Owner |
 | 4 | Hardware and resources | `hardware collect`, `resources plan` | Root |
 | 5 | ROCm | `rocm validate` | User |
@@ -978,8 +978,11 @@ Add `--with-memory` to render the opt-in Graphiti memory profile
 | 9 | GPU Operator | `render.sh`; apply is a gate ([GPU Operator](HOME-LAB.md#4-gpu-operator-and-allocation)) | User, owner |
 | 10 | GPU qualification | Gate: [validation and promotion](HOME-LAB.md#6-validation-and-promotion) | Owner |
 | 11 | Service preparation | `telemetry render`/`verify`, `service render --experience assistant`, `rag stage-models`/`verify-models` | User |
-| 12 | Admission | `telemetry plan`, `service plan`; a blocked budget stops here | Root |
-| 13 | Rollout | Gates: backup credentials, service credentials and Secrets, web-search key, then [service rollout](AI-SERVICE.md#prepare-and-roll-out) | Owner |
+| 12 | Telemetry admission | `telemetry plan` | Root |
+| 13 | Telemetry apply | Gate: apply the collectors, install and start the host collector, create `/var/lib/workstation-ai-stack` for AI-stack build metrics ([send telemetry to the NAS](TELEMETRY.md#send-telemetry-to-the-nas)) | Owner |
+| 14 | Tariff helper | Gate: install the tariff configuration and enable `workstation-tariff.timer` ([electricity estimates](TELEMETRY.md#flexible-octopus-prices-and-electricity-estimates)) | Owner |
+| 15 | Service admission | `service plan`; a blocked budget stops here | Root |
+| 16 | Rollout | Gates: backup credentials, service credentials and Secrets, web-search key, then [service rollout](AI-SERVICE.md#prepare-and-roll-out) | Owner |
 
 The ROCm packages must come before `site.yml`. The `arch_host` role requires a
 hardware report from the current boot. That report must list both GPUs in

@@ -29,6 +29,9 @@ remain open; component tests do not establish a deployed assistant.
 | Update, back up or restore | [Operations](docs/OPERATIONS.md), [service recovery](docs/SERVICE-RECOVERY.md) |
 | Use Grafana or diagnose missing data | [Monitoring](docs/TELEMETRY.md) |
 | Configure models and private chat/API access | [Models](docs/MODELS.md), [AI service](docs/AI-SERVICE.md) |
+| Build or refresh the AI serving image | [AI serving stack](infrastructure/ai-stack/README.md#routine-update) |
+| Stage a model on the NAS | [AI-stack models](infrastructure/ai-stack/README.md#models) |
+| Qualify a serving profile | [AI-stack serving](infrastructure/ai-stack/README.md#serving) |
 | Compare document retrieval and plan book ingestion | [RAG](docs/RAG.md), [GraphRAG pilot](docs/GRAPHRAG.md) |
 | Qualify persistent coding and home-assistant memory | [Session continuity](docs/MEMORY.md) |
 | Build the Sunshine/Moonlight candidate | [Sunshine](docs/SUNSHINE.md) |

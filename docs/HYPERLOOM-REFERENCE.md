@@ -87,7 +87,12 @@ the adapter does not fix the collector ABI. Keep consumed packets and failed rec
 
 ## SGLang ROCm 10.2 bridge
 
-The owner-selected target runtime is the source-built ROCm
+Status, 9 November 2026: this section is historical. The 2026-11 reinstall
+wiped the op234 runtime it describes, including its owner sandbox and the
+`/home/developer` prefixes in the commands below. The current serving image is
+built by the [AI serving stack](../infrastructure/ai-stack/README.md).
+
+The owner-selected target runtime was the source-built ROCm
 `10.2.0.dev20261020+git535d2990`, Torch
 `2.14.0+git2e66fe81.rocm10.2.0` and HIP `7.17.26416`. The retained serving
 record identifies SGLang 0.5.21 and RCCL 2.32.3. Triton's base distribution

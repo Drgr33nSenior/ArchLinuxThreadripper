@@ -7,8 +7,16 @@ observations are historical. Collect current memory/topology before budgeting.
 The optional K3s VM receives neither GPU by default. No swap, zram or hibernation
 is configured.
 
-The owner-selected **native serving campaign uses ROCm 10.2 dev / Torch 2.14**.
-It is separate from the host SDK and the older checked-in application overlays.
+The owner-selected **native serving campaign used ROCm 10.2 dev / Torch 2.14**
+(historical). It is separate from the host SDK and the older checked-in
+application overlays.
+
+Status, 9 November 2026: the 2026-11 reinstall wiped that 10.2 runtime. The
+current serving image is built by the
+[AI serving stack](../infrastructure/ai-stack/README.md) from
+[`stack.lock`](../infrastructure/ai-stack/stack.lock): TheRock ROCm
+10.3.0.dev20261108 (HIP 7.18), PyTorch 2.16.0a0 and SGLang main. The 10.2
+material below is historical.
 See the [runtime map](README.md#keep-the-runtime-layers-distinct) and
 [SGLang owner binding](HYPERLOOM-REFERENCE.md#sglang-rocm-102-bridge).
 This guide's generic TheRock plan status does not mean that no source-built
