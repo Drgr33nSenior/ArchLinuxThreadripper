@@ -178,9 +178,9 @@ for e in profile["args"]:
 for e in profile["env"]:
     assert e["reason"] and e["source"] and e["confidence"] in ("H", "M", "L"), e
 assert sum(1 for arm in profile["arms"].values() if arm["default"]) == 1
-# Arm M (the qualified ports and the PCIe custom all-reduce) is the default;
-# arm A stays as the baseline arm and arm K as the RCCL comparison.
-assert profile["arms"]["M"]["default"] and not profile["arms"]["A"]["default"]
+# Arm N (the qualified ports, the PCIe custom all-reduce and P1 prefill) is the
+# default; arm A stays as the baseline arm, K as the RCCL and M as the P1 comparison.
+assert profile["arms"]["N"]["default"] and not profile["arms"]["A"]["default"]
 flags = [e["flag"] for e in profile["args"]]
 assert len(flags) == len(set(flags)), "duplicate flag"
 unset = {e["name"] for e in profile["must_unset_env"]}
