@@ -246,6 +246,7 @@ variables, which the Job adds to the profile's.
 | `E` | `SGLANG_GFX1201_PACKED_GDN_IN_PROJ=1` (packed GDN input projection) |
 | `F` | `SGLANG_GFX1201_FP8_LM_HEAD=1` (FP8 target and draft heads; lossy) |
 | `G` | `--enable-linear-replayssm-spec` (GDN ReplaySSM for DFLASH) |
+| `I` | `SGLANG_GFX1201_GDN_NORM_QUANT=1` (fused GDN gated-norm MXFP4 quantization) |
 | `H` | all of the above |
 
 Enable an item in arm A only after its arm matches arm A's quality result and
@@ -269,11 +270,18 @@ kubectl -n ai-home-lab logs job/<name> | grep '^BENCH_RESULT'
 kubectl -n ai-home-lab delete job,configmap -l app.kubernetes.io/name=sglang-bench
 ```
 
+After BetterBench and before the quality phase, a long-context phase sends one
+request at each of 32K, 64K and 120K prompt tokens: a unique filler document
+with exactly 1024 generated tokens (`min_tokens`). It is not part of op233's
+profile and measures verify cost at depth.
+
 `BENCH_RESULT` gives these results:
 
 - the median decode rate for each category;
 - C1 and C2 aggregate throughput;
 - the median prefill rate at each depth;
+- for each long-context depth: prompt tokens, time to first token, decode rate
+  and tokens per verify;
 - for each phase, the server's generated tokens per verify call (its
   `generation_tokens_total` and `spec_verify_calls_total` counters).
 
