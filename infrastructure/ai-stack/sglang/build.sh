@@ -97,6 +97,8 @@ export MAX_JOBS=$JOBS CMAKE_BUILD_PARALLEL_LEVEL=$JOBS CCACHE_DIR=/work/ccache A
   rm -f pyproject.toml
   mv pyproject_rocm.toml pyproject.toml
   python setup_rocm.py bdist_wheel --dist-dir "$out/wheels"
+  # The AOT build tree sits inside the SGLang package; keep it out of that wheel.
+  rm -rf build
 )
 (
   cd "$src/python"

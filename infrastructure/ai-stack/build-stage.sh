@@ -90,9 +90,13 @@ if [[ $stage == image ]]; then
   cp -- "$lock" "$sglang_run/out/stack.lock"
   podman build --pull=missing --build-arg RUNTIME_BASE_IMAGE="$base" --build-arg STACK_ID="$sglang_key" \
     -f "$here/image/Containerfile" -t "$tag" "$sglang_run/out"
-  # A missing system library only shows at import, so check before pushing.
-  podman run --rm --pull=never --network none --entrypoint python3 "$tag" \
-    -c 'import torch, sgl_kernel, xgrammar, sglang.srt.server_args; print("IMAGE_IMPORTS=ok torch", torch.__version__)'
+  # HIP-only imports, the MXFP4 route and Triton's runtime compiler show only
+  # with a GPU, so smoke-test on the build host's GPUs before pushing.
+  # Read-only root and a /tmp tmpfs, as in the pod.
+  podman run --rm --pull=never --network none --read-only --tmpfs /tmp --device /dev/kfd --device /dev/dri \
+    --group-add keep-groups --security-opt label=disable -e HOME=/tmp \
+    -e SGLANG_USE_AITER=false -e SGLANG_USE_AITER_MHA=false -e SGLANG_USE_AITER_MOE=false \
+    -v "$here/image/smoke.py:/smoke.py:ro" --entrypoint python3 "$tag" /smoke.py
   printf 'IMAGE=%s\n' "$tag"
   if [[ ${AI_STACK_PUSH:-0} == 1 ]]; then
     podman push --digestfile "$sglang_run/out/image.digest" "$tag"
