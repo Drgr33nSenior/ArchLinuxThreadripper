@@ -65,6 +65,10 @@ rocm_run=$root/builds/rocm-${THEROCK_COMMIT:0:12}
 torch_run=$root/builds/torch-$(key_of "$THEROCK_COMMIT" "$PYTHON_ABI" "$PYTORCH_COMMIT" "$TORCHVISION_COMMIT" "$TRITON_COMMIT")
 sglang_key=$(key_of "${torch_run##*/}" "$SGLANG_COMMIT" "$SGLANG_PATCHSET_SHA256")
 sglang_run=$root/builds/sglang-$sglang_key
+# The image also changes with the files it is built from (stack.lock is copied
+# into it) and with the smoke test that gates it.
+image_key=$(key_of "$sglang_key" "$(cat -- "$lock" "$here/image/Containerfile" "$here/image/smoke.py" | sha256sum | cut -c1-64)")
+image_run=$root/builds/image-$image_key
 patches=$root/patches/$SGLANG_PATCHSET_SHA256
 need() { [[ -s $1/out/RECEIPT.json ]] || stop "build the $2 stage first ($1)"; }
 
@@ -81,14 +85,15 @@ track() {
 if [[ $stage == image ]]; then
   need "$sglang_run" sglang
   base=$(digest_image RUNTIME_BASE_IMAGE)
-  tag=$(read_lock IMAGE_REPOSITORY):$sglang_key
-  if podman image exists "$tag" && [[ ${AI_STACK_PUSH:-0} != 1 || -s $sglang_run/out/image.digest ]]; then
+  tag=$(read_lock IMAGE_REPOSITORY):$image_key
+  if podman image exists "$tag" && [[ ${AI_STACK_PUSH:-0} != 1 || -s $image_run/out/image.digest ]]; then
     printf 'BUILT=image %s\n' "$tag"
     exit 0
   fi
   track /dev/null
+  mkdir -p "$image_run/out"
   cp -- "$lock" "$sglang_run/out/stack.lock"
-  podman build --pull=missing --build-arg RUNTIME_BASE_IMAGE="$base" --build-arg STACK_ID="$sglang_key" \
+  podman build --pull=missing --build-arg RUNTIME_BASE_IMAGE="$base" --build-arg STACK_ID="$image_key" \
     -f "$here/image/Containerfile" -t "$tag" "$sglang_run/out"
   # HIP-only imports, the MXFP4 route and Triton's runtime compiler show only
   # with a GPU, so smoke-test on the build host's GPUs before pushing.
@@ -108,7 +113,7 @@ if [[ $stage == image ]]; then
     [[ -s $authfile ]] || stop "no registry login at $authfile; run podman login first"
     cosign_image=$(digest_image COSIGN_IMAGE)
     trivy_image=$(digest_image TRIVY_IMAGE)
-    scan=$sglang_run/out/scan
+    scan=$image_run/out/scan
     mkdir -p "$scan" "$root/scan" "$root/trivy-cache"
     rm -f -- "$scan/pushed.digest"
     podman save --format docker-archive -o "$root/scan/image.tar" "$tag"
@@ -147,7 +152,7 @@ if [[ $stage == image ]]; then
       --type vuln --predicate /scan/vuln.cosign.json "$ref" >/dev/null
     unset COSIGN_PASSWORD
     bash "$here/signing/verify-image.sh" "$ref"
-    mv -- "$scan/pushed.digest" "$sglang_run/out/image.digest"
+    mv -- "$scan/pushed.digest" "$image_run/out/image.digest"
     printf 'PUSHED=%s\nSIGNED=%s\n' "$ref" "$ref"
   fi
   exit 0

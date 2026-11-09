@@ -47,6 +47,11 @@ grep -Fq 'HIP_DEVICE_LIB_PATH=/usr/local/lib/python3.14/site-packages/_rocm_sdk_
   fail 'runtime image does not point hipcc at the device bitcode (SGLang JIT kernels fail to build)'
 grep -Fq 'HIP C++ JIT compile failed' "$dir/image/smoke.py" || fail 'image smoke test does not compile a HIP C++ JIT kernel'
 # shellcheck disable=SC2016 # literal text in build-stage.sh
+grep -Fq 'cat -- "$lock" "$here/image/Containerfile" "$here/image/smoke.py"' "$dir/build-stage.sh" ||
+  fail 'image key ignores stack.lock, the Containerfile or the smoke test, so image changes are not rebuilt'
+# shellcheck disable=SC2016 # literal text in build-stage.sh
+grep -Fq 'tag=$(read_lock IMAGE_REPOSITORY):$image_key' "$dir/build-stage.sh" || fail 'image tag is not the image key'
+# shellcheck disable=SC2016 # literal text in build-stage.sh
 grep -Fq -- '-v "$here/image/smoke.py:/smoke.py:ro"' "$dir/build-stage.sh" ||
   fail 'image stage does not run the GPU smoke test before pushing'
 grep -Fq -- '--read-only --tmpfs /tmp --device /dev/kfd --device /dev/dri' "$dir/build-stage.sh" ||
