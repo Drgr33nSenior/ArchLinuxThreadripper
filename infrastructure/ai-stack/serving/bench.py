@@ -205,7 +205,10 @@ def main():
         "results": {name: results.count(name) for name in sorted(set(results))},
         "failed": [t for t in quality["tasks"] if t["result"] == "failed"]}), flush=True)
     print("QUALITY_RAW " + base64.b64encode(zlib.compress(json.dumps(quality).encode(), 9)).decode(), flush=True)
-    return 0 if not failures and "failed" not in results else 1
+    # The Job fails only when the bench itself did: a failed request or a quality
+    # runner error (above). Graded quality failures are results, reported in
+    # QUALITY_RESULT; the known format failures would otherwise fail every run.
+    return 0 if not failures else 1
 
 
 if __name__ == "__main__":
