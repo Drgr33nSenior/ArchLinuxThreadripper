@@ -11,9 +11,9 @@ repository (benchmarks/betterbench/native-v2), so results compare with the
 op233/op234 measurements. Output is JSON that `kubectl apply -f -` accepts;
 this script never contacts a cluster.
 
-Usage: render.py argv PROFILE [--arm A|B]
-       render.py job PROFILE IMAGE [--arm A|B]
-       render.py bench PROFILE IMAGE --serving SERVING_REPOSITORY_ROOT [--arm A|B] [--greedy]
+Usage: render.py argv PROFILE [--arm A|B|C]
+       render.py job PROFILE IMAGE [--arm A|B|C]
+       render.py bench PROFILE IMAGE --serving SERVING_REPOSITORY_ROOT [--arm A|B|C] [--greedy] [--top-p P]
 """
 import argparse
 import base64
@@ -25,6 +25,12 @@ import re
 import tarfile
 
 HERE = pathlib.Path(__file__).resolve().parent
+REPOSITORY = HERE.parents[2]
+# The assistant acceptance runner and its menu, bundled unchanged with their
+# repository-relative paths (the runner locates its menu from its own path).
+QUALITY_FILES = ["lib/workstation/assistant_acceptance.py", "lib/workstation/assistant_api.py",
+                 "lib/workstation/coding_eval.py", "infrastructure/sglang/assistant-quality.json"]
+QUALITY_TASKS = "infrastructure/sglang/assistant-tasks"
 NAMESPACE = "ai-home-lab"
 PORT = 30000
 # Host groups of /dev/kfd and /dev/dri/renderD* (render) and /dev/dri/card* (video).
@@ -74,8 +80,9 @@ def environment(profile):
     return env
 
 
-def betterbench_bundle(serving, greedy):
-    """The vendored BetterBench client, corpus and profile as one tar.gz."""
+def betterbench_bundle(serving, greedy, top_p=None):
+    """The vendored BetterBench client, corpus and profile, plus the assistant
+    acceptance runner and menu under quality/, as one tar.gz."""
     root = pathlib.Path(serving) / "benchmarks/betterbench/native-v2"
     profile = json.loads((root / "profile.json").read_text())
     if profile.get("name") != "qwen38-selected-thinking-low-native-terminal-v2":
@@ -83,6 +90,11 @@ def betterbench_bundle(serving, greedy):
     if greedy:
         profile["config"]["greedy"] = True
         profile["name"] += "-greedy"
+    if top_p is not None:
+        if not 0 < top_p <= 1:
+            raise SystemExit("STOP: --top-p must be in (0, 1]")
+        profile["config"]["top_p"] = top_p
+        profile["name"] += f"-top-p-{top_p:g}"
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w:gz", format=tarfile.PAX_FORMAT) as archive:
         def add(path, data):
@@ -94,6 +106,9 @@ def betterbench_bundle(serving, greedy):
             if source.is_file() and relative.parts[0] in ("betterbench", "corpus") and source.suffix in (".py", ".jsonl"):
                 add(str(relative), source.read_bytes())
         add("profile.json", json.dumps(profile, sort_keys=True).encode())
+        tasks = sorted(p for p in (REPOSITORY / QUALITY_TASKS).rglob("*") if p.is_file())
+        for source in [REPOSITORY / name for name in QUALITY_FILES] + tasks:
+            add("quality/" + str(source.relative_to(REPOSITORY)), source.read_bytes())
     return buffer.getvalue()
 
 
@@ -162,6 +177,7 @@ def main():
     parser.add_argument("--arm")
     parser.add_argument("--serving", help="serving repository root (bench)")
     parser.add_argument("--greedy", action="store_true", help="bench at temperature 0 (acceptance bisection)")
+    parser.add_argument("--top-p", type=float, help="bench with this top-p instead of the profile's 0.95")
     args = parser.parse_args()
     profile, catalog = load(args.profile)
     if args.mode == "argv":
@@ -173,7 +189,7 @@ def main():
     if args.mode == "bench":
         if not args.serving:
             raise SystemExit("STOP: bench needs --serving SERVING_REPOSITORY_ROOT")
-        bench = betterbench_bundle(args.serving, args.greedy)
+        bench = betterbench_bundle(args.serving, args.greedy, args.top_p)
     print(json.dumps(job(profile, catalog, args.image, args.arm, bench), indent=2))
 
 

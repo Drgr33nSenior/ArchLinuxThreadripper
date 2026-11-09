@@ -233,7 +233,18 @@ repository's `benchmarks/betterbench/native-v2`. The profile is 53 requests:
   thinking at low effort and a unique cache salt per request.
 
 `--greedy` runs the same profile at temperature 0, which separates sampling
-effects from draft or target defects.
+effects from draft or target defects. `--top-p P` changes only the client's
+top-p. Arm `C` is arm A plus `--speculative-use-block-verification`.
+
+After BetterBench, the Job runs the assistant acceptance menu
+([`assistant-quality.json`](../sglang/assistant-quality.json) through
+`lib/workstation/assistant_acceptance.py`, both unchanged) against the native
+endpoint. No speed change is read without a quality result. Code tasks need
+the bubblewrap sandbox, which the pod lacks, and long-context cases need a
+tokenizer budget. The runner reports both as NOT RUN, never as passed.
+`QUALITY_RESULT` lists the pass rate, the tool round-trip, grounded and
+abstention rates, and any failed task. The Job fails if an executed task
+fails.
 
 ```sh
 infrastructure/ai-stack/serving/render.py bench infrastructure/ai-stack/serving/<profile>.json \

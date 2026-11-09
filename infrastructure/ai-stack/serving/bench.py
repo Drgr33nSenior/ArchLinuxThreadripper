@@ -11,8 +11,17 @@ binds the request body and output cap; the upstream client, corpus and runner
 are unchanged. It adds the server's own speculative counters per phase
 (generated tokens / verify calls = mean tokens per verify step).
 
-Prints one BENCH_RESULT JSON summary line, then BENCH_RAW with the full
-results (zlib + base64). Exits 0 when every request succeeded.
+Then runs the assistant acceptance menu (infrastructure/sglang/assistant-quality.json,
+lib/workstation/assistant_acceptance.py, unchanged) against the native
+endpoint, so no throughput change is read without a quality check. Code
+tasks need the bubblewrap sandbox, which the pod lacks, and long-context
+cases need a tokenizer budget; the runner reports both NOT RUN rather than
+passing them.
+
+Prints one BENCH_RESULT JSON summary line and BENCH_RAW with the full
+results (zlib + base64), then QUALITY_RESULT and QUALITY_RAW likewise.
+Exits 0 when every BetterBench request succeeded and no executed quality
+task failed.
 
 Usage: bench.py PORT SERVED_MODEL_NAME SERVER_PID DEADLINE_SECONDS BUNDLE_TAR_GZ
 """
@@ -25,6 +34,7 @@ import json
 import os
 import re
 import statistics
+import subprocess
 import sys
 import tarfile
 import time
@@ -139,7 +149,25 @@ def main():
                "reference_op233_op234": {"C1_tps": "96.3-104.3", "C2_tps": "172.8-194.5", "cap_w": 235}}
     print("BENCH_RESULT " + json.dumps(summary), flush=True)
     print("BENCH_RAW " + base64.b64encode(zlib.compress(json.dumps(raw).encode(), 9)).decode(), flush=True)
-    return 0 if not failures else 1
+
+    report = "/tmp/quality.json"
+    runner = f"{root}/quality/lib/workstation/assistant_acceptance.py"
+    # -E -s -B, not -I: the runner imports its sibling modules from its own directory.
+    graded = subprocess.run([sys.executable, "-E", "-s", "-B", runner, "run", report, "--boundary", "direct",
+                             "--base-url", base, "--model", model, "--timeout", str(REQUEST_TIMEOUT_SECONDS)],
+                            capture_output=True, text=True)
+    if graded.returncode != 0 or not os.path.exists(report):
+        print("QUALITY_RESULT " + json.dumps({"status": "error", "stderr": graded.stderr[-800:]}), flush=True)
+        return 1
+    quality = json.loads(open(report).read())
+    results = [task["result"] for task in quality["tasks"]]
+    print("QUALITY_RESULT " + json.dumps({
+        "status": quality["status"], "metrics": quality["metrics"], "attempts": quality["attempts"],
+        "executed_attempts": quality["executed_attempts"],
+        "results": {name: results.count(name) for name in sorted(set(results))},
+        "failed": [t for t in quality["tasks"] if t["result"] == "failed"]}), flush=True)
+    print("QUALITY_RAW " + base64.b64encode(zlib.compress(json.dumps(quality).encode(), 9)).decode(), flush=True)
+    return 0 if not failures and "failed" not in results else 1
 
 
 if __name__ == "__main__":
