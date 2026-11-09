@@ -46,6 +46,9 @@ grep -Fq 'install -y --no-install-recommends libgomp1 libatomic1 gcc g++ libc6-d
 grep -Fq 'HIP_DEVICE_LIB_PATH=/usr/local/lib/python3.14/site-packages/_rocm_sdk_devel/amdgcn/bitcode' "$dir/image/Containerfile" ||
   fail 'runtime image does not point hipcc at the device bitcode (SGLang JIT kernels fail to build)'
 grep -Fq 'HIP C++ JIT compile failed' "$dir/image/smoke.py" || fail 'image smoke test does not compile a HIP C++ JIT kernel'
+for check in 'split-K down/out GEMM outside the op234 limits' 'packed GDN projection differs' 'FP8 LM head route missing'; do
+  grep -Fq "$check" "$dir/image/smoke.py" || fail "image smoke test does not cover: $check"
+done
 # shellcheck disable=SC2016 # literal text in build-stage.sh
 grep -Fq 'cat -- "$lock" "$here/image/Containerfile" "$here/image/smoke.py"' "$dir/build-stage.sh" ||
   fail 'image key ignores stack.lock, the Containerfile or the smoke test, so image changes are not rebuilt'
@@ -136,7 +139,7 @@ printf '# client\n' >"$bb/upstream/betterbench/client.py"
 printf '{}\n' >"$bb/upstream/corpus/v1/code.jsonl"
 printf 'not shipped\n' >"$bb/upstream/docs/notes.md"
 for profile in "$dir"/serving/*.json; do
-  for arm in A B C; do
+  for arm in $(python3 -I -c 'import json,sys; print(" ".join(json.load(open(sys.argv[1]))["arms"]))' "$profile"); do
     python3 -I "$render" argv "$profile" --arm "$arm" >"$work/argv-$arm.json" || fail "argv render: $profile $arm"
     python3 -I "$render" job "$profile" "$digest" --arm "$arm" >"$work/job-$arm.json" || fail "job render: $profile $arm"
   done
@@ -170,7 +173,11 @@ flags = [e["flag"] for e in profile["args"]]
 assert len(flags) == len(set(flags)), "duplicate flag"
 unset = {e["name"] for e in profile["must_unset_env"]}
 forbidden = {e["flag"] for e in profile["not_set"]}
-argv = {arm: json.loads((work / f"argv-{arm}.json").read_text()) for arm in "ABC"}
+argv = {arm: json.loads((work / f"argv-{arm}.json").read_text()) for arm in profile["arms"]}
+for name, spec in profile["arms"].items():
+    for e in spec.get("env", []):
+        assert e["reason"] and e["source"] and e["confidence"] in ("H", "M", "L"), (name, e)
+        assert e["name"] not in {x["name"] for x in profile["env"]}, (name, e["name"])
 for arm, a in argv.items():
     assert not forbidden & set(a), (arm, forbidden & set(a))
     assert a[a.index("--attention-backend") + 1] == "triton" and "--disable-custom-all-reduce" in a
@@ -180,7 +187,13 @@ assert argv["B"][argv["B"].index("--mamba-radix-cache-strategy") + 1] == "extra_
 assert "--disable-overlap-schedule" not in argv["B"]
 # Arm C is arm A plus block verification, nothing else.
 assert argv["C"] == argv["A"][:-4] + ["--speculative-use-block-verification"] + argv["A"][-4:]
-for arm in "AB":
+# Verify-path arms: D/E/F change only the environment, G adds ReplaySSM, H is all of them.
+for arm in "DEF":
+    assert argv[arm] == argv["A"] and len(profile["arms"][arm]["env"]) == 1, arm
+assert argv["G"] == argv["H"] == argv["A"][:-4] + ["--enable-linear-replayssm-spec"] + argv["A"][-4:]
+assert ({e["name"] for e in profile["arms"]["H"]["env"]} ==
+        {profile["arms"][a]["env"][0]["name"] for a in "DEF"})
+for arm in profile["arms"]:
     items = json.loads((work / f"job-{arm}.json").read_text())["items"]
     config, job = items
     pod = job["spec"]["template"]["spec"]
@@ -196,6 +209,7 @@ for arm in "AB":
     assert models["persistentVolumeClaim"] == {"claimName": "ai-models", "readOnly": True}
     names = {e["name"] for e in c["env"]}
     assert not unset & names, unset & names
+    assert names >= {e["name"] for e in profile["arms"][arm].get("env", [])}, arm
     assert job["spec"]["backoffLimit"] == 0 and job["metadata"]["namespace"] == "ai-home-lab"
 # The bench Job is the qualification pod running bench.py with the vendored
 # BetterBench client, corpus and profile; --greedy only changes the profile.

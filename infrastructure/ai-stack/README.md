@@ -236,6 +236,21 @@ repository's `benchmarks/betterbench/native-v2`. The profile is 53 requests:
 effects from draft or target defects. `--top-p P` changes only the client's
 top-p. Arm `C` is arm A plus `--speculative-use-block-verification`.
 
+Arms `D` to `H` measure the opt-in verify-path ports (serving patches
+`0006` to `0009`) against arm A. An arm may set its own environment
+variables, which the Job adds to the profile's.
+
+| Arm | Adds to arm A |
+| --- | --- |
+| `D` | `SGLANG_GFX1201_SPLITK_DOWNOUT=1` (S4 split-K down/out) |
+| `E` | `SGLANG_GFX1201_PACKED_GDN_IN_PROJ=1` (packed GDN input projection) |
+| `F` | `SGLANG_GFX1201_FP8_LM_HEAD=1` (FP8 target and draft heads; lossy) |
+| `G` | `--enable-linear-replayssm-spec` (GDN ReplaySSM for DFLASH) |
+| `H` | all of the above |
+
+Enable an item in arm A only after its arm matches arm A's quality result and
+greedy acceptance.
+
 After BetterBench, the Job runs the assistant acceptance menu
 ([`assistant-quality.json`](../sglang/assistant-quality.json) through
 `lib/workstation/assistant_acceptance.py`, both unchanged) against the native
