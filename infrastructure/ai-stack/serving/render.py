@@ -5,17 +5,24 @@ The profile JSON is the single record of the server's flags and environment;
 model and draft revisions come from the model catalog it names. `argv` prints
 the server command line. `job` renders a qualification Job (plus the probe's
 ConfigMap) that starts the server beside qualify.py on the ai-models volume
-and exits with the probe's result. Output is JSON that `kubectl apply -f -`
-accepts; this script never contacts a cluster.
+and exits with the probe's result. `bench` renders the same pod running
+bench.py, which replays the BetterBench profile vendored in the serving
+repository (benchmarks/betterbench/native-v2), so results compare with the
+op233/op234 measurements. Output is JSON that `kubectl apply -f -` accepts;
+this script never contacts a cluster.
 
 Usage: render.py argv PROFILE [--arm A|B]
        render.py job PROFILE IMAGE [--arm A|B]
+       render.py bench PROFILE IMAGE --serving SERVING_REPOSITORY_ROOT [--arm A|B] [--greedy]
 """
 import argparse
+import base64
 import hashlib
+import io
 import json
 import pathlib
 import re
+import tarfile
 
 HERE = pathlib.Path(__file__).resolve().parent
 NAMESPACE = "ai-home-lab"
@@ -67,23 +74,53 @@ def environment(profile):
     return env
 
 
-def job(profile, catalog, image, arm):
+def betterbench_bundle(serving, greedy):
+    """The vendored BetterBench client, corpus and profile as one tar.gz."""
+    root = pathlib.Path(serving) / "benchmarks/betterbench/native-v2"
+    profile = json.loads((root / "profile.json").read_text())
+    if profile.get("name") != "qwen38-selected-thinking-low-native-terminal-v2":
+        raise SystemExit("STOP: unexpected BetterBench profile")
+    if greedy:
+        profile["config"]["greedy"] = True
+        profile["name"] += "-greedy"
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz", format=tarfile.PAX_FORMAT) as archive:
+        def add(path, data):
+            info = tarfile.TarInfo(path)
+            info.size, info.mode, info.mtime = len(data), 0o444, 0
+            archive.addfile(info, io.BytesIO(data))
+        for source in sorted((root / "upstream").rglob("*")):
+            relative = source.relative_to(root / "upstream")
+            if source.is_file() and relative.parts[0] in ("betterbench", "corpus") and source.suffix in (".py", ".jsonl"):
+                add(str(relative), source.read_bytes())
+        add("profile.json", json.dumps(profile, sort_keys=True).encode())
+    return buffer.getvalue()
+
+
+def job(profile, catalog, image, arm, bench=None):
     if not re.fullmatch(IMAGE_RE, image):
         raise SystemExit("STOP: IMAGE must be a lab registry image pinned by digest")
     arm, _ = arm_of(profile, arm)
     argv = server_argv(profile, catalog, arm)
-    probe = (HERE / "qualify.py").read_text()
-    key = hashlib.sha256(json.dumps([argv, image, probe]).encode()).hexdigest()[:10]
-    name = f"sglang-qualify-{arm.lower()}-{key}"
-    labels = {"app.kubernetes.io/name": "sglang-qualify", "ai-stack/profile": profile["profile"], "ai-stack/arm": arm}
+    kind = "qualify" if bench is None else "bench"
+    probe = (HERE / f"{kind}.py").read_text()
+    data, binary = {f"{kind}.py": probe}, {}
+    if bench is None:
+        command = f'python3 /qualify/qualify.py {PORT} "$SERVED_MODEL_NAME" "$server" 2400'
+    else:
+        binary["betterbench.tar.gz"] = base64.b64encode(bench).decode()
+        command = f'python3 /qualify/bench.py {PORT} "$SERVED_MODEL_NAME" "$server" 2400 /qualify/betterbench.tar.gz'
+    key = hashlib.sha256(json.dumps([argv, image, probe] + ([binary] if binary else [])).encode()).hexdigest()[:10]
+    name = f"sglang-{kind}-{arm.lower()}-{key}"
+    labels = {"app.kubernetes.io/name": f"sglang-{kind}", "ai-stack/profile": profile["profile"], "ai-stack/arm": arm}
     script = ('python3 -m sglang.launch_server "$@" & server=$!\n'
-              f'python3 /qualify/qualify.py {PORT} "$SERVED_MODEL_NAME" "$server" 2400; rc=$?\n'
+              f'{command}; rc=$?\n'
               'kill -TERM "$server" 2>/dev/null; wait "$server"; exit "$rc"\n')
     container = {
         "name": "sglang",
         "image": image,
         "imagePullPolicy": "IfNotPresent",
-        "command": ["bash", "-c", script, "sglang-qualify"],
+        "command": ["bash", "-c", script, f"sglang-{kind}"],
         "args": argv,
         "env": environment(profile) + [{"name": "SERVED_MODEL_NAME", "value": profile["served_model_name"]}],
         "resources": {"requests": {"cpu": "16", "memory": "38Gi", "amd.com/gpu": "2"},
@@ -110,7 +147,7 @@ def job(profile, catalog, image, arm):
     }
     meta = {"name": name, "namespace": NAMESPACE, "labels": labels}
     return {"apiVersion": "v1", "kind": "List", "items": [
-        {"apiVersion": "v1", "kind": "ConfigMap", "metadata": meta, "data": {"qualify.py": probe}},
+        {"apiVersion": "v1", "kind": "ConfigMap", "metadata": meta, "data": data, **({"binaryData": binary} if binary else {})},
         {"apiVersion": "batch/v1", "kind": "Job", "metadata": meta,
          "spec": {"backoffLimit": 0, "activeDeadlineSeconds": 4500, "ttlSecondsAfterFinished": 172800,
                   "template": {"metadata": {"labels": labels}, "spec": pod}}},
@@ -119,18 +156,25 @@ def job(profile, catalog, image, arm):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("mode", choices=["argv", "job"])
+    parser.add_argument("mode", choices=["argv", "job", "bench"])
     parser.add_argument("profile")
     parser.add_argument("image", nargs="?")
     parser.add_argument("--arm")
+    parser.add_argument("--serving", help="serving repository root (bench)")
+    parser.add_argument("--greedy", action="store_true", help="bench at temperature 0 (acceptance bisection)")
     args = parser.parse_args()
     profile, catalog = load(args.profile)
     if args.mode == "argv":
         print(json.dumps(server_argv(profile, catalog, args.arm)))
-    else:
-        if not args.image:
-            raise SystemExit("STOP: job needs IMAGE")
-        print(json.dumps(job(profile, catalog, args.image, args.arm), indent=2))
+        return
+    if not args.image:
+        raise SystemExit(f"STOP: {args.mode} needs IMAGE")
+    bench = None
+    if args.mode == "bench":
+        if not args.serving:
+            raise SystemExit("STOP: bench needs --serving SERVING_REPOSITORY_ROOT")
+        bench = betterbench_bundle(args.serving, args.greedy)
+    print(json.dumps(job(profile, catalog, args.image, args.arm, bench), indent=2))
 
 
 if __name__ == "__main__":

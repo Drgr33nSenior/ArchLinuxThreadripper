@@ -127,12 +127,25 @@ PY
 # digest-pinned, read-only and on the verified ai-models volume.
 render=$dir/serving/render.py
 digest=registry.lan.thespry.family/local/sglang-gfx1201@sha256:$(printf '0%.0s' {1..64})
-python3 -I -m py_compile "$render" "$dir/serving/qualify.py" || fail 'serving scripts do not compile'
+python3 -I -m py_compile "$render" "$dir/serving/qualify.py" "$dir/serving/bench.py" || fail 'serving scripts do not compile'
+# A minimal stand-in for the serving repository's vendored BetterBench.
+bb=$work/serving-repo/benchmarks/betterbench/native-v2
+mkdir -p "$bb/upstream/betterbench" "$bb/upstream/corpus/v1" "$bb/upstream/docs"
+printf '{"name": "qwen38-selected-thinking-low-native-terminal-v2", "config": {"greedy": false}}\n' >"$bb/profile.json"
+printf '# client\n' >"$bb/upstream/betterbench/client.py"
+printf '{}\n' >"$bb/upstream/corpus/v1/code.jsonl"
+printf 'not shipped\n' >"$bb/upstream/docs/notes.md"
 for profile in "$dir"/serving/*.json; do
   for arm in A B; do
     python3 -I "$render" argv "$profile" --arm "$arm" >"$work/argv-$arm.json" || fail "argv render: $profile $arm"
     python3 -I "$render" job "$profile" "$digest" --arm "$arm" >"$work/job-$arm.json" || fail "job render: $profile $arm"
   done
+  python3 -I "$render" bench "$profile" "$digest" --serving "$work/serving-repo" >"$work/bench.json" || fail "bench render: $profile"
+  python3 -I "$render" bench "$profile" "$digest" --serving "$work/serving-repo" --greedy >"$work/bench-greedy.json" ||
+    fail "greedy bench render: $profile"
+  if python3 -I "$render" bench "$profile" "$digest" >/dev/null 2>&1; then
+    fail 'bench rendered without the serving repository'
+  fi
   if python3 -I "$render" job "$profile" registry.lan.thespry.family/local/sglang-gfx1201:tag >/dev/null 2>&1; then
     fail 'qualification Job accepted an image without a digest'
   fi
@@ -177,6 +190,23 @@ for arm in "AB":
     names = {e["name"] for e in c["env"]}
     assert not unset & names, unset & names
     assert job["spec"]["backoffLimit"] == 0 and job["metadata"]["namespace"] == "ai-home-lab"
+# The bench Job is the qualification pod running bench.py with the vendored
+# BetterBench client, corpus and profile; --greedy only changes the profile.
+import base64, io, tarfile
+qualify = json.loads((work / "job-A.json").read_text())["items"][1]
+bundles = {}
+for variant in ("bench", "bench-greedy"):
+    config, job = json.loads((work / f"{variant}.json").read_text())["items"]
+    assert config["data"] == {"bench.py": (root / "serving" / "bench.py").read_text()}
+    archive = tarfile.open(fileobj=io.BytesIO(base64.b64decode(config["binaryData"]["betterbench.tar.gz"])))
+    assert sorted(archive.getnames()) == ["betterbench/client.py", "corpus/v1/code.jsonl", "profile.json"]
+    bundles[variant] = json.loads(archive.extractfile("profile.json").read())
+    spec, base = job["spec"]["template"]["spec"], qualify["spec"]["template"]["spec"]
+    assert spec["securityContext"] == base["securityContext"] and spec["volumes"][0] == base["volumes"][0]
+    c, q = spec["containers"][0], base["containers"][0]
+    assert c["args"] == q["args"] and c["image"] == q["image"] and c["securityContext"] == q["securityContext"]
+    assert "/qualify/bench.py" in c["command"][2] and job["metadata"]["labels"]["app.kubernetes.io/name"] == "sglang-bench"
+assert bundles["bench"]["config"]["greedy"] is False and bundles["bench-greedy"]["config"]["greedy"] is True
 PY
 done
 
