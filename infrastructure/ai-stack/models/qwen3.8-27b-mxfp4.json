@@ -1,9 +1,8 @@
 {
   "schema": 1,
   "alias": "qwen3.8-27b-mxfp4",
-  "served_model_name": "Qwen3.8-27B-MXFP4",
   "status": "candidate",
-  "notes": "Native 128K candidate (ASSISTANT.md): Quark MXFP4 weights, BF16 target and draft KV, DFlash width 8, TP2. Qualify on the current stack image before routing clients to it.",
+  "notes": "Native 128K candidate (ASSISTANT.md): Quark MXFP4 weights with the DFlash2 draft. Serving flags and environment live in serving/qwen3.8-27b-mxfp4-tp2.json.",
   "model": {
     "repository": "amd/Qwen3.8-27B-Quark-AWQ-MXFP4",
     "revision": "5233554c5fa56afda40150556b95573c2d7d29c0",
@@ -105,16 +104,5 @@
         "sha256": "67fc76d68dc5a9415511a4f394ef744d67510cd20e93b37cc2cc7d28e4bab65c"
       }
     ]
-  },
-  "serving": {
-    "tp_size": 2,
-    "context_length": 131040,
-    "max_total_tokens": 262144,
-    "max_running_requests": 2,
-    "kv_cache_dtype": "bf16",
-    "speculative_algorithm": "DFLASH",
-    "speculative_num_draft_tokens": 8,
-    "reasoning_parser": "qwen3",
-    "tool_call_parser": "qwen3_coder"
   }
 }
