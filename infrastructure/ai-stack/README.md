@@ -206,6 +206,12 @@ Before applying the Job:
 - The `apps/` layer is not required; the Job needs only the namespace, the
   `ai-models` claim and the image.
 
+Each rendered Job also includes a Service named `sglang`, the address the
+telemetry stack scrapes as the `sglang` job, so the Workloads dashboard's
+serving panels follow whichever qualification or bench server is running.
+Do not run a Job while the serving Deployment is up: only one can hold the
+GPUs, and both use that Service name.
+
 To clean up a run, including its probe ConfigMap:
 
 ```sh
