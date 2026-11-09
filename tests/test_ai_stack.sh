@@ -246,6 +246,10 @@ assert ([e["name"] for e in profile["arms"]["P"]["env"]] ==
 assert argv["Q"] == argv["O"]
 assert ([e["name"] for e in profile["arms"]["Q"]["env"]] ==
         [e["name"] for e in profile["arms"]["O"]["env"]] + ["SGLANG_GFX1201_SPLITK_FUSED_REDUCE"])
+# R is Q with the fused add+norm+MXFP4 read: same flags, one env switch added.
+assert argv["R"] == argv["Q"]
+assert ([e["name"] for e in profile["arms"]["R"]["env"]] ==
+        [e["name"] for e in profile["arms"]["Q"]["env"]] + ["SGLANG_GFX1201_ADD_NORM_MXFP4"])
 for arm in profile["arms"]:
     items = json.loads((work / f"job-{arm}.json").read_text())["items"]
     config, job, service = items

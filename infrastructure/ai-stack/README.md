@@ -271,6 +271,7 @@ variables, which the Job adds to the profile's.
 | `O` | `N` plus `SGLANG_GFX1201_EXTEND_WARPS8=1` (8-warp prefill attention for head dim 256, C4; serving patch 0016); the comparison for `Q` |
 | `P` | `O` with the draft quantized to FP8 at load (as `L`) and `SGLANG_DFLASH_FUSED_KV_FP8=1`, which keeps DFLASH's fused KV materialization for it (serving patch 0017) |
 | `Q` | `O` plus `SGLANG_GFX1201_SPLITK_FUSED_REDUCE=1` (split-K verify GEMMs as one kernel with the reduce fused, bitwise equal; serving patch 0018), **the default** |
+| `R` | `Q` plus `SGLANG_GFX1201_ADD_NORM_MXFP4=1` (the boundary norm read also quantizes to MXFP4 on verify batches, bitwise equal; serving patch 0019) |
 
 Enable an item in arm A only after its arm matches arm A's quality result and
 greedy acceptance.
