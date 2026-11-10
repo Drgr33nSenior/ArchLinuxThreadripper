@@ -104,7 +104,7 @@ these views and preserve the selected time range and matching filters:
 | Kubernetes Pods | Why is a Pod waiting, restarting or slow? | Namespace, Pod and phase filters; readiness, unschedulable/waiting reasons, last termination, restarts, actual CPU/memory, budgets and throttling |
 | GPUs | What is happening on each card? | GPU filter; per-card package power, junction, memory and edge temperatures, compute activity, clocks, VRAM and identity from the AMD exporter (readable while a card sleeps); runtime power state and PCIe link width and speed from node-exporter's `pcidevice` collector |
 | Host & storage | Is CPU, RAM or storage limiting work? | Continuous CPU flame graph of host processes (eBPF), CPU and memory trends, pressure stalls, filesystem capacity, block-device I/O filter, CPU/NVMe temperatures, reported CPU frequency and exposed ECC counters |
-| Workloads | Are requests waiting, and what resources do containers use? | Sections for model serving (queue, KV pool, generation rate, TTFT/inter-token, speculative acceptance, prefix cache, p95 end-to-end and queue latency, retractions), gateway and eBPF service requests, containers (namespace filter, working set, CPU, budgets, throttling, restarts, GPU activity and VRAM by pod) and AI-stack builds (stage state, duration, compiler-cache hit ratio) |
+| Workloads | Are requests waiting, and what resources do containers use? | Sections for model serving (queue, KV pool, generation rate, TTFT/inter-token, speculative acceptance, prefix cache, p95 end-to-end and queue latency, retractions), gateway and eBPF service requests, containers (namespace filter, working set, CPU, budgets, throttling, restarts, GPU activity and VRAM by pod), AI-stack builds (stage state, duration, compiler-cache hit ratio) and [assistant tools](#assistant-tool-metrics) |
 | Power & energy | How do power, heat, energy and electricity costs change together? | PSU DC power/rail history, GPU power/temperature, cumulative energy and coverage; collapsible Electricity costs section with current cost/hour, projections, selected-window estimates, separate household standing charge and API/cache/manual status |
 | Monitoring health | Can these observations be trusted? | Scrape targets, alerts, sample age, collector failures and filtered installation/kernel logs; Explore links for logs and traces |
 
@@ -180,6 +180,38 @@ TTFT/inter-token latency, throughput, peak memory, throttling, power and spread.
 Change scrape rate or trace sampling independently. Retain changes only when
 diagnostic value outweighs measured cost. Available RAM and fixtures cannot
 establish negligible overhead.
+
+## Assistant tool metrics
+
+Both collector profiles scrape `service-tools.ai-home-lab.svc:8000/metrics` as
+`job="assistant-tools"`. The `alloy-to-assistant-tools-8000` egress policy and
+an ingress rule in `service-tools-service-flows` admit only the collector
+besides the existing Open WebUI and Traefik flows. NetworkPolicy is per port,
+not per path: Traefik routes only `/mcp` to service-tools, so `/metrics` is not
+reachable from outside the cluster.
+
+The families are defined in
+[`assistant_metrics.py`](../apps/base/shared-api/assistant_metrics.py). Every
+label takes a value from a fixed list, or `other`, so request text, passages,
+URLs and user, project or session identifiers never become labels. The
+counters record tool outcomes. A successful retrieval, web, handoff or memory
+call is not evidence that the user's task succeeded, and no panel or rule
+presents it that way.
+
+`workstation_assistant_serving_contract_info{contract,status}` is set from the
+`SERVING_CONTRACT` and `SERVING_CONTRACT_STATUS` values that
+`service render --serving-profile` writes into the service-tools Deployment.
+It reports what the clients were rendered for, not what the server runs. A
+render without a serving profile leaves it unset.
+
+The **Workloads** dashboard has an **Assistant tools** row. The NAS copy of the
+dashboards and the workstation rules are authoritative after the NAS cutover;
+this repository keeps a byte-identical `workloads.json` for the local Grafana,
+so change both together. The assistant recording and alert rules (retrieval
+error ratio, reranker not active, informational handoff conflicts and
+incomplete serving contract) are in the NAS `workstation-alerts.yaml`
+(HP-ProliantGen10-DebianNAS `docs/WORKSTATION-TELEMETRY.md`), not in the local
+`alerts.yaml`.
 
 ## Host sampling, journal forwarding and Bridge
 
