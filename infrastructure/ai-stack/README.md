@@ -181,13 +181,15 @@ runtime it replaces is guidance there, not a target. The model catalog keeps
 only model and draft identity.
 
 A profile has arms for the A/B decisions that need measurement; one is the
-default. For `qwen3.8-27b-mxfp4-tp2`, arm Q is the default: arm A's flags
+default. For `qwen3.8-27b-mxfp4-tp2`, arm S is the default: arm A's flags
 (`no_buffer`, overlap off, as op234) with the six qualified gfx1201 ports
 switched on, SGLang's custom all-reduce in place of RCCL for verify and
 decode reductions, the P1 FP8 route for prefill GEMMs, 8-warp prefill
-attention and the fused split-K reduce. Arm A stays as the baseline that every
-other arm is compared with; arms K, M, N and O each lack one later addition
-(the custom all-reduce, P1, 8-warp prefill attention, the fused reduce). Arm B
+attention, the fused split-K reduce and the fused MXFP4 quantization of the
+norm and SiLU*mul outputs. Arm A stays as the baseline that every other arm is
+compared with; arms K, M, N, O, Q and R each lack one later addition (the
+custom all-reduce, P1, 8-warp prefill attention, the fused reduce, the fused
+norm read, the fused SiLU*mul). Arm B
 (`extra_buffer_lazy` with the overlap scheduler) is an experiment.
 
 An arm may list base flags under `drop` (arm `M` drops
@@ -270,9 +272,9 @@ variables, which the Job adds to the profile's.
 | `N` | `M` plus `SGLANG_GFX1201_P1_PREFILL=1` (prefill chunks of 1024-2048 rows on the P1 FP8 GEMM route; serving patch 0015); the comparison for `O` |
 | `O` | `N` plus `SGLANG_GFX1201_EXTEND_WARPS8=1` (8-warp prefill attention for head dim 256, C4; serving patch 0016); the comparison for `Q` |
 | `P` | `O` with the draft quantized to FP8 at load (as `L`) and `SGLANG_DFLASH_FUSED_KV_FP8=1`, which keeps DFLASH's fused KV materialization for it (serving patch 0017) |
-| `Q` | `O` plus `SGLANG_GFX1201_SPLITK_FUSED_REDUCE=1` (split-K verify GEMMs as one kernel with the reduce fused, bitwise equal; serving patch 0018), **the default** |
-| `R` | `Q` plus `SGLANG_GFX1201_ADD_NORM_MXFP4=1` (the boundary norm read also quantizes to MXFP4 on verify batches, bitwise equal; serving patch 0019) |
-| `S` | `R` plus `SGLANG_GFX1201_SILU_MUL_MXFP4=1` (SiLU*mul and the down projection's MXFP4 quantization in one kernel on verify batches, bitwise equal; serving patch 0020) |
+| `Q` | `O` plus `SGLANG_GFX1201_SPLITK_FUSED_REDUCE=1` (split-K verify GEMMs as one kernel with the reduce fused, bitwise equal; serving patch 0018); the comparison for `R` and `S` |
+| `R` | `Q` plus `SGLANG_GFX1201_ADD_NORM_MXFP4=1` (the boundary norm read also quantizes to MXFP4 on verify batches, bitwise equal; serving patch 0019); the comparison for `S` |
+| `S` | `R` plus `SGLANG_GFX1201_SILU_MUL_MXFP4=1` (SiLU*mul and the down projection's MXFP4 quantization in one kernel on verify batches, bitwise equal; serving patch 0020), **the default** |
 
 Enable an item in arm A only after its arm matches arm A's quality result and
 greedy acceptance.
@@ -388,6 +390,21 @@ launches per verify round (about 2.2 us of dispatch each inside a graph) for
 none was disabled. Because the arithmetic is identical, the runs also measure
 sampling noise: accepted length 4.59 against 4.41 and C2 204 against 187
 tokens/s from the same computation.
+
+Results on 2026-11-10 (image `sha256:8d68cdc5`, series `299e2f58`, run back to
+back; median and 25th percentile verify step):
+
+| Arm | Verify step | Two-request step | Prefill at 2K / 8K / 16K | First token at 23.5K / 47K / 88K | Quality |
+| --- | --- | --- | --- | --- | --- |
+| `Q` | 32.97 / 32.67 ms | 35.41 ms | 2,684 / 3,796 / 3,557 tokens/s | 7.49 / 18.61 / 44.59 s | 10 passed, 1 failed (`k8s-troubleshoot`) |
+| `R` | 32.84 / 32.55 ms | 35.46 ms | 3,851 / 3,770 / 3,547 tokens/s | 7.53 / 18.04 / 44.13 s | same |
+| `S` | 32.58 / 32.32 ms | 35.28 ms | 3,852 / 3,772 / 3,547 tokens/s | 7.50 / 18.28 / 44.15 s | same |
+
+Arm `S` became the default: both fusions keep the output bitwise equal and
+together take 0.39 ms off the verify step. The fused norm read gave 0.13 ms,
+about half of its isolated measurement; the fused SiLU*mul gave 0.26 ms. Arm
+`Q` reproduced its previous verify step within 0.03 ms; its 2K prefill figure
+is the low first-of-sequence outlier seen before.
 
 After BetterBench, the Job runs the assistant acceptance menu
 ([`assistant-quality.json`](../sglang/assistant-quality.json) through
