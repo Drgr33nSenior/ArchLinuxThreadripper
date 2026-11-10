@@ -120,6 +120,29 @@ class AssistantTests(unittest.TestCase):
             for address in ("127.0.0.1", "169.254.169.254", "10.43.0.1", "192.168.2.15", "172.16.1.1"):
                 self.assertTrue(any(ipaddress.ip_address(address) in n for n in excluded))
 
+    def test_browser_tools_use_each_users_own_session_identity(self):
+        for objects in (self.large, self.split):
+            _, env = environment(objects)
+            servers = json.loads(env["TOOL_SERVER_CONNECTIONS"])
+            self.assertEqual(1, len(servers))
+            server = servers[0]
+            # Native MCP with the signed-in user's own token; no shared credential.
+            self.assertEqual(("mcp", "http://service-tools:8000/mcp", "session", ""),
+                             (server["type"], server["url"], server["auth_type"], server["key"]))
+            self.assertNotIn("headers", server)
+            self.assertFalse(server.get("forward_cookies", False))
+            self.assertTrue(server["config"]["enable"])
+            self.assertEqual([{"principal_type": "user", "principal_id": "*", "permission": "read"}],
+                             server["config"]["access_grants"])
+            self.assertEqual("workstation", server["info"]["id"])
+            tools = named(objects, "Deployment", "service-tools")["spec"]["template"]["spec"]["containers"][0]
+            self.assertIn({"name": "HANDOFF_ENABLED", "value": "true"}, tools["env"])
+            self.assertIn("/api/v1/knowledge/", env["API_KEYS_ALLOWED_ENDPOINTS"].split(","))
+            # The existing exact flow already carries WebUI -> service-tools:8000.
+            policy = named(objects, "NetworkPolicy", "open-webui-service-flows")["spec"]
+            self.assertIn({"to": [{"podSelector": {"matchLabels": {"app.kubernetes.io/name": "service-tools"}}}],
+                           "ports": [{"protocol": "TCP", "port": 8000}]}, policy["egress"])
+
     def test_declared_image_identity_matches_creative_staging_and_effective_ui(self):
         profile, workflow, workflow_sha = load_image_profile(ROOT / "apps/base/shared-api")
         model = json.loads((ROOT / "infrastructure/creative/runtime.json").read_text())["model"]

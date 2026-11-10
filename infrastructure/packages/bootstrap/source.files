@@ -285,6 +285,8 @@ apps/base/shared-api/network-policy.yaml
 apps/base/shared-api/sdxl-workflow.json
 apps/base/shared-api/image-profile.json
 apps/base/shared-api/service_tools.py
+apps/base/shared-api/handoff.py
+apps/base/shared-api/project_scope.py
 apps/base/shared-api/storage.yaml
 apps/base/shared-api/workloads.yaml
 apps/overlays/service-split/kustomization.yaml
@@ -360,6 +362,7 @@ tests/test_assistant_stack.sh
 tests/workstation/test_assistant_stack.py
 tests/validation-service.lock
 tests/workstation/test_service_tools.py
+tests/workstation/test_handoff.py
 tests/workstation/test_creative.py
 tests/workstation/test_shared_service.py
 docs/INSTALL-READINESS.md
