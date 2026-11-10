@@ -1,5 +1,18 @@
 # Install through the existing K3s HelmChartConfig mechanism after site review.
-# ServiceLB remains disabled; one private NodePort is the exposure method.
+# Apply only the copy written by `workstationctl service render`: it adds the
+# site's node_address as the Service's single externalIP. ServiceLB remains
+# disabled and no NodePort is allocated.
+#
+# HTTPS is reached on TCP 443 of that one node address only. kube-proxy DNATs
+# exactly <node_address>:443 to the Traefik Pod; nothing listens on 0.0.0.0, so
+# other host addresses and interfaces (for example a future DMZ NIC) are not
+# bound. externalTrafficPolicy Local keeps the client source address for the
+# private-clients allowlist. The host guard additionally limits 443 to the
+# management VLAN interface and approved client CIDRs.
+#
+# The chart's ports.websecure.hostIP is deliberately not used: chart 40.x also
+# writes it into the entryPoint listen address, which a non-hostNetwork Pod
+# cannot bind. Port 80 is not exposed (no plaintext listener, not even a redirect).
 apiVersion: helm.cattle.io/v1
 kind: HelmChartConfig
 metadata:
@@ -8,15 +21,15 @@ metadata:
 spec:
   valuesContent: |-
     service:
-      type: NodePort
       spec:
+        type: ClusterIP
         externalTrafficPolicy: Local
     ports:
       web:
         expose:
           default: false
       websecure:
-        nodePort: 32443
+        exposedPort: 443
         transport:
           respondingTimeouts:
             readTimeout: 30s

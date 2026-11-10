@@ -942,9 +942,48 @@ def site_values(path):
         require(isinstance(site[key], str) and re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", site[key])
                 and "." in site[key] and not site[key].endswith(".invalid"), "supply actual private DNS names")
     require(site["webui_host"] != site["api_host"], "browser/API names must differ")
-    for key in ("node", "context", "tls_secret"):
+    for key in ("node", "context"):
         require(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:@/-]{0,200}", site[key]) is not None, "invalid target identifier")
+    # A Kubernetes Secret name; the staging certificate uses "<tls_secret>-staging".
+    require(re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,200}[a-z0-9])?", site["tls_secret"]) is not None,
+            "TLS Secret must be a lowercase DNS label")
     return site
+
+
+def traefik_config(site):
+    """Bind the reviewed Traefik values to the site's node address, TCP 443 only."""
+    config = yaml.safe_load((ROOT / "infrastructure/service/traefik.yaml").read_text())
+    values = yaml.safe_load(config["spec"]["valuesContent"])
+    spec = values["service"]["spec"]
+    require(spec.get("type") == "ClusterIP" and "externalIPs" not in spec
+            and spec.get("externalTrafficPolicy") == "Local"
+            and values["ports"]["websecure"].get("exposedPort") == 443
+            and values["ports"]["web"]["expose"] == {"default": False}
+            and not any("nodePort" in (port or {}) or "hostPort" in (port or {}) or "hostIP" in (port or {})
+                        for port in values["ports"].values()),
+            "Traefik source must expose only HTTPS 443 through the site address")
+    spec["externalIPs"] = [site["node_address"]]
+    config["spec"]["valuesContent"] = yaml.safe_dump(values, sort_keys=False)
+
+    class Dumper(yaml.SafeDumper):
+        pass
+    # Keep the embedded chart values reviewable as a block, as in the source.
+    Dumper.add_representer(str, lambda dumper, value: dumper.represent_scalar(
+        "tag:yaml.org,2002:str", value, style="|" if "\n" in value else None))
+    return yaml.dump(config, Dumper=Dumper, sort_keys=False)
+
+
+def certificates(site):
+    """ACME staging into a separate Secret first; production into the serving TLS Secret."""
+    def certificate(name, secret, issuer):
+        return {"apiVersion": "cert-manager.io/v1", "kind": "Certificate",
+                "metadata": {"name": name, "namespace": "ai-home-lab"},
+                "spec": {"secretName": secret, "dnsNames": [site["webui_host"], site["api_host"]],
+                         "privateKey": {"algorithm": "ECDSA", "size": 256, "rotationPolicy": "Always"},
+                         "issuerRef": {"group": "cert-manager.io", "kind": "ClusterIssuer", "name": issuer}}}
+    return {"certificate-staging.yaml": certificate("ai-home-lab-tls-staging", site["tls_secret"] + "-staging",
+                                                    "letsencrypt-staging-cloudflare"),
+            "certificate.yaml": certificate("ai-home-lab-tls", site["tls_secret"], "letsencrypt-production-cloudflare")}
 
 
 def render(args):
@@ -975,7 +1014,7 @@ def render(args):
         name, kind = obj["metadata"]["name"], obj["kind"]
         if kind == "Deployment" and name == "service-tools":
             obj["spec"]["template"]["spec"]["containers"][0].setdefault("env", []).append(
-                {"name": "PUBLIC_WEBUI_BASE_URL", "value": f'https://{site["webui_host"]}:32443'})
+                {"name": "PUBLIC_WEBUI_BASE_URL", "value": f'https://{site["webui_host"]}'})
         if kind == "Ingress":
             host = site["webui_host"] if name == "open-webui" else site["api_host"]
             obj["spec"]["rules"][0]["host"] = host
@@ -993,7 +1032,9 @@ def render(args):
                     "spec": {"ipAllowList": {"sourceRange": site["client_cidrs"]}}})
     output = new_directory(args.output)
     (output / "workloads.yaml").write_text(yaml.safe_dump_all(objects, sort_keys=False))
-    (output / "traefik.yaml").write_text((ROOT / "infrastructure/service/traefik.yaml").read_text())
+    (output / "traefik.yaml").write_text(traefik_config(site))
+    for name, certificate in certificates(site).items():
+        (output / name).write_text(yaml.safe_dump(certificate, sort_keys=False))
     gateway = next(o for o in objects if o["kind"] == "Deployment" and o["metadata"]["name"] == "litellm")
     template = copy.deepcopy(gateway["spec"]["template"])
     template["metadata"]["labels"]["app.kubernetes.io/name"] = "litellm"
@@ -1010,7 +1051,7 @@ def render(args):
     values = client_profile(args.mode)
     if contract:
         values = {**contract_rendered["client"], "AGENT_SERVING_CONTRACT": contract["contract"]}
-    (output / "client.conf").write_text(f'AGENT_BASE_URL=https://{site["api_host"]}:32443/v1\n' +
+    (output / "client.conf").write_text(f'AGENT_BASE_URL=https://{site["api_host"]}/v1\n' +
         "".join(f"{key}={str(value).lower() if type(value) is bool else value}\n" for key, value in values.items()))
     if experience.startswith("assistant"):
         tools = next(o for o in objects if o["kind"] == "Deployment" and o["metadata"]["name"] == "service-tools")
@@ -1020,7 +1061,8 @@ def render(args):
             client.write(f'AGENT_MEMORY_ENABLED={"true" if experience == "assistant-memory" else "false"}\n')
             # Handoff tools follow the rendered service: offered only when it serves them.
             client.write(f'AGENT_HANDOFF_ENABLED={"true" if tools_env.get("HANDOFF_ENABLED") == "true" else "false"}\n')
-    files = ["workloads.yaml", "traefik.yaml", "migration.yaml", "site.json", "client.conf"]
+    files = ["workloads.yaml", "traefik.yaml", "certificate-staging.yaml", "certificate.yaml", "migration.yaml",
+             "site.json", "client.conf"]
     if contract:
         (output / "serving-contract.json").write_text(json.dumps(public_contract(contract), indent=2) + "\n")
         files.append("serving-contract.json")
@@ -1031,7 +1073,7 @@ def render(args):
                               "missing_inputs": contract["missing_inputs"], "checks": contract_checks}
                              if contract else {"contract": None, "note": "legacy source composition; no serving contract"}),
         "files": {n: sha(output / n) for n in files},
-        "required": ["TLS Secret", "private DNS", "NodePort firewall review", "retained-PV migration",
+        "required": ["TLS certificate issued", "private DNS", "host firewall 443/6443 review", "retained-PV migration",
                      "backup restore acceptance", "database migration", "workload qualification"]
                     + (["serving contract: " + item for item in contract["missing_inputs"]] if contract else [])},
         indent=2) + "\n")

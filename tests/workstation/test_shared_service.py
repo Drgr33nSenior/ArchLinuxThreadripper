@@ -681,6 +681,27 @@ class ResourceTests(unittest.TestCase):
             tools = next(o for o in objects if o["kind"] == "Deployment" and o["metadata"]["name"] == "service-tools")
             secret_names = {v["secret"]["secretName"] for v in tools["spec"]["template"]["spec"]["volumes"] if "secret" in v}
             self.assertEqual({"gateway-image-permissions"}, secret_names)
+            # Standard HTTPS port: no port in client or citation URLs.
+            client = dict(line.split("=", 1) for line in (root / "render/client.conf").read_text().splitlines())
+            self.assertEqual("https://api.fixture.test/v1", client["AGENT_BASE_URL"])
+            tools_env = {e["name"]: e.get("value") for e in tools["spec"]["template"]["spec"]["containers"][0]["env"]}
+            self.assertEqual("https://chat.fixture.test", tools_env["PUBLIC_WEBUI_BASE_URL"])
+            # Traefik is reachable only on the site address, TCP 443, with source preservation.
+            traefik = yaml.safe_load((root / "render/traefik.yaml").read_text())
+            values = yaml.safe_load(traefik["spec"]["valuesContent"])
+            self.assertEqual({"type": "ClusterIP", "externalTrafficPolicy": "Local", "externalIPs": ["192.168.77.9"]},
+                             values["service"]["spec"])
+            self.assertEqual(443, values["ports"]["websecure"]["exposedPort"])
+            self.assertEqual({"default": False}, values["ports"]["web"]["expose"])
+            # Staging issues into its own Secret; production into the Ingress TLS Secret.
+            for name, issuer, secret in (("certificate-staging.yaml", "letsencrypt-staging-cloudflare", "fixture-tls-staging"),
+                                         ("certificate.yaml", "letsencrypt-production-cloudflare", "fixture-tls")):
+                certificate = yaml.safe_load((root / "render" / name).read_text())
+                self.assertEqual((issuer, secret, ["chat.fixture.test", "api.fixture.test"]),
+                                 (certificate["spec"]["issuerRef"]["name"], certificate["spec"]["secretName"],
+                                  certificate["spec"]["dnsNames"]))
+            self.assertTrue(all(tls["secretName"] == "fixture-tls" for o in objects if o["kind"] == "Ingress"
+                                for tls in o["spec"]["tls"]))
             existing = root / "claims.json"
             existing.write_text(json.dumps({"kind": "List", "items": [{"kind": "PersistentVolumeClaim",
                 "metadata": {"name": "webui-rag-qwen3-data", "namespace": "ai-home-lab", "uid": "existing-claim"},
@@ -693,6 +714,10 @@ class ResourceTests(unittest.TestCase):
             self.assertEqual("existing-claim", json.loads((root / "existing/evidence.json").read_text())[
                 "existing_claims"]["webui-rag-qwen3-data"]["uid"])
             site["client_cidrs"] = ["0.0.0.0/0"]
+            path.write_text(json.dumps(site))
+            with self.assertRaises(ValueError):
+                service.site_values(path)
+            site["client_cidrs"], site["tls_secret"] = ["192.168.77.0/24"], "Fixture/TLS"
             path.write_text(json.dumps(site))
             with self.assertRaises(ValueError):
                 service.site_values(path)
