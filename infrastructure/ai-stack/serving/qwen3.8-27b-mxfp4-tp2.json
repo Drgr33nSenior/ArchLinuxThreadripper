@@ -11,14 +11,14 @@
     "evidence": "Three BetterBench bench Jobs of arm Y on this image (sglang-bench-y-0113d00cca-r1..r3): C1 / C2 median 139.2 / 254.7 tokens/s (135.0-145.3 / 230.2-257.8), verify step 26.93-26.96 ms, prefill 3,868 / 3,853 / 3,618 tokens/s at 2K / 8K / 16K, first token 17.9 / 44.2 s at 47K / 88K; assistant quality menu 11 passed, 0 failed, 1 needs-review, 14 not run (no sandbox or long-context budget) in every run; no tracebacks; 0024/0025 routes on both ranks.",
     "host_resources": {
       "requests": {
-        "cpu": "8",
-        "memory": "12Gi"
+        "cpu": "16",
+        "memory": "24Gi"
       },
       "limits": {
         "cpu": "16",
         "memory": "24Gi"
       },
-      "evidence": "Measured on the workstation (NAS Prometheus, cAdvisor, container sglang): arm Y bench runs RSS 8.0 GiB, working set 9.65 GiB, CPU peak 7.0 cores (2-minute rate); the highest working set of any U-Y run was 19.7 GiB (first load of a new image, page cache); RSS peak over all 62 SGLang runs 9.2 GiB. The earlier 38 GiB / 24 CPU allowance was an unmeasured estimate."
+      "evidence": "Measured on the workstation (NAS Prometheus, cAdvisor, container sglang): arm Y bench runs RSS 8.0 GiB, working set 9.65 GiB, CPU peak 7.0 cores (2-minute rate); the highest working set of any U-Y run was 19.7 GiB (first load of a new image, page cache); RSS peak over all 62 SGLang runs 9.2 GiB. The earlier 38 GiB / 24 CPU allowance was an unmeasured estimate. Requests equal limits (24 GiB, 16 CPU) because session switch admits only Guaranteed-QoS GPU workloads."
     },
     "limits": "The quality menu leaves 14 cases NOT RUN and has known evaluator gaps (long-context bodies, rag-and-web-version prompt); qualification covers the measured profile only. Re-qualify after any image, patch-series or default-arm change."
   },
