@@ -6,5 +6,6 @@
   "client_cidrs": [],
   "webui_host": "",
   "api_host": "",
-  "tls_secret": "ai-home-lab-tls"
+  "tls_secret": "ai-home-lab-tls",
+  "webui_default_group": ""
 }

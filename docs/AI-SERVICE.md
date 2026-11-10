@@ -155,6 +155,16 @@ context, node and new output paths; placeholders are not site values.
    | `webui_host` | `chat.lan.thespry.family` (Open WebUI) |
    | `api_host` | `api.lan.thespry.family` (OpenAI-compatible `/v1` and `/mcp`) |
    | `tls_secret` | `ai-home-lab-tls` |
+   | `webui_default_group` | Optional. The UUID of the Open WebUI group every new account joins (`DEFAULT_GROUP_ID`); empty or absent leaves it unset. |
+
+   **Model visibility.** Open WebUI 0.12 shows a gateway model without an Open
+   WebUI model entry to admins only. As admin, create a group (for example
+   "Family") under *Admin Panel → Users → Groups*, add the existing accounts, then
+   open the model under *Admin Panel → Settings → Models* and grant that group
+   read access. Put the group's UUID in `webui_default_group` so new accounts
+   join it. The group, members and grant live in Open WebUI's database, which
+   is backed up. Each account still needs its own gateway browser key; the group
+   only controls what the browser lists.
 
    Do not commit this site file. The renderer writes Traefik with
    `node_address` as its only Service externalIP on TCP 443. kube-proxy
