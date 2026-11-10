@@ -403,10 +403,13 @@ automated here; review the pinned chart's lifecycle hooks before using Helm for
 release management. Automatic CRD upgrade and NFD deletion cleanup are disabled.
 
 The values disable KMM installation **and watching**, default DeviceConfig
-creation, DRA DeviceClass creation and automatic remediation. Apply the separate
-DeviceConfig only after its CRD exists. It disables driver management, blacklisting,
-driver upgrades, partition management and DRA; it enables the traditional device
-plugin and node labeller. NFD is enabled. The operator/device-plugin images are
+creation and automatic remediation, and render the DRA `gpu.amd.com`
+DeviceClass. Apply the separate DeviceConfig only after its CRD exists. It
+disables driver management, blacklisting, driver upgrades and partition
+management. It allocates GPUs through the DRA driver (pinned
+`k8s-gpu-dra-driver` v1.0.1) instead of the traditional device plugin, and keeps
+the node labeller. The DRA pilot and its rollback are in
+[gpu-operator/dra-pilot](../infrastructure/gpu-operator/dra-pilot/README.md). NFD is enabled. The operator/device-plugin images are
 digest-pinned. [The values](../infrastructure/gpu-operator/values.yaml) also pin
 the bundled NFD version to its Linux/amd64 manifest. This bare-metal profile is
 not a multi-architecture deployment. Verify every rendered image before release
@@ -418,9 +421,10 @@ and CRD deletion permissions. Review and obtain owner approval for these grants
 before installation. Keep NFD's read-only host mounts in its infrastructure
 namespace; do not relax application namespace controls to admit them.
 
-The resource name is `amd.com/gpu`, not `://amd.com`. DRA infrastructure being
-enabled does not make these device-plugin workloads DRA consumers. AMD prohibits
-running its DRA driver and device plugin simultaneously. CDI is runtime support,
+With the device plugin, the resource name is `amd.com/gpu`, not `://amd.com`.
+Workloads that still request it stay Pending once DRA allocates the GPUs; they
+must reference ResourceClaims instead. AMD prohibits running its DRA driver and
+device plugin simultaneously. CDI is runtime support,
 not GPU partitioning or a scheduling resource by itself.
 
 NFD discovers the AMD PCI vendor; it does not automatically supply a verified

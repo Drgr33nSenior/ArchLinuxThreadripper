@@ -19,9 +19,11 @@ crds:
   defaultCR:
     install: false
     upgrade: false
+# The DRA driver's DeviceClass (gpu.amd.com, selects driver == gpu.amd.com).
+# The driver RBAC is rendered either way; this adds only the DeviceClass.
 draDriver:
   deviceClass:
-    create: false
+    create: true
 defaultDCMConfigMap:
   install: false
 controllerManager:

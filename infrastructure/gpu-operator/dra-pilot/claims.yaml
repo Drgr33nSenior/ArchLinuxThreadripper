@@ -1,0 +1,38 @@
+# One standalone ResourceClaim per physical R9700, selected by PCI address.
+# Standalone claims (not templates) can be shared: every pod that references a
+# claim gets the same card. SGLang will reference both; SwarmUI shares gpu-1.
+# DRA shares devices; it does not partition them (no VRAM or compute isolation).
+# The PCI addresses are this host's (lspci / ResourceSlice pciBusID).
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaim
+metadata:
+  name: gpu-0
+  namespace: ai-home-lab
+spec:
+  devices:
+    requests:
+      - name: gpu
+        exactly:
+          deviceClassName: gpu.amd.com
+          allocationMode: ExactCount
+          count: 1
+          selectors:
+            - cel:
+                expression: device.attributes["resource.kubernetes.io"].pciBusID == "0000:23:00.0"
+---
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaim
+metadata:
+  name: gpu-1
+  namespace: ai-home-lab
+spec:
+  devices:
+    requests:
+      - name: gpu
+        exactly:
+          deviceClassName: gpu.amd.com
+          allocationMode: ExactCount
+          count: 1
+          selectors:
+            - cel:
+                expression: device.attributes["resource.kubernetes.io"].pciBusID == "0000:c3:00.0"
