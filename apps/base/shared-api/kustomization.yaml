@@ -3,7 +3,7 @@ kind: Kustomization
 resources: [workloads.yaml, storage.yaml, network-policy.yaml]
 configMapGenerator:
   - name: gateway-runtime
-    files: [boundary.py, gateway_entry.py, service_tools.py, web_search.py, web-search-policy.json, migrate.py, health.py, sdxl-workflow.json, image-profile.json]
+    files: [boundary.py, gateway_entry.py, service_tools.py, assistant_metrics.py, web_search.py, web-search-policy.json, migrate.py, health.py, sdxl-workflow.json, image-profile.json]
   - name: gateway-config
     files: [litellm.yaml]
   - name: gateway-postgres-init

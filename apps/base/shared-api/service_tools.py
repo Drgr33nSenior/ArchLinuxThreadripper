@@ -18,8 +18,9 @@ from urllib.parse import unquote
 
 import httpx
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 
+from assistant_metrics import METRICS
 from boundary import Refusal, browser_key, read_body, secret_json
 from web_search import WebSearch
 
@@ -91,8 +92,13 @@ class ServiceTools:
         self.app.add_api_route("/mcp", self.mcp, methods=["POST"])
         self.app.add_api_route("/webui/images/generations", self.image, methods=["POST"])
         self.app.add_api_route("/health", self.health, methods=["GET"])
+        # Bounded-label Prometheus text (assistant_metrics.py); no request content.
+        self.app.add_api_route("/metrics", self.metrics, methods=["GET"])
         self.app.add_api_route("/webui/search", self.browser_search, methods=["POST"])
         self.app.add_api_route("/webui/fetch", self.browser_fetch, methods=["POST"])
+
+    async def metrics(self):
+        return PlainTextResponse(METRICS.render(), media_type="text/plain; version=0.0.4")
 
     async def health(self):
         return {"status": "process-ready", "image_busy": self.busy,
