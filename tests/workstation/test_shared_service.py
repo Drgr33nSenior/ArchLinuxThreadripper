@@ -698,5 +698,218 @@ class ResourceTests(unittest.TestCase):
                 service.site_values(path)
 
 
+
+class ServingContractTests(unittest.TestCase):
+    """One contract, read from the serving owner's profile, drives every consumer (offline)."""
+
+    PROFILE = ROOT / "infrastructure/ai-stack/serving/qwen3.8-27b-mxfp4-tp2.json"
+    IMAGE = "registry.lan.thespry.family/local/sglang-gfx1201@sha256:" + "a" * 64
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        self.profile = json.loads(self.PROFILE.read_text())
+
+    def write_profile(self, profile):
+        path = self.root / "profile.json"
+        path.write_text(json.dumps(profile))
+        return path
+
+    def test_selected_arm_is_read_from_the_profile_not_fixed(self):
+        default = next(name for name, arm in self.profile["arms"].items() if arm.get("default"))
+        contract = service.serving_contract(self.PROFILE)
+        self.assertEqual((default, "profile-default"), (contract["selection"]["arm"], contract["selection"]["arm_source"]))
+        self.assertEqual(f"{self.profile['profile']}.{default}", contract["contract"])
+        other = next(name for name in self.profile["arms"] if name != default)
+        for name, arm in self.profile["arms"].items():
+            arm["default"] = name == other
+        moved = service.serving_contract(self.write_profile(self.profile))
+        render = service.ai_stack_render()
+        self.assertEqual(other, moved["selection"]["arm"])
+        self.assertEqual(render.server_argv(self.profile, json.loads((ROOT / "infrastructure/ai-stack/models" /
+                         (self.profile["model"] + ".json")).read_text()), other), moved["_render"]["argv"])
+        self.assertEqual(render.environment(self.profile, other), moved["_render"]["environment"])
+
+    def test_status_and_missing_inputs_are_explicit(self):
+        # Fixture states, independent of the live catalogue/profile promotion.
+        default = next(name for name, arm in self.profile["arms"].items() if arm.get("default"))
+        unqualified = self.write_profile({k: v for k, v in dict(self.profile, status="unqualified").items()
+                                          if k != "qualification"})
+        not_promoted = {"candidate": False, "selected": False}
+        with patch.dict(service.CATALOGUE_STATES, not_promoted):
+            incomplete = service.serving_contract(unqualified)
+            self.assertEqual("incomplete", incomplete["status"])
+            self.assertIsNone(incomplete["runtime"]["image"])
+            self.assertTrue(any(item.startswith("runtime image") for item in incomplete["missing_inputs"]))
+            self.assertTrue(any(item.startswith("model promotion") for item in incomplete["missing_inputs"]))
+            provisional = service.serving_contract(unqualified, runtime_image=self.IMAGE)
+            self.assertEqual("provisional", provisional["status"])
+            for wrong in ("localhost/sglang@sha256:" + "a" * 64, "registry.lan.thespry.family/local/sglang:latest"):
+                self.assertEqual("incomplete", service.serving_contract(unqualified, runtime_image=wrong)["status"])
+        promoted = {"candidate": True, "selected": True}
+        record = {"arm": default, "image": self.IMAGE}
+        qualified = self.write_profile(dict(self.profile, status="qualified", qualification=record))
+        with patch.dict(service.CATALOGUE_STATES, promoted):
+            active = service.serving_contract(qualified, runtime_image=self.IMAGE)
+            self.assertEqual(("active", []), (active["status"], active["missing_inputs"]))
+            # Qualified for one arm on one image: another image or arm is provisional, never active.
+            other_image = self.IMAGE[:-1] + "b"
+            moved = service.serving_contract(qualified, runtime_image=other_image)
+            self.assertEqual("provisional", moved["status"])
+            self.assertTrue(any("not --runtime-image" in item for item in moved["missing_inputs"]))
+            other = next(name for name in self.profile["arms"] if name != default)
+            wrong_arm = self.write_profile(dict(self.profile, status="qualified", qualification=dict(record, arm=other)))
+            self.assertEqual("provisional", service.serving_contract(wrong_arm, runtime_image=self.IMAGE)["status"])
+            no_record = self.write_profile({k: v for k, v in dict(self.profile, status="qualified").items()
+                                            if k != "qualification"})
+            self.assertEqual("provisional", service.serving_contract(no_record, runtime_image=self.IMAGE)["status"])
+        # A catalogue status the contract does not know (whatever the live value is) is refused.
+        with patch.object(service, "CATALOGUE_STATES", {"other": True}), \
+                self.assertRaisesRegex(ValueError, "unknown model catalogue status"):
+            service.serving_contract(self.PROFILE)
+
+    def test_measured_host_resources_come_from_the_qualification_record(self):
+        measured = {"requests": {"cpu": "8", "memory": "12Gi"}, "limits": {"cpu": "16", "memory": "24Gi"},
+                    "evidence": "fixture"}
+        record = {"arm": "Y", "image": self.IMAGE, "host_resources": measured}
+        contract = service.serving_contract(self.write_profile(dict(self.profile, qualification=record)))
+        self.assertEqual({k: measured[k] for k in ("requests", "limits")},
+                         {k: contract["requirements"]["host_resources"][k] for k in ("requests", "limits")})
+        without = {k: v for k, v in self.profile.items() if k != "qualification"}
+        self.assertIsNone(service.serving_contract(self.write_profile(without))["requirements"]["host_resources"])
+        for bad in ({"requests": {"cpu": "8", "memory": "12G"}}, {"requests": {"cpu": "32", "memory": "12Gi"}},
+                    {"evidence": ""}):
+            broken = dict(record, host_resources={**measured, **bad})
+            with self.assertRaises(ValueError):
+                service.serving_contract(self.write_profile(dict(self.profile, qualification=broken)))
+
+    def test_reasoning_parameters_come_from_the_verified_template(self):
+        contract = service.serving_contract(self.PROFILE, runtime_image=self.IMAGE)
+        template = contract["chat_template"]
+        self.assertTrue(template["verified"])
+        self.assertEqual(["low", "medium", "xhigh"], template["reasoning_efforts"])
+        server = json.loads(next(entry["value"][0] for entry in self.profile["args"]
+                                 if entry["flag"] == "--default-chat-template-kwargs"))
+        self.assertEqual({"chat_template_kwargs": {"enable_thinking": server["enable_thinking"]},
+                          "reasoning_effort": server["reasoning_effort"]}, contract["reasoning"]["request_defaults"])
+        # high is not a template value; clients that offer it get the nearest accepted level.
+        self.assertEqual({"low": "low", "medium": "medium", "xhigh": "xhigh", "high": "xhigh"},
+                         contract["reasoning"]["client_efforts"])
+        self.assertEqual(["enable_thinking"], contract["reasoning"]["client_template_kwargs"])
+        with patch.dict(service.VERIFIED_TEMPLATES, clear=True):
+            unread = service.serving_contract(self.PROFILE, runtime_image=self.IMAGE)
+        self.assertEqual("incomplete", unread["status"])
+        self.assertIsNone(unread["reasoning"]["request_defaults"])
+        self.assertTrue(any(item.startswith("reasoning parameters") for item in unread["missing_inputs"]))
+        for entry in self.profile["args"]:
+            if entry["flag"] == "--default-chat-template-kwargs":
+                entry["value"] = [json.dumps({"enable_thinking": True, "reasoning_effort": "high"})]
+        with self.assertRaisesRegex(ValueError, "not accepted by the checkpoint template"):
+            service.serving_contract(self.write_profile(self.profile))
+
+    def test_every_consumer_is_rendered_from_the_contract_and_none_targets_fp8(self):
+        contract = service.serving_contract(self.PROFILE)
+        objects, rendered, checks = service.apply_contract(service.kustomize(ROOT / "apps/overlays/assistant"),
+                                                           contract, "large", "assistant")
+        self.assertTrue(all(check["matches"] for check in checks), checks)
+        named = lambda kind, name: next(o for o in objects if o["kind"] == kind and o["metadata"]["name"] == name)
+        alias, budgets = contract["model"]["alias"], contract["budgets"]
+        sglang = named("Deployment", "sglang")
+        container = sglang["spec"]["template"]["spec"]["containers"][0]
+        self.assertEqual(0, sglang["spec"]["replicas"])
+        self.assertEqual(contract["_render"]["argv"], container["args"])
+        self.assertIn("CONTRACT-INCOMPLETE", container["image"])
+        self.assertEqual(str(contract["requirements"]["gpus"]), container["resources"]["limits"]["amd.com/gpu"])
+        self.assertNotIn("envFrom", container)
+        models = next(v for v in sglang["spec"]["template"]["spec"]["volumes"] if v["name"] == "models")
+        self.assertEqual({"claimName": "ai-models", "readOnly": True}, models["persistentVolumeClaim"])
+        self.assertTrue(container["securityContext"]["readOnlyRootFilesystem"])
+        gateway = next(o for o in objects if o["kind"] == "ConfigMap" and "litellm.yaml" in o["data"])
+        routes = {r["model_name"]: r for r in yaml.safe_load(gateway["data"]["litellm.yaml"])["model_list"]}
+        self.assertEqual({alias, "Qwen3.5-9B"}, set(routes))
+        self.assertEqual(budgets["context_length"], routes[alias]["model_info"]["max_tokens"])
+        policy = json.loads(gateway["data"]["gateway-policy.json"])
+        self.assertEqual([budgets["context_length"], budgets["output_tokens"]], policy["chat_models"][alias])
+        self.assertNotIn(service.LEGACY_ALIAS, policy["chat_models"])
+        webui = {e["name"]: e.get("value") for e in named("Deployment", "open-webui")["spec"]["template"]["spec"]["containers"][0]["env"]}
+        self.assertEqual(alias, webui["DEFAULT_MODELS"])
+        self.assertEqual("native", json.loads(webui["DEFAULT_MODEL_PARAMS"])["function_calling"])
+        tools = {e["name"]: e.get("value") for e in named("Deployment", "service-tools")["spec"]["template"]["spec"]["containers"][0]["env"]}
+        self.assertEqual((contract["contract"], "incomplete"), (tools["SERVING_CONTRACT"], tools["SERVING_CONTRACT_STATUS"]))
+        self.assertFalse(any(o["kind"] == "ConfigMap" and "MODEL_REVISION" in o.get("data", {}) for o in objects))
+        for mode, experience in (("split", "assistant"), ("large", "service")):
+            with self.assertRaises(ValueError):
+                service.apply_contract(service.kustomize(ROOT / "apps/overlays/assistant"), contract, mode, experience)
+
+    def test_render_writes_contract_client_values_and_missing_inputs(self):
+        site = self.root / "site.json"
+        site.write_text(json.dumps({"context": "fixture", "node": "fixture", "node_address": "192.168.77.9",
+            "management_cidr": "192.168.77.0/24", "client_cidrs": ["192.168.77.0/24"],
+            "webui_host": "chat.fixture.test", "api_host": "api.fixture.test", "tls_secret": "fixture-tls"}))
+        output = self.root / "render"
+        service.render(SimpleNamespace(site=site, output=output, mode="large", experience="assistant-memory",
+                                       serving_profile=self.PROFILE, arm=None, runtime_image=None, output_tokens=4096))
+        client = dict(line.split("=", 1) for line in (output / "client.conf").read_text().splitlines())
+        contract = json.loads((output / "serving-contract.json").read_text())
+        self.assertEqual((contract["model"]["alias"], str(contract["budgets"]["context_length"]), contract["contract"]),
+                         (client["AGENT_MODEL"], client["AGENT_CONTEXT_TOKENS"], client["AGENT_SERVING_CONTRACT"]))
+        self.assertEqual("true", client["AGENT_ENABLE_THINKING"])
+        self.assertNotIn("_render", contract)
+        evidence = json.loads((output / "evidence.json").read_text())
+        self.assertEqual("incomplete", evidence["serving_contract"]["status"])
+        self.assertEqual(contract["missing_inputs"], evidence["serving_contract"]["missing_inputs"])
+        self.assertIn("serving-contract.json", evidence["files"])
+        self.assertNotIn(service.LEGACY_ALIAS, (output / "client.conf").read_text())
+        memory = next(o for o in service.load_objects((output / "workloads.yaml").read_text())
+                      if o["kind"] == "ConfigMap" and "MEMORY_LLM_MODEL" in o.get("data", {}))
+        self.assertEqual(contract["model"]["alias"], memory["data"]["MEMORY_LLM_MODEL"])
+
+
+class GatewayPolicyTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        saved = (dict(boundary.CHAT_MODELS), dict(boundary.REASONING_EFFORTS), dict(boundary.TEMPLATE_KWARGS),
+                 boundary.ADMISSION_LIMIT)
+        def restore():
+            for target, value in zip((boundary.CHAT_MODELS, boundary.REASONING_EFFORTS, boundary.TEMPLATE_KWARGS), saved):
+                target.clear()
+                target.update(value)
+            boundary.ADMISSION_LIMIT = saved[3]
+        self.addCleanup(restore)
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.path = Path(self.directory.name) / "gateway-policy.json"
+
+    async def test_rendered_policy_replaces_source_defaults(self):
+        contract = service.serving_contract(ServingContractTests.PROFILE)
+        rendered = service.candidate_render(service.contract_view(contract), 4096, 180, 16)
+        self.path.write_text(json.dumps(service.gateway_policy(contract, rendered)))
+        self.assertEqual(180, boundary.apply_policy(self.path))
+        self.assertNotIn("Qwen3.8-27B-FP8", boundary.CHAT_MODELS)
+        self.assertEqual((contract["budgets"]["context_length"], 4096), boundary.CHAT_MODELS["Qwen3.8-27B-MXFP4"])
+        self.assertEqual("xhigh", boundary.REASONING_EFFORTS["high"])
+        gateway = boundary.GatewayBoundary(None, "/nonexistent", "/nonexistent")
+        gateway.state = {"phase": "ready", "model": "Qwen3.8-27B-MXFP4", "images": False}
+        result = await request(gateway, "/v1/chat/completions",
+                               {"model": "Qwen3.8-27B-FP8", "messages": [{"role": "user", "content": "x"}]})
+        self.assertEqual("unknown_model", json.loads(result[-1]["body"])["error"]["code"])
+        for change in ({"template_kwargs": ["chat_template"]}, {"admission_limit": 0},
+                       {"chat_models": {"m": [4096, 4096]}}, {"request_timeout": 5}):
+            self.path.write_text(json.dumps({**service.gateway_policy(contract, rendered), **change}))
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                boundary.apply_policy(self.path)
+
+    def test_contract_metric_follows_the_rendered_environment(self):
+        import assistant_metrics
+        metrics = assistant_metrics.Metrics()
+        with patch.object(assistant_metrics, "METRICS", metrics):
+            assistant_metrics.record_serving_contract({})
+            self.assertNotIn("workstation_assistant_serving_contract_info{", metrics.render())
+            assistant_metrics.record_serving_contract({"SERVING_CONTRACT": "qwen3.8-27b-mxfp4-tp2.Y",
+                                                       "SERVING_CONTRACT_STATUS": "incomplete"})
+        self.assertIn('workstation_assistant_serving_contract_info{contract="qwen3.8-27b-mxfp4-tp2.Y",'
+                      'status="incomplete"} 1', metrics.render())
+
+
 if __name__ == "__main__":
     unittest.main()

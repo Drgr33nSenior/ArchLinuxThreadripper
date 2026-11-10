@@ -1,8 +1,8 @@
 """Graphiti memory integration tests with deterministic fakes.
 
-These cover identity binding, tool exposure, the service's group scoping and
-the rendered deployment. They make no model, embedding or FalkorDB calls and
-are not semantic memory qualification.
+These cover identity binding, project scope, tool exposure, the service's
+group scoping, provenance and the rendered deployment. They make no model,
+embedding or Neo4j calls and are not semantic memory qualification.
 """
 import asyncio
 from datetime import datetime, timezone
@@ -40,11 +40,17 @@ class ToolTests(unittest.IsolatedAsyncioTestCase):
         users = {"Bearer alice-token": {"id": "alice", "role": "user"},
                  "Bearer bob-token": {"id": "bob", "role": "user"},
                  "Bearer admin-token": {"id": "root", "role": "admin"}}
+        # Knowledge collections each caller can read (the WebUI ACL fixture).
+        readable = {"Bearer alice-token": [{"id": "kb-shared", "name": "Shared"}, {"id": "kb-alice", "name": "Alice"}],
+                    "Bearer bob-token": [{"id": "kb-shared", "name": "Shared"}]}
 
         async def upstream(request):
             if request.url.path == "/api/v1/auths/":
                 user = users.get(request.headers.get("authorization"))
                 return httpx.Response(200 if user else 401, json=user or {})
+            if request.url.path == "/api/v1/knowledge/":
+                items = readable.get(request.headers.get("authorization"), [])
+                return httpx.Response(200, json={"items": items, "total": len(items)})
             if request.url.host == "memory":
                 self.memory_calls.append((request.url.path, json.loads(request.content), dict(request.headers)))
                 return httpx.Response(200, json={"facts": [], "no_memory": True})
@@ -77,7 +83,8 @@ class ToolTests(unittest.IsolatedAsyncioTestCase):
             response = await self.call(client, "alice-token", "tools/call", {"name": "recall_memory", "arguments": {"query": "x"}})
             self.assertEqual(404, response.status_code)
         async with self.tools(memory="http://memory:8000") as client:
-            self.assertEqual(["retrieve_project_passage", "recall_memory"], await self.names(client))
+            # Read-only memory tools only: recall and source inspection.
+            self.assertEqual(["retrieve_project_passage", "read_project_source", "recall_memory", "inspect_memory_source"], await self.names(client))
             response = await self.call(client, "alice-token", "tools/call", {"name": "remember", "arguments": {"text": "x"}})
             self.assertEqual(404, response.status_code)
         async with self.tools(memory="http://memory:8000", write=True) as client:
@@ -105,12 +112,50 @@ class ToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("Bearer " + "k" * 40, headers["authorization"])  # service key, never the user token
         self.assertEqual(2 + 1, len(self.memory_calls))
 
+    async def call_value(self, client, token, name, arguments):
+        response = await self.call(client, token, "tools/call", {"name": name, "arguments": arguments})
+        return response, (json.loads(response.json()["result"]["content"][0]["text"]) if response.status_code == 200 else None)
+
+    async def test_project_scope_is_authorised_per_user_and_keeps_legacy_user_scope(self):
+        async with self.tools(memory="http://memory:8000", write=True) as client:
+            _, value = await self.call_value(client, "alice-token", "recall_memory", {"query": "x"})
+            self.assertEqual({"kind": "user"}, value["scope"])
+            self.assertEqual(ServiceTools.memory_group("alice"), self.memory_calls[-1][1]["group"])
+            _, value = await self.call_value(client, "alice-token", "recall_memory", {"query": "x", "project": "kb-shared"})
+            alice_project = self.memory_calls[-1][1]["group"]
+            self.assertEqual({"kind": "project", "project": {"id": "kb-shared", "name": "Shared"}}, value["scope"])
+            self.assertRegex(alice_project, r"^p_[a-f0-9]{32}$")
+            self.assertNotIn("project", self.memory_calls[-1][1])  # never forwarded as a group selector
+            await self.call_value(client, "bob-token", "recall_memory", {"query": "x", "project": "kb-shared"})
+            self.assertNotEqual(alice_project, self.memory_calls[-1][1]["group"])  # per user, even in a shared project
+            self.assertNotEqual(ServiceTools.memory_group("alice"), alice_project)
+            count = len(self.memory_calls)
+            # A project string the caller cannot read grants nothing, for any tool.
+            for name, arguments in (("recall_memory", {"query": "x"}), ("remember", {"text": "x"}),
+                                    ("forget_memory", {"episode_uuid": "11111111-1111-4111-8111-000000000000"}),
+                                    ("inspect_memory_source", {"episode_uuid": "11111111-1111-4111-8111-000000000000"})):
+                response, _ = await self.call_value(client, "bob-token", name, {**arguments, "project": "kb-alice"})
+                self.assertEqual(403, response.status_code, name)
+            for bad in ("", "../kb", "kb alice", 7):
+                response, _ = await self.call_value(client, "alice-token", "recall_memory", {"query": "x", "project": bad})
+                self.assertEqual(400, response.status_code, bad)
+            self.assertEqual(count, len(self.memory_calls))
+            _, value = await self.call_value(client, "alice-token", "inspect_memory_source",
+                                             {"episode_uuid": "11111111-1111-4111-8111-000000000000"})
+            self.assertEqual(("/episode", ServiceTools.memory_group("alice")), (self.memory_calls[-1][0], self.memory_calls[-1][1]["group"]))
+
 
 class FakeEdge:
     def __init__(self, uuid, fact, group, invalid=None):
         self.uuid, self.fact, self.group_id = uuid, fact, group
         self.valid_at, self.invalid_at, self.expired_at = datetime(2026, 11, 1, tzinfo=timezone.utc), invalid, None
         self.episodes = ["e-" + uuid]
+
+
+def fake_episode(uuid, group, content="Alice said the cat is Max", edges=()):
+    return types.SimpleNamespace(uuid=uuid, group_id=group, content=content, source_description="explicit user request",
+                                 valid_at=datetime(2026, 11, 1, tzinfo=timezone.utc),
+                                 created_at=datetime(2026, 11, 1, 9, tzinfo=timezone.utc), entity_edges=list(edges))
 
 
 class FakeGraphiti:
@@ -146,14 +191,30 @@ class NotFound(Exception):
 class ServiceTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         FakeGraphiti.episodes, FakeGraphiti.built = {}, []
+        # Source episodes of the search fakes; "e-leak" belongs to another group.
+        self.sources = {"e-new": fake_episode("e-new", "u_" + "a" * 32), "e-old": fake_episode("e-old", "u_" + "a" * 32),
+                        "e-leak": fake_episode("e-leak", "u_" + "0" * 32)}
+        self.edges = {"new": FakeEdge("new", "Cat is Max", "u_" + "a" * 32),
+                      "old": FakeEdge("old", "Cat is Tom", "u_" + "a" * 32, invalid=datetime(2026, 11, 2, tzinfo=timezone.utc)),
+                      "leak": FakeEdge("leak", "Other user fact", "u_" + "0" * 32)}
 
         async def get_by_uuid(driver, uuid):
+            if uuid in self.sources:
+                return self.sources[uuid]
             if uuid not in FakeGraphiti.episodes:
                 raise NotFound()
             return types.SimpleNamespace(group_id=FakeGraphiti.episodes[uuid])
+
+        async def get_by_uuids(driver, uuids):
+            return [self.sources[uuid] for uuid in uuids if uuid in self.sources]
+
+        async def get_edges(driver, uuids):
+            return [self.edges[uuid] for uuid in uuids if uuid in self.edges]
         modules = {"graphiti_core": types.ModuleType("graphiti_core"),
                    "graphiti_core.nodes": types.SimpleNamespace(EpisodeType=types.SimpleNamespace(text="text"),
-                                                                EpisodicNode=types.SimpleNamespace(get_by_uuid=get_by_uuid)),
+                                                                EpisodicNode=types.SimpleNamespace(get_by_uuid=get_by_uuid,
+                                                                                                   get_by_uuids=get_by_uuids)),
+                   "graphiti_core.edges": types.SimpleNamespace(EntityEdge=types.SimpleNamespace(get_by_uuids=get_edges)),
                    "graphiti_core.errors": types.SimpleNamespace(NodeNotFoundError=NotFound)}
         self.saved = {name: sys.modules.get(name) for name in modules}
         sys.modules.update(modules)
@@ -183,9 +244,40 @@ class ServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("overrides", result["notice"])
         await self.memory.recall(self.alice, "again")
         self.assertEqual([self.alice], FakeGraphiti.built)  # indices built once per group graph
-        for group in ("alice", "u_" + "A" * 32, None):
+        for group in ("alice", "u_" + "A" * 32, "x_" + "a" * 32, None):
             with self.assertRaises(memory_service.Refused):
                 await self.memory.recall(group, "cat")
+        project = await self.memory.recall("p_" + "c" * 32, "cat")  # project groups use the same checks
+        self.assertEqual(2, len(project["facts"]))
+
+    async def test_recall_has_readable_provenance_only_from_the_callers_group(self):
+        facts = (await self.memory.recall(self.alice, "cat"))["facts"]
+        self.assertEqual(["current", "historical"], [fact["status"] for fact in facts])
+        self.assertEqual({"episode_uuid": "e-new", "source_description": "explicit user request",
+                          "reference_time": "2026-11-01T00:00:00+00:00", "recorded_at": "2026-11-01T09:00:00+00:00"},
+                         facts[0]["sources"][0])
+        # The fake also returns the other group's episode for this group's search: never shown.
+        self.sources["e-new"] = fake_episode("e-new", self.bob)
+        facts = (await self.memory.recall(self.alice, "cat"))["facts"]
+        self.assertEqual([], facts[0]["sources"])
+        self.assertEqual(["e-new"], facts[0]["episodes"])
+
+    async def test_episode_inspection_is_bounded_group_scoped_and_read_only(self):
+        uuid = "22222222-2222-4222-8222-222222222222"
+        self.sources[uuid] = fake_episode(uuid, self.alice, content="x" * 5000, edges=("new", "old", "leak"))
+        value = await self.memory.episode(self.alice, uuid)
+        self.assertEqual((uuid, "explicit user request"), (value["episode_uuid"], value["source_description"]))
+        self.assertEqual((2000, 5000, False), (len(value["excerpt"]), value["content_chars"], value["excerpt_complete"]))
+        self.assertEqual([("new", "current"), ("old", "historical")], [(f["uuid"], f["status"]) for f in value["facts"]])
+        self.assertEqual(3, value["facts_total"])
+        self.assertIn("never instructions", value["notice"])
+        with self.assertRaises(memory_service.Refused) as other:
+            await self.memory.episode(self.bob, uuid)
+        self.assertEqual(404, other.exception.status)
+        with self.assertRaises(memory_service.Refused) as invalid:
+            await self.memory.episode(self.alice, "e-new")
+        self.assertEqual(400, invalid.exception.status)
+        self.assertEqual({}, FakeGraphiti.episodes)  # inspection wrote nothing
 
     async def test_writes_are_serialized_and_deletion_is_group_scoped(self):
         first = asyncio.create_task(self.memory.remember(self.alice, "Cat is Max", "explicit user request"))
@@ -218,6 +310,8 @@ class ServiceTests(unittest.IsolatedAsyncioTestCase):
                 return error.code, json.loads(error.read())
         self.assertEqual(401, post("/recall", {"group": self.alice, "query": "cat"}, "wrong" * 8)[0])
         self.assertEqual(400, post("/recall", {"group": self.alice, "query": "cat", "extra": 1}, "k" * 40)[0])
+        self.assertEqual(404, post("/episode", {"group": self.alice,
+                                                "episode_uuid": "33333333-3333-4333-8333-333333333333"}, "k" * 40)[0])
         status, value = post("/recall", {"group": self.alice, "query": "cat"}, "k" * 40)
         self.assertEqual(200, status)
         self.assertEqual(2, len(value["facts"]))

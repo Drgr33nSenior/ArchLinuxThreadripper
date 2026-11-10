@@ -27,6 +27,43 @@ REASONING_EFFORTS = {"low": "low", "medium": "medium", "high": "xhigh", "xhigh":
 # Template variables a client may set. Other variables can change the rendered
 # prompt in unreviewed ways, so they are refused rather than forwarded.
 TEMPLATE_KWARGS = {"enable_thinking": bool}
+# Requests admitted at once; the selected runtime may execute fewer and queue.
+ADMISSION_LIMIT = 4
+# Boolean template switches a rendered policy may allow. Anything else is refused.
+POLICY_TEMPLATE_KWARGS = {"enable_thinking", "preserve_thinking"}
+
+
+def apply_policy(path):
+    """Replace the source defaults above with a rendered serving-contract policy.
+
+    `service render --serving-profile` writes gateway-policy.json from the same
+    contract as the LiteLLM route, so the gateway admits only the contract's
+    models, budgets and reasoning values. The defaults are replaced, not merged:
+    a model the contract omits is no longer admitted. Returns the deadline.
+    """
+    global ADMISSION_LIMIT
+    policy = json.loads(Path(path).read_text())
+    models = policy["chat_models"]
+    efforts = policy["reasoning_efforts"]
+    kwargs = policy["template_kwargs"]
+    timeout, admission = policy["request_timeout"], policy["admission_limit"]
+    if (not isinstance(models, dict) or not models
+            or any(type(c) is not int or type(o) is not int or not 1 <= o <= c // 2
+                   for c, o in (tuple(limits) for limits in models.values()))
+            or not isinstance(efforts, dict) or not all(isinstance(k, str) and isinstance(v, str)
+                                                       for k, v in efforts.items())
+            or not isinstance(kwargs, list) or not set(kwargs) <= POLICY_TEMPLATE_KWARGS
+            or type(timeout) is not int or not 30 <= timeout <= 3600
+            or type(admission) is not int or not 1 <= admission <= 16):
+        raise ValueError("invalid gateway policy")
+    CHAT_MODELS.clear()
+    CHAT_MODELS.update({name: tuple(limits) for name, limits in models.items()})
+    REASONING_EFFORTS.clear()
+    REASONING_EFFORTS.update(efforts)
+    TEMPLATE_KWARGS.clear()
+    TEMPLATE_KWARGS.update({name: bool for name in kwargs})
+    ADMISSION_LIMIT = admission
+    return timeout
 
 
 class Refusal(Exception):
@@ -190,7 +227,7 @@ class GatewayBoundary:
             raise Refusal(404, "unknown_model")
         if self.state["phase"] != "ready" or self.state["model"] != model:
             raise Refusal(503, "requested_model_unavailable")
-        if len(self.active) >= 4:
+        if len(self.active) >= ADMISSION_LIMIT:
             raise Refusal(429, "service_concurrency_limit")
         if data.get("n", 1) != 1:
             raise Refusal(400, "one_completion_per_request")

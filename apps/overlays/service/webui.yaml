@@ -16,7 +16,10 @@ spec:
             - {name: ENABLE_DIRECT_CONNECTIONS, value: 'false'}
             - {name: ENABLE_API_KEYS, value: 'true'}
             - {name: ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS, value: 'true'}
-            - {name: API_KEYS_ALLOWED_ENDPOINTS, value: '/api/v1/auths/,/api/v1/retrieval/query/collection,/api/v1/files'}
+            # '/api/v1/knowledge/' (trailing slash) matches only the read-only
+            # knowledge listing, the project authority for handoffs and project
+            # memory; it does not admit /api/v1/knowledge/<id>/... write routes.
+            - {name: API_KEYS_ALLOWED_ENDPOINTS, value: '/api/v1/auths/,/api/v1/retrieval/query/collection,/api/v1/files,/api/v1/knowledge/'}
             - {name: ENABLE_IMAGE_GENERATION, value: 'true'}
             - {name: IMAGE_GENERATION_ENGINE, value: openai}
             - {name: IMAGES_OPENAI_API_BASE_URL, value: 'http://service-tools:8000/webui'}

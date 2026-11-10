@@ -263,6 +263,28 @@
             "port": 8000
           }
         ]
+      },
+      {
+        "from": [
+          {
+            "podSelector": {
+              "matchLabels": {
+                "app.kubernetes.io/name": "alloy"
+              }
+            },
+            "namespaceSelector": {
+              "matchLabels": {
+                "kubernetes.io/metadata.name": "workstation-observability"
+              }
+            }
+          }
+        ],
+        "ports": [
+          {
+            "protocol": "TCP",
+            "port": 8000
+          }
+        ]
       }
     ],
     "egress": [

@@ -17,10 +17,10 @@ and installation/recovery gates still apply.
 
 | Need | Selected direction | Current status |
 | --- | --- | --- |
-| Durable preferences, decisions and changing project facts | Graphiti on Neo4j Community, scoped by user | Opt-in `assistant-memory` profile packaged; Neo4j storage/restart test, model and client qualification pending |
+| Durable preferences, decisions and changing project facts | Graphiti on Neo4j Community, scoped by user or by user and authorised project | Opt-in `assistant-memory` profile packaged; Neo4j storage/restart test, model and client qualification pending |
 | Current public web information | Existing Exa adapter | Source integration exists; full target acceptance remains separate |
 | Exact code, private documentation and book passages | Repository tools and local hybrid retrieval | Existing retrieval path; book conversion remains planned |
-| Active goal, constraints, last result and next steps | Short project handoff | Shared handoff storage/loading not implemented |
+| Active goal, constraints, last result and next steps | [Task handoff](#task-handoffs) per user, project and task | Implemented in service-tools for the `assistant` experiences; client qualification pending |
 | Model execution and reusable prompt computation | SGLang and its prefix/state caches | Separate from semantic memory and retrieval |
 | Questions across a document collection | Optional [GraphRAG pilot](GRAPHRAG.md) | Real-library fixture workflows passed; live Qwen quality/resource tests pending |
 
@@ -61,11 +61,11 @@ milestones. Retain source pointers and dates. Record planned hardware separately
 from observed installed capacity, and distinguish attempted work from passing
 results. Preserve superseded facts as history with their validity and provenance.
 
-Keep the immediate project handoff compact; 500–1,000 tokens is an initial
-evaluation target, not an implemented limit. Include the goal, confirmed
-constraints, current state, last verified result, unresolved questions and next
-steps. Link to the original conversation, code revision and evidence. Recheck
-volatile Git, hardware and service state when work resumes.
+Keep the immediate task handoff compact. The [handoff tools](#task-handoffs)
+enforce character limits sized for roughly 500–1,000 tokens. Include the goal,
+confirmed constraints, current state, last observed verification, unresolved
+work and next steps. Link to the code revision and evidence. Recheck volatile
+Git, hardware and service state when work resumes.
 
 Do not automatically ingest every chat turn, full book or Exa page. Public web
 results remain temporary evidence unless deliberately retained with a source,
@@ -128,22 +128,74 @@ inactive until you raise replicas, and it is absent from every other profile.
 | `memory-embedding` | Text Embeddings Inference CPU 1.9.2, pinned digest | 4 CPU, 4 GiB | Serves the hash-verified RAG `Qwen3-Embedding-0.6B` files read-only |
 | `graphiti-memory` | Local image from [infrastructure/graphiti](../infrastructure/graphiti/Containerfile): Graphiti 0.31.2, hashed lock | 1 CPU, 1 GiB | Internal memory API |
 
-The service-tools MCP server exposes the tools to Open WebUI and Qwen Code:
+The service-tools MCP server exposes these tools to Qwen Code and, through
+the [Open WebUI tool server](#open-webui-tool-server), to browser chats:
 
 | Tool | Scope | Switch |
 | --- | --- | --- |
-| `recall_memory` | Read: facts with dates, marked current or historical | `MEMORY_ENABLED` |
+| `recall_memory` | Read: facts marked current or historical, with dates and source provenance | `MEMORY_ENABLED` |
+| `inspect_memory_source` | Read: one episode's source description, times, a 2,000-character excerpt and the status of its facts | `MEMORY_ENABLED` |
 | `remember` | Write one explicit fact; a corrected statement makes the older fact historical | `MEMORY_WRITE_ENABLED` |
 | `forget_memory` | Delete one episode by its ID | `MEMORY_WRITE_ENABLED` |
 
-Each WebUI user gets a separate memory group. service-tools derives the group
-from the caller's own authenticated identity; a tool argument can never select
-it, and administrator tokens are refused. The memory service passes that group
-to every search, drops any result without it, and checks an episode's group
-before deleting it. Recall results say that current repository,
-file or tool evidence overrides memory. NetworkPolicies allow only
-service-tools → graphiti-memory → Neo4j, the embedding server and the
-gateway. Nothing is exposed outside the cluster.
+Each tool takes an optional `project`. service-tools derives the memory group
+from the caller's own authenticated identity and, when `project` is given, from
+a project the caller can read now (see [Project scope](#project-scope)). A tool
+argument never names a group, and administrator tokens are refused. The memory
+service passes the group to every search, drops any fact or source episode
+from another group, and checks an episode's group before showing or deleting
+it. NetworkPolicies allow only service-tools → graphiti-memory → Neo4j, the
+embedding server and the gateway. Nothing is exposed outside the cluster.
+
+### Explicit writes and provenance
+
+Memory is written only when the user explicitly asks; tool descriptions say so,
+and there is no background ingestion of chats, files or web pages. Remembered
+text is user-supplied evidence. It has no instruction or permission authority,
+and current repository, file or tool evidence overrides it. Recall and
+inspection results repeat this notice.
+
+Each recalled fact has `status` (`current` or `historical`), `valid_at`,
+`invalid_at`, `expired_at` and up to three `sources`: the episode ID, its
+source description, its reference time and when it was recorded. Pass an
+episode ID to `inspect_memory_source` to read a bounded excerpt of the stored
+text and the facts extracted from it. Episode text longer than 2,000 characters
+is reported with `excerpt_complete: false`.
+
+### Project scope
+
+A project is an Open WebUI knowledge collection that the caller can read: the
+collection ID that `retrieve_project_passage` takes. The only authority is
+Open WebUI's knowledge ACL (owner, user or group read grant, public read
+grant). service-tools reads `GET /api/v1/knowledge/` with the caller's own
+credential on every project-scoped call; pinned 0.12.5 applies the same owner
+and read-grant rules to knowledge collections during retrieval. A client-supplied
+project string is only a lookup key. A collection that is missing or not
+readable is refused with `project_not_authorized`. The listing is read for at
+most 300 collections; beyond that a call is refused with
+`project_listing_incomplete`.
+
+API keys reach the listing through the `/api/v1/knowledge/` entry in
+`API_KEYS_ALLOWED_ENDPOINTS`. Open WebUI matches an entry exactly or as a
+prefix followed by `/`, so the trailing slash admits only the read-only
+listing, not `/api/v1/knowledge/<id>/...` write routes.
+
+| Scope | Group | When |
+| --- | --- | --- |
+| User-wide (legacy) | `u_` + 32 hex of SHA-256(`workstation-memory:<user id>`) | `project` omitted |
+| User and project | `p_` + 32 hex of SHA-256(`workstation-memory-project:<user id>\0<project id>`) | `project` given and readable |
+
+The `u_` formula is unchanged, so memory written before project scope remains
+reachable by omitting `project`. No data was moved, repartitioned or deleted.
+Project memory is per user: two users of a shared collection have separate
+groups. If access to a collection is revoked, its project memory is no longer
+reachable, including for `forget_memory`; it is kept, not deleted. Moving
+user-wide facts into a project would be a separate, non-destructive procedure:
+re-`remember` the selected facts with `project`, verify recall, then
+`forget_memory` the user-wide episodes individually. No such migration is
+implemented.
+
+### Enable memory
 
 To enable it on the installed workstation:
 
@@ -167,9 +219,87 @@ the copy.
 Deployments without memory are unaffected.
 
 Offline checks: `tests/workstation/test_memory.py` covers identity binding,
-tool switches, group-scoped recall and deletion, the HTTP service key, the
-rendered policies and pins, the lock and the backup claim. These use fakes; they
-do not test extraction or recall quality.
+project authorisation and the legacy user scope, tool switches, group-scoped
+recall, provenance, inspection and deletion, the HTTP service key, the rendered
+policies and pins, the lock and the backup claim. `tests/workstation/test_handoff.py`
+covers handoff scope, limits, verification status, conflicts and storage. These
+use fakes; they do not test extraction, recall quality or a live browser.
+
+## Task handoffs
+
+`save_task_handoff`, `load_task_handoff` and `list_task_handoffs` keep a compact
+record of one paused task. They are enabled by `HANDOFF_ENABLED` in the
+`assistant` experiences and do not depend on Graphiti. A handoff is scoped to
+the authenticated user, an authorised [project](#project-scope) and a task slug
+(`[a-z0-9][a-z0-9._-]{0,63}`). Other users, including users of the same
+collection, cannot read it.
+
+| Field | Limit (characters) |
+| --- | --- |
+| `goal` (required) | 600 |
+| `repository`, `branch`, `revision` | 200, 120, 80 |
+| `next_action` | 400 |
+| `completion_criteria`, `constraints`, `decisions` (accepted), `outstanding`, `evidence` | 6–8 items of 240 |
+| `blockers` | 6 items of 240 |
+| `changed_files` | 20 items of 200 |
+| `verification` | `status`, `observed` 400, `observed_at` 40, `evidence` 240 |
+| All text together | 4,000 |
+
+Limits count characters, not tokens; 4,000 characters is roughly 1,000 English
+tokens. Unknown fields and control characters are refused. Each user can keep
+100 handoffs; there is no delete tool, so reuse task slugs.
+
+`verification.status` is one of `passed`, `failed`, `partial`, `not_run` or
+`unknown`. A missing verification is stored as `unknown`. `passed`, `failed` and
+`partial` require the `observed` result text, for example `pytest: 42 passed`.
+The service never infers or upgrades a status.
+
+Every save carries `base_revision`: `0` for a new task, otherwise the revision
+that was loaded. A save based on an older revision returns an error result
+`handoff_conflict` with `current_revision` and `updated_at`, and nothing is
+overwritten. Load the current handoff, merge, and save again. Handoff refusals
+are MCP tool results with `isError: true`, so both Qwen Code and Open WebUI
+show them to the model.
+
+`load_task_handoff` returns the handoff, `revision`, `updated_at` and a notice
+to recheck Git, runtime and hardware facts before acting. `list_task_handoffs`
+without `project` lists handoffs in every collection the caller can currently
+read, with those collections' IDs and names.
+
+Handoffs are stored in `/state/task-handoffs.sqlite3` on the retained
+`service-tools-state` claim, with a derived owner key instead of the WebUI user
+ID. The backup capture stops `service-tools` and waits for its Pod to exit
+before archiving that claim, so the closed SQLite file is consistent. Preserve
+it during restore and rollback, as for the web request ledger.
+
+## Open WebUI tool server
+
+The `assistant` component configures one native MCP tool server in
+`TOOL_SERVER_CONNECTIONS`: `http://service-tools:8000/mcp`, ID `workstation`,
+named "Workstation tools". Its `auth_type` is `session`, so pinned Open WebUI
+0.12.5 sends the signed-in user's own token with each MCP request. service-tools
+checks that token through `/api/v1/auths/` as it checks a coding client's API
+key. There is no shared credential. The public read grant only lists the server
+in every user's tool menu; each call is authorised for the calling user.
+The existing `open-webui` → `service-tools:8000` NetworkPolicy already allows
+the flow.
+
+To use it, select "Workstation tools" in a chat's tool menu, or attach it to a
+model in the admin model settings. With `ENABLE_PERSISTENT_CONFIG=false`,
+change the connection in source, not the admin UI.
+
+Known gaps:
+
+- Administrator accounts are refused by service-tools, as on the coding path.
+- The forwarded session token is not limited by `API_KEYS_ALLOWED_ENDPOINTS`;
+  service-tools only calls the read routes listed above with it.
+- Memory and retrieval refusals are HTTP errors. Pinned Open WebUI shows them as
+  a generic tool error, not the refusal code. Handoff refusals are tool results.
+- Nothing is synchronised. Browser chat history, Open WebUI's own per-user
+  memory, Qwen Code auto-memory and knowledge collections stay separate stores;
+  only calls to these tools reach the shared handoff and Graphiti stores.
+- Browser-side tool selection, model tool-call quality and the end-to-end flow
+  have not been qualified on the workstation.
 
 ## Acceptance before adoption
 

@@ -1,0 +1,15 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: open-webui
+spec:
+  template:
+    spec:
+      initContainers:
+        # The init container imports torch/sentence-transformers and loads the
+        # 91 MB model once (check-reranker.py). Its limits stay below the
+        # application container's, so the pod's admitted budget is unchanged.
+        - name: rag-inputs
+          resources:
+            requests: {cpu: 100m, memory: 1Gi}
+            limits: {cpu: '1', memory: 2Gi}

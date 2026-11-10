@@ -209,7 +209,7 @@ sed 's|^AGENT_RETRIEVAL_ENABLED=.*|AGENT_RETRIEVAL_ENABLED=true|' "$work/https.c
 jq -e '.mcpServers.workstationKnowledge.httpUrl == "https://agents.example.test/mcp" and
   .mcpServers.workstationKnowledge.headers.Authorization == "Bearer ${WORKSTATION_RETRIEVAL_API_KEY}" and
   .mcpServers.workstationKnowledge.trust == false and
-  .mcpServers.workstationKnowledge.includeTools == ["retrieve_project_passage"]' \
+  .mcpServers.workstationKnowledge.includeTools == ["retrieve_project_passage","read_project_source"]' \
   "$work/retrieval-bundle/qwen/settings.json" >/dev/null
 (
   WORKSTATION_AGENT_API_KEY=fixture-secret
@@ -233,7 +233,7 @@ for retrieval in true false; do
   jq -e --argjson retrieval "$retrieval" '
     .mcpServers.workstationKnowledge as $m |
     $m.httpUrl == "https://agents.example.test/mcp" and $m.trust == false and
-    $m.includeTools == ((if $retrieval then ["retrieve_project_passage"] else [] end) + ["search_web","read_web_page"])' \
+    $m.includeTools == ((if $retrieval then ["retrieve_project_passage","read_project_source"] else [] end) + ["search_web","read_web_page"])' \
     "$work/search-$retrieval/qwen/settings.json" >/dev/null
 done
 sed 's|^AGENT_WEB_SEARCH_ENABLED=.*|AGENT_WEB_SEARCH_ENABLED=true|' "$work/agent.conf" >"$work/loopback-search.conf"
@@ -245,7 +245,7 @@ reject "$root/bin/workstationctl" --config "$work/unsupported-search.conf" agent
 sed -e 's|^AGENT_HARNESS=.*|AGENT_HARNESS=qwen|' -e 's|^AGENT_MEMORY_ENABLED=.*|AGENT_MEMORY_ENABLED=true|' \
   "$work/https.conf" >"$work/memory.conf"
 "$root/bin/workstationctl" --config "$work/memory.conf" agent configure "$work/memory" >/dev/null
-jq -e '.mcpServers.workstationKnowledge.includeTools == ["recall_memory","remember","forget_memory"]' \
+jq -e '.mcpServers.workstationKnowledge.includeTools == ["recall_memory","remember","forget_memory","inspect_memory_source"]' \
   "$work/memory/qwen/settings.json" >/dev/null
 jq -e '.mcpServers.workstationKnowledge.includeTools | index("recall_memory") == null' \
   "$work/search-true/qwen/settings.json" >/dev/null
@@ -253,6 +253,55 @@ sed 's|^AGENT_MEMORY_ENABLED=.*|AGENT_MEMORY_ENABLED=true|' "$work/agent.conf" >
 reject "$root/bin/workstationctl" --config "$work/loopback-memory.conf" agent configure "$work/unsafe-memory"
 sed 's|^AGENT_HARNESS=.*|AGENT_HARNESS=hermes|' "$work/memory.conf" >"$work/unsupported-memory.conf"
 reject "$root/bin/workstationctl" --config "$work/unsupported-memory.conf" agent configure "$work/unsupported-memory"
+
+# Task handoff tools are their own opt-in on the same scoped endpoint, Qwen Code only.
+sed -e 's|^AGENT_HARNESS=.*|AGENT_HARNESS=qwen|' -e 's|^AGENT_HANDOFF_ENABLED=.*|AGENT_HANDOFF_ENABLED=true|' \
+  "$work/https.conf" >"$work/handoff.conf"
+"$root/bin/workstationctl" --config "$work/handoff.conf" agent configure "$work/handoff" >/dev/null
+jq -e '.mcpServers.workstationKnowledge.includeTools == ["save_task_handoff","load_task_handoff","list_task_handoffs"]' \
+  "$work/handoff/qwen/settings.json" >/dev/null
+jq -e '.mcpServers.workstationKnowledge.includeTools | index("save_task_handoff") == null' \
+  "$work/memory/qwen/settings.json" >/dev/null
+sed 's|^AGENT_HANDOFF_ENABLED=.*|AGENT_HANDOFF_ENABLED=true|' "$work/agent.conf" >"$work/loopback-handoff.conf"
+reject "$root/bin/workstationctl" --config "$work/loopback-handoff.conf" agent configure "$work/unsafe-handoff"
+sed 's|^AGENT_HARNESS=.*|AGENT_HARNESS=hermes|' "$work/handoff.conf" >"$work/unsupported-handoff.conf"
+reject "$root/bin/workstationctl" --config "$work/unsupported-handoff.conf" agent configure "$work/unsupported-handoff"
+
+# Serving-contract request defaults (service render client.conf) reach Qwen Code
+# requests and the bundle; empty values leave the server defaults in force.
+{
+  sed -e 's|^AGENT_HARNESS=.*|AGENT_HARNESS=qwen|' -e 's|^AGENT_MODEL=.*|AGENT_MODEL=Qwen3.8-27B-MXFP4|' \
+    -e 's|^AGENT_CONTEXT_TOKENS=.*|AGENT_CONTEXT_TOKENS=131040|' "$work/https.conf"
+  printf '%s\n' AGENT_SERVING_CONTRACT=qwen3.8-27b-mxfp4-tp2.Y AGENT_ENABLE_THINKING=true AGENT_REASONING_EFFORT=low
+} >"$work/contract.conf"
+"$root/bin/workstationctl" --config "$work/contract.conf" agent configure "$work/contract" >/dev/null
+jq -e '.modelProviders.openai[0].generationConfig.samplingParams ==
+  {"max_tokens":1024,"reasoning_effort":"low","chat_template_kwargs":{"enable_thinking":true}}' \
+  "$work/contract/qwen/settings.json" >/dev/null
+jq -e '.serving_contract == "qwen3.8-27b-mxfp4-tp2.Y" and
+  .request_defaults == {"reasoning_effort":"low","chat_template_kwargs":{"enable_thinking":true}}' \
+  "$work/contract/bundle.json" >/dev/null
+jq -e '.modelProviders.openai[0].generationConfig.samplingParams == {"max_tokens":1024}' \
+  "$work/https-bundle/qwen/settings.json" >/dev/null
+jq -e '.serving_contract == null and .request_defaults == {}' "$work/https-bundle/bundle.json" >/dev/null
+(
+  WORKSTATION_AGENT_API_KEY=fixture-secret
+  export WORKSTATION_AGENT_API_KEY
+  # Launch takes request defaults from the bundle, not the inherited environment.
+  AGENT_REASONING_EFFORT=bogus ws_agent_launch "$work/contract" qwen cli
+) >/dev/null
+# A bundle whose recorded defaults differ from the pinned native file is refused.
+cp "$work/contract/bundle.json" "$work/contract-bundle-original"
+jq '.request_defaults.reasoning_effort = "xhigh"' "$work/contract-bundle-original" >"$work/contract/bundle.json"
+reject ws_agent_launch "$work/contract" qwen cli
+cp "$work/contract-bundle-original" "$work/contract/bundle.json"
+for invalid_setting in AGENT_REASONING_EFFORT=max AGENT_ENABLE_THINKING=yes AGENT_SERVING_CONTRACT=bad/value AGENT_TOP_P=1.5; do
+  setting_key=${invalid_setting%%=*}
+  sed "s|^$setting_key=.*|$invalid_setting|" "$work/contract.conf" >"$work/invalid-contract.conf"
+  grep -q "^$setting_key=" "$work/invalid-contract.conf" || printf '%s\n' "$invalid_setting" >>"$work/invalid-contract.conf"
+  reject "$root/bin/workstationctl" --config "$work/invalid-contract.conf" agent configure "$work/invalid-contract"
+  [[ ! -e $work/invalid-contract ]]
+done
 
 # Client failure is returned as-is, never retried through a second harness.
 ws_agent_exec() {

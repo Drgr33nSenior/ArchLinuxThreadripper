@@ -108,6 +108,14 @@ OPEN_WEBUI_IMAGE=ghcr.io/open-webui/open-webui:v0.11.4@sha256:332438e079ad23bb11
 RAG_EMBEDDING_REPOSITORY=Qwen/Qwen3-Embedding-0.6B
 RAG_EMBEDDING_REVISION=97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3
 # Per-file SHA-256 inputs: apps/overlays/rag/SHA256SUMS (safetensors, no pickle).
+# The image above is the rag/service pilot pin. The assistant overlays override it
+# with v0.12.5 (source f7ac7ee10962ddec0017f5c29b6740d9b9c5faca), pinned in
+# apps/components/assistant/kustomization.yaml; docs/RAG.md records both.
+# Assistant CPU cross-encoder reranker, reviewed 2026-11-10 against that 0.12.5
+# loader (sentence-transformers 5.5.1 CrossEncoder, no remote code). Apache-2.0.
+# Per-file SHA-256 inputs: apps/overlays/rag/RERANKER-SHA256SUMS (safetensors).
+RAG_RERANKER_REPOSITORY=cross-encoder/ms-marco-MiniLM-L6-v2
+RAG_RERANKER_REVISION=233902d25c440f23af6f7d6e94d2946bac0bee0a
 # Qwen CLI schema and output-limit contract rechecked 2026-09-09; npm gitHead,
 # not the separately released SDK. Client execution remains unqualified.
 QWEN_CODE_VERSION=0.23.2

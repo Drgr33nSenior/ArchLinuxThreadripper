@@ -13,7 +13,8 @@ trap 'rm -rf -- "$scratch"' EXIT
 
 # The separate legacy K3s parser must accept only the new exact lock keys/values.
 source "$root/lib/k3s/common.sh"
-for key in OPEN_WEBUI_VERSION OPEN_WEBUI_COMMIT OPEN_WEBUI_IMAGE RAG_EMBEDDING_REPOSITORY RAG_EMBEDDING_REVISION; do
+for key in OPEN_WEBUI_VERSION OPEN_WEBUI_COMMIT OPEN_WEBUI_IMAGE RAG_EMBEDDING_REPOSITORY RAG_EMBEDDING_REVISION \
+  RAG_RERANKER_REPOSITORY RAG_RERANKER_REVISION; do
   k3s_allowed_key "$key"
   k3s_validate_value "$key" "$(common::lock_get "$root/versions.lock" "$key")"
   if (k3s_validate_value "$key" unreviewed) >"$scratch/invalid-lock.log" 2>&1; then exit 1; fi
@@ -33,9 +34,31 @@ for invalid in UVICORN_WORKERS=2 VECTOR_DB=pgvector USE_CUDA_DOCKER=true ENABLE_
   RAG_EMBEDDING_CONTENT_PREFIX=unreviewed RAG_EMBEDDING_MODEL=/rag-models/other \
   CHUNK_SIZE=512 CHUNK_OVERLAP=192 RAG_TOP_K=0 RAG_TOP_K=1000 RAG_EMBEDDING_BATCH_SIZE=3 \
   RAG_TOP_K_RERANKER=10 RAG_TEXT_SPLITTER=token OMP_NUM_THREADS=48 RAG_FILE_MAX_SIZE=100 \
-  RAG_ALLOWED_FILE_EXTENSIONS=pdf RAG_TOP_K=4 TIKTOKEN_CACHE_DIR=/app/backend/data/cache/tiktoken; do
+  RAG_ALLOWED_FILE_EXTENSIONS=pdf RAG_TOP_K=4 TIKTOKEN_CACHE_DIR=/app/backend/data/cache/tiktoken \
+  RAG_RERANKER_PROFILE=ms-marco-minilm-l6-v2 RAG_PASSAGE_CHAR_LIMIT=100; do
   if profile_check "$invalid" >"$scratch/invalid.log" 2>&1; then
     printf 'Unexpectedly accepted %s\n' "$invalid" >&2
+    exit 1
+  fi
+done
+
+# The assistant profile: rag.env plus the reranker component's merged settings.
+reranker_check() (
+  set -a
+  source "$root/apps/overlays/rag/rag.env"
+  source "$root/apps/components/rag-reranker/reranker.env"
+  export RAG_EMBEDDING_QUERY_PREFIX=$'Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:'
+  env "$@" bash "$root/apps/overlays/rag/validate-profile.sh"
+)
+reranker_check >/dev/null
+reranker_check RAG_TOP_K=16 RAG_TOP_K_RERANKER=8 RAG_RERANKING_BATCH_SIZE=32 >/dev/null
+for invalid in ENABLE_RAG_HYBRID_SEARCH=false RAG_TOP_K=17 RAG_TOP_K_RERANKER=9 RAG_TOP_K=4 \
+  RAG_RERANKING_MODEL=/rag-models/other RAG_RERANKING_MODEL= RAG_RERANKING_ENGINE=external RAG_RERANKING_BATCH_SIZE=64 \
+  RAG_RERANKER_PROFILE=unreviewed RAG_RERANKING_MODEL_TRUST_REMOTE_CODE=true SENTENCE_TRANSFORMERS_CROSS_ENCODER_BACKEND=onnx \
+  SENTENCE_TRANSFORMERS_CROSS_ENCODER_SIGMOID_ACTIVATION_FUNCTION=false RAG_RELEVANCE_THRESHOLD=1.5 \
+  RAG_CONTEXT_CHAR_BUDGET=100 RAG_SOURCE_READ_CHAR_LIMIT=999999; do
+  if reranker_check "$invalid" >"$scratch/invalid.log" 2>&1; then
+    printf 'Unexpectedly accepted reranker setting %s\n' "$invalid" >&2
     exit 1
   fi
 done
@@ -100,6 +123,22 @@ mv "$scratch/staged/Qwen3-Embedding-0.6B/config.json" "$scratch/saved-config"
 ln -s "$scratch/saved-config" "$scratch/staged/Qwen3-Embedding-0.6B/config.json"
 if ws_rag_verify_models "$scratch/staged" >"$scratch/symlink.log" 2>&1; then exit 1; fi
 if ws_rag_verify_models "$scratch/missing" >"$scratch/missing.log" 2>&1; then exit 1; fi
+
+# Reranker allowlist and checksums: synthetic bytes, separate manifest and set.
+mkdir -p "$scratch/reranker/ms-marco-MiniLM-L6-v2"
+while read -r _ relative; do
+  cp "$scratch/fixture" "$scratch/reranker/$relative"
+  printf '%s  %s\n' "$fixture_hash" "$relative"
+done <"$root/apps/overlays/rag/RERANKER-SHA256SUMS" >"$scratch/reranker.sums"
+verify_reranker() { bash "$root/apps/overlays/rag/verify-models.sh" "$scratch/reranker" "$@"; }
+verify_reranker "$scratch/reranker.sums" reranker >/dev/null
+if verify_reranker "$scratch/reranker.sums" >"$scratch/reranker-set.log" 2>&1; then exit 1; fi
+head -n 5 "$scratch/reranker.sums" >"$scratch/reranker-short.sums"
+if verify_reranker "$scratch/reranker-short.sums" reranker >"$scratch/reranker-short.log" 2>&1; then exit 1; fi
+printf '%s  %s\n' "$fixture_hash" 'ms-marco-MiniLM-L6-v2/pytorch_model.bin' >>"$scratch/reranker-short.sums"
+if verify_reranker "$scratch/reranker-short.sums" reranker >"$scratch/reranker-pickle.log" 2>&1; then exit 1; fi
+printf 'tampered\n' >>"$scratch/reranker/ms-marco-MiniLM-L6-v2/model.safetensors"
+if verify_reranker "$scratch/reranker.sums" reranker >"$scratch/reranker-tamper.log" 2>&1; then exit 1; fi
 
 printf '# Approved public runbook\nUse the locked image.\n' >"$scratch/repo/docs/runbook.md"
 ws_rag_corpus "$scratch/corpus" docs/runbook.md >/dev/null

@@ -190,7 +190,7 @@ require_check(env.any? { |e| e == {'name' => 'HSA_OVERRIDE_GFX_VERSION', 'value'
 end
 kids_env = named(family, 'Deployment', 'kids-steam-headless').dig('spec', 'template', 'spec', 'containers')[0]['env']
 require_check(kids_env.any? { |e| e['name'] == 'STEAM_ARGS' && e['value'] == '-tenfoot' }, 'Kids profile lost Big Picture mode')
-require_check(named(family, 'Namespace', 'ai-home-lab').dig('metadata', 'labels', 'pod-security.kubernetes.io/enforce') == 'baseline', 'No implicit namespace-wide gaming exception')
+require_check(named(family, 'Namespace', 'ai-home-lab').dig('metadata', 'labels', 'pod-security.kubernetes.io/enforce') == 'restricted', 'No implicit namespace-wide gaming exception')
 if File.file?(File.join(directory, 'operator.yaml'))
   operator = documents(directory, 'operator')
   require_check(operator.none? { |d| d.dig('metadata', 'annotations', 'helm.sh/hook') }, 'Helm lifecycle hooks must not become ordinary manifest resources')

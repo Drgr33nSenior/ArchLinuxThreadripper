@@ -33,6 +33,19 @@ spec:
             # Public results are transient prompt evidence. Local knowledge
             # remains the existing authenticated RAG collection.
             - {name: BYPASS_WEB_SEARCH_EMBEDDING_AND_RETRIEVAL, value: 'true'}
+            # Native MCP tool server with per-user identity: auth_type "session"
+            # forwards the signed-in user's own WebUI token, which service-tools
+            # checks like a coding client's key (role user; admins refused).
+            # No shared credential. The public read grant only shows the server
+            # in the tool menu; every call is authorised per user downstream.
+            # Existing open-webui -> service-tools:8000 policies cover the flow.
+            - name: TOOL_SERVER_CONNECTIONS
+              value: >-
+                [{"type":"mcp","url":"http://service-tools:8000/mcp","path":"","auth_type":"session",
+                "key":"","config":{"enable":true,"access_grants":[{"principal_type":"user",
+                "principal_id":"*","permission":"read"}]},"info":{"id":"workstation",
+                "name":"Workstation tools","description":"Project passages, task handoffs, memory and
+                public web pages, with your own permissions"}}]
             - {name: ENABLE_IMAGE_PROMPT_GENERATION, value: 'false'}
             - {name: AUDIO_TTS_ENGINE, value: ''}
             - {name: AUDIO_STT_OPENAI_API_BASE_URL, value: ''}

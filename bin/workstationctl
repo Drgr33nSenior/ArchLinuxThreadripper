@@ -38,7 +38,8 @@ Commands:
   performance hyperloom sglang-owner <fresh-session> --authorization-sha256 <sha256> --selection <current-selection.json> --boot-id <uuid> [--execute-owner --output <fresh-output> --wheel <release.whl>]
   performance hyperloom sglang-evidence <manifest.json> <new-output> --manifest-sha256 <sha256> [--runtime-root <absolute-optimizer-path>]
   resources plan <hardware.json> <new-output-directory> [versions.lock]
-  service render <site.json> <new-output-directory> [--mode large|split] [--experience service|assistant] [--existing-claims <pvc.json>]
+  service render <site.json> <new-output-directory> [--mode large|split] [--experience service|assistant|assistant-memory] [--existing-claims <pvc.json>]
+                 [--serving-profile <profile.json> [--arm ARM] [--runtime-image IMAGE@sha256:D] [--output-tokens N]]
   service candidate-plan <selected-pointer.json> <new-output-directory> --pointer-sha256 SHA256 [--package-root DIR] [--output-tokens N] [--deadline-seconds N] [--reserve-tokens N] [--runtime-image localhost/...@sha256:D]
   service acceptance plan <new-output.json> --model ALIAS [--tokenizer-dir DIR]
   service acceptance run <new-output.json> --boundary direct|gateway|webui-api --base-url URL --model ALIAS [--key-file F] [--case ID]
@@ -69,6 +70,8 @@ Commands:
   sunshine qualify-frames <decoded.framemd5> <requested-Hz> <new-output.json>
   rag stage-models <new-output-directory>
   rag verify-models <staged-model-directory>
+  rag stage-reranker <new-output-directory>
+  rag verify-reranker <staged-reranker-directory>
   rag corpus <new-output-directory> <docs/file.md...>
   graphrag prepare|verify|stage-tokenizers|index|query <options; see docs/GRAPHRAG.md>
   agent configure <new-output-directory>
@@ -300,6 +303,14 @@ main() {
     rag:verify-models)
       (($# == 3)) || return 2
       ws_rag_verify_models "$3"
+      ;;
+    rag:stage-reranker)
+      (($# == 3)) || return 2
+      ws_rag_stage_reranker "$3"
+      ;;
+    rag:verify-reranker)
+      (($# == 3)) || return 2
+      ws_rag_verify_reranker "$3"
       ;;
     rag:corpus)
       (($# >= 4)) || return 2

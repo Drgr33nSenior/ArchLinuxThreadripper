@@ -1,0 +1,11 @@
+# CPU cross-encoder reranking for the assistant retrieval profile. Included by
+# apps/overlays/assistant and apps/overlays/assistant-split; removing it restores
+# the baseline rag.env mode (no reranker, three candidates/three final passages).
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+configMapGenerator:
+  - name: webui-rag-profile
+    behavior: merge
+    envs: [reranker.env]
+patches:
+  - path: webui.yaml

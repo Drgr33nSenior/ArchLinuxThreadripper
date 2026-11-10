@@ -69,7 +69,16 @@ class AssistantTests(unittest.TestCase):
                 name, kind = original["metadata"]["name"], original["kind"]
                 if kind == "Deployment" and name in {"open-webui", "service-tools"}:
                     continue
+                if kind == "ConfigMap" and name.startswith("webui-rag-profile-"):
+                    continue  # The reranker component merges its profile; checked below.
                 self.assertEqual(original, named(objects, kind, name), (kind, name))
+            reranker = dict(line.split("=", 1) for line in
+                            (ROOT / "apps/components/rag-reranker/reranker.env").read_text().splitlines()
+                            if line and not line.startswith("#"))
+            profiles = [next(o["data"] for o in rendered if o["kind"] == "ConfigMap"
+                             and o["metadata"]["name"].startswith("webui-rag-profile-")) for rendered in (previous, objects)]
+            self.assertEqual({**profiles[0], **reranker}, profiles[1])
+            self.assertEqual(("none", "ms-marco-minilm-l6-v2"), tuple(p["RAG_RERANKER_PROFILE"] for p in profiles))
             self.assertEqual(len(previous) + 2, len(objects))
             for obj in objects:
                 self.assertNotEqual("Secret", obj["kind"])
@@ -119,6 +128,29 @@ class AssistantTests(unittest.TestCase):
             excluded = [ipaddress.ip_network(n) for n in policy["egress"][0]["to"][0]["ipBlock"]["except"]]
             for address in ("127.0.0.1", "169.254.169.254", "10.43.0.1", "192.168.2.15", "172.16.1.1"):
                 self.assertTrue(any(ipaddress.ip_address(address) in n for n in excluded))
+
+    def test_browser_tools_use_each_users_own_session_identity(self):
+        for objects in (self.large, self.split):
+            _, env = environment(objects)
+            servers = json.loads(env["TOOL_SERVER_CONNECTIONS"])
+            self.assertEqual(1, len(servers))
+            server = servers[0]
+            # Native MCP with the signed-in user's own token; no shared credential.
+            self.assertEqual(("mcp", "http://service-tools:8000/mcp", "session", ""),
+                             (server["type"], server["url"], server["auth_type"], server["key"]))
+            self.assertNotIn("headers", server)
+            self.assertFalse(server.get("forward_cookies", False))
+            self.assertTrue(server["config"]["enable"])
+            self.assertEqual([{"principal_type": "user", "principal_id": "*", "permission": "read"}],
+                             server["config"]["access_grants"])
+            self.assertEqual("workstation", server["info"]["id"])
+            tools = named(objects, "Deployment", "service-tools")["spec"]["template"]["spec"]["containers"][0]
+            self.assertIn({"name": "HANDOFF_ENABLED", "value": "true"}, tools["env"])
+            self.assertIn("/api/v1/knowledge/", env["API_KEYS_ALLOWED_ENDPOINTS"].split(","))
+            # The existing exact flow already carries WebUI -> service-tools:8000.
+            policy = named(objects, "NetworkPolicy", "open-webui-service-flows")["spec"]
+            self.assertIn({"to": [{"podSelector": {"matchLabels": {"app.kubernetes.io/name": "service-tools"}}}],
+                           "ports": [{"protocol": "TCP", "port": 8000}]}, policy["egress"])
 
     def test_declared_image_identity_matches_creative_staging_and_effective_ui(self):
         profile, workflow, workflow_sha = load_image_profile(ROOT / "apps/base/shared-api")

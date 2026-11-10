@@ -68,8 +68,9 @@ and existing claim metadata; do not apply example DNS or invent a new identity.
   --experience assistant --mode split --existing-claims /private/service-pvcs.json
 ```
 
-`large` keeps the existing two-GPU Qwen3.8-27B-FP8 service contract and disables
-image generation in WebUI. `split` explicitly selects the existing one-GPU
+Without `--serving-profile`, `large` keeps the existing two-GPU Qwen3.8-27B-FP8
+source composition and disables image generation in WebUI. With it, every
+consumer is rendered from the [serving contract](#serving-contract) instead. `split` explicitly selects the existing one-GPU
 Qwen3.5-9B contract and enables SDXL on the other GPU. It never silently exchanges
 the chat model to make room for an image. The native serving candidate (below)
 must still complete its own packaging and model-specific qualification; this
@@ -95,6 +96,92 @@ TheRock ROCm 10.3.0.dev20261108), the
 (unqualified) and its qualification Job. The op234 material below, including
 the `SELECTED-PACKAGE-V2` planner commands and the composition-image blocker,
 is historical.
+
+### Serving contract
+
+`service render --serving-profile` reads the AI-stack serving profile, its model
+catalogue and `stack.lock`, and builds one contract
+(`serving-contract.json`). Every consumer in that render comes from it: the
+persistent SGLang Deployment, the gateway policy, the LiteLLM route, the Open
+WebUI defaults, the Qwen Code client values (`client.conf`) and the
+`service-tools` contract metric. The serving owner's files are read, never
+edited, and their `render.py` builds the launch argv and environment, so the
+Deployment starts exactly what the qualification Job starts.
+
+```sh
+./bin/workstationctl service render /private/service-site.json /private/assistant-contract \
+  --experience assistant --mode large --existing-claims /private/service-pvcs.json \
+  --serving-profile infrastructure/ai-stack/serving/qwen3.8-27b-mxfp4-tp2.json \
+  --runtime-image registry.lan.thespry.family/local/sglang-gfx1201@sha256:DIGEST_FROM_SERVING_OWNER
+```
+
+| Contract field | Source |
+| --- | --- |
+| `contract` (`<profile>.<arm>`), `selection` | Profile name and the arm the profile marks `default`, unless `--arm` names one |
+| `model` (alias, checkpoint and draft revisions) | Profile `served_model_name`; model catalogue |
+| `tokenizer`, `chat_template` | Catalogue file identities; accepted reasoning values from the template itself (below) |
+| `runtime` | `--runtime-image` (lab registry or its `ghcr.io` copy, pinned by digest); SGLang commit, patch series and GPU target from `stack.lock`; digest of the launch argv and environment |
+| `parsers` | Profile `--reasoning-parser`, `--tool-call-parser`, `--grammar-backend` |
+| `reasoning` | Profile `--default-chat-template-kwargs`; template-accepted efforts; client mapping |
+| `budgets`, `concurrency`, `deadlines` | Profile context, pool and running-request limits; `--output-tokens` (default 4,096, at most half the context, unqualified); gateway admission 4 and 180-second deadline |
+| `assets`, `requirements` | Model and draft paths from the argv; `ai-models` claim from `k8s/models.yaml`; GPU count, groups and node label from the profile, `render.py` and `stack.lock` |
+
+`status` is `incomplete` while a deployment input is missing, `provisional`
+when the inputs are present but the profile is not `qualified` or the catalogue
+is not promoted, and `active` only when both are. An incomplete render still
+writes every consumer so it can be reviewed, but the Deployment image is
+`registry.invalid/…:CONTRACT-INCOMPLETE`, replicas stay zero, and
+`evidence.json` lists `missing_inputs`. The catalogue's promoted value is
+assumed to be `selected`; any status other than `candidate` or `selected` is
+refused until the serving owner names it.
+
+The render cannot silently target the older FP8/32K profile. It replaces the
+FP8 LiteLLM route, gateway allowlist, Open WebUI default, memory extraction
+model and client model, drops the unused FP8 `sglang-profile` ConfigMap, and
+then refuses to write anything if `Qwen3.8-27B-FP8` remains in the rendered
+configuration or any layer disagrees with the contract (route, gateway and
+client context, output cap, input budget, deadline order, request defaults,
+Deployment argv). The gateway reads the rendered `gateway-policy.json` at
+startup and replaces its source defaults, so an FP8 request is refused as
+`unknown_model`. The 9B split route is kept. The contract needs both GPUs, so
+`--mode split` is refused. Virtual keys allowlisted only for the FP8 alias do
+not reach the new alias: issue keys for `Qwen3.8-27B-MXFP4` with
+`service provision` (the alias is now in its allowlist) and revoke the old ones
+as before.
+
+Before activation, also extend `service_session.py` and `session.sh`, which
+still accept only the FP8 and 9B aliases when they set the gateway phase.
+
+#### Reasoning parameters
+
+The catalogue's `chat_template.jinja` (git blob `c0c686f9…`, 8,952 bytes; the
+same bytes as the FP8 checkpoint's template) was read directly:
+
+- thinking is on unless `enable_thinking` is false;
+- `reasoning_effort` defaults to `xhigh` and accepts only `xhigh`, `medium`
+  and `low` (lines 46–49); any other value, including `high` and numeric
+  efforts, raises a template error;
+- it also reads `preserve_thinking` (line 116), which clients may not set.
+
+SGLang at the pinned commit (`fcb32746…`) accepts the tiers `none`, `minimal`,
+`low`, `medium`, `high`, `xhigh`, `ultra` and `max`, or a float from 0 to 0.99
+(`entrypoints/openai/protocol.py`, `ReasoningEffortTier`), and passes the
+effort to the template as `reasoning_effort` (`serving_chat.py`
+`_apply_jinja_template`). The template, not SGLang, therefore limits the
+values, and the gateway's `high` → `xhigh` mapping is still required. The
+contract derives that mapping from the template's accepted list.
+
+The pinned `serving_chat.py` merges `--default-chat-template-kwargs` with
+`setdefault` after it has moved a request's `chat_template_kwargs.reasoning_effort`
+into the top-level field, and at render time those kwargs override the
+top-level effort. Because the profile's server default includes
+`reasoning_effort: low`, a per-request effort appears not to reach the
+template. This is a source reading, not an observation: the serving owner
+should confirm it with one rendered prompt (the research note's open item 8)
+and, if confirmed, drop `reasoning_effort` from the server default or patch the
+merge. Until then the contract's client defaults equal the server default
+(`enable_thinking: true`, `reasoning_effort: low`), and sampling is left to the
+checkpoint's generation defaults.
 
 ### op234 selection (historical)
 
@@ -148,9 +235,10 @@ template is in `tokenizer_config.json` (`b11349aa…`). The template:
 The AI-stack revision `5233554c…` ships `chat_template.jinja`, listed in the
 [model catalog](../infrastructure/ai-stack/models/qwen3.8-27b-mxfp4.json).
 The serving research found that it renders identically to Qwen's template and
-reads `enable_thinking`, `reasoning_effort` and `preserve_thinking`. The
-accepted `reasoning_effort` values above, and therefore the gateway's `high`
-to `xhigh` mapping, need re-verification against `5233554c…`.
+reads `enable_thinking`, `reasoning_effort` and `preserve_thinking`. Its
+`chat_template.jinja` has the same git blob as the template read for this
+section, so the accepted values and the `high` to `xhigh` mapping hold for
+`5233554c…` (see [Reasoning parameters](#reasoning-parameters)).
 
 ### Prepare the integration plan (historical)
 
@@ -198,6 +286,7 @@ The selected arm was throughput-measured with a sampled profile (temperature
 | Gateway boundary | Accepts `reasoning_effort` `low`, `medium`, `high` and `xhigh`; sends `high` as `xhigh`, the nearest level the template accepts. Accepts `chat_template_kwargs` with only a boolean `enable_thinking`; refuses other fields |
 | LiteLLM 1.106.2 | `drop_params: false`; forwards `reasoning_effort` and `max_completion_tokens` unchanged; passes `top_k` and `chat_template_kwargs` through `extra_body` |
 | SGLang 0.5.21 | Passes `reasoning_effort` and `chat_template_kwargs` to the template |
+| SGLang `fcb32746…` (AI stack) | Same, plus server defaults from `--default-chat-template-kwargs`; see [Reasoning parameters](#reasoning-parameters) for the per-request effort caveat |
 
 Without parser flags, SGLang returns reasoning and tool-call markup in
 `content`, and `finish_reason` stays `stop`. The persistent descriptor adds
