@@ -272,6 +272,11 @@ assert ([e["name"] for e in profile["arms"]["V"]["env"]] ==
 assert argv["W"] == argv["V"]
 assert ([e["name"] for e in profile["arms"]["W"]["env"]] ==
         [e["name"] for e in profile["arms"]["V"]["env"]] + ["SGLANG_GFX1201_P1_FROM_KQ3"])
+# X is W with prefill-sized reductions on the PCIe custom all-reduce (24 MiB cap).
+assert argv["X"] == argv["W"]
+assert ([e["name"] for e in profile["arms"]["X"]["env"]] ==
+        [e["name"] for e in profile["arms"]["W"]["env"]] + ["SGLANG_GFX1201_PCIE_CUSTOM_AR_MAX_BYTES"])
+assert profile["arms"]["X"]["env"][-1]["value"] == str(24 << 20)
 for arm in profile["arms"]:
     items = json.loads((work / f"job-{arm}.json").read_text())["items"]
     config, job, service = items
