@@ -250,6 +250,28 @@ if not g._fused_asm_checked.get((torch.cuda.current_device(), 8, sn, sk, 4)):
 if not torch.equal(souts[0], souts[1]):
     raise SystemExit("IMAGE_SMOKE=fail: fused split-K reduce differs from the two-kernel path")
 
+# kq3 verify GEMM (serving patch 0022) on the same out-projection shard: the records
+# unpack to the weight exactly, and the kernel is bitwise equal to the split-K path at
+# 8 and 16 rows. The split-K switch is set here because the image leaves it off.
+import types
+from sglang.srt.layers.quantization.quark.schemes import gfx1201_mxfp4_kq3 as kq3
+downout = g.SPLITK_DOWNOUT
+g.SPLITK_DOWNOUT = True
+kholder = types.SimpleNamespace()
+krec = kq3.pack_weight(swq, sws.contiguous(), ((kholder, 0),))
+if krec is None:
+    raise SystemExit("IMAGE_SMOKE=fail: kq3 did not admit the out-projection shard")
+kc = krec.canonical()
+if not (torch.equal(kc.weight, swq) and torch.equal(kc.weight_scale, sws.contiguous())):
+    raise SystemExit("IMAGE_SMOKE=fail: kq3 records do not unpack to the weight")
+for km in (8, 16):
+    kxq, kxs = g.dynamic_mxfp4_quant(torch.randn(km, sk, device="cuda", dtype=torch.bfloat16))
+    kref, kout = (torch.empty(km, sn, device="cuda", dtype=torch.bfloat16) for _ in range(2))
+    g.gemm_afp4wfp4(kxq, swq, kxs, sws.contiguous(), torch.bfloat16, kref)
+    if not (kq3.admits(krec, kxq, kxs, torch.bfloat16) and torch.equal(kq3.gemm(krec, kxq, kxs, kout), kref)):
+        raise SystemExit(f"IMAGE_SMOKE=fail: kq3 differs from the split-K GEMM at {km} rows")
+g.SPLITK_DOWNOUT = downout
+
 # Fused add + Gemma RMSNorm + MXFP4 (serving patch 0019): bitwise equal to the add+norm
 # kernel followed by the MXFP4 quantizer, residual included.
 from sglang.kernels.ops.layernorm.minimax_m3_rmsnorm import gemma_fused_add_rmsnorm

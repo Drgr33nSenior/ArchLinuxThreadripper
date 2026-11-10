@@ -259,6 +259,10 @@ assert ([e["name"] for e in profile["arms"]["S"]["env"]] ==
 assert argv["T"] == argv["S"]
 assert ([e["name"] for e in profile["arms"]["T"]["env"]] ==
         [e["name"] for e in profile["arms"]["S"]["env"]] + ["SGLANG_GFX1201_VERIFY_ATTENTION_B1_TILE"])
+# U is T with the kq3 verify GEMM: same flags, one env switch added.
+assert argv["U"] == argv["T"]
+assert ([e["name"] for e in profile["arms"]["U"]["env"]] ==
+        [e["name"] for e in profile["arms"]["T"]["env"]] + ["SGLANG_GFX1201_MXFP4_KQ3"])
 for arm in profile["arms"]:
     items = json.loads((work / f"job-{arm}.json").read_text())["items"]
     config, job, service = items
