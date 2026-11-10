@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: service-tools}
+spec:
+  template:
+    spec:
+      containers:
+        - name: tools
+          # The MCP retrieval tools report and bound results with the same profile
+          # Open WebUI uses for browser chat (retrieval.py). Only these keys are
+          # read; a missing key fails the pod rather than using a hidden default.
+          env:
+            - name: RAG_RERANKER_PROFILE
+              valueFrom: {configMapKeyRef: {name: webui-rag-profile, key: RAG_RERANKER_PROFILE}}
+            - name: RAG_RERANKING_MODEL
+              valueFrom: {configMapKeyRef: {name: webui-rag-profile, key: RAG_RERANKING_MODEL}}
+            - name: ENABLE_RAG_HYBRID_SEARCH
+              valueFrom: {configMapKeyRef: {name: webui-rag-profile, key: ENABLE_RAG_HYBRID_SEARCH}}
+            - name: RAG_TOP_K
+              valueFrom: {configMapKeyRef: {name: webui-rag-profile, key: RAG_TOP_K}}
+            - name: RAG_TOP_K_RERANKER
+              valueFrom: {configMapKeyRef: {name: webui-rag-profile, key: RAG_TOP_K_RERANKER}}
+            - name: RAG_RELEVANCE_THRESHOLD
+              valueFrom: {configMapKeyRef: {name: webui-rag-profile, key: RAG_RELEVANCE_THRESHOLD}}
+            - name: RAG_PASSAGE_CHAR_LIMIT
+              valueFrom: {configMapKeyRef: {name: webui-rag-profile, key: RAG_PASSAGE_CHAR_LIMIT}}
+            - name: RAG_CONTEXT_CHAR_BUDGET
+              valueFrom: {configMapKeyRef: {name: webui-rag-profile, key: RAG_CONTEXT_CHAR_BUDGET}}
+            - name: RAG_EXPANSION_CHAR_LIMIT
+              valueFrom: {configMapKeyRef: {name: webui-rag-profile, key: RAG_EXPANSION_CHAR_LIMIT}}
+            - name: RAG_SOURCE_READ_CHAR_LIMIT
+              valueFrom: {configMapKeyRef: {name: webui-rag-profile, key: RAG_SOURCE_READ_CHAR_LIMIT}}

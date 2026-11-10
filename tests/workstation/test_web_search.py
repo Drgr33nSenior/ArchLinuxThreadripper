@@ -104,7 +104,7 @@ class SearchTests(unittest.IsolatedAsyncioTestCase):
     async def test_browser_and_mcp_share_fixed_provider_and_credit_ledger(self):
         catalog = await self.client.post("/mcp", headers={"Authorization": "Bearer caller-fixture-only"},
             json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
-        self.assertEqual(["retrieve_project_passage", "search_web", "read_web_page"],
+        self.assertEqual(["retrieve_project_passage", "read_project_source", "search_web", "read_web_page"],
                          [tool["name"] for tool in catalog.json()["result"]["tools"]])
         response = await self.client.post("/webui/search", headers=self.headers,
                                           json={"query": "SGLang docs", "count": 3})
@@ -316,7 +316,7 @@ class SearchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(503, (await self.mcp("search_web", {"query": "docs"})).status_code)
         catalog = await self.client.post("/mcp", headers={"Authorization": "Bearer caller-fixture-only"},
             json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
-        self.assertEqual(["retrieve_project_passage"], [tool["name"] for tool in catalog.json()["result"]["tools"]])
+        self.assertEqual(["retrieve_project_passage", "read_project_source"], [tool["name"] for tool in catalog.json()["result"]["tools"]])
 
     async def test_cancelled_provider_call_retains_reservation_and_releases_concurrency(self):
         self.slow = True

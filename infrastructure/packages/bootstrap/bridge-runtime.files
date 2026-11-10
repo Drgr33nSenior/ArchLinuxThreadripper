@@ -209,6 +209,7 @@ apps/base/shared-api/migrate.py
 apps/base/shared-api/network-policy.yaml
 apps/base/shared-api/sdxl-workflow.json
 apps/base/shared-api/service_tools.py
+apps/base/shared-api/retrieval.py
 apps/base/shared-api/storage.yaml
 apps/base/shared-api/workloads.yaml
 apps/overlays/service-split/kustomization.yaml
@@ -216,6 +217,7 @@ apps/overlays/service-split/sglang.yaml
 apps/overlays/service/ingress.yaml
 apps/overlays/service/kustomization.yaml
 apps/overlays/service/webui.yaml
+apps/overlays/service/tools.yaml
 infrastructure/creative/Dockerfile
 infrastructure/creative/launch.sh
 infrastructure/creative/prepare.py
