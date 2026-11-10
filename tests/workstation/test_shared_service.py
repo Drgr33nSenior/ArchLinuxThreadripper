@@ -732,20 +732,40 @@ class ServingContractTests(unittest.TestCase):
         self.assertEqual(render.environment(self.profile, other), moved["_render"]["environment"])
 
     def test_status_and_missing_inputs_are_explicit(self):
-        incomplete = service.serving_contract(self.PROFILE)
-        self.assertEqual("incomplete", incomplete["status"])
-        self.assertIsNone(incomplete["runtime"]["image"])
-        self.assertTrue(any(item.startswith("runtime image") for item in incomplete["missing_inputs"]))
-        self.assertTrue(any(item.startswith("model promotion") for item in incomplete["missing_inputs"]))
-        provisional = service.serving_contract(self.PROFILE, runtime_image=self.IMAGE)
-        self.assertEqual("provisional", provisional["status"])
-        for wrong in ("localhost/sglang@sha256:" + "a" * 64, "registry.lan.thespry.family/local/sglang:latest"):
-            self.assertEqual("incomplete", service.serving_contract(self.PROFILE, runtime_image=wrong)["status"])
-        qualified = self.write_profile(dict(self.profile, status="qualified"))
-        with patch.dict(service.CATALOGUE_STATES, {"candidate": True}):
+        # Fixture states, independent of the live catalogue/profile promotion.
+        default = next(name for name, arm in self.profile["arms"].items() if arm.get("default"))
+        unqualified = self.write_profile({k: v for k, v in dict(self.profile, status="unqualified").items()
+                                          if k != "qualification"})
+        not_promoted = {"candidate": False, "selected": False}
+        with patch.dict(service.CATALOGUE_STATES, not_promoted):
+            incomplete = service.serving_contract(unqualified)
+            self.assertEqual("incomplete", incomplete["status"])
+            self.assertIsNone(incomplete["runtime"]["image"])
+            self.assertTrue(any(item.startswith("runtime image") for item in incomplete["missing_inputs"]))
+            self.assertTrue(any(item.startswith("model promotion") for item in incomplete["missing_inputs"]))
+            provisional = service.serving_contract(unqualified, runtime_image=self.IMAGE)
+            self.assertEqual("provisional", provisional["status"])
+            for wrong in ("localhost/sglang@sha256:" + "a" * 64, "registry.lan.thespry.family/local/sglang:latest"):
+                self.assertEqual("incomplete", service.serving_contract(unqualified, runtime_image=wrong)["status"])
+        promoted = {"candidate": True, "selected": True}
+        record = {"arm": default, "image": self.IMAGE}
+        qualified = self.write_profile(dict(self.profile, status="qualified", qualification=record))
+        with patch.dict(service.CATALOGUE_STATES, promoted):
             active = service.serving_contract(qualified, runtime_image=self.IMAGE)
-        self.assertEqual(("active", []), (active["status"], active["missing_inputs"]))
-        with patch.dict(service.CATALOGUE_STATES, {"selected": True}, clear=True), \
+            self.assertEqual(("active", []), (active["status"], active["missing_inputs"]))
+            # Qualified for one arm on one image: another image or arm is provisional, never active.
+            other_image = self.IMAGE[:-1] + "b"
+            moved = service.serving_contract(qualified, runtime_image=other_image)
+            self.assertEqual("provisional", moved["status"])
+            self.assertTrue(any("not --runtime-image" in item for item in moved["missing_inputs"]))
+            other = next(name for name in self.profile["arms"] if name != default)
+            wrong_arm = self.write_profile(dict(self.profile, status="qualified", qualification=dict(record, arm=other)))
+            self.assertEqual("provisional", service.serving_contract(wrong_arm, runtime_image=self.IMAGE)["status"])
+            no_record = self.write_profile({k: v for k, v in dict(self.profile, status="qualified").items()
+                                            if k != "qualification"})
+            self.assertEqual("provisional", service.serving_contract(no_record, runtime_image=self.IMAGE)["status"])
+        # A catalogue status the contract does not know (whatever the live value is) is refused.
+        with patch.object(service, "CATALOGUE_STATES", {"other": True}), \
                 self.assertRaisesRegex(ValueError, "unknown model catalogue status"):
             service.serving_contract(self.PROFILE)
 

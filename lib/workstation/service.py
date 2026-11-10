@@ -693,6 +693,13 @@ def serving_contract(profile_path=SERVING_PROFILE, arm=None, runtime_image=None,
     if profile.get("status") != "qualified":
         missing.append(f"profile qualification: serving/{profile['profile']}.json status is {profile.get('status')!r}; "
                        "the owner records the qualification Job result first")
+    else:
+        # A qualified profile is qualified for one arm on one image: anything else is provisional.
+        record = profile.get("qualification") if isinstance(profile.get("qualification"), dict) else {}
+        if record.get("arm") != arm_name:
+            missing.append(f"profile qualification covers arm {record.get('arm')!r}, not the rendered arm {arm_name!r}")
+        if image_ok and record.get("image") != runtime_image:
+            missing.append(f"profile qualification covers image {record.get('image')!r}, not --runtime-image")
     status = "incomplete" if blocking else ("provisional" if missing else "active")
     identity = f"{profile['profile']}.{arm_name}"
     require(CONTRACT_ID.fullmatch(identity) is not None, "contract identity is not a bounded label value")
