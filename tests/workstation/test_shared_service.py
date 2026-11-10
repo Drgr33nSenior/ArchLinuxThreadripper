@@ -747,6 +747,19 @@ class ResourceTests(unittest.TestCase):
 
 
 
+class CredentialFileTests(unittest.TestCase):
+    def test_env_consumed_service_key_has_no_trailing_newline(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "credentials"
+            service.credentials(SimpleNamespace(output=output))
+            key = (output / "service-key").read_bytes()
+            self.assertFalse(key.endswith(b"\n"))
+            self.assertTrue(key and key == key.strip())
+            for name in ("mapping.json", "image-users.json"):
+                self.assertEqual(key.decode(), json.loads((output / name).read_text())["service_key"])
+            self.assertTrue((output / "master-key").read_text().strip().startswith("sk-"))
+
+
 class KubeYamlTests(unittest.TestCase):
     """Manifests are read as YAML 1.1 by Kubernetes and Prometheus: y/n/yes/no/on/off are booleans there."""
 
