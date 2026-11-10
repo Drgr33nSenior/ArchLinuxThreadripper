@@ -96,9 +96,12 @@ spec:
         - name: embedding
           # Text Embeddings Inference CPU 1.9.2 (Apache-2.0). It serves the same
           # hash-verified Qwen3-Embedding-0.6B files as RAG, read-only, offline.
+          # 8192 batch tokens OOM-killed warm-up at the 4 GiB limit; 2048 starts at
+          # about 3.4 GiB and settles near 2.5 GiB. Longer inputs are truncated to
+          # 2048 tokens, which covers Graphiti's episode and entity texts.
           image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9.2@sha256:16230cd8f679ae5f8a51d585033628b1c0d45cd70c2bc9b0d208170d71218fdb
           args: [--model-id, /rag-models/Qwen3-Embedding-0.6B, --served-model-name, Qwen3-Embedding-0.6B,
-                 --port, '8080', --max-client-batch-size, '16', --max-batch-tokens, '8192', --auto-truncate]
+                 --port, '8080', --max-client-batch-size, '16', --max-batch-tokens, '2048', --auto-truncate]
           env:
             - {name: HF_HUB_OFFLINE, value: '1'}
             - {name: HOME, value: /tmp}
@@ -149,6 +152,10 @@ spec:
         runAsNonRoot: true
         runAsUser: 1000
         runAsGroup: 1000
+        # The memory-service Secret mounts 0440 root-owned; the group grant
+        # is what lets user 1000 read service-key and llm-key.
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: memory
