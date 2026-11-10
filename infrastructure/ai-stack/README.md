@@ -279,6 +279,7 @@ variables, which the Job adds to the profile's.
 | `T` | `S` plus `SGLANG_GFX1201_VERIFY_ATTENTION_B1_TILE=1` (one-request verify batches run the verify-attention kernel with a wider tile, BT 64 / 8 warps / QC 64; serving patch 0021; not bitwise, so it needs the quality phase); the comparison for `U` |
 | `U` | `T` plus `SGLANG_GFX1201_MXFP4_KQ3=1` (verify GEMMs of at most 16 rows run the kq3 kernel over pre-packed weight records, bitwise equal; the records replace the weight and prefill rebuilds it into a scratch, about 26 ms per forward; serving patch 0022), **the default** |
 | `V` | `U` plus `SGLANG_GFX1201_EXTEND_TILE32=1` (head-dim-256 prefill attention with a 32 x 32 tile and 4 warps, -11% to -15% per chunk; serving patch 0023; not bitwise, so it needs the quality phase) |
+| `W` | `V` plus `SGLANG_GFX1201_P1_FROM_KQ3=1` (P1 expands its FP8 weight directly from kq3 records, removing the prefill weight rebuild, about -27 ms per chunk, bitwise equal; serving patch 0024) |
 
 Enable an item in arm A only after its arm matches arm A's quality result and
 greedy acceptance.
