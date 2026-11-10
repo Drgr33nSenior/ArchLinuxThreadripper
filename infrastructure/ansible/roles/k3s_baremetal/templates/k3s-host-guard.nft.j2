@@ -3,14 +3,15 @@
 # ruleset, so K3s/kube-proxy/flannel rules are untouched. `destroy` and the
 # re-creation below are one nft transaction. Other traffic (including SSH) is
 # left to the existing policy. Nothing here accepts traffic on any interface
-# other than {{ lab_network_interface }}; a future DMZ NIC gets no service.
+# other than {{ lab_network_interface }} (443) and lab_api_interfaces (6443); a
+# future DMZ NIC gets no service.
 destroy table inet k3s_host_guard
 table inet k3s_host_guard {
-  # Kubernetes API clients: the management network only.
+  # Kubernetes API clients (lab_api_client_cidrs; default: the management network).
   set api_clients_v4 {
     type ipv4_addr
     flags interval
-    elements = { {{ lab_management_cidr }} }
+    elements = { {{ lab_api_client_cidrs | join(', ') }} }
   }
 
   # In-cluster API callers: Pods and Services.
@@ -43,7 +44,8 @@ table inet k3s_host_guard {
     type filter hook input priority filter - 10; policy accept;
     iifname "lo" accept
     # Kubernetes API (supervisor and apiserver share 6443).
-    iifname "{{ lab_network_interface }}" ip daddr {{ lab_node_ip }} ip saddr @api_clients_v4 tcp dport 6443 accept
+    # Approved clients on the listed internal interfaces only; a DMZ NIC is never listed.
+    iifname { {% for i in lab_api_interfaces %}"{{ i }}"{{ ", " if not loop.last }}{% endfor %} } ip saddr @api_clients_v4 tcp dport 6443 accept
     tcp dport 6443 ip saddr @cluster_v4 accept
     tcp dport 6443 counter drop
     # Kubelet: the local apiserver (via lo) and in-cluster pods only.

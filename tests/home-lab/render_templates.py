@@ -17,6 +17,9 @@ variables.update(
     lab_management_cidr='192.168.50.0/24', lab_cluster_cidr='10.42.0.0/16',
     lab_service_cidr='10.43.0.0/16', lab_cluster_dns='10.43.0.10',
     lab_network_interface='synthetic0', lab_tls_sans=['synthetic.example.invalid'],
+    # The group defaults template these from the management values; Ansible
+    # resolves them at run time, so the synthetic render sets them directly.
+    lab_api_client_cidrs=['192.168.50.0/24'], lab_api_interfaces=['synthetic0'],
 )
 environment = jinja2.Environment(undefined=jinja2.StrictUndefined)
 environment.filters['to_json'] = json.dumps
@@ -42,16 +45,21 @@ assert 'eviction-hard=memory.available<2Gi,nodefs.available<10%,imagefs.availabl
 assert not {'kube-apiserver-arg', 'kube-scheduler-arg', 'kube-controller-manager-arg'} & config.keys()
 assert not any('DynamicResourceAllocation' in arg for arg in config['kubelet-arg'])
 # Host guard: 443 only to the node address on the management interface from
-# approved clients (checked before kube-proxy DNAT); 6443 only from management
-# there or from in-cluster sources. It owns only its table.
+# approved clients (checked before kube-proxy DNAT); 6443 only from the API
+# client networks on the listed internal interfaces, or from in-cluster sources. It owns only its table.
 guard_template = environment.from_string((role / 'templates/k3s-host-guard.nft.j2').read_text())
 guard = guard_template.render(**dict(variables, lab_https_client_cidrs=['192.168.0.0/16']))
 assert 'type filter hook prerouting priority -150; policy accept;' in guard
 assert 'iifname "synthetic0" ip daddr 192.168.50.10 ip saddr @https_clients_v4 tcp dport 443 accept' in guard
 assert 'fib daddr type local tcp dport 443 counter drop' in guard
 assert 'elements = { 192.168.0.0/16 }' in guard
-assert 'iifname "synthetic0" ip daddr 192.168.50.10 ip saddr @api_clients_v4 tcp dport 6443 accept' in guard
+assert 'iifname { "synthetic0" } ip saddr @api_clients_v4 tcp dport 6443 accept' in guard
 assert 'elements = { 192.168.50.0/24 }' in guard
+# Several management networks and internal interfaces; never an unlisted (DMZ) interface.
+several = guard_template.render(**dict(variables, lab_api_client_cidrs=['192.168.2.0/24', '192.168.30.0/24'],
+                                       lab_api_interfaces=['lan0', 'synthetic0']))
+assert 'elements = { 192.168.2.0/24, 192.168.30.0/24 }' in several
+assert 'iifname { "lan0", "synthetic0" } ip saddr @api_clients_v4 tcp dport 6443 accept' in several
 assert 'tcp dport 6443 ip saddr @cluster_v4 accept' in guard and 'tcp dport 6443 counter drop' in guard
 assert 'tcp dport 10250 counter drop' in guard and 'udp dport 8472 counter drop' in guard
 assert 'flush ruleset' not in guard and guard.count('destroy table inet k3s_host_guard') == 1

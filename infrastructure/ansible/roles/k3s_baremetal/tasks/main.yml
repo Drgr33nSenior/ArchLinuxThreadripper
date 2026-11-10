@@ -26,6 +26,9 @@
       - lab_service_cidr | length > 0
       - lab_cluster_dns | length > 0
       - lab_network_interface in ansible_facts.interfaces
+      - lab_api_client_cidrs | length > 0
+      - lab_api_interfaces | length > 0
+      - lab_api_interfaces | difference(ansible_facts.interfaces) | length == 0
       - lab_tls_sans | length > 0
       - lab_k3s_version is match('^v1[.]36[.][0-9]+[+]k3s[0-9]+$')
       - lab_cpu_manager_policy in ['none', 'static']

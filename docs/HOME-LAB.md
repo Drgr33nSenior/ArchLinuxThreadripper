@@ -350,9 +350,10 @@ true. Rules:
   `lab_https_client_cidrs`. These are the service site's `client_cidrs`. TCP
   443 to every other local address or interface is dropped. This check runs at
   prerouting priority -150, before kube-proxy's DNAT to Traefik.
-- The Kubernetes API (6443) is accepted only from `lab_management_cidr` on that
-  interface to `lab_node_ip`, or from the Pod/Service CIDRs. Other 6443
-  traffic is dropped.
+- The Kubernetes API (6443) is accepted only from `lab_api_client_cidrs`
+  (default: `lab_management_cidr`) arriving on `lab_api_interfaces` (default:
+  `lab_network_interface`), or from the Pod/Service CIDRs. Other 6443 traffic is
+  dropped. List only internal interfaces; a DMZ NIC is never listed.
 - The kubelet (10250) and VXLAN (8472) rules are unchanged: Pods only, and no
   peers.
 

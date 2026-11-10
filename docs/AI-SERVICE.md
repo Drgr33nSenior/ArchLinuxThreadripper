@@ -170,19 +170,21 @@ context, node and new output paths; placeholders are not site values.
    record is needed: certificates use DNS-01.
 
    **Host firewall.** Set `lab_https_client_cidrs: ["192.168.0.0/16"]`,
-   `lab_management_cidr: 192.168.30.0/24`, `lab_node_ip: 192.168.30.11` and
-   `lab_network_interface: enp103s0.30` in the private Ansible overrides. Run
+   `lab_management_cidr: 192.168.30.0/24`, `lab_node_ip: 192.168.30.11`,
+   `lab_network_interface: enp103s0.30`, `lab_api_client_cidrs:
+   ["192.168.2.0/24", "192.168.4.0/24", "192.168.30.0/24"]` (the live API
+   clients, kept) and `lab_api_interfaces: ["enp103s0", "enp103s0.30"]` in the
+   private Ansible overrides. Never list the DMZ NIC (`eno1`). Run
    the bare-metal play ([HOME-LAB.md](HOME-LAB.md)) with `--check --diff`
    first and confirm that it changes only the guard files. Then run it with
    `lab_manage_service=true` and `lab_network_reviewed=true`. This replaces the
    live `k3s_host_guard` table in one nft transaction. Leave
-   `lab_restart_approved` false; the guard needs no K3s restart. The table admits TCP 443 only on `enp103s0.30` to
-   `192.168.30.11` from `192.168.0.0/16`, and 6443 only from `192.168.30.0/24`
-   there or from Pods/Services. It drops 443 to every other local address. The
-   live guard also admits 6443 from `192.168.2.0/24` and `192.168.4.0/24`; the
-   new guard does not. Before you load it, move kubectl clients onto
-   `192.168.30.0/24` or use them over SSH on the node. Pods cannot reach the
-   service through its public name.
+   `lab_restart_approved` false; the guard needs no K3s restart. The table
+   admits TCP 443 only on `enp103s0.30` to `192.168.30.11` from
+   `192.168.0.0/16`, and 6443 only from `192.168.2.0/24`, `192.168.4.0/24` and
+   `192.168.30.0/24` arriving on `enp103s0` or `enp103s0.30` (the live guard's
+   API clients, kept), or from Pods/Services. It drops 443 to every other local
+   address. Pods cannot reach the service through its public name.
 
    **DMZ NIC.** The second NIC, `eno1`, is reserved for a future DMZ. It has
    no address and no bound service, and no guard rule accepts traffic on it.

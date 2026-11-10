@@ -9,7 +9,11 @@ lab_network_interface: ''
 lab_tls_sans: []
 # HTTPS (Traefik 443) clients admitted by the host guard on lab_network_interface
 # to lab_node_ip; use the service site file's client_cidrs. Empty admits none.
-# The Kubernetes API (6443) is admitted only from lab_management_cidr there.
+# The Kubernetes API (6443) is admitted from lab_api_client_cidrs (default: the
+# management network only), on lab_api_interfaces (default: lab_network_interface).
+# List every internal interface clients use; never a DMZ interface.
+lab_api_client_cidrs: ['{{ lab_management_cidr }}']
+lab_api_interfaces: ['{{ lab_network_interface }}']
 lab_https_client_cidrs: []
 lab_hardware_report: ''
 lab_manage_service: false
