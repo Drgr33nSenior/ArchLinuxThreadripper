@@ -11,6 +11,10 @@ spec:
     metadata: {labels: {app.kubernetes.io/name: neo4j}}
     spec:
       automountServiceAccountToken: false
+      # The neo4j image turns every NEO4J_* variable into a setting; Kubernetes'
+      # service links for the neo4j Service (NEO4J_PORT_7687_TCP_PORT, ...) fail
+      # its strict config validation at startup.
+      enableServiceLinks: false
       # A clean shutdown checkpoints the store; backups stop it before copying.
       terminationGracePeriodSeconds: 120
       nodeSelector: {kubernetes.io/arch: amd64, kubernetes.io/os: linux}
