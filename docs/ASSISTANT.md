@@ -336,7 +336,7 @@ Repetitions are counted separately from tasks. Human-rubric items stay
 ./bin/workstationctl service acceptance plan /private/acceptance-plan.json \
   --model Qwen3.8-27B-MXFP4 --tokenizer-dir /private/model-tokenizer
 ./bin/workstationctl service acceptance run /private/gateway-run.json \
-  --boundary gateway --base-url https://API_HOST:32443 --model Qwen3.8-27B-MXFP4 \
+  --boundary gateway --base-url https://API_HOST --model Qwen3.8-27B-MXFP4 \
   --key-file /private/virtual-key
 ```
 

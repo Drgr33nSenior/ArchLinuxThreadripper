@@ -26,7 +26,7 @@ native model, deployed client path or independent recovery.
 
 | Component | Request path / owner | Credentials | Durable state and recovery |
 | --- | --- | --- | --- |
-| Traefik | Actual private node IP, TCP 32443; browser and API DNS names | Owner TLS Secret; private client CIDRs | K3s configuration and SQLite backup |
+| Traefik | Node management address only, TCP 443 (Service externalIP); browser and API DNS names | cert-manager-issued TLS Secret; private client CIDRs | K3s configuration and SQLite backup; certificate reissued by cert-manager |
 | Open WebUI 0.11.4 (`service`); 0.12.5 (`assistant`) | Browser HTTPS → WebUI → internal `/webui/v1` gateway route | WebUI login; server-held application credential and user-ID mapping | Accounts, conversations, uploads, embedded Chroma on `webui-rag-qwen3-data` |
 | LiteLLM OSS 1.106.2 | API HTTPS `/v1/models`, `/v1/chat/completions` → internal SGLang | Per-client virtual keys; separate master, salt and host-control credentials | Scoped `litellm` PostgreSQL role/database; dump plus matching K3s Secrets |
 | SGLang | ClusterIP only; unchanged qualified model/runtime inputs | No ordinary user access to backend | Weights and caches rebuildable; model revisions retained |
@@ -140,11 +140,54 @@ Run source preparation from the reviewed checkout. Commands that contact a clust
 below are owner-run rollout steps, **NOT RUN** by this change. Use the actual
 context, node and new output paths; placeholders are not site values.
 
-1. Complete `config/service-site.example.json` outside Git. Supply actual private
-   IPv4 address, management/client CIDRs, distinct browser/API DNS names, TLS
-   Secret name, node and context. Confirm that the
-   K3s NodePort address range includes the chosen address. Review the host firewall
-   to allow TCP 32443 only from approved clients; keep 6443 management-only.
+1. Complete `config/service-site.example.json` outside Git, for example as
+   `/private/site.json`. Supply the actual private node address,
+   management/client CIDRs, distinct browser/API DNS names, TLS Secret name,
+   node and context. For gr33nstein, the owner's 2026-11-10 decisions give:
+
+   | Key | Value |
+   | --- | --- |
+   | `context` | `default` |
+   | `node` | `gr33nstein` |
+   | `node_address` | `192.168.30.11` (VLAN 30, `enp103s0.30`; also the management address) |
+   | `management_cidr` | `192.168.30.0/24` |
+   | `client_cidrs` | `["192.168.0.0/16"]` (LAN clients; later WireGuard clients in the same range) |
+   | `webui_host` | `chat.lan.thespry.family` (Open WebUI) |
+   | `api_host` | `api.lan.thespry.family` (OpenAI-compatible `/v1` and `/mcp`) |
+   | `tls_secret` | `ai-home-lab-tls` |
+
+   Do not commit this site file. The renderer writes Traefik with
+   `node_address` as its only Service externalIP on TCP 443. kube-proxy
+   forwards exactly that address and port, so other host addresses and NICs are
+   not bound. `externalTrafficPolicy: Local` keeps client source addresses for
+   the `client_cidrs` allowlist. No NodePort is allocated. Port 80 stays closed
+   rather than redirecting, so an API client that mistypes `http://` fails before
+   it sends a bearer key in plaintext. The client URLs are
+   `https://chat.lan.thespry.family` and `https://api.lan.thespry.family/v1`.
+
+   **DNS (owner, UniFi).** Add two internal A records: `chat.lan.thespry.family`
+   → `192.168.30.11` and `api.lan.thespry.family` → `192.168.30.11`. No public
+   record is needed: certificates use DNS-01.
+
+   **Host firewall.** Set `lab_https_client_cidrs: ["192.168.0.0/16"]`,
+   `lab_management_cidr: 192.168.30.0/24`, `lab_node_ip: 192.168.30.11` and
+   `lab_network_interface: enp103s0.30` in the private Ansible overrides. Run
+   the bare-metal play ([HOME-LAB.md](HOME-LAB.md)) with `--check --diff`
+   first and confirm that it changes only the guard files. Then run it with
+   `lab_manage_service=true` and `lab_network_reviewed=true`. This replaces the
+   live `k3s_host_guard` table in one nft transaction. Leave
+   `lab_restart_approved` false; the guard needs no K3s restart. The table admits TCP 443 only on `enp103s0.30` to
+   `192.168.30.11` from `192.168.0.0/16`, and 6443 only from `192.168.30.0/24`
+   there or from Pods/Services. It drops 443 to every other local address. The
+   live guard also admits 6443 from `192.168.2.0/24` and `192.168.4.0/24`; the
+   new guard does not. Before you load it, move kubectl clients onto
+   `192.168.30.0/24` or use them over SSH on the node. Pods cannot reach the
+   service through its public name.
+
+   **DMZ NIC.** The second NIC, `eno1`, is reserved for a future DMZ. It has
+   no address and no bound service, and no guard rule accepts traffic on it.
+   Public exposure is out of scope for this service. A DMZ needs its own
+   reviewed default-drop policy before `eno1` is configured.
 2. Render the service and existing telemetry, then plan admission:
 
    ```sh
@@ -185,13 +228,62 @@ context, node and new output paths; placeholders are not site values.
    | `gateway-browser-keys` / `ai-home-lab` | `mapping.json` |
    | `gateway-image-permissions` / `ai-home-lab` | `image-users.json` (no inference keys) |
    | `webui-gateway-connection` / `ai-home-lab` | `service-key` |
-   | chosen TLS Secret / `ai-home-lab` | `kubectl create secret tls ... --cert=<file> --key=<file>` |
+   | `cloudflare-dns01-api-token` / `cert-manager` | `api-token` (scoped Cloudflare token, step 5) |
 
    Use protected file paths, never inline values or shell tracing. Secret creation
    is a separate owner action; the renderer never emits Secret values. Preserve
-   the existing WebUI auth secret and account database.
-5. Apply reviewed `service-large/workloads.yaml` and `traefik.yaml` using the
-   explicit context. Do not turn on all scaffolded workloads. Start only PostgreSQL:
+   the existing WebUI auth secret and account database. cert-manager creates and
+   renews the TLS Secret; do not create it by hand. The NAS's own
+   `*.lan.thespry.family` certificate and private key stay on the NAS.
+5. Issue the certificate, then apply the service. Install the checksum-locked
+   cert-manager release only (it is not yet installed):
+
+   ```sh
+   ./kubernetes/install-pinned-addons.sh check --component cert-manager
+   ./kubernetes/install-pinned-addons.sh apply --component cert-manager \
+     --kubeconfig /private/kubeconfig --context "$SERVICE_CONTEXT" --confirm-context "$SERVICE_CONTEXT"
+   kubectl --context "$SERVICE_CONTEXT" -n cert-manager rollout status deployment/cert-manager-webhook --timeout=300s
+   ```
+
+   Create the Cloudflare token Secret, then render and apply both ClusterIssuers.
+   The procedure is in [kubernetes/cert-manager/README.md](../kubernetes/cert-manager/README.md#cloudflare-workstation-ai-service).
+   The token has *Zone → DNS → Edit* and *Zone → Zone → Read*, limited to the
+   `thespry.family` zone. cert-manager documents Zone Read as required to look
+   up the zone. Issue staging first. The staging certificate goes into its own
+   Secret, `ai-home-lab-tls-staging`:
+
+   ```sh
+   kubectl --context "$SERVICE_CONTEXT" apply -f service-large/certificate-staging.yaml
+   kubectl --context "$SERVICE_CONTEXT" -n ai-home-lab wait --for=condition=Ready certificate/ai-home-lab-tls-staging --timeout=600s
+   kubectl --context "$SERVICE_CONTEXT" apply -f service-large/certificate.yaml
+   kubectl --context "$SERVICE_CONTEXT" -n ai-home-lab wait --for=condition=Ready certificate/ai-home-lab-tls --timeout=600s
+   kubectl --context "$SERVICE_CONTEXT" -n ai-home-lab delete certificate/ai-home-lab-tls-staging secret/ai-home-lab-tls-staging
+   ```
+
+   That README also covers renewal (automatic, at about two-thirds of the
+   lifetime) and failures (the current certificate stays in place while retries
+   back off).
+
+   The Traefik change converts the existing LoadBalancer Service to ClusterIP
+   and releases its NodePorts. Validate the Service that it produces on the
+   server first. A dry run of the HelmChartConfig alone does not validate that
+   Service. Copy the bundled chart, which is
+   `/var/lib/rancher/k3s/server/static/charts/traefik-40.1.7+up40.1.0.tgz` on
+   the node:
+
+   ```sh
+   kubectl --context "$SERVICE_CONTEXT" -n kube-system get helmchart traefik -o jsonpath='{.spec.valuesContent}' > /private/k3s-traefik-values.yaml
+   yq '.spec.valuesContent' service-large/traefik.yaml > /private/site-traefik-values.yaml
+   helm template traefik /private/traefik-40.1.7+up40.1.0.tgz -n kube-system \
+     -f /private/k3s-traefik-values.yaml -f /private/site-traefik-values.yaml --show-only templates/service.yaml \
+     | kubectl --context "$SERVICE_CONTEXT" apply --dry-run=server -f -
+   ```
+
+   Apply reviewed `service-large/workloads.yaml` and `traefik.yaml` using the
+   explicit context. K3s's helm-controller upgrades the bundled chart. Check
+   `kubectl -n kube-system get svc traefik`: expect `ClusterIP` with external IP
+   `192.168.30.11` and port `443/TCP` only. Do not turn on all scaffolded
+   workloads. Start only PostgreSQL:
 
    ```sh
    kubectl --context "$SERVICE_CONTEXT" -n ai-home-lab scale deployment/gateway-postgres --replicas=1
@@ -252,11 +344,14 @@ context, node and new output paths; placeholders are not site values.
    To change model profiles, first enter maintenance, apply the separately reviewed
    overlay, then request `split`. Never apply a new Pod template to a running model
    as an implicit image-triggered switch. Bridge v1 catalog support is separate.
-9. Point family DNS at the actual private IP. Verify certificate chain/SANs from
-   both a browser and an IDE host, including your private CA if used. Do not use
-   insecure TLS flags. Generate the existing agent bundle with the HTTPS values
-   from `client.conf`; `AGENT_RETRIEVAL_ENABLED=true` adds the read-only MCP tool
-   to Qwen. Provide `WORKSTATION_AGENT_API_KEY` and the separate user-owned
+9. Confirm that the step 1 DNS records resolve to `192.168.30.11` from client
+   networks. Verify the certificate chain and SANs from both a browser and an
+   IDE host. The certificate is publicly trusted (Let's Encrypt), so no private
+   CA is needed. Do not use insecure TLS flags. Check that a client outside
+   `192.168.0.0/16` cannot connect, and that `http://` (port 80) is refused.
+   Generate the existing agent bundle with the HTTPS values from `client.conf`;
+   `AGENT_RETRIEVAL_ENABLED=true` adds the read-only MCP tool to Qwen. Provide
+   `WORKSTATION_AGENT_API_KEY` and the separate user-owned
    `WORKSTATION_RETRIEVAL_API_KEY` through the client credential store. Neither is
    written into the bundle. Keep Qwen tool approval enabled and ACP beside project
    files. DSH/Hermes retain their existing inference path; their MCP UI integration
@@ -386,8 +481,9 @@ model-only maintenance requires no external suppression.
 For repeatable HTTPS checks from an ordinary client, prepare a mode-0600 curl
 config in the client's credential store containing its Authorization header.
 Use its path as `CLIENT_CURL_CONFIG`; never pass a key with `-H` or print that
-file. `API_URL` is the actual HTTPS origin including port 32443. System CA trust
-must already trust the selected certificate; no `-k` override is permitted:
+file. `API_URL` is the actual HTTPS origin on the standard port, for example
+`https://api.lan.thespry.family`. System CA trust must already trust the
+selected certificate; no `-k` override is permitted:
 
 ```sh
 umask 077

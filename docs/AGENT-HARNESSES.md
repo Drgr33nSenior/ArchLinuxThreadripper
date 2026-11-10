@@ -19,7 +19,7 @@ qualification in [MODELS.md](MODELS.md). The checked-in SGLang Deployment starts
 at zero replicas and remains pending qualification. This guide does not make an
 endpoint available.
 
-The shared-service client path is `https://<actual-api-host>:32443/v1`, using a
+The shared-service client path is `https://<actual-api-host>/v1` (standard port 443), using a
 revocable per-client virtual key from [AI-SERVICE.md](AI-SERVICE.md). The IDE
 agent runs beside its project files; it needs no kubeconfig or desktop proxy.
 Copy `service render`'s client values into the existing workstation config, then
