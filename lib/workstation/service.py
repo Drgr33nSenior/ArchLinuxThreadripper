@@ -1231,7 +1231,10 @@ def credentials(args):
               "image-users.json": json.dumps({"service_key": service_key, "users": {}})}
     for name, value in values.items():
         path = output / name
-        path.write_text(value + "\n")
+        # service-key reaches Open WebUI as an environment variable (secretKeyRef),
+        # which keeps every byte; a trailing newline makes its Authorization header
+        # invalid. File readers strip, so only this value must be written bare.
+        path.write_text(value if name == "service-key" else value + "\n")
         path.chmod(0o600)
     print("Protected credential files prepared; provision Secrets through the owner workflow.")
 
