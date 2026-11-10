@@ -11,6 +11,8 @@ spec:
         - name: tools
           env:
             - {name: WEB_SEARCH_ENABLED, value: 'true'}
+            # Task handoffs: SQLite on the existing retained service-tools-state claim.
+            - {name: HANDOFF_ENABLED, value: 'true'}
           volumeMounts:
             - {name: web-search, mountPath: /run/web-search, readOnly: true}
       volumes:
