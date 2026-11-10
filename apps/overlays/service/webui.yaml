@@ -14,6 +14,10 @@ spec:
                 secretKeyRef: {name: webui-gateway-connection, key: service-key}
             - {name: ENABLE_FORWARD_USER_INFO_HEADERS, value: 'true'}
             - {name: ENABLE_DIRECT_CONNECTIONS, value: 'false'}
+            # Open WebUI 0.12 shows a connection model without a WebUI model entry to
+            # admins only. The gateway's per-user key mapping is the access control
+            # (unmapped users are refused), so list the served models to every user.
+            - {name: BYPASS_MODEL_ACCESS_CONTROL, value: 'true'}
             - {name: ENABLE_API_KEYS, value: 'true'}
             # Users (not only admins) may create API keys: service-tools refuses admin
             # credentials, so coding clients need a user-role key (default is off).
