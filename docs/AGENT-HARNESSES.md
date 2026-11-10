@@ -132,6 +132,15 @@ installing an update. The bundle source metadata is not runtime attestation.
 Verify the installed client version and source yourself, and do not accept an
 automatic floating update.
 
+Qwen Code only loads MCP servers, including the workstation retrieval, web
+search and memory tools, in folders it trusts. In ACP mode (IDE agents) it
+never asks, so an untrusted project silently runs without those tools. The
+launcher keeps the trust list outside the bundle, in
+`~/.config/workstation-agent/qwen-trustedFolders.json`
+(`QWEN_CODE_TRUSTED_FOLDERS_PATH`; an explicit value wins), so regenerating a
+bundle keeps it. Trust a project by running the CLI launcher once in it and
+accepting the prompt, or with an IDE helper that edits that file.
+
 Qwen Code disables automatic update in its generated configuration and disables
 usage statistics and telemetry in both that configuration and its process
 environment. DSH starts with `DSH_TELEMETRY_MODE=DISABLED`. These controls do
