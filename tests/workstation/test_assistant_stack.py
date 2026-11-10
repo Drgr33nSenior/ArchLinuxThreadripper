@@ -69,7 +69,16 @@ class AssistantTests(unittest.TestCase):
                 name, kind = original["metadata"]["name"], original["kind"]
                 if kind == "Deployment" and name in {"open-webui", "service-tools"}:
                     continue
+                if kind == "ConfigMap" and name.startswith("webui-rag-profile-"):
+                    continue  # The reranker component merges its profile; checked below.
                 self.assertEqual(original, named(objects, kind, name), (kind, name))
+            reranker = dict(line.split("=", 1) for line in
+                            (ROOT / "apps/components/rag-reranker/reranker.env").read_text().splitlines()
+                            if line and not line.startswith("#"))
+            profiles = [next(o["data"] for o in rendered if o["kind"] == "ConfigMap"
+                             and o["metadata"]["name"].startswith("webui-rag-profile-")) for rendered in (previous, objects)]
+            self.assertEqual({**profiles[0], **reranker}, profiles[1])
+            self.assertEqual(("none", "ms-marco-minilm-l6-v2"), tuple(p["RAG_RERANKER_PROFILE"] for p in profiles))
             self.assertEqual(len(previous) + 2, len(objects))
             for obj in objects:
                 self.assertNotEqual("Secret", obj["kind"])

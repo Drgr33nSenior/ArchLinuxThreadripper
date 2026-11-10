@@ -70,6 +70,8 @@ Commands:
   sunshine qualify-frames <decoded.framemd5> <requested-Hz> <new-output.json>
   rag stage-models <new-output-directory>
   rag verify-models <staged-model-directory>
+  rag stage-reranker <new-output-directory>
+  rag verify-reranker <staged-reranker-directory>
   rag corpus <new-output-directory> <docs/file.md...>
   graphrag prepare|verify|stage-tokenizers|index|query <options; see docs/GRAPHRAG.md>
   agent configure <new-output-directory>
@@ -301,6 +303,14 @@ main() {
     rag:verify-models)
       (($# == 3)) || return 2
       ws_rag_verify_models "$3"
+      ;;
+    rag:stage-reranker)
+      (($# == 3)) || return 2
+      ws_rag_stage_reranker "$3"
+      ;;
+    rag:verify-reranker)
+      (($# == 3)) || return 2
+      ws_rag_verify_reranker "$3"
       ;;
     rag:corpus)
       (($# >= 4)) || return 2

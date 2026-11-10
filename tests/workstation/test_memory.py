@@ -84,7 +84,7 @@ class ToolTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(404, response.status_code)
         async with self.tools(memory="http://memory:8000") as client:
             # Read-only memory tools only: recall and source inspection.
-            self.assertEqual(["retrieve_project_passage", "recall_memory", "inspect_memory_source"], await self.names(client))
+            self.assertEqual(["retrieve_project_passage", "read_project_source", "recall_memory", "inspect_memory_source"], await self.names(client))
             response = await self.call(client, "alice-token", "tools/call", {"name": "remember", "arguments": {"text": "x"}})
             self.assertEqual(404, response.status_code)
         async with self.tools(memory="http://memory:8000", write=True) as client:

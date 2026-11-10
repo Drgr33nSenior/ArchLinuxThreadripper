@@ -28,6 +28,9 @@ FAMILIES = {
         "histogram", "Candidate passages returned by the retrieval backend before final selection.", {"client": CLIENTS}),
     "workstation_assistant_retrieval_results": (
         "histogram", "Passages returned to the client after permission checks and final selection.", {"client": CLIENTS}),
+    "workstation_assistant_source_reads_total": (
+        "counter", "Exact source excerpt reads (read_project_source) by client and outcome.",
+        {"client": CLIENTS, "outcome": OUTCOMES_RETRIEVAL}),
     "workstation_assistant_reranker_state": (
         "gauge", "Configured reranker state (1 for the current state).",
         {"state": ("active", "disabled", "missing_assets", "incompatible", "unknown")}),

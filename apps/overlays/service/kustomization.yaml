@@ -4,6 +4,7 @@ namespace: ai-home-lab
 resources: [../rag, ../../base/shared-api, ingress.yaml]
 patches:
   - path: webui.yaml
+  - path: tools.yaml
   - target: {kind: NetworkPolicy, name: webui-to-sglang}
     patch: |-
       $patch: delete

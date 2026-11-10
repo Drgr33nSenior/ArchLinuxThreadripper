@@ -1,0 +1,6 @@
+380e02c93f431831be65d99a4e7e5f67c133985bf2e77d9d4eba46847190bacc  ms-marco-MiniLM-L6-v2/config.json
+821d1aa69520101d6e0737f78a042ae25b19e5cb9160701909d10434f4aeb0ae  ms-marco-MiniLM-L6-v2/model.safetensors
+3c3507f36dff57bce437223db3b3081d1e2b52ec3e56ee55438193ecb2c94dd6  ms-marco-MiniLM-L6-v2/special_tokens_map.json
+d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66  ms-marco-MiniLM-L6-v2/tokenizer.json
+a5c2e5a7b1a29a0702cd28c08a399b5ecc110c263009d17f7e3b415f25905fd8  ms-marco-MiniLM-L6-v2/tokenizer_config.json
+07eced375cec144d27c900241f3e339478dec958f92fddbc551f295c992038a3  ms-marco-MiniLM-L6-v2/vocab.txt
