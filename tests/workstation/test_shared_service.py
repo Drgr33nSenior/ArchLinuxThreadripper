@@ -722,6 +722,29 @@ class ResourceTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 service.site_values(path)
 
+    def test_site_default_group_reaches_webui_only_when_set(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            site = {"context": "fixture", "node": "fixture", "node_address": "192.168.77.9",
+                "management_cidr": "192.168.77.0/24", "client_cidrs": ["192.168.77.0/24"],
+                "webui_host": "chat.fixture.test", "api_host": "api.fixture.test", "tls_secret": "fixture-tls"}
+            path = root / "site.json"
+
+            def webui_env(output, **extra):
+                path.write_text(json.dumps(dict(site, **extra)))
+                service.render(SimpleNamespace(site=path, output=root / output, mode="large"))
+                objects = service.load_objects((root / output / "workloads.yaml").read_text())
+                webui = next(o for o in objects if o["kind"] == "Deployment" and o["metadata"]["name"] == "open-webui")
+                return {e["name"]: e.get("value") for e in webui["spec"]["template"]["spec"]["containers"][0]["env"]}
+            group = "0b7e6f1a-2c3d-4e5f-8a9b-0c1d2e3f4a5b"
+            self.assertNotIn("DEFAULT_GROUP_ID", webui_env("absent"))
+            self.assertNotIn("DEFAULT_GROUP_ID", webui_env("empty", webui_default_group=""))
+            self.assertEqual(group, webui_env("set", webui_default_group=group)["DEFAULT_GROUP_ID"])
+            for bad in ("family", "0B7E6F1A-2C3D-4E5F-8A9B-0C1D2E3F4A5B", group + "\n", 7):
+                path.write_text(json.dumps(dict(site, webui_default_group=bad)))
+                with self.assertRaises(ValueError):
+                    service.site_values(path)
+
 
 
 class KubeYamlTests(unittest.TestCase):

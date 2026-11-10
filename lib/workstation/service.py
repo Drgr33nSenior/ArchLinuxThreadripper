@@ -954,9 +954,14 @@ def protected(path):
 def site_values(path):
     site = json.loads(Path(path).read_text())
     # "environment" is no longer used; older private site files may still carry it.
-    require(set(site) - {"environment"} == {"context", "node", "node_address", "management_cidr",
-                                            "client_cidrs", "webui_host", "api_host", "tls_secret"},
+    # "webui_default_group" is optional: the Open WebUI group new accounts join.
+    require(set(site) - {"environment", "webui_default_group"} == {"context", "node", "node_address", "management_cidr",
+                                                                   "client_cidrs", "webui_host", "api_host", "tls_secret"},
             "unexpected/missing site keys")
+    group = site.setdefault("webui_default_group", "")
+    require(isinstance(group, str) and (group == "" or re.fullmatch(
+        r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", group) is not None),
+        "webui_default_group must be an Open WebUI group UUID or empty")
     address = ipaddress.ip_address(site["node_address"])
     management = ipaddress.ip_network(site["management_cidr"])
     private = [ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")]
@@ -1040,6 +1045,11 @@ def render(args):
         if kind == "Deployment" and name == "service-tools":
             obj["spec"]["template"]["spec"]["containers"][0].setdefault("env", []).append(
                 {"name": "PUBLIC_WEBUI_BASE_URL", "value": f'https://{site["webui_host"]}'})
+        if kind == "Deployment" and name == "open-webui" and site["webui_default_group"]:
+            # New accounts join this group; its model read grants make the served
+            # models visible. Persistent config is off, so the environment is the source.
+            obj["spec"]["template"]["spec"]["containers"][0].setdefault("env", []).append(
+                {"name": "DEFAULT_GROUP_ID", "value": site["webui_default_group"]})
         if kind == "Ingress":
             host = site["webui_host"] if name == "open-webui" else site["api_host"]
             obj["spec"]["rules"][0]["host"] = host
