@@ -769,6 +769,21 @@ class ServingContractTests(unittest.TestCase):
                 self.assertRaisesRegex(ValueError, "unknown model catalogue status"):
             service.serving_contract(self.PROFILE)
 
+    def test_measured_host_resources_come_from_the_qualification_record(self):
+        measured = {"requests": {"cpu": "8", "memory": "12Gi"}, "limits": {"cpu": "16", "memory": "24Gi"},
+                    "evidence": "fixture"}
+        record = {"arm": "Y", "image": self.IMAGE, "host_resources": measured}
+        contract = service.serving_contract(self.write_profile(dict(self.profile, qualification=record)))
+        self.assertEqual({k: measured[k] for k in ("requests", "limits")},
+                         {k: contract["requirements"]["host_resources"][k] for k in ("requests", "limits")})
+        without = {k: v for k, v in self.profile.items() if k != "qualification"}
+        self.assertIsNone(service.serving_contract(self.write_profile(without))["requirements"]["host_resources"])
+        for bad in ({"requests": {"cpu": "8", "memory": "12G"}}, {"requests": {"cpu": "32", "memory": "12Gi"}},
+                    {"evidence": ""}):
+            broken = dict(record, host_resources={**measured, **bad})
+            with self.assertRaises(ValueError):
+                service.serving_contract(self.write_profile(dict(self.profile, qualification=broken)))
+
     def test_reasoning_parameters_come_from_the_verified_template(self):
         contract = service.serving_contract(self.PROFILE, runtime_image=self.IMAGE)
         template = contract["chat_template"]

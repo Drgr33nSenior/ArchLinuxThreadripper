@@ -633,6 +633,29 @@ def client_efforts(accepted):
     return efforts
 
 
+HOST_CPU = re.compile(r"[1-9][0-9]?\Z")
+HOST_MEMORY = re.compile(r"[1-9][0-9]{0,2}Gi\Z")
+
+
+def host_resources(profile):
+    """The qualification record's measured SGLang CPU/RAM requests and limits, validated, or None."""
+    record = profile.get("qualification")
+    value = record.get("host_resources") if isinstance(record, dict) else None
+    if value is None:
+        return None
+    require(isinstance(value, dict) and set(value) >= {"requests", "limits", "evidence"} and value["evidence"],
+            "qualification host_resources needs requests, limits and evidence")
+    out = {}
+    for section in ("requests", "limits"):
+        entry = value[section]
+        require(isinstance(entry, dict) and set(entry) == {"cpu", "memory"} and HOST_CPU.match(str(entry["cpu"]))
+                and HOST_MEMORY.match(str(entry["memory"])), f"qualification host_resources.{section} must be cpu N and memory NGi")
+        out[section] = {"cpu": str(entry["cpu"]), "memory": str(entry["memory"])}
+    require(int(out["requests"]["cpu"]) <= int(out["limits"]["cpu"]) and
+            int(out["requests"]["memory"][:-2]) <= int(out["limits"]["memory"][:-2]), "host_resources requests exceed limits")
+    return {**out, "evidence": value["evidence"]}
+
+
 def serving_contract(profile_path=SERVING_PROFILE, arm=None, runtime_image=None,
                      output_tokens=DEFAULT_OUTPUT_TOKENS, deadline_seconds=180, reserve_tokens=16):
     """Build the serving contract from the owner's profile, catalogue and stack lock."""
@@ -754,7 +777,9 @@ def serving_contract(profile_path=SERVING_PROFILE, arm=None, runtime_image=None,
                                    "caching for active models. Recorded for the serving owner, not changed here."},
         "requirements": {"gpus": numbers["tp_size"], "gpu_groups": list(render_module.GPU_GROUPS),
                          "node_selector": {"ai-home-lab.local/gfx": lock.get("GPU_TARGET")},
-                         "pod_security": "restricted"},
+                         "pod_security": "restricted",
+                         # Measured host CPU/RAM from the qualification record; None keeps the base Deployment's.
+                         "host_resources": host_resources(profile)},
         "_render": {"argv": argv, "environment": environment, "server_label": render_module.SERVER_LABEL},
     }
 
@@ -789,8 +814,11 @@ def contract_deployment(contract, objects):
     container.pop("envFrom", None)
     container["env"] = [dict(entry) for entry in rendered["environment"]]
     gpus = str(contract["requirements"]["gpus"])
+    measured = contract["requirements"].get("host_resources")
     for section in ("requests", "limits"):
         container["resources"][section]["amd.com/gpu"] = gpus
+        if measured:
+            container["resources"][section].update(measured[section])
     container["securityContext"] = {**container.get("securityContext", {}), "readOnlyRootFilesystem": True}
     spec["securityContext"]["supplementalGroups"] = contract["requirements"]["gpu_groups"]
     spec["nodeSelector"] = {**spec.get("nodeSelector", {}), **contract["requirements"]["node_selector"]}
