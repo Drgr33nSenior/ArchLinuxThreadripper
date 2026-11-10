@@ -40,9 +40,9 @@ short handoff. Do not introduce a second store solely to duplicate those feature
 - Open WebUI 0.11.4 (`service`) and 0.12.5 (`assistant`) include per-user memory,
   system-context injection and background review controls. Upstream background
   review defaults to off in both pins.
-- Qwen Code 0.23.2 supports `AGENTS.md`/`QWEN.md` briefings and editable Markdown
-  auto-memory. Upstream automatic extraction/consolidation defaults to on;
-  team memory and its Git sync default to off. These are upstream capabilities,
+- Qwen Code 0.27.1 supports `AGENTS.md`/`QWEN.md` briefings and editable Markdown
+  auto-memory. At 0.23.2, upstream automatic extraction/consolidation defaulted
+  to on and team memory and its Git sync to off; recheck these defaults for 0.27.1. These are upstream capabilities,
   not observations of a configured or qualified client session.
 - The two clients do not automatically share their stores. Their existing tool
   permissions do not grant access to a new shared memory service.
@@ -52,7 +52,7 @@ Inspect the exact pins in [versions.lock](../versions.lock) and the
 effective settings and model behaviour before enabling automatic writes. Sources:
 [WebUI 0.11.4 configuration](https://github.com/open-webui/open-webui/blob/8bd8b4fac5e059578ac0c74b3c18d11139f88b7d/backend/open_webui/config.py),
 [WebUI 0.12.5 configuration](https://github.com/open-webui/open-webui/blob/f7ac7ee10962ddec0017f5c29b6740d9b9c5faca/backend/open_webui/config.py),
-[pinned Qwen memory guide](https://github.com/QwenLM/qwen-code/blob/f56de980b316cd5410f067fbb62357481ebd66b8/docs/users/features/memory.md).
+[pinned Qwen memory guide](https://github.com/QwenLM/qwen-code/blob/c2eccf7459c8d6d4b2a5df3733d2f3833153763b/docs/users/features/memory.md).
 
 ## What to retain
 

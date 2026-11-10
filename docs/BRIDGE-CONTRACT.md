@@ -41,8 +41,8 @@ installation, review the Bridge runtime artifact manifest and complete its
 target-machine qualification checklist. No service or policy is installed by
 these source changes.
 
-The source export selects Qwen Code 0.23.2 /
-`f56de980b316cd5410f067fbb62357481ebd66b8`. The pinned cross-repository test
+The source export selects Qwen Code 0.27.1 /
+`c2eccf7459c8d6d4b2a5df3733d2f3833153763b`. The pinned cross-repository test
 compares complete native bundles and rejects stale pins. This does not authorize
 changes to root-owned installed runtime manifests or owner-reviewed executable
 hashes.

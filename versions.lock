@@ -118,7 +118,7 @@ RAG_RERANKER_REPOSITORY=cross-encoder/ms-marco-MiniLM-L6-v2
 RAG_RERANKER_REVISION=233902d25c440f23af6f7d6e94d2946bac0bee0a
 # Qwen CLI schema and output-limit contract rechecked 2026-09-09; npm gitHead,
 # not the separately released SDK. Client execution remains unqualified.
-QWEN_CODE_VERSION=0.23.2
-QWEN_CODE_COMMIT=f56de980b316cd5410f067fbb62357481ebd66b8
+QWEN_CODE_VERSION=0.27.1
+QWEN_CODE_COMMIT=c2eccf7459c8d6d4b2a5df3733d2f3833153763b
 DSH_COMMIT=c389f96bf3a9b6807cb71ed6bdad5849be0df6d8
 HERMES_AGENT_COMMIT=13fb5e1eceba51fc45a48b5d95a357e144d42689

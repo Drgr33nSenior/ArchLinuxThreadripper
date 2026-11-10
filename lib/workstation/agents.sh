@@ -92,7 +92,7 @@ ws_agent_configure() (
   mkdir -m 0700 -- "$output"
   mkdir -m 0700 -- "$output/qwen" "$output/dsh" "$output/hermes"
   # Contract request defaults; only set values are sent. The pinned Qwen Code
-  # passes samplingParams keys to the request unchanged.
+  # passes samplingParams keys to the request unchanged (0.27.1 pipeline.ts).
   defaults=$(jq -n --arg thinking "$AGENT_ENABLE_THINKING" --arg effort "$AGENT_REASONING_EFFORT" \
     --arg temperature "$AGENT_TEMPERATURE" --arg top_p "$AGENT_TOP_P" --arg top_k "$AGENT_TOP_K" \
     '(if $effort == "" then {} else {reasoning_effort:$effort} end) +
@@ -102,12 +102,15 @@ ws_agent_configure() (
      (if $top_k == "" then {} else {top_k:($top_k|tonumber)} end)')
   # JSON is also valid YAML. No evaluation, interpolation of credential values,
   # writes to existing dotfiles, or secondary model services are involved.
+  # "$version" is Qwen Code's settings schema (SETTINGS_VERSION 4 since 0.27);
+  # without it the client migrates the file on first run and the launcher's
+  # SHA-256 check then rejects the bundle.
   jq -n --arg url "$AGENT_BASE_URL" --arg model "$AGENT_MODEL" \
     --arg retrieval "$retrieval" \
     --argjson retrieval_enabled "$AGENT_RETRIEVAL_ENABLED" --argjson search_enabled "$AGENT_WEB_SEARCH_ENABLED" \
     --argjson memory_enabled "$AGENT_MEMORY_ENABLED" --argjson handoff_enabled "$AGENT_HANDOFF_ENABLED" \
     --argjson context "$AGENT_CONTEXT_TOKENS" --argjson output "$AGENT_MAX_OUTPUT_TOKENS" --argjson defaults "$defaults" \
-    '{general:{enableAutoUpdate:false},privacy:{usageStatisticsEnabled:false},telemetry:{enabled:false},
+    '{"$version":4,general:{enableAutoUpdate:false},privacy:{usageStatisticsEnabled:false},telemetry:{enabled:false},
       security:{auth:{selectedType:"openai"},folderTrust:{enabled:true}},
       tools:{approvalMode:"default"},context:{fileName:["AGENTS.md","QWEN.md"]},
       model:{name:$model},modelProviders:{openai:[{id:$model,name:"Workstation local Qwen",
