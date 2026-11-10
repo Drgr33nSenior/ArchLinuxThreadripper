@@ -5,6 +5,10 @@ spec:
   template:
     spec:
       priorityClassName: interactive-ai-priority
+      # One card. Kustomize replaces (does not merge) resourceClaims, so state the
+      # full list: gpu-0 only; gpu-1 belongs to SwarmUI in split mode.
+      resourceClaims:
+        - {name: gpu-0, resourceClaimName: gpu-0}
       containers:
         - name: sglang
           image: localhost/workstation/sglang@sha256:c9e4d0e0ea8818de29ccef4249119fc1c096d7a924b86c63567a6b9f9d5c3c8b
@@ -18,5 +22,6 @@ spec:
             - {name: OMP_NUM_THREADS, value: '4'}
             - {name: MAX_JOBS, value: '4'}
           resources:
-            requests: {cpu: '20', memory: 32Gi, amd.com/gpu: '1'}
-            limits: {cpu: '20', memory: 32Gi, amd.com/gpu: '1'}
+            requests: {cpu: '20', memory: 32Gi}
+            limits: {cpu: '20', memory: 32Gi}
+            claims: [{name: gpu-0}]

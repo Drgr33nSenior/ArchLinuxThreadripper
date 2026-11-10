@@ -429,15 +429,24 @@ not GPU partitioning or a scheduling resource by itself.
 
 NFD discovers the AMD PCI vendor; it does not automatically supply a verified
 `gfx1201` label. The host profile adds `ai-home-lab.local/gfx` only after the
-ROCm hardware report matches. Verify actual labels and allocatable GPU count are
-two before enabling any workload. Operator v1.5 does not imply compatibility with
+ROCm hardware report matches. Verify the actual labels, and that the DRA driver
+publishes exactly two GPUs (`kubectl get resourceslices`), before enabling any
+workload. Operator v1.5 does not imply compatibility with
 every ROCm 10 build; qualify the kernel/userspace/image combination separately.
 
-Do not use `HIP_VISIBLE_DEVICES=1` to reserve the second physical card. The device
-plugin chooses a GPU and container ordinals can change. SwarmUI requests one
-exclusive GPU and its embedded backend uses visible ordinal zero. Deterministic
-physical-card ownership requires a separate DRA/device-selection design using
-discovered identities, not an environment-variable workaround.
+Do not use `HIP_VISIBLE_DEVICES=1` to reserve the second physical card. Physical
+cards are owned through DRA: the operator-applied standalone ResourceClaims
+`gpu-0` (`0000:23:00.0`) and `gpu-1` (`0000:c3:00.0`) in
+[claims.yaml](../infrastructure/gpu-operator/claims.yaml) select cards by PCI
+address. Workloads reference them by name: SGLang TP2 uses both, the single-GPU
+SGLang profile `gpu-0`, and SwarmUI and the gaming sessions `gpu-1`. Every pod
+that references a claim gets the same card, so references *share* it; DRA does
+not isolate VRAM or compute, and the session tooling still stops one workload
+before starting a conflicting one. A container sees only its claimed card, as
+ordinal zero. Kustomize replaces `resourceClaims` lists rather than merging
+them, so each overlay states its full list. Bench Jobs get their own two-GPU
+claim from a ResourceClaimTemplate; DRA never allocates a device to two claims,
+so a bench waits while the serving Deployment or SwarmUI hold the cards.
 
 ## 5. Workload profiles and tenant data
 

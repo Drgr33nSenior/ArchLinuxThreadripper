@@ -13,7 +13,7 @@ driver for Instinct GPUs; Radeon support is what this pilot establishes.
   reports no version on this host; v1.0.0 publishes no GPUs in that case.
 - `values.yaml`: the operator chart renders the `gpu.amd.com` DeviceClass. The
   driver's RBAC was already part of the render.
-- `claims.yaml`: standalone claims `gpu-0` (`0000:23:00.0`) and `gpu-1`
+- `../claims.yaml` (canonical, outside the pilot): standalone claims `gpu-0` (`0000:23:00.0`) and `gpu-1`
   (`0000:c3:00.0`), selected by PCI address.
 - `probe.yaml`: a restricted pod that shares `gpu-1` and only lists devices.
 
@@ -38,7 +38,7 @@ DRA does not isolate VRAM or compute. Sharing a card is cooperative.
    adds the DeviceClass (`infrastructure/gpu-operator/render.sh <chart.tgz>`).
 2. Apply `deviceconfig.yaml`. Wait until the device plugin DaemonSet is gone and
    the DRA driver DaemonSet is ready.
-3. Apply `claims.yaml`, then `probe.yaml`.
+3. Apply `../claims.yaml`, then `probe.yaml`.
 4. Run `verify.sh --probe`. Expected: every line PASS, two devices with the PCI
    addresses above, the probe sees one render node and one gfx1201 GPU, and the
    SGLang pod is still Running.

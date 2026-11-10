@@ -192,6 +192,20 @@ def pod_spec(obj):
     return None
 
 
+def gpu_claims(obj):
+    """The DRA GPU claims (gpu-N, infrastructure/gpu-operator/claims.yaml) a workload references.
+
+    Claims are shared: workloads that reference the same claim use the same card,
+    so GPU demand is the number of distinct claims, not a sum per workload.
+    """
+    spec = pod_spec(obj) or {}
+    require(not any("amd.com/gpu" in c.get("resources", {}).get(kind, {})
+                    for c in spec.get("containers", []) + spec.get("initContainers", []) for kind in ("requests", "limits")),
+            "GPUs are allocated through DRA claims; amd.com/gpu is retired")
+    return sorted({c.get("resourceClaimName", "") for c in spec.get("resourceClaims", [])
+                   if re.fullmatch(r"gpu-[0-9]+", c.get("resourceClaimName", ""))})
+
+
 def images(objects):
     return sorted({c["image"] for obj in objects if pod_spec(obj)
                    for c in pod_spec(obj).get("containers", []) + pod_spec(obj).get("initContainers", [])})
@@ -390,8 +404,7 @@ def render(args):
             config_name = container["envFrom"][0]["configMapRef"]["name"]
             settings = next(o["data"] for o in workloads if o["kind"] == "ConfigMap" and o["metadata"]["name"] == config_name)
             validate_profile_contract(contract, settings)
-            require(all(str(container["resources"][kind]["amd.com/gpu"]) == "1" for kind in ("requests", "limits")),
-                    "ROCm 10.1 telemetry render requires the single-GPU profile")
+            require(len(gpu_claims(deployment)) == 1, "ROCm 10.1 telemetry render requires the single-GPU profile")
         workloads = configure_workloads(workloads, args.trace == "true", contract["image"])
     else:
         stack, workloads = [], []
@@ -506,8 +519,7 @@ def plan(args):
     stack_cpu = sum(pod_budget(o)["cpu"] for o in stack if pod_spec(o))
     memory = resources["memory"]["allocatable_mib"] - evidence["reserve_mib"] - sum(r["memory_mib"] for r in rows)
     cpu = resources["allocatable_logical_cpus"] - stack_cpu - sum(r["cpu"] for r in rows)
-    gpu = sum(int(c["resources"]["limits"].get("amd.com/gpu", 0))
-              for name in evidence["planned_workloads"] for c in pod_spec(selected[name])["containers"])
+    gpu = len(set().union(*(gpu_claims(selected[name]) for name in evidence["planned_workloads"])))
     fits = memory >= 0 and cpu >= 0 and gpu <= resources["gpu_count"]
     result = {"schema": 1, "status": "planned-not-qualified" if fits else "blocked-capacity", "fits": fits,
               "resource_plan_sha256": sha(Path(args.resources)), "render_sha256": sha(Path(args.rendered) / "SHA256SUMS"),

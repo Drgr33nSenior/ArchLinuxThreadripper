@@ -35,10 +35,11 @@ outputs. Edit the source and regenerate both previews; do not edit them separate
   management-VLAN address only (a Service externalIP). SwarmUI retains
   ownership of its packaged ComfyUI; a narrow adapter serves browser images.
   Site DNS/TLS, backend packaging and target qualification remain prerequisites.
-- Arch owns `amdgpu`. The AMD operator manages the traditional device plugin
-  and labels, not host driver installation. `amd.com/gpu` requests allocate
-  exclusive device counts; they do not select a known physical R9700. The two
-  cards have separate VRAM pools. Neither labels nor this view prove peer DMA.
+- Arch owns `amdgpu`. The AMD operator manages the DRA driver (`gpu.amd.com`)
+  and labels, not host driver installation. Workloads reference the standalone
+  claims `gpu-0`/`gpu-1`, which select each R9700 by PCI address; pods sharing a
+  claim share the card without VRAM isolation. The two cards have separate VRAM
+  pools. Neither labels nor this view prove peer DMA.
 - The explicit session command stops managed GPU workloads and verifies release
   before starting the selected workload. It does not implement simultaneous
   one-GPU AI and one-GPU gaming. New managed builds are inhibited during gaming;

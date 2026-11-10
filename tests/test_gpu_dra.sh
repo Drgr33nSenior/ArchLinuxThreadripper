@@ -21,7 +21,7 @@ if dra
   check(match, 'DRA driver image must be a pinned version and digest (operator default is :latest)')
   check((match[1..3].map(&:to_i) <=> [1, 0, 1]) >= 0, 'DRA driver v1.0.1+ is required for an amdgpu module without a version')
 end
-claims = YAML.load_stream(File.read("#{op}/dra-pilot/claims.yaml")).compact
+claims = YAML.load_stream(File.read("#{op}/claims.yaml")).compact
 check(claims.map { |c| c.dig('metadata', 'name') } == %w[gpu-0 gpu-1], 'expected claims gpu-0 and gpu-1')
 buses = claims.map do |c|
   check(c['apiVersion'] == 'resource.k8s.io/v1' && c['kind'] == 'ResourceClaim', 'claims use resource.k8s.io/v1')

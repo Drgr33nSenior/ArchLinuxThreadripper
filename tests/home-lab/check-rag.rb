@@ -40,7 +40,7 @@ containers = pod.fetch('initContainers') + pod.fetch('containers')
 containers.each do |c|
   check(c['image'] == image, 'RAG init/runtime images must match versions.lock')
   check(c.dig('securityContext', 'allowPrivilegeEscalation') == false && c.dig('securityContext', 'capabilities', 'drop') == ['ALL'], 'RAG gained privileges')
-  check(!c.dig('resources', 'limits', 'amd.com/gpu'), 'CPU RAG must not consume GPU allocations')
+  check(!c.dig('resources', 'limits', 'amd.com/gpu') && !c.dig('resources', 'claims'), 'CPU RAG must not consume GPU allocations')
   check(c.fetch('volumeMounts').any? { |m| m['name'] == 'rag-models' && m['readOnly'] == true }, 'RAG model inputs must be read-only')
   check(c.dig('envFrom', 0, 'configMapRef', 'name').start_with?('webui-rag-profile-'), 'Hashed profile reference not rewritten')
 end

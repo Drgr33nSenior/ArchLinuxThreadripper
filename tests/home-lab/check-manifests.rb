@@ -38,9 +38,17 @@ deployments.each do |d|
   pod['containers'].each do |c|
     require_check(c.dig('securityContext', 'privileged') != true, 'Privileged workload found')
     require_check(c.fetch('env', []).none? { |e| e['name'] == 'HIP_VISIBLE_DEVICES' }, 'GPU ordinal is not physical allocation')
-    next unless c.dig('resources', 'limits', 'amd.com/gpu')
-    require_check(c.dig('resources', 'requests', 'amd.com/gpu') == c.dig('resources', 'limits', 'amd.com/gpu'), 'GPU request/limit mismatch')
+    %w[requests limits].each { |kind| require_check(!c.dig('resources', kind, 'amd.com/gpu'), 'amd.com/gpu is retired; reference the DRA gpu-N claims') }
   end
+  # DRA: pods reference the shared standalone claims gpu-0/gpu-1 by their own
+  # names, and containers use exactly the claims their pod declares.
+  pod_claims = pod.fetch('resourceClaims', [])
+  require_check(pod_claims.all? { |r| r['resourceClaimName'].to_s.match?(/\Agpu-[01]\z/) && r['name'] == r['resourceClaimName'] }, 'Workloads may only reference the gpu-0/gpu-1 claims')
+  used = pod['containers'].flat_map { |c| c.dig('resources', 'claims') || [] }.map { |r| r['name'] }.uniq.sort
+  require_check(used == pod_claims.map { |r| r['name'] }.sort, 'Pod claims and container claims differ')
+end
+def gpu_claims(pod)
+  pod.fetch('resourceClaims', []).map { |r| r['resourceClaimName'] }
 end
 
 single = documents(directory, 'single-gpu')
@@ -129,8 +137,8 @@ end
 sglang = named(dual, 'Deployment', 'sglang')
 pod = sglang.dig('spec', 'template', 'spec')
 require_check(pod['priorityClassName'] == 'heavy-ai-priority', 'Dual GPU needs preempting priority')
-require_check(pod['containers'][0].dig('resources', 'limits', 'amd.com/gpu') == '2', 'Dual GPU must reserve both cards')
-require_check(pod['containers'][0].dig('resources', 'limits') == {'cpu' => '24', 'memory' => '38Gi', 'amd.com/gpu' => '2'}, 'Dual GPU SGLang must leave room for CPU RAG and system pods')
+require_check(gpu_claims(pod) == %w[gpu-0 gpu-1], 'Dual GPU must reserve both cards')
+require_check(pod['containers'][0].dig('resources', 'limits') == {'cpu' => '24', 'memory' => '38Gi'}, 'Dual GPU SGLang must leave room for CPU RAG and system pods')
 guaranteed_pod(pod)
 require_check(pod['volumes'].any? { |v| v['name'] == 'shm' && v['emptyDir'] == {'medium' => 'Memory', 'sizeLimit' => '16Gi'} }, 'Missing bounded shared memory')
 require_check(pod['volumes'].any? { |v| v['name'] == 'cache' && v.dig('persistentVolumeClaim', 'claimName') == 'sglang-hf-cache' }, 'SGLang HF cache PVC is missing')
@@ -149,10 +157,10 @@ require_check(cache.dig('spec', 'storageClassName') == 'local-path' && cache.dig
 require_check(cache.dig('metadata', 'annotations', 'ai-home-lab.local/capacity-note') == 'advisory-request-not-local-path-filesystem-quota', 'SGLang cache local-path capacity caveat is missing')
 require_check(named(single, 'Deployment', 'sglang').dig('spec', 'template', 'spec', 'containers')[0]['env'].none? { |e| e['name'].start_with?('HSA_') }, 'Overrides leaked into normal profile')
 single_sglang = named(single, 'Deployment', 'sglang').dig('spec', 'template', 'spec')
-require_check(single_sglang['containers'][0].dig('resources', 'limits') == {'cpu' => '20', 'memory' => '32Gi', 'amd.com/gpu' => '1'}, 'Single GPU SGLang resource envelope changed')
+require_check(single_sglang['containers'][0].dig('resources', 'limits') == {'cpu' => '20', 'memory' => '32Gi'} && gpu_claims(single_sglang) == %w[gpu-0], 'Single GPU SGLang resource envelope changed')
 guaranteed_pod(single_sglang)
 swarmui = named(single, 'Deployment', 'swarmui').dig('spec', 'template', 'spec')
-require_check(swarmui['containers'][0].dig('resources', 'limits') == {'cpu' => '12', 'memory' => '12Gi', 'amd.com/gpu' => '1'}, 'SwarmUI resource envelope changed')
+require_check(swarmui['containers'][0].dig('resources', 'limits') == {'cpu' => '12', 'memory' => '12Gi'} && gpu_claims(swarmui) == %w[gpu-1], 'SwarmUI resource envelope changed')
 require_check(swarmui['initContainers'][0].dig('resources', 'limits') == {'cpu' => '2', 'memory' => '64Mi'}, 'SwarmUI init resource envelope changed')
 guaranteed_pod(swarmui)
 compat = documents(directory, 'rdna4-compat')
@@ -165,7 +173,7 @@ require_check(env.any? { |e| e == {'name' => 'HSA_OVERRIDE_GFX_VERSION', 'value'
   labels = deployment.dig('spec', 'template', 'metadata', 'labels')
   require_check(service.dig('spec', 'selector').all? { |key, value| labels[key] == value }, 'Gaming service cross-selects another profile')
   require_check(deployment.dig('spec', 'template', 'spec', 'volumes')[0].dig('persistentVolumeClaim', 'claimName') == "#{owner}-gaming-home", 'Gaming profiles share user PVCs')
-  require_check(deployment.dig('spec', 'template', 'spec', 'containers')[0].dig('resources', 'limits') == {'cpu' => '12', 'memory' => '12Gi', 'amd.com/gpu' => '1'}, 'Steam resource envelope changed')
+  require_check(deployment.dig('spec', 'template', 'spec', 'containers')[0].dig('resources', 'limits') == {'cpu' => '12', 'memory' => '12Gi'} && gpu_claims(deployment.dig('spec', 'template', 'spec')) == %w[gpu-1], 'Steam resource envelope changed')
   guaranteed_pod(deployment.dig('spec', 'template', 'spec'))
   game = deployment.dig('spec', 'template', 'spec', 'containers')[0]
   pod_security = deployment.dig('spec', 'template', 'spec', 'securityContext')

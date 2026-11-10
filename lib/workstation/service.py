@@ -47,7 +47,7 @@ def kube_yaml(document):
 def kube_yaml_all(documents):
     return yaml.dump_all(documents, Dumper=KubeDumper, sort_keys=False)
 
-from telemetry import kustomize, load_objects, new_directory, pod_budget, pod_spec, sha, verify
+from telemetry import gpu_claims, kustomize, load_objects, new_directory, pod_budget, pod_spec, sha, verify
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -57,6 +57,16 @@ LEGACY_ALIAS = "Qwen3.8-27B-FP8"
 # issued for it before a contract render routes it; until then the gateway
 # refuses requests for it as an unknown model.
 MODELS = {LEGACY_ALIAS, "Qwen3.5-9B", CANDIDATE_ALIAS}
+
+
+def set_gpu_claims(spec, container, count):
+    """Use the first `count` DRA GPU claims (gpu-0..) instead of amd.com/gpu."""
+    require(type(count) is int and 1 <= count <= 2, "one or two GPUs")
+    names = [f"gpu-{index}" for index in range(count)]
+    spec["resourceClaims"] = [{"name": name, "resourceClaimName": name} for name in names]
+    container["resources"]["claims"] = [{"name": name} for name in names]
+    for section in ("requests", "limits"):
+        container["resources"][section].pop("amd.com/gpu", None)
 
 
 def require(condition, message):
@@ -471,9 +481,7 @@ def candidate_runtime(contract, objects, runtime_image=None):
     environment = (contract.get("identity") or {}).get("runtime_environment", {})
     kept = [e for e in container.get("env", []) if e["name"] not in environment]
     container["env"] = kept + [{"name": key, "value": value} for key, value in sorted(environment.items())]
-    gpus = str(contract["tp_size"])
-    for section in ("requests", "limits"):
-        container["resources"][section]["amd.com/gpu"] = gpus
+    set_gpu_claims(deployment["spec"]["template"]["spec"], container, int(contract["tp_size"]))
     deployment["spec"]["replicas"] = 0
     deployment["metadata"].setdefault("annotations", {}).update({
         "ai-home-lab.local/qualification": "candidate-inactive-not-qualified",
@@ -842,10 +850,9 @@ def contract_deployment(contract, objects):
     container["args"] = list(rendered["argv"])
     container.pop("envFrom", None)
     container["env"] = [dict(entry) for entry in rendered["environment"]]
-    gpus = str(contract["requirements"]["gpus"])
+    set_gpu_claims(spec, container, int(contract["requirements"]["gpus"]))
     measured = contract["requirements"].get("host_resources")
     for section in ("requests", "limits"):
-        container["resources"][section]["amd.com/gpu"] = gpus
         if measured:
             container["resources"][section].update(measured[section])
     container["securityContext"] = {**container.get("securityContext", {}), "readOnlyRootFilesystem": True}
@@ -1136,8 +1143,8 @@ def capacity(resources, workloads, telemetry, telemetry_stack, mode, build_mib=0
              {"name": "telemetry", "memory_mib": reserve, "cpu": telemetry_cpu},
              {"name": "builds", "memory_mib": build_mib, "cpu": build_cpus},
              {"name": "optional-vms", "memory_mib": vm_mib, "cpu": vm_cpus}]
-    gpu = sum(int(c["resources"]["limits"].get("amd.com/gpu", 0))
-              for name in names for c in selected[name]["spec"]["template"]["spec"]["containers"])
+    # Shared claims: SGLang (gpu-0, gpu-1) and SwarmUI (gpu-1) need two cards, not three.
+    gpu = len(set().union(*(gpu_claims(selected[name]) for name in names)))
     memory = resources["memory"]["allocatable_mib"] - sum(r["memory_mib"] for r in rows)
     cpu = resources["allocatable_logical_cpus"] - sum(r["cpu"] for r in rows)
     fits = memory >= 0 and cpu >= 0 and gpu <= resources["gpu_count"]

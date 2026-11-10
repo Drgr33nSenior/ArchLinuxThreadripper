@@ -5,6 +5,11 @@ spec:
   template:
     spec:
       priorityClassName: heavy-ai-priority
+      # TP2: both cards. Kustomize replaces (does not merge) resourceClaims, so
+      # this is the full list.
+      resourceClaims:
+        - {name: gpu-0, resourceClaimName: gpu-0}
+        - {name: gpu-1, resourceClaimName: gpu-1}
       containers:
         - name: sglang
           # FP8/TP2 is not covered by the single-GPU ROCm 10.1 evidence.
@@ -23,5 +28,6 @@ spec:
             # Unmeasured host-RAM cap, not VRAM or an up-front allocation.
             # Right-size using serving-startup --memory + serving-memory-plan;
             # retain equal requests/limits and count RAG/telemetry separately.
-            requests: {cpu: '24', memory: 38Gi, amd.com/gpu: '2'}
-            limits: {cpu: '24', memory: 38Gi, amd.com/gpu: '2'}
+            requests: {cpu: '24', memory: 38Gi}
+            limits: {cpu: '24', memory: 38Gi}
+            claims: [{name: gpu-0}, {name: gpu-1}]

@@ -360,9 +360,9 @@ Pods and logs; do not prune caches or increase limits merely to obtain a pass.
 For serving scaling, keep the **same fitting model** for TP=1, TP=2 and two
 independent one-GPU workers. The last topology requires an owner-reviewed
 second Deployment and fitting CPU/RAM budgets; it is not created by this tool.
-Request one exclusive `amd.com/gpu` each, validate both assigned physical
-devices, and benchmark the two private endpoints with matching total work.
-The traditional plugin cannot select a particular BDF. Pipeline parallelism is
+Reference one DRA claim each (`gpu-0`, `gpu-1`), validate both assigned
+physical devices, and benchmark the two private endpoints with matching total
+work. Pipeline parallelism is
 deferred until the pinned Radeon engine/model supports and passes that path.
 
 ## CPU, build and encrypted storage comparisons

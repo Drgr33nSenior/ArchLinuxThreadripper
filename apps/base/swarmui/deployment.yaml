@@ -39,6 +39,10 @@ spec:
           volumeMounts:
             - {name: state, mountPath: /state}
             - {name: backend, mountPath: /seed, readOnly: true}
+      # DRA: standalone claims applied with the GPU Operator
+      # (infrastructure/gpu-operator/claims.yaml); see docs/HOME-LAB.md.
+      resourceClaims:
+        - {name: gpu-1, resourceClaimName: gpu-1}
       containers:
         - name: swarmui
           image: registry.invalid/ai-home-lab/swarmui-rocm:UNQUALIFIED
@@ -48,8 +52,9 @@ spec:
           env:
             - {name: HF_HUB_OFFLINE, value: '1'}
           resources:
-            requests: {cpu: '12', memory: 12Gi, amd.com/gpu: '1'}
-            limits: {cpu: '12', memory: 12Gi, amd.com/gpu: '1'}
+            requests: {cpu: '12', memory: 12Gi}
+            limits: {cpu: '12', memory: 12Gi}
+            claims: [{name: gpu-1}]
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: {drop: [ALL]}
