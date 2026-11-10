@@ -163,7 +163,7 @@ for profile in "$dir"/serving/*.json; do
   for f in run.sh server-args.json server.env models.txt README.md cosign.pub bench/bench.py bench/betterbench.tar.gz; do
     [[ -s $sa/$f ]] || fail "standalone folder lacks $f"
   done
-  [[ -x $sa/run.sh ]] && bash -n "$sa/run.sh" || fail 'standalone run.sh is not valid bash'
+  if ! { [[ -x $sa/run.sh ]] && bash -n "$sa/run.sh"; }; then fail 'standalone run.sh is not valid bash'; fi
   grep -q "^image=$public$" "$sa/run.sh" || fail 'standalone run.sh does not pin the image digest'
   cmp -s "$sa/cosign.pub" "$dir/signing/cosign.pub" || fail 'standalone folder does not carry the signing key'
   ! grep -q '@[A-Z_]*@' "$sa/README.md" "$sa/run.sh" || fail 'standalone placeholders left unfilled'
@@ -179,7 +179,7 @@ for e in p["env"] + arm.get("env", []):
     assert env[e["name"]] == e["value"], e["name"]
 assert env["SERVED_MODEL_NAME"] == p["served_model_name"]
 PY
-  if ENGINE=false MODELS_DIR= "$sa/run.sh" serve >/dev/null 2>&1; then fail 'standalone ran without MODELS_DIR'; fi
+  if ENGINE=false MODELS_DIR='' "$sa/run.sh" serve >/dev/null 2>&1; then fail 'standalone ran without MODELS_DIR'; fi
   mkdir -p "$work/no-models"
   out=$(ENGINE=false MODELS_DIR="$work/no-models" "$sa/run.sh" bench 2>&1) && fail 'standalone ran without its models'
   [[ $out == missing* ]] || fail "standalone did not name the missing model: $out"
