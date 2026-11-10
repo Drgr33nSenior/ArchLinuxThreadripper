@@ -257,6 +257,17 @@ nq, ns = g.dynamic_mxfp4_quant(nout)
 if not (torch.equal(nq, fq) and torch.equal(ns, fs) and torch.equal(nres, fres) and ns.stride() == fs.stride()):
     raise SystemExit("IMAGE_SMOKE=fail: fused add+norm+MXFP4 differs from add+norm then quantize")
 
+# Fused SiLU*mul + MXFP4 (serving patch 0020): bitwise equal to act_and_mul followed by the
+# MXFP4 quantizer at a TP2 down-projection width.
+from sglang.srt.layers.activation import SiluAndMul
+from sglang.srt.layers.quantization.quark.schemes.gfx1201_silu_mul_mxfp4 import silu_mul_mxfp4
+
+sgu = (torch.randn(16, 2 * 8704, device="cuda") * 3).to(torch.bfloat16)
+sq, ss = g.dynamic_mxfp4_quant(SiluAndMul()(sgu))
+fq2, fs2 = silu_mul_mxfp4(sgu)
+if not (torch.equal(sq, fq2) and torch.equal(ss, fs2) and ss.stride() == fs2.stride()):
+    raise SystemExit("IMAGE_SMOKE=fail: fused SiLU*mul+MXFP4 differs from act_and_mul then quantize")
+
 # PCIe custom all-reduce (serving patch 0014) on both GPUs: the AOT-built kernel
 # must give the exact fixed-order sum on both ranks. The stock kernel gave wrong,
 # rank-divergent sums here.

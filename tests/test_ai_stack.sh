@@ -250,6 +250,10 @@ assert ([e["name"] for e in profile["arms"]["Q"]["env"]] ==
 assert argv["R"] == argv["Q"]
 assert ([e["name"] for e in profile["arms"]["R"]["env"]] ==
         [e["name"] for e in profile["arms"]["Q"]["env"]] + ["SGLANG_GFX1201_ADD_NORM_MXFP4"])
+# S is R with the fused SiLU*mul+MXFP4: same flags, one env switch added.
+assert argv["S"] == argv["R"]
+assert ([e["name"] for e in profile["arms"]["S"]["env"]] ==
+        [e["name"] for e in profile["arms"]["R"]["env"]] + ["SGLANG_GFX1201_SILU_MUL_MXFP4"])
 for arm in profile["arms"]:
     items = json.loads((work / f"job-{arm}.json").read_text())["items"]
     config, job, service = items
