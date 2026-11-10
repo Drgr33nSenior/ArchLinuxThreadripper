@@ -187,8 +187,15 @@ infrastructure/ai-stack/models/inventory.py OWNER/NAME FULL_COMMIT > /tmp/invent
 ```
 
 Copy the inventory into a new `models/<alias>.json` beside the existing entry,
-add a `serving/<profile>.json` for it, and run the tests. To stage it on the
-NAS:
+add a `serving/<profile>.json` for it, and run the tests. Use `--exclude` for
+files the runtime never reads.
+
+| Entry | Used by |
+| --- | --- |
+| `qwen3.8-27b-mxfp4.json` | SGLang, via `serving/qwen3.8-27b-mxfp4-tp2.json` (model plus DFlash2 draft) |
+| `sdxl-base-1.0.json` | The creative image's ComfyUI, via `apps/base/shared-api/image-profile.json` (single-file checkpoint only; a test keeps the two hashes equal) |
+
+To stage it on the NAS:
 
 ```sh
 kubectl apply -f apps/base/namespace.yaml                     # once; owns ai-home-lab

@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "alias": "sdxl-base-1.0",
+  "status": "selected",
+  "notes": "Selected 2026-11-10 (owner decision): Stable Diffusion XL base 1.0 for browser image generation, run by the creative image's SwarmUI-managed ComfyUI (ai-stack creative stage) with the fixed workflow apps/base/shared-api/sdxl-workflow.json. Only the single-file checkpoint is fetched; the diffusers, ONNX and OpenVINO copies, the 0.9-VAE variant and the example LoRA are excluded. Licence: CreativeML Open RAIL++-M (LICENSE.md is fetched with the weights). The checkpoint hash must match apps/base/shared-api/image-profile.json.",
+  "model": {
+    "repository": "stabilityai/stable-diffusion-xl-base-1.0",
+    "revision": "462165984030d82259a11f4367a4eed129e94a7b",
+    "files": [
+      {
+        "path": ".gitattributes",
+        "size": 1562,
+        "git_sha1": "7691f136a2661ab8fa1e9396a024016ae8aa4799"
+      },
+      {
+        "path": "LICENSE.md",
+        "size": 14109,
+        "git_sha1": "af7e355e31c0d976933aa0d06759611151ad8c39"
+      },
+      {
+        "path": "README.md",
+        "size": 8668,
+        "git_sha1": "3de812966870aa7122954891ce74faabc77335a9"
+      },
+      {
+        "path": "sd_xl_base_1.0.safetensors",
+        "size": 6938078334,
+        "sha256": "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b"
+      }
+    ]
+  }
+}
