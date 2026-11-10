@@ -51,7 +51,7 @@ class HandoffTests(unittest.IsolatedAsyncioTestCase):
         async def upstream(request):
             self.webui_calls.append(request)
             user = self.users.get(request.headers.get("authorization"))
-            if request.url.path == "/api/v1/auths/":
+            if request.url.path == "/api/v1/users/user/status":
                 return httpx.Response(200 if user else 401, json=user or {})
             if request.url.path == "/api/v1/knowledge/" and user:
                 items = self.readable.get(user["id"], [])

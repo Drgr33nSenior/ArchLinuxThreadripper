@@ -284,8 +284,8 @@ The `assistant` component configures one native MCP tool server in
 `TOOL_SERVER_CONNECTIONS`: `http://service-tools:8000/mcp`, ID `workstation`,
 named "Workstation tools". Its `auth_type` is `session`, so pinned Open WebUI
 0.12.5 sends the signed-in user's own token with each MCP request. service-tools
-checks that token through `/api/v1/auths/` as it checks a coding client's API
-key. There is no shared credential. The public read grant only lists the server
+checks that token through `/api/v1/users/user/status` as it checks a coding
+client's API key. (Open WebUI 0.12 refuses API keys on `/api/v1/auths/`.) There is no shared credential. The public read grant only lists the server
 in every user's tool menu; each call is authorised for the calling user.
 The existing `open-webui` → `service-tools:8000` NetworkPolicy already allows
 the flow.
