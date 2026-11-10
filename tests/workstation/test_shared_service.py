@@ -453,7 +453,10 @@ class CandidatePlanTests(unittest.TestCase):
         container = deployment["spec"]["template"]["spec"]["containers"][0]
         self.assertEqual(0, deployment["spec"]["replicas"])
         self.assertIn("UNBUILT", container["image"])
-        self.assertEqual("2", container["resources"]["limits"]["amd.com/gpu"])
+        self.assertEqual([{"name": "gpu-0", "resourceClaimName": "gpu-0"}, {"name": "gpu-1", "resourceClaimName": "gpu-1"}],
+                         deployment["spec"]["template"]["spec"]["resourceClaims"])
+        self.assertEqual([{"name": "gpu-0"}, {"name": "gpu-1"}], container["resources"]["claims"])
+        self.assertNotIn("amd.com/gpu", container["resources"]["limits"])
         self.assertEqual(["--reasoning-parser", "qwen3", "--tool-call-parser", "qwen3_coder"], container["args"][-4:])
         runtime = json.loads((output / "candidate-runtime.json").read_text())
         self.assertTrue(any("startup numerical probes" in item for item in runtime["blockers"]))
@@ -747,6 +750,36 @@ class ResourceTests(unittest.TestCase):
 
 
 
+class GpuClaimTests(unittest.TestCase):
+    """DRA: shared claims count once, so SGLang TP2 plus SwarmUI needs two cards."""
+
+    def deployment(self, claims, legacy=False):
+        resources = {"limits": {"cpu": "1", "memory": "1Gi"}, "requests": {"cpu": "1", "memory": "1Gi"}}
+        if legacy:
+            resources["limits"]["amd.com/gpu"] = "1"
+        return {"kind": "Deployment", "spec": {"template": {"spec": {
+            "resourceClaims": [{"name": c, "resourceClaimName": c} for c in claims],
+            "containers": [{"name": "c", "resources": resources}]}}}}
+
+    def test_shared_claims_are_counted_once_and_legacy_requests_refused(self):
+        sglang, swarmui = self.deployment(["gpu-0", "gpu-1"]), self.deployment(["gpu-1"])
+        self.assertEqual(["gpu-0", "gpu-1"], service.gpu_claims(sglang))
+        self.assertEqual(2, len(set().union(*(service.gpu_claims(d) for d in (sglang, swarmui)))))
+        self.assertEqual([], service.gpu_claims(self.deployment(["other-claim"])))
+        with self.assertRaisesRegex(ValueError, "amd.com/gpu is retired"):
+            service.gpu_claims(self.deployment([], legacy=True))
+
+    def test_set_gpu_claims_replaces_the_device_plugin_resource(self):
+        spec = {"containers": [{"resources": {"requests": {"amd.com/gpu": "2"}, "limits": {"amd.com/gpu": "2"}}}]}
+        service.set_gpu_claims(spec, spec["containers"][0], 2)
+        self.assertEqual(["gpu-0", "gpu-1"], [c["resourceClaimName"] for c in spec["resourceClaims"]])
+        self.assertEqual({"requests": {}, "limits": {}, "claims": [{"name": "gpu-0"}, {"name": "gpu-1"}]},
+                         spec["containers"][0]["resources"])
+        for bad in (0, 3, "2"):
+            with self.assertRaises(ValueError):
+                service.set_gpu_claims(spec, spec["containers"][0], bad)
+
+
 class CredentialFileTests(unittest.TestCase):
     def test_env_consumed_service_key_has_no_trailing_newline(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -893,7 +926,10 @@ class ServingContractTests(unittest.TestCase):
         self.assertEqual(0, sglang["spec"]["replicas"])
         self.assertEqual(contract["_render"]["argv"], container["args"])
         self.assertIn("CONTRACT-INCOMPLETE", container["image"])
-        self.assertEqual(str(contract["requirements"]["gpus"]), container["resources"]["limits"]["amd.com/gpu"])
+        names = [f"gpu-{i}" for i in range(contract["requirements"]["gpus"])]
+        self.assertEqual([{"name": n, "resourceClaimName": n} for n in names], sglang["spec"]["template"]["spec"]["resourceClaims"])
+        self.assertEqual([{"name": n} for n in names], container["resources"]["claims"])
+        self.assertNotIn("amd.com/gpu", container["resources"]["limits"])
         self.assertNotIn("envFrom", container)
         models = next(v for v in sglang["spec"]["template"]["spec"]["volumes"] if v["name"] == "models")
         self.assertEqual({"claimName": "ai-models", "readOnly": True}, models["persistentVolumeClaim"])

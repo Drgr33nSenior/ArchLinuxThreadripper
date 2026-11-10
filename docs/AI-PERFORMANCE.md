@@ -249,8 +249,9 @@ handover gates.
 This tranche stops the selected AI workload before gaming, including models
 spanning both cards. A paused request queue does not unload VRAM. Simultaneous
 one-GPU AI + one-GPU gaming is deferred: 32+12 GiB consumes 44 of approximately
-46 GiB allocatable before other Pods, and physical-card selection is not provided
-by the traditional `amd.com/gpu` count resource. BDFs and render ordinals are
+46 GiB allocatable before other Pods. Physical cards are selected by the DRA
+claims `gpu-0`/`gpu-1` (docs/HOME-LAB.md); sharing a claim does not isolate
+VRAM. BDFs and render ordinals are
 re-resolved at runtime, not used as an unsupported scheduler selector. The DRM
 check is point-in-time evidence only; a host process outside these controls can
 subsequently acquire a GPU. `/dev/kfd` is global and is not proof of card identity.

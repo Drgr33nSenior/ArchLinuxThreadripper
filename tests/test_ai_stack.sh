@@ -318,7 +318,12 @@ assert ([e["name"] for e in profile["arms"]["Y"]["env"]] ==
         [e["name"] for e in profile["arms"]["U"]["env"]] + ["SGLANG_GFX1201_P1_FROM_KQ3", "SGLANG_GFX1201_PCIE_CUSTOM_AR_MAX_BYTES"])
 for arm in profile["arms"]:
     items = json.loads((work / f"job-{arm}.json").read_text())["items"]
-    config, job, service = items
+    config, job, service, claims = items
+    # Bench Jobs get their own two-GPU claim so DRA keeps them off cards that the
+    # serving Deployment (shared gpu-0/gpu-1 claims) still holds.
+    assert claims["kind"] == "ResourceClaimTemplate" and claims["metadata"]["name"] == job["metadata"]["name"]
+    assert claims["spec"]["spec"]["devices"]["requests"] == [{"name": "gpus", "exactly": {
+        "deviceClassName": "gpu.amd.com", "allocationMode": "ExactCount", "count": 2}}]
     # The Service gives telemetry's fixed sglang target to the running server.
     assert service["kind"] == "Service" and service["metadata"]["name"] == "sglang"
     assert service["spec"]["ports"] == [{"name": "http", "port": 30000, "targetPort": 30000}]
@@ -332,7 +337,9 @@ for arm in profile["arms"]:
     assert pod["automountServiceAccountToken"] is False
     assert c["securityContext"] == {"allowPrivilegeEscalation": False, "readOnlyRootFilesystem": True,
                                     "capabilities": {"drop": ["ALL"]}}
-    assert c["resources"]["requests"] == c["resources"]["limits"] and c["resources"]["limits"]["amd.com/gpu"] == "2"
+    assert c["resources"]["requests"] == c["resources"]["limits"] and "amd.com/gpu" not in c["resources"]["limits"]
+    assert pod["resourceClaims"] == [{"name": "gpus", "resourceClaimTemplateName": job["metadata"]["name"]}]
+    assert c["resources"]["claims"] == [{"name": "gpus"}]
     models = next(v for v in pod["volumes"] if v["name"] == "models")
     assert models["persistentVolumeClaim"] == {"claimName": "ai-models", "readOnly": True}
     names = {e["name"] for e in c["env"]}
@@ -346,7 +353,7 @@ default_arm = next(name for name, spec in profile["arms"].items() if spec["defau
 qualify = json.loads((work / f"job-{default_arm}.json").read_text())["items"][1]
 bundles = {}
 for variant in ("bench", "bench-greedy"):
-    config, job, service = json.loads((work / f"{variant}.json").read_text())["items"]
+    config, job, service, _claims = json.loads((work / f"{variant}.json").read_text())["items"]
     assert service["metadata"]["name"] == "sglang"
     assert config["data"] == {"bench.py": (root / "serving" / "bench.py").read_text()}
     archive = tarfile.open(fileobj=io.BytesIO(base64.b64decode(config["binaryData"]["betterbench.tar.gz"])))

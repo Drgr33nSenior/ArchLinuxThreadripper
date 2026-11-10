@@ -151,8 +151,9 @@ def job(profile, catalog, image, arm, bench=None):
         "command": ["bash", "-c", script, f"sglang-{kind}"],
         "args": argv,
         "env": environment(profile, arm) + [{"name": "SERVED_MODEL_NAME", "value": profile["served_model_name"]}],
-        "resources": {"requests": {"cpu": "16", "memory": "38Gi", "amd.com/gpu": "2"},
-                      "limits": {"cpu": "16", "memory": "38Gi", "amd.com/gpu": "2"}},
+        "resources": {"requests": {"cpu": "16", "memory": "38Gi"},
+                      "limits": {"cpu": "16", "memory": "38Gi"},
+                      "claims": [{"name": "gpus"}]},
         "securityContext": {"allowPrivilegeEscalation": False, "readOnlyRootFilesystem": True,
                             "capabilities": {"drop": ["ALL"]}},
         "volumeMounts": [{"name": "models", "mountPath": "/models", "readOnly": True},
@@ -167,6 +168,10 @@ def job(profile, catalog, image, arm, bench=None):
         "securityContext": {"runAsNonRoot": True, "runAsUser": 1000, "runAsGroup": 1000,
                             "supplementalGroups": GPU_GROUPS, "seccompProfile": {"type": "RuntimeDefault"}},
         "containers": [container],
+        # Its own claim (from the template below), not the shared gpu-0/gpu-1: DRA
+        # never allocates a device to two different claims, so the Job stays
+        # Pending while the serving Deployment or SwarmUI hold the cards.
+        "resourceClaims": [{"name": "gpus", "resourceClaimTemplateName": name}],
         "volumes": [{"name": "models", "persistentVolumeClaim": {"claimName": "ai-models", "readOnly": True}},
                     {"name": "qualify", "configMap": {"name": name}},
                     {"name": "cache", "emptyDir": {"sizeLimit": "32Gi"}},
@@ -174,6 +179,10 @@ def job(profile, catalog, image, arm, bench=None):
                     {"name": "shm", "emptyDir": {"medium": "Memory", "sizeLimit": "16Gi"}}],
     }
     meta = {"name": name, "namespace": NAMESPACE, "labels": labels}
+    # Both R9700s, exclusively, for the life of the Job's pod.
+    claims = {"apiVersion": "resource.k8s.io/v1", "kind": "ResourceClaimTemplate", "metadata": meta,
+              "spec": {"spec": {"devices": {"requests": [{"name": "gpus", "exactly": {
+                  "deviceClassName": "gpu.amd.com", "allocationMode": "ExactCount", "count": 2}}]}}}}
     # Telemetry scrapes sglang.ai-home-lab.svc:30000 (job "sglang"); this Service
     # points it at whichever qualification or bench server is running. Only one
     # Job (or the serving Deployment) can hold the GPUs, so only one matches.
@@ -187,6 +196,7 @@ def job(profile, catalog, image, arm, bench=None):
          "spec": {"backoffLimit": 0, "activeDeadlineSeconds": 4500, "ttlSecondsAfterFinished": 172800,
                   "template": {"metadata": {"labels": {**labels, SERVER_LABEL: "true"}}, "spec": pod}}},
         service,
+        claims,
     ]}
 
 

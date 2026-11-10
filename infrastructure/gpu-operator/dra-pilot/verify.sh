@@ -2,9 +2,13 @@
 # Read-only DRA pilot checks. Prints PASS/FAIL per check; changes nothing.
 # Usage: verify.sh [--probe]   (--probe also reads the dra-probe pod's log)
 set -uo pipefail
-ns=ai-home-lab; fail=0
+ns=ai-home-lab
+fail=0
 pass() { printf 'PASS  %s\n' "$1"; }
-bad() { printf 'FAIL  %s\n' "$1"; fail=1; }
+bad() {
+  printf 'FAIL  %s\n' "$1"
+  fail=1
+}
 if kubectl -n kube-amd-gpu get daemonsets -o name | grep -q dra-driver; then pass 'DRA driver DaemonSet exists'; else bad 'DRA driver DaemonSet missing'; fi
 if ! kubectl -n kube-amd-gpu get daemonsets -o name | grep -q device-plugin; then pass 'device plugin DaemonSet removed'; else bad 'device plugin DaemonSet still present'; fi
 if kubectl get deviceclass gpu.amd.com >/dev/null 2>&1; then pass 'DeviceClass gpu.amd.com exists'; else bad 'DeviceClass gpu.amd.com missing'; fi

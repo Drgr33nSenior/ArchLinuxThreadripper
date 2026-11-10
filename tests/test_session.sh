@@ -17,7 +17,7 @@ SESSION_TIMEOUT_SECONDS=1
 SESSION_STREAMING_PATH=sunshine
 export SESSION_CONTEXT SESSION_NODE SESSION_NAMESPACE SESSION_AI_DEPLOYMENT SESSION_GAME_DEPLOYMENT SESSION_TIMEOUT_SECONDS SESSION_STREAMING_PATH
 mkdir "$work/api"
-fixture_node='{"status":{"allocatable":{"cpu":"42","memory":"48234496Ki","amd.com/gpu":"2"}}}'
+fixture_node='{"status":{"allocatable":{"cpu":"42","memory":"48234496Ki"}}}'
 printf '{"items":[]}\n' >"$work/api/pods.json"
 printf '{"items":[]}\n' >"$work/api/rs.json"
 for name in "$SESSION_AI_DEPLOYMENT" "$SESSION_GAME_DEPLOYMENT"; do
@@ -26,7 +26,8 @@ for name in "$SESSION_AI_DEPLOYMENT" "$SESSION_GAME_DEPLOYMENT"; do
       image:("registry.invalid/fixture@sha256:"+("a"*64)),
       env:[{name:"ENABLE_STEAM",value:"true"},{name:"ENABLE_SUNSHINE",value:"true"}],
       securityContext:{privileged:false,allowPrivilegeEscalation:false,capabilities:{drop:["ALL"]}},
-      resources:{requests:{cpu:"20",memory:"32Gi","amd.com/gpu":1},limits:{cpu:"20",memory:"32Gi","amd.com/gpu":1}}}],
+      resources:{requests:{cpu:"20",memory:"32Gi"},limits:{cpu:"20",memory:"32Gi"},claims:[{name:"gpu-0"}]}}],
+      resourceClaims:[{name:"gpu-0",resourceClaimName:"gpu-0"}],
       volumes:[]}}}}' >"$work/api/$name.json"
 done
 set_document() {
@@ -97,15 +98,31 @@ pod_level="$(ws_session_deployment sglang | jq '.spec.template.spec.resources={r
 expect_failure ws_session_capacity_check "$pod_level" "$fixture_node"
 sidecar="$(ws_session_deployment sglang | jq '.spec.template.spec.initContainers=[(.spec.template.spec.containers[0] + {restartPolicy:"Always"})]')"
 expect_failure ws_session_capacity_check "$sidecar" "$fixture_node"
+# GPUs come from DRA claims gpu-N: two cards pass; none, three, an unknown claim
+# or the retired device-plugin resource fail closed.
+tp2="$(ws_session_deployment sglang | jq '.spec.template.spec.resourceClaims+=[{name:"gpu-1",resourceClaimName:"gpu-1"}] | .spec.template.spec.containers[0].resources.claims+=[{name:"gpu-1"}]')"
+ws_session_capacity_check "$tp2" "$fixture_node"
+expect_failure ws_session_capacity_check "$(jq '.spec.template.spec.resourceClaims=[] | .spec.template.spec.containers[0].resources.claims=[]' <<<"$tp2")" "$fixture_node"
+expect_failure ws_session_capacity_check "$(jq '.spec.template.spec.resourceClaims+=[{name:"gpu-2",resourceClaimName:"gpu-2"}]' <<<"$tp2")" "$fixture_node"
+expect_failure ws_session_capacity_check "$(ws_session_deployment sglang | jq '.spec.template.spec.resourceClaims+=[{name:"other",resourceClaimName:"foreign-claim"}]')" "$fixture_node"
+expect_failure ws_session_capacity_check "$(ws_session_deployment sglang | jq '.spec.template.spec.containers[0].resources.requests["amd.com/gpu"]=1 | .spec.template.spec.containers[0].resources.limits["amd.com/gpu"]=1')" "$fixture_node"
 
 # Exact UID chain: a deceptive generated-name prefix is not managed ownership.
 printf '{"items":[{"metadata":{"uid":"rs-real","ownerReferences":[{"uid":"sglang-uid","kind":"Deployment"}]}}]}\n' >"$work/api/rs.json"
 printf '{"items":[{"metadata":{"uid":"pod-real","ownerReferences":[{"uid":"rs-real","kind":"ReplicaSet"}]}},{"metadata":{"uid":"pod-foreign","ownerReferences":[{"uid":"rs-foreign","name":"sglang-deceptive","kind":"ReplicaSet"}]}}]}\n' >"$work/api/pods.json"
 [[ "$(ws_session_managed_pods sglang | jq -c 'map(.metadata.uid)')" == '["pod-real"]' ]]
 # Pending/unbound consumers are checked globally before any mutation.
-printf '{"items":[{"metadata":{"uid":"pending-unmanaged"},"status":{"phase":"Pending"},"spec":{"containers":[{"resources":{"requests":{"amd.com/gpu":1}}}]}}]}\n' >"$work/api/pods.json"
+printf '{"items":[{"metadata":{"uid":"pending-unmanaged"},"status":{"phase":"Pending"},"spec":{"resourceClaims":[{"name":"gpu","resourceClaimName":"gpu-1"}],"containers":[{"resources":{"claims":[{"name":"gpu"}]}}]}}]}\n' >"$work/api/pods.json"
 expect_failure ws_session_other_gpu_check
 expect_failure ws_session_gpu_free "$work/unused-hardware.json"
+# Any claim counts as GPU use (unknown claims too), as does the retired resource.
+printf '{"items":[{"metadata":{"uid":"templated"},"status":{"phase":"Running"},"spec":{"resourceClaims":[{"name":"g","resourceClaimTemplateName":"any-gpu"}],"containers":[{}]}}]}\n' >"$work/api/pods.json"
+expect_failure ws_session_other_gpu_check
+printf '{"items":[{"metadata":{"uid":"legacy"},"status":{"phase":"Running"},"spec":{"containers":[{"resources":{"limits":{"amd.com/gpu":1}}}]}}]}\n' >"$work/api/pods.json"
+expect_failure ws_session_other_gpu_check
+expect_failure ws_session_gpu_free "$work/unused-hardware.json"
+printf '{"items":[{"metadata":{"uid":"cpu-only"},"status":{"phase":"Running"},"spec":{"containers":[{"resources":{"requests":{"cpu":"1"}}}]}}]}\n' >"$work/api/pods.json"
+ws_session_other_gpu_check
 printf '{"items":[]}\n' >"$work/api/pods.json"
 printf '{"items":[]}\n' >"$work/api/rs.json"
 
@@ -193,7 +210,7 @@ SESSION_SERVICE_ENABLED=true
 SESSION_IMAGE_DEPLOYMENT=swarmui
 SESSION_SERVICE_CONTROL_FILE=/fixture/gateway-control-key
 cp "$work/api/parent-steam-headless.json" "$work/api/swarmui.json"
-set_document "$work/api/swarmui.json" '.metadata.name="swarmui" | .metadata.uid="swarmui-uid" | .spec.replicas=0 | .spec.template.spec.containers[0].resources={requests:{cpu:"12",memory:"12Gi","amd.com/gpu":1},limits:{cpu:"12",memory:"12Gi","amd.com/gpu":1}}'
+set_document "$work/api/swarmui.json" '.metadata.name="swarmui" | .metadata.uid="swarmui-uid" | .spec.replicas=0 | .spec.template.spec.containers[0].resources={requests:{cpu:"12",memory:"12Gi"},limits:{cpu:"12",memory:"12Gi"},claims:[{name:"gpu-1"}]} | .spec.template.spec.resourceClaims=[{name:"gpu-1",resourceClaimName:"gpu-1"}]'
 ws_session_service_model() { printf 'Qwen3.5-9B\n'; }
 ws_session_service() { printf '%s\n' "$*" >>"$work/service-phases"; }
 ws_session_switch split "$work/fixture.json" "$work/state" --execute
@@ -212,8 +229,17 @@ grep -Fxq unavailable "$work/service-phases"
 rm "$work/fail-rollout"
 ws_session_switch maintenance "$work/fixture.json" "$work/state" --execute
 [[ $(jq -r .spec.replicas "$work/api/sglang.json") == 0 && $(jq -r .spec.replicas "$work/api/swarmui.json") == 0 ]]
+# Called indirectly by ws_session_switch below.
+# shellcheck disable=SC2329
 ws_session_service_model() { printf 'Qwen3.8-27B-FP8\n'; }
 count=$(wc -l <"$work/scale.log")
 expect_failure ws_session_switch split "$work/fixture.json" "$work/state" --execute
 [[ $(wc -l <"$work/scale.log") == "$count" ]]
+# Split needs one distinct card each: both on gpu-0 is refused before any scale.
+ws_session_service_model() { printf 'Qwen3.5-9B\n'; }
+cp "$work/api/swarmui.json" "$work/swarmui.bak"
+set_document "$work/api/swarmui.json" '.spec.template.spec.resourceClaims=[{name:"gpu-0",resourceClaimName:"gpu-0"}] | .spec.template.spec.containers[0].resources.claims=[{name:"gpu-0"}]'
+expect_failure ws_session_switch split "$work/fixture.json" "$work/state" --execute
+[[ $(wc -l <"$work/scale.log") == "$count" ]]
+mv "$work/swarmui.bak" "$work/api/swarmui.json"
 printf 'shared service split/drain/failure fixture tests passed\n'

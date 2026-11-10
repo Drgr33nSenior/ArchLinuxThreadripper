@@ -22,6 +22,10 @@ spec:
         runAsUser: 1000
         runAsGroup: 1000
         seccompProfile: {type: RuntimeDefault}
+      # DRA: standalone claims applied with the GPU Operator
+      # (infrastructure/gpu-operator/claims.yaml); see docs/HOME-LAB.md.
+      resourceClaims:
+        - {name: gpu-1, resourceClaimName: gpu-1}
       containers:
         - name: steam-headless
           # Build the locked recipe, qualify it, then supply its registry manifest
@@ -51,8 +55,9 @@ spec:
             capabilities:
               drop: [ALL]
           resources:
-            requests: {cpu: '12', memory: 12Gi, amd.com/gpu: '1'}
-            limits: {cpu: '12', memory: 12Gi, amd.com/gpu: '1'}
+            requests: {cpu: '12', memory: 12Gi}
+            limits: {cpu: '12', memory: 12Gi}
+            claims: [{name: gpu-1}]
           ports:
             - {name: http, containerPort: 47989, protocol: TCP}
             - {name: https, containerPort: 47984, protocol: TCP}

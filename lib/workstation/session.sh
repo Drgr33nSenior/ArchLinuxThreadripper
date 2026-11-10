@@ -89,8 +89,19 @@ ws_session_plan() {
       power_policy:"No temporary power changes; existing TuneD state remains unchanged."}'
 }
 
+# GPUs are allocated through Kubernetes DRA: the operator-applied standalone
+# ResourceClaims gpu-0/gpu-1 (infrastructure/gpu-operator/claims.yaml). A pod
+# spec uses a GPU when it references any ResourceClaim (unknown claims are
+# treated as GPU use, conservatively) or still requests the retired device-plugin
+# resource amd.com/gpu. Managed workloads must use only gpu-N claims.
+WS_SESSION_GPU_JQ='
+  def gpu_claims: [(.resourceClaims // [])[] | (.resourceClaimName // "") | select(test("^gpu-[0-9]+$"))] | unique;
+  def legacy_gpu: any(((.containers // []) + (.initContainers // []))[];
+    ((.resources.requests["amd.com/gpu"] // 0)|tonumber) > 0 or ((.resources.limits["amd.com/gpu"] // 0)|tonumber) > 0);
+  def uses_gpu: ((.resourceClaims // [])|length) > 0 or legacy_gpu;'
+
 ws_session_target_check() {
-  local hardware="$1" node nodes boot container_status cpu_config
+  local hardware="$1" node slices boot container_status cpu_config
   if systemd-detect-virt --container --quiet; then container_status=0; else container_status=$?; fi
   [[ "$container_status" == 1 ]] || ws_die 'run session control on the host, not inside a container or an unknown process namespace'
   ws_detected_gpu_target "$hardware" >/dev/null
@@ -108,14 +119,16 @@ ws_session_target_check() {
   [[ "$boot" == "$(ws_rocm_boot_id_read "$(dirname -- "$hardware")/boot-id.txt")" ]] || ws_die 'recollect hardware after reboot before session control'
   node="$(ws_session_kubectl get node "$SESSION_NODE" -o json)" || ws_die 'cannot inspect the explicit node'
   jq -e --arg boot "$boot" '.status.nodeInfo.bootID == $boot and
-    any(.status.conditions[]; .type == "Ready" and .status == "True") and
-    ((.status.allocatable["amd.com/gpu"]|tonumber) == 2)' <<<"$node" >/dev/null ||
-    ws_die 'selected node is not this boot, Ready, or advertising exactly two GPUs'
+    any(.status.conditions[]; .type == "Ready" and .status == "True")' <<<"$node" >/dev/null ||
+    ws_die 'selected node is not this boot or not Ready'
+  # GPUs are published by the DRA driver (gpu.amd.com) as ResourceSlices.
   # Existing overlays use gfx labels rather than a node-name pin. Restrict the
   # command to their established single accelerator-node deployment model.
-  nodes="$(ws_session_kubectl get nodes -o json)" || ws_die 'cannot check accelerator node scope'
-  jq -e --arg node "$SESSION_NODE" '[.items[] | select(((.status.allocatable["amd.com/gpu"] // "0")|tonumber)>0) | .metadata.name] == [$node]' \
-    <<<"$nodes" >/dev/null || ws_die 'session control requires exactly one accelerator node; pin and qualify multi-node placement separately'
+  slices="$(ws_session_kubectl get resourceslices -o json)" || ws_die 'cannot inspect published GPUs'
+  jq -e --arg node "$SESSION_NODE" '[.items[] | select(.spec.driver == "gpu.amd.com") | .spec.nodeName] | unique == [$node]' \
+    <<<"$slices" >/dev/null || ws_die 'session control requires exactly one accelerator node; pin and qualify multi-node placement separately'
+  jq -e --arg node "$SESSION_NODE" '[.items[] | select(.spec.driver == "gpu.amd.com" and .spec.nodeName == $node) | .spec.devices[]] | length == 2' \
+    <<<"$slices" >/dev/null || ws_die 'selected node does not publish exactly two GPUs through the DRA driver'
   printf '%s\n' "$node"
 }
 
@@ -178,7 +191,7 @@ ws_session_capacity_check() {
   # Only this repository's explicit integer CPU and Mi/Gi memory quantities
   # are accepted for the selected Guaranteed workload; unknown units fail.
   jq -en --argjson d "$document" --argjson node "$node" --argjson pods "$pods" \
-    --argjson managed "$managed" --argjson smt "$smt" '
+    --argjson managed "$managed" --argjson smt "$smt" "$WS_SESSION_GPU_JQ"'
     def cpu: tostring | if test("^[0-9]+m$") then rtrimstr("m")|tonumber/1000 else tonumber end;
     def mem: tostring | if test("^[0-9]+(Ki|Mi|Gi|Ti)?$") then . else error("unhandled memory quantity") end |
       capture("^(?<n>[0-9]+)(?<u>Ki|Mi|Gi|Ti)?$") as $q |
@@ -190,7 +203,7 @@ ws_session_capacity_check() {
       ([$app,$init]|max) + ((.overhead[$key] // "0")|f);
     def managed: .metadata.uid as $uid | ($managed|index($uid)) != null;
     def supported: (has("resources")|not) and
-      all(.initContainers[]?; .restartPolicy != "Always" and
+      all(.initContainers[]?; .restartPolicy != "Always" and ((.resources.claims // [])|length) == 0 and
         ((.resources.requests["amd.com/gpu"] // 0)|tonumber) == 0 and
         ((.resources.limits["amd.com/gpu"] // 0)|tonumber) == 0);
     $d.spec.template.spec as $spec |
@@ -205,10 +218,9 @@ ws_session_capacity_check() {
       (.resources.requests.cpu|test("^[1-9][0-9]*$")) and
       ((.resources.requests.cpu|tonumber) % $smt == 0) and
       (.resources.requests.memory|test("^[1-9][0-9]*(Mi|Gi)$"))) and
-    ([ $spec.containers[] | .resources.requests["amd.com/gpu"] // 0 | tonumber ]|add) >= 1 and
-    ([ $spec.containers[] | .resources.requests["amd.com/gpu"] // 0 | tonumber ]|add) <= 2 and
-    all($spec.containers[];
-      (.resources.requests["amd.com/gpu"] // 0) == (.resources.limits["amd.com/gpu"] // 0)) and
+    ($spec|legacy_gpu|not) and
+    (($spec.resourceClaims // [])|length) == ($spec|gpu_claims|length) and
+    ($spec|gpu_claims|length) >= 1 and ($spec|gpu_claims|length) <= 2 and
     (($spec|footprint("cpu";cpu))+$usedcpu <= ($node.status.allocatable.cpu|cpu)) and
     (($spec|footprint("memory";mem))+$usedmem <= ($node.status.allocatable.memory|mem))
   ' >/dev/null || ws_die 'workload is not Guaranteed or cannot fit node CPU/RAM/GPU requests; unknown quantities also fail closed'
@@ -226,12 +238,10 @@ ws_session_other_gpu_check() {
   local pods managed
   pods="$(ws_session_kubectl get pods -A -o json)" || ws_die 'cannot inspect pending and bound GPU consumers'
   managed="$(ws_session_managed_uids)" || ws_die 'cannot resolve managed Pod ownership'
-  jq -e --argjson managed "$managed" 'all(.items[];
+  jq -e --argjson managed "$managed" "$WS_SESSION_GPU_JQ"'all(.items[];
     ((.status.phase == "Succeeded" or .status.phase == "Failed") and .metadata.deletionTimestamp == null) or
     (.metadata.uid as $uid | ($managed|index($uid)) != null) or
-    all((.spec.containers + (.spec.initContainers // []))[];
-      ((.resources.requests["amd.com/gpu"] // 0)|tonumber) == 0 and
-      ((.resources.limits["amd.com/gpu"] // 0)|tonumber) == 0))' <<<"$pods" >/dev/null ||
+    (.spec|uses_gpu|not))' <<<"$pods" >/dev/null ||
     ws_die 'an unmanaged pending or bound Pod requests GPUs; leave it untouched and resolve ownership before switching'
 }
 
@@ -267,11 +277,9 @@ ws_session_stop() {
 ws_session_gpu_free() {
   local hardware="$1" pods bdf bdfs path device number fd pid found=0 current expected
   pods="$(ws_session_kubectl get pods -A -o json)" || ws_die 'cannot verify GPU allocations, including pending consumers'
-  jq -e 'all(.items[];
+  jq -e "$WS_SESSION_GPU_JQ"'all(.items[];
     ((.status.phase == "Succeeded" or .status.phase == "Failed") and .metadata.deletionTimestamp == null) or
-    all((.spec.containers + (.spec.initContainers // []))[];
-      ((.resources.requests["amd.com/gpu"] // 0)|tonumber) == 0 and
-      ((.resources.limits["amd.com/gpu"] // 0)|tonumber) == 0))' <<<"$pods" >/dev/null ||
+    (.spec|uses_gpu|not))' <<<"$pods" >/dev/null ||
     ws_die 'a Pod still requests GPUs on this node; do not start the next session'
   current="$(ws_pci_amd_gpus)"
   expected="$(jq -c '.pci_gpus|map({bdf,device_id,driver})|sort_by(.bdf)' "$hardware")"
@@ -452,9 +460,11 @@ ws_session_switch() (
     [[ "$service_model" == Qwen3.5-9B ]] || ws_die 'split requires the separately qualified one-GPU Qwen3.5-9B overlay'
     ws_session_qualify "$SESSION_IMAGE_DEPLOYMENT" "$node" ai
     local combined
-    combined="$(jq -n --argjson ai "$(ws_session_deployment "$SESSION_AI_DEPLOYMENT")" --argjson image "$(ws_session_deployment "$SESSION_IMAGE_DEPLOYMENT")" '
-      [$ai,$image] | if all(.[]; ([.spec.template.spec.containers[].resources.requests["amd.com/gpu"]|tonumber]|add)==1) then
+    combined="$(jq -n --argjson ai "$(ws_session_deployment "$SESSION_AI_DEPLOYMENT")" --argjson image "$(ws_session_deployment "$SESSION_IMAGE_DEPLOYMENT")" "$WS_SESSION_GPU_JQ"'
+      [$ai,$image] | if all(.[]; (.spec.template.spec|gpu_claims|length)==1) and
+          ($ai.spec.template.spec|gpu_claims) != ($image.spec.template.spec|gpu_claims) then
         $ai | .spec.template.spec.containers += $image.spec.template.spec.containers |
+        .spec.template.spec.resourceClaims = ((.spec.template.spec.resourceClaims // []) + ($image.spec.template.spec.resourceClaims // [])) |
         .spec.template.spec.initContainers=((.spec.template.spec.initContainers // [])+($image.spec.template.spec.initContainers // []))
       else error("split requires one device each") end')" || ws_die 'invalid split device allocation'
     ws_session_capacity_check "$combined" "$node"

@@ -42,7 +42,7 @@ workloads.each do |workload|
     check(security['allowPrivilegeEscalation'] == false && security['readOnlyRootFilesystem'] == true, 'container hardening')
     check(security.dig('capabilities', 'drop') == ['ALL'] && !security['privileged'], 'capability escalation')
     limits = container.dig('resources', 'limits')
-    check(!limits.key?('amd.com/gpu'), 'telemetry must not reserve an inference GPU')
+    check(!limits.key?('amd.com/gpu') && !container.dig('resources', 'claims'), 'telemetry must not reserve an inference GPU')
     check(limits['memory'].match?(/\A\d+Mi\z/), 'explicit bounded memory')
     total_memory += limits['memory'].to_i
   end

@@ -28,7 +28,7 @@ a fresh image rebuild from that final source is still required.
 | Capture/encode | `capture=kwin`, `encoder=vulkan`; compare VA-API separately on the same accepted capture path |
 | Graphics | Sunshine and base inputs are locked; each build records installed packages and needs a fresh immutable image identity |
 | State | Per-owner gaming-home PVC retains pairing, config, Steam data and shader caches; no automatic state migration/reset |
-| GPU | One `amd.com/gpu`; verify actual render/capture/encode placement by BDF, not an environment index |
+| GPU | DRA claim `gpu-1` (`0000:c3:00.0`); the session tooling stops other `gpu-1` users first. Verify render/capture/encode placement by BDF, not an environment index |
 
 The existing 12-CPU/12-GiB gaming envelope, 2-GiB shared-memory limit, one-GPU
 request, AI-unload checks and cooperative build inhibition are retained. This
