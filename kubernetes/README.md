@@ -10,8 +10,11 @@ egress policy. `dev` is deliberately baseline-only for local development.
 locked upstream bytes without mutating a cluster. `apply` requires a readable
 explicit kubeconfig, its explicit context, and a matching confirmation value.
 It downloads the cert-manager and local-path manifests from the URL and
-SHA-256 values in the root `versions.lock`. No Route53 credential is
-represented in this repository.
+SHA-256 values in the root `versions.lock`. `--component cert-manager` limits
+check and apply to the cert-manager release and its install record. Use it on
+the bare-metal workstation cluster, where K3s already provides `local-path`. No
+Route53 or Cloudflare credential is represented in this repository; see
+[cert-manager/README.md](cert-manager/README.md).
 
 Each immutable install-lock ConfigMap includes the release version and manifest
 checksum prefix in its name. `render`, `check`, and `apply` reject metadata that

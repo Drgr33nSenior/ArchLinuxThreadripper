@@ -1,4 +1,13 @@
 ---
+# Listed first so a reviewed guard is loaded before any approved K3s restart.
+# One nft transaction replaces only the owned table (no unprotected window).
+- name: Load approved K3s host guard
+  ansible.builtin.command: nft -f /etc/nftables.d/k3s-host-guard.nft
+  changed_when: true
+  when:
+    - lab_manage_service | bool
+    - lab_network_reviewed | bool
+
 - name: Restart approved K3s server
   ansible.builtin.systemd_service:
     name: k3s

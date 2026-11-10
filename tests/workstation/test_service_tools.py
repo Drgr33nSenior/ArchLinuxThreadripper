@@ -97,7 +97,7 @@ class ToolsTests(unittest.IsolatedAsyncioTestCase):
             raise AssertionError("unexpected upstream route")
         self.upstream = httpx.AsyncClient(transport=httpx.MockTransport(upstream))
         self.tools = ServiceTools(self.upstream, "http://webui", "http://swarm", "http://gateway",
-            self.mapping, self.root / "state", image_timeout=0.2, public_webui="https://chat.test:32443")
+            self.mapping, self.root / "state", image_timeout=0.2, public_webui="https://chat.test")
         self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=self.tools.app), base_url="http://tools")
         self.headers = {"Authorization": "Bearer " + "s" * 32, "X-OpenWebUI-User-Id": "alice"}
         self.image = {"model": "workstation-sdxl", "prompt": "fixture landscape", "size": "512x512"}
@@ -117,7 +117,7 @@ class ToolsTests(unittest.IsolatedAsyncioTestCase):
         response = await self.retrieve("alice-project")
         self.assertEqual(200, response.status_code)
         value = json.loads(response.json()["result"]["content"][0]["text"])
-        self.assertEqual("https://chat.test:32443/api/v1/files/doc1/content", value["hits"][0]["citation"])
+        self.assertEqual("https://chat.test/api/v1/files/doc1/content", value["hits"][0]["citation"])
         self.assertLessEqual(len(value["hits"][0]["snippet"]), 1600)
         self.assertEqual("untrusted-source-text", value["hits"][0]["content_trust"])
         self.assertTrue(all(r.headers.get("authorization") == "Bearer fixture-user-token" for r in self.calls))

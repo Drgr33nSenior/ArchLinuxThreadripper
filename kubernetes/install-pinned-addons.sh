@@ -8,16 +8,20 @@ mode=render
 kubeconfig=''
 context=''
 confirm_context=''
+component=all
 
 usage() {
   cat <<'EOF'
-Usage: install-pinned-addons.sh [render|check|apply] [--kubeconfig FILE --context NAME --confirm-context NAME]
+Usage: install-pinned-addons.sh [render|check|apply] [--component all|cert-manager] [--kubeconfig FILE --context NAME --confirm-context NAME]
 
 render (default) renders only repository manifests. check downloads locked
 add-on manifests, verifies SHA-256 checksums, and performs bounded local shape
 checks without contacting a cluster.
 apply requires all three explicit Kubernetes target arguments and a matching
 confirmation value.
+--component cert-manager limits every mode to the locked cert-manager release
+and its install record. Use it on the bare-metal workstation cluster, whose
+bundled K3s local-path StorageClass must not be replaced.
 EOF
 }
 
@@ -83,6 +87,14 @@ while (($#)); do
       confirm_context=$2
       shift 2
       ;;
+    --component)
+      (($# >= 2)) && [[ $2 == all || $2 == cert-manager ]] || {
+        usage >&2
+        exit 2
+      }
+      component=$2
+      shift 2
+      ;;
     -h | --help)
       usage
       exit 0
@@ -100,7 +112,11 @@ validate_addon_metadata local-path-provisioner-install-lock LOCAL_PATH_PROVISION
 need kubectl
 case "$mode" in
   render)
-    kubectl kustomize "$repo_root/kubernetes"
+    if [ "$component" = cert-manager ]; then
+      kubectl kustomize "$repo_root/kubernetes/cert-manager"
+    else
+      kubectl kustomize "$repo_root/kubernetes"
+    fi
     exit 0
     ;;
   check | apply)
@@ -157,6 +173,19 @@ local_path_helper_image="$(read_lock LOCAL_PATH_HELPER_IMAGE)"
     exit 1
   }
 download_locked_manifest cert-manager "$(read_lock CERT_MANAGER_MANIFEST_URL)" "$(read_lock CERT_MANAGER_MANIFEST_SHA256)" "$cert_manager"
+
+if [ "$component" = cert-manager ]; then
+  grep -Fq 'kind: CustomResourceDefinition' "$cert_manager"
+  grep -Fq 'name: cert-manager' "$cert_manager"
+  if [ "$mode" = check ]; then
+    printf 'check passed; no cluster mutation was requested\n'
+    exit 0
+  fi
+  kubectl --kubeconfig "$kubeconfig" --context "$context" apply --server-side --field-manager=k3s-lab-cert-manager -f "$cert_manager"
+  kubectl --kubeconfig "$kubeconfig" --context "$context" apply --server-side --field-manager=k3s-lab-cert-manager -k "$repo_root/kubernetes/cert-manager"
+  exit 0
+fi
+
 download_locked_manifest local-path-provisioner "$(read_lock LOCAL_PATH_PROVISIONER_MANIFEST_URL)" "$(read_lock LOCAL_PATH_PROVISIONER_MANIFEST_SHA256)" "$local_path"
 mkdir -p "$local_path_merge_dir"
 cp -- "$local_path" "$local_path_merge_dir/upstream.yaml"

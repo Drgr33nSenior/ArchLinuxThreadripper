@@ -31,7 +31,8 @@ outputs. Edit the source and regenerate both previews; do not edit them separate
   candidate remain unqualified. Use [SUNSHINE.md](SUNSHINE.md) for
   current capture/admission and input acceptance. No diagram arrow qualifies it.
 - The service overlay routes Open WebUI and HTTPS clients through LiteLLM to
-  internal SGLang. Traefik uses one private NodePort, 32443. SwarmUI retains
+  internal SGLang. Traefik serves standard HTTPS (TCP 443) on the node's
+  management-VLAN address only (a Service externalIP). SwarmUI retains
   ownership of its packaged ComfyUI; a narrow adapter serves browser images.
   Site DNS/TLS, backend packaging and target qualification remain prerequisites.
 - Arch owns `amdgpu`. The AMD operator manages the traditional device plugin

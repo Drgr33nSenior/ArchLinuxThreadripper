@@ -1,0 +1,46 @@
+# Cloudflare DNS-01 ClusterIssuers for the workstation AI service.
+# Replace __ACME_EMAIL__ and __DNS_ZONE__ into a private copy; no value here is
+# secret. The API token lives only in the owner-created Secret
+# cert-manager/cloudflare-dns01-api-token (key api-token). An issuer only
+# registers an ACME account; the staged order is enforced by the Certificates:
+# apply the rendered staging Certificate first and the production one only
+# after staging has become Ready.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging-cloudflare
+spec:
+  acme:
+    email: "__ACME_EMAIL__"
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-staging-cloudflare-account
+    solvers:
+      - selector:
+          dnsZones:
+            - "__DNS_ZONE__"
+        dns01:
+          cloudflare:
+            apiTokenSecretRef:
+              name: cloudflare-dns01-api-token
+              key: api-token
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-production-cloudflare
+spec:
+  acme:
+    email: "__ACME_EMAIL__"
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-production-cloudflare-account
+    solvers:
+      - selector:
+          dnsZones:
+            - "__DNS_ZONE__"
+        dns01:
+          cloudflare:
+            apiTokenSecretRef:
+              name: cloudflare-dns01-api-token
+              key: api-token
