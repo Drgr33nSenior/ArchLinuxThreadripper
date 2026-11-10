@@ -249,6 +249,20 @@ fi
 [ "$(grep -c 'field-manager=k3s-lab-local-path ' "$offline_log")" -eq 6 ]
 [ "$(grep -c 'field-manager=k3s-lab-local-path .*local-path-merged.yaml' "$offline_log")" -eq 2 ]
 
+# The bare-metal workstation installs only the locked cert-manager release; its
+# bundled K3s local-path StorageClass must not be touched.
+: >"$offline_log"
+OFFLINE_KUBECTL_LOG="$offline_log" PATH="$offline_bin:/usr/bin:/bin" \
+  "$repo_root/kubernetes/install-pinned-addons.sh" apply --component cert-manager \
+  --kubeconfig "$temp_dir/empty-kubeconfig" --context k3s-test \
+  --confirm-context k3s-test >/dev/null
+[ "$(grep -c ' apply ' "$offline_log")" -eq 2 ]
+[ "$(grep -c 'field-manager=k3s-lab-cert-manager' "$offline_log")" -eq 2 ]
+if grep -q 'local-path\|kubernetes/base' "$offline_log"; then
+  echo 'cert-manager-only apply touched another add-on' >&2
+  exit 1
+fi
+
 bad_config="$temp_dir/bad-pool.conf"
 sed 's|^VM_POOL_DIR=.*|VM_POOL_DIR=/tmp/wrong-target|' "$config_file" >"$bad_config"
 if (k3s_load_config "$bad_config" "$repo_root/versions.lock") >/dev/null 2>&1; then
@@ -352,6 +366,15 @@ bootstrap_remove_line=$(grep -n 'Remove one-time passwordless bootstrap sudo pol
 prerequisite_line=$(grep -n 'Install prerequisites' "$repo_root/ansible/roles/k3s/tasks/main.yml" | cut -d: -f1)
 ((password_assert_line < bootstrap_remove_line && bootstrap_remove_line < prerequisite_line))
 grep -q 'route53-dns01-credentials' "$repo_root/kubernetes/cert-manager/templates/route53-cluster-issuer.yaml.tmpl"
+cloudflare_issuers="$repo_root/kubernetes/cert-manager/templates/cloudflare-cluster-issuers.yaml.tmpl"
+grep -q 'name: cloudflare-dns01-api-token' "$cloudflare_issuers"
+grep -q 'acme-staging-v02.api.letsencrypt.org' "$cloudflare_issuers"
+grep -q 'acme-v02.api.letsencrypt.org' "$cloudflare_issuers"
+# Only a scoped API token reference: never a Global API Key or an inline token.
+if grep -Eq 'apiKeySecretRef|apiToken:|email: "[^_]' "$cloudflare_issuers"; then
+  echo 'Cloudflare issuer template must reference only the scoped token Secret' >&2
+  exit 1
+fi
 grep -q 'upgrade version must exactly equal K3S_VERSION' "$repo_root/lib/k3s/lifecycle.sh"
 grep -q 'net-dumpxml' "$repo_root/lib/k3s/lifecycle.sh"
 grep -q 'existing management network must have autostart disabled' "$repo_root/lib/k3s/lifecycle.sh"
