@@ -255,6 +255,10 @@ assert ([e["name"] for e in profile["arms"]["R"]["env"]] ==
 assert argv["S"] == argv["R"]
 assert ([e["name"] for e in profile["arms"]["S"]["env"]] ==
         [e["name"] for e in profile["arms"]["R"]["env"]] + ["SGLANG_GFX1201_SILU_MUL_MXFP4"])
+# T is S with the one-request verify-attention tile: same flags, one env switch added.
+assert argv["T"] == argv["S"]
+assert ([e["name"] for e in profile["arms"]["T"]["env"]] ==
+        [e["name"] for e in profile["arms"]["S"]["env"]] + ["SGLANG_GFX1201_VERIFY_ATTENTION_B1_TILE"])
 for arm in profile["arms"]:
     items = json.loads((work / f"job-{arm}.json").read_text())["items"]
     config, job, service = items
