@@ -322,7 +322,7 @@
         "baseline"
       ],
       "held_out": true,
-      "prompt": "Supplied evidence (synthetic):\n[E1] kubectl get pod api-7c9 -o wide: STATUS CrashLoopBackOff, RESTARTS 6\n[E2] kubectl describe pod api-7c9: Last State: Terminated, Reason: OOMKilled, Exit Code: 137; Limits: memory 512Mi\n[E3] container log (previous): 'loaded 4 cache shards; resident 498Mi'\n[E4] deployment api: env CACHE_SHARDS=4 (changed from 2 at 09:12 UTC)\nReturn only JSON with keys root_cause (one of OOMKilled, ImagePullBackOff, ProbeFailure, ConfigError), container_limit, trigger_env, evidence (list of evidence IDs that support the cause).",
+      "prompt": "Supplied evidence (synthetic):\n[E1] kubectl get pod api-7c9 -o wide: STATUS CrashLoopBackOff, RESTARTS 6\n[E2] kubectl describe pod api-7c9: Last State: Terminated, Reason: OOMKilled, Exit Code: 137; Limits: memory 512Mi\n[E3] container log (previous): 'loaded 4 cache shards; resident 498Mi'\n[E4] deployment api: env CACHE_SHARDS=4 (changed from 2 at 09:12 UTC)\nReturn only JSON with keys root_cause (one of OOMKilled, ImagePullBackOff, ProbeFailure, ConfigError), container_limit, trigger_env (the name of the environment variable whose change triggered it), evidence (list of evidence IDs that support the cause).",
       "grading": {
         "kind": "json-fields",
         "expected": {
@@ -395,7 +395,7 @@
       ]
     }
   ],
-  "version": "2026-11-07.1",
+  "version": "2026-11-10.1",
   "profiles": {
     "baseline": {
       "description": "Principal selected recipe: thinking enabled at low effort, greedy decoding.",

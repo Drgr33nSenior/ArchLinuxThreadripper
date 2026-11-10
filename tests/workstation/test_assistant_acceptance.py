@@ -260,5 +260,41 @@ class RunnerTests(unittest.TestCase):
         self.assertTrue(all(row["fits"] for row in result["rows"]))
 
 
+
+class JsonFenceTests(unittest.TestCase):
+    """A JSON answer wrapped whole in one fence is graded on its content and reported as fenced."""
+
+    case = {"grading": {"kind": "json-fields", "expected": {"root_cause": "OOMKilled"},
+                        "required_citations": ["E2"], "allowed_citations": ["E1", "E2"]}}
+    body = '{"root_cause": "OOMKilled", "evidence": ["E2"]}'
+
+    def grade(self, final):
+        return assistant_acceptance.answer(self.case, {"final": final})
+
+    def test_bare_object_passes_unfenced(self):
+        self.assertEqual((True, {"citations": ["E2"], "fenced": False}), self.grade(self.body))
+
+    def test_one_enclosing_fence_passes_and_is_reported(self):
+        for final in (f"```json\n{self.body}\n```", f"\n\n```json\n{self.body}\n```", f"```\n{self.body}```"):
+            self.assertEqual((True, {"citations": ["E2"], "fenced": True}), self.grade(final))
+
+    def test_prose_around_the_object_still_fails(self):
+        for final in (f"Here it is:\n```json\n{self.body}\n```", f"```json\n{self.body}\n```\nDone.",
+                      f"```json\n{self.body}\n```\n```json\n{self.body}\n```"):
+            with self.assertRaises(ValueError):
+                self.grade(final)
+
+    def test_wrong_content_fails_even_when_fenced(self):
+        ok, detail = self.grade('```json\n{"root_cause": "ConfigError", "evidence": ["E2"]}\n```')
+        self.assertFalse(ok)
+        self.assertTrue(detail["fenced"])
+
+    def test_report_counts_fenced_json_answers(self):
+        menu = {"version": "t", "cases": [{"id": "j", "category": "troubleshooting", "grading": self.case["grading"]}]}
+        records = [{"case": "j", "profile": "baseline", "grade": "passed", "fenced": True},
+                   {"case": "j", "profile": "baseline", "grade": "passed", "fenced": False}]
+        self.assertEqual(0.5, assistant_acceptance.report(menu, records, "fixture", {})["metrics"]["json_fenced_rate"])
+
+
 if __name__ == "__main__":
     unittest.main()
