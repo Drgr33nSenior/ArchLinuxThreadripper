@@ -33,6 +33,15 @@ BOUNDARIES = ("fixture", "direct", "gateway", "webui-api")
 NOT_RUN = "NOT RUN"
 MAX_BODY = 8 << 20
 FENCE = re.compile(r"```([A-Za-z0-9_./-]+)\n(.*?)```", re.S)
+# A JSON answer wrapped whole in one ```json (or bare ```) fence is graded on its
+# content; the wrapper is recorded as "fenced" so the habit stays visible.
+JSON_FENCE = re.compile(r"\A```(?:json)?[ \t]*\n(.*?)\n?```\Z", re.S)
+
+
+def json_answer(final):
+    """(text to parse, fenced): strips exactly one fence enclosing the whole answer."""
+    match = JSON_FENCE.match(final)
+    return (match[1], True) if match else (final, False)
 
 
 def load_menu(path=MENU):
@@ -164,14 +173,16 @@ def answer(case, result):
     if kind == "text-equality":
         return final == grading["expected"], None
     if kind == "json-equality":
-        return json_equal(parse_object(final), grading["expected"]), None
+        text, fenced = json_answer(final)
+        return json_equal(parse_object(text), grading["expected"]), {"fenced": fenced}
     if kind == "json-fields":
-        value = parse_object(final)
+        text, fenced = json_answer(final)
+        value = parse_object(text)
         cited = value.get("evidence")
         ok = (all(json_equal(value.get(key), expected) for key, expected in grading["expected"].items())
               and isinstance(cited, list) and set(grading["required_citations"]) <= set(cited)
               and set(cited) <= set(grading["allowed_citations"]))
-        return ok, {"citations": cited if isinstance(cited, list) else None}
+        return ok, {"citations": cited if isinstance(cited, list) else None, "fenced": fenced}
     if kind == "answer-and-citation":
         ok = grading["required_fact"] in final and grading["required_url"] in final
         return ok, {"citations": [grading["required_url"]] if grading["required_url"] in final else []}
@@ -299,6 +310,7 @@ def report(menu, records, boundary, settings):
                     "needs-review" if all(g in ("passed", "needs-review") for g in grades) else "failed")
               for key, grades in tasks.items()}
     category = {case["id"]: case["category"] for case in menu["cases"]}
+    json_cases = {case["id"] for case in menu["cases"] if case["grading"]["kind"] in ("json-equality", "json-fields")}
 
     def rate(rows, predicate):
         rows = list(rows)
@@ -319,7 +331,9 @@ def report(menu, records, boundary, settings):
                 "grounded_answer_accuracy": rate(grounded, lambda r: r["grade"] == "passed"),
                 "abstention_correct": rate((r for r in executed if r["case"] == "project-evidence"), lambda r: r["grade"] == "passed"),
                 "truncation_rate": rate(executed, lambda r: r.get("outcome") in ("truncated", "unfinished-thinking")),
-                "median_time_to_usable_seconds": statistics.median(usable) if usable else None},
+                "median_time_to_usable_seconds": statistics.median(usable) if usable else None,
+                "json_fenced_rate": rate((r for r in executed if r["case"] in json_cases and "fenced" in r),
+                                         lambda r: r["fenced"])},
             "tasks": [{"case": k[0], "profile": k[1], "variant": k[2], "result": v} for k, v in sorted(unique.items(), key=str)],
             "records": records,
             "limitations": ["A fixture boundary tests this runner only; it is not model evidence.",

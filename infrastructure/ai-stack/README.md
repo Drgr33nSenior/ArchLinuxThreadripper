@@ -434,6 +434,10 @@ the bubblewrap sandbox, which the pod lacks, and long-context cases need a
 tokenizer budget. The runner reports both as NOT RUN, never as passed.
 `QUALITY_RESULT` lists the pass rate, the tool round-trip, grounded and
 abstention rates, and any failed task.
+JSON-graded answers wrapped whole in one ```` ```json ```` fence are graded on
+their content; `json_fenced_rate` reports how often the model wrapped them
+(menu `2026-11-10.1`; before it, a fenced answer failed as "not a JSON
+object").
 
 The bench Job fails only when the bench does: a failed BetterBench or
 long-context request, or a quality runner error. Graded quality failures are
