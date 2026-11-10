@@ -128,6 +128,30 @@ infrastructure/ai-stack/signing/verify-image.sh registry.lan.thespry.family/loca
 A cluster admission policy that rejects unsigned `local/` images is a planned
 follow-up; until then this check is the enforcement point.
 
+### Publishing an image
+
+To let others run the stack, the owner copies one verified image to GitHub's
+registry and hands out a standalone folder:
+
+```sh
+# On the workstation, after `podman login ghcr.io -u <owner>` with a classic
+# token that has write:packages:
+infrastructure/ai-stack/publish/publish.sh \
+  registry.lan.thespry.family/local/sglang-gfx1201@sha256:<digest> ghcr.io/<owner>/sglang-gfx1201
+# Anywhere:
+infrastructure/ai-stack/serving/render.py standalone \
+  infrastructure/ai-stack/serving/qwen3.8-27b-mxfp4-tp2.json \
+  ghcr.io/<owner>/sglang-gfx1201@sha256:<digest> --serving ../Spry.ai-rdna4-serving --out <folder>
+```
+
+`publish.sh` verifies the lab image, stops on any Trivy secret finding, then
+`cosign copy`s the image with its signature and attestations, so the public
+digest equals the lab digest and verifies with `signing/cosign.pub`. The first
+push creates a private package; make it public on GitHub. The standalone
+folder (`run.sh serve|bench`, the default arm's exact arguments and
+environment, the model revisions, the bench bundle, `cosign.pub` and a README)
+needs only podman or docker and the two models; it never names lab hosts.
+
 ## Models
 
 Each catalog entry pins a model and an optional draft: repository, revision and
