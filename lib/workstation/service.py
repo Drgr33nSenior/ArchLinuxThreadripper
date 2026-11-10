@@ -22,7 +22,12 @@ from telemetry import kustomize, load_objects, new_directory, pod_budget, pod_sp
 
 
 ROOT = Path(__file__).resolve().parents[2]
-MODELS = {"Qwen3.8-27B-FP8", "Qwen3.5-9B"}
+CANDIDATE_ALIAS = "Qwen3.8-27B-MXFP4"
+LEGACY_ALIAS = "Qwen3.8-27B-FP8"
+# Key provisioning allowlist. The MXFP4 alias is listed so revocable keys can be
+# issued for it before a contract render routes it; until then the gateway
+# refuses requests for it as an unknown model.
+MODELS = {LEGACY_ALIAS, "Qwen3.5-9B", CANDIDATE_ALIAS}
 
 
 def require(condition, message):
@@ -30,7 +35,6 @@ def require(condition, message):
         raise ValueError(message)
 
 
-CANDIDATE_ALIAS = "Qwen3.8-27B-MXFP4"
 # Native admission and gateway admission are different limits. The gateway
 # admits four concurrent requests; the selected runtime executes at most two.
 GATEWAY_ADMISSION = 4
@@ -41,6 +45,7 @@ REQUEST_DEFAULT_KEYS = ("chat_template_kwargs", "reasoning_effort", "temperature
 # 232, now the rollback arm). The selected arm's own measured sampling profile
 # is reported separately and treated as an alternative recipe.
 BASELINE_SAMPLING = {"temperature": 0.0, "top_k": 1, "top_p": 1.0}
+SAMPLING_KEYS = ("temperature", "top_p", "top_k")
 HEX = re.compile(r"[a-f0-9]{64}")
 
 
@@ -285,9 +290,10 @@ def candidate_client_profile(contract, output_tokens):
     defaults = contract.get("request_defaults")
     if defaults:
         values.update({"AGENT_ENABLE_THINKING": defaults["chat_template_kwargs"]["enable_thinking"],
-                       "AGENT_REASONING_EFFORT": defaults["reasoning_effort"],
-                       "AGENT_TEMPERATURE": defaults["temperature"], "AGENT_TOP_P": defaults["top_p"],
-                       "AGENT_TOP_K": defaults["top_k"]})
+                       "AGENT_REASONING_EFFORT": defaults["reasoning_effort"]})
+        # Sampling is projected only when the contract fixes it; otherwise the
+        # server applies the checkpoint's generation defaults.
+        values.update({"AGENT_" + key.upper(): defaults[key] for key in SAMPLING_KEYS if key in defaults})
     return values
 
 
@@ -315,12 +321,13 @@ def candidate_render(contract, output_tokens, deadline_seconds, reserve_tokens):
         # Source-controlled DEFAULT_MODEL_PARAMS; Open WebUI copies these to the
         # top level of each request. The output cap is left to the gateway
         # default because this variable also applies to the 9B model.
-        params.update({"temperature": defaults["temperature"], "top_k": defaults["top_k"], "top_p": defaults["top_p"],
-                       "reasoning_effort": defaults["reasoning_effort"],
+        params.update({key: defaults[key] for key in ("temperature", "top_k", "top_p") if key in defaults})
+        params.update({"reasoning_effort": defaults["reasoning_effort"],
                        "custom_params": {"chat_template_kwargs": defaults["chat_template_kwargs"]}})
     webui = {"DEFAULT_MODELS": alias, "DEFAULT_MODEL_PARAMS": json.dumps(params, separators=(",", ":"))}
     request = {"model": alias, "max_tokens": output_tokens,
-               **({key: params[key] for key in ("temperature", "top_k", "top_p", "reasoning_effort")} if defaults else {}),
+               **({key: params[key] for key in ("temperature", "top_k", "top_p", "reasoning_effort") if key in params}
+                  if defaults else {}),
                **(params["custom_params"] if defaults else {})}
     native = {"served_model": contract["served_model"], "context_length": context,
               "max_total_tokens": contract["max_total_tokens"], "max_running_requests": contract["max_running_requests"]}
@@ -550,6 +557,327 @@ def candidate_plan(args):
     print(f"Candidate integration prepared ({status}); not deployed:", output)
 
 
+# --- Serving contract for the AI-stack serving profile -----------------------
+# One explicit record that every consumer (persistent SGLang Deployment, gateway
+# policy, LiteLLM route, Open WebUI defaults, Qwen Code client values and the
+# service-tools contract metric) is rendered from. Inputs are read, never
+# edited: the serving profile and model catalogue under infrastructure/ai-stack
+# belong to the serving owner, and their render.py builds the server argv and
+# environment, so the persistent Deployment launches exactly what the
+# qualification Job launches. The selected arm is the profile's default arm
+# unless one is named; no arm letter is fixed here.
+SERVING_PROFILE = ROOT / "infrastructure/ai-stack/serving/qwen3.8-27b-mxfp4-tp2.json"
+CONTRACT_SCHEMA = "workstation-serving-contract/1"
+CONTRACT_ID = re.compile(r"[A-Za-z0-9._:-]{1,64}")
+# Reasoning parameters read from the checkpoint template itself, keyed by the
+# template's git blob id as the model catalogue records it. Blob c0c686f9…
+# (chat_template.jinja, 8952 bytes): thinking is on unless enable_thinking is
+# false; reasoning_effort defaults to xhigh and any value other than xhigh,
+# medium or low raises a template error (lines 46-49); preserve_thinking
+# controls whether earlier reasoning is replayed (line 116). A template not
+# listed here leaves the contract incomplete until it is read the same way.
+VERIFIED_TEMPLATES = {
+    "c0c686f9c38d70d179fb7b5f5aa7530bc913dda3": {
+        "reads": ["enable_thinking", "reasoning_effort", "preserve_thinking"],
+        "reasoning_efforts": ["low", "medium", "xhigh"], "default_effort": "xhigh",
+        "rejects": "any other effort, including high and numeric efforts, raises a template error"},
+}
+# Template switches a client may send. preserve_thinking changes which earlier
+# reasoning is replayed and is not reviewed for clients, so it stays refused.
+CLIENT_TEMPLATE_KWARGS = ("enable_thinking",)
+# Only "candidate" is a known not-promoted catalogue state today. The promoted
+# value is an assumption until the serving owner names it; any other value is
+# refused rather than guessed.
+CATALOGUE_STATES = {"candidate": False, "selected": True}
+DEFAULT_OUTPUT_TOKENS = 4096
+
+
+def ai_stack_render():
+    """The serving owner's render.py, loaded as a module (it never contacts a cluster)."""
+    import importlib.util
+    path = ROOT / "infrastructure/ai-stack/serving/render.py"
+    spec = importlib.util.spec_from_file_location("ai_stack_serving_render", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _last_values(argv, flag):
+    """Values after the last occurrence of a flag (argparse keeps the last one)."""
+    positions = [i for i, arg in enumerate(argv) if arg == flag]
+    if not positions:
+        return None
+    values = []
+    for arg in argv[positions[-1] + 1:]:
+        if arg.startswith("--"):
+            break
+        values.append(arg)
+    return values
+
+
+def _catalogue_file(catalog, name):
+    row = next((f for f in catalog["model"]["files"] if f["path"] == name), None)
+    require(row is not None, f"model catalogue lacks {name}")
+    return {key: row[key] for key in ("size", "git_sha1", "sha256") if key in row}
+
+
+def client_efforts(accepted):
+    """Client effort names mapped to template-accepted values.
+
+    OpenAI-style clients offer "high"; a template that accepts xhigh but not
+    high would raise, so high is sent as the nearest accepted level.
+    """
+    efforts = {effort: effort for effort in accepted}
+    if "high" not in accepted and "xhigh" in accepted:
+        efforts["high"] = "xhigh"
+    return efforts
+
+
+def serving_contract(profile_path=SERVING_PROFILE, arm=None, runtime_image=None,
+                     output_tokens=DEFAULT_OUTPUT_TOKENS, deadline_seconds=180, reserve_tokens=16):
+    """Build the serving contract from the owner's profile, catalogue and stack lock."""
+    render_module = ai_stack_render()
+    profile_path = Path(profile_path).resolve()
+    profile, catalog = render_module.load(profile_path)
+    arm_name, _ = render_module.arm_of(profile, arm)
+    argv = render_module.server_argv(profile, catalog, arm_name)
+    environment = render_module.environment(profile, arm_name)
+    # render.py reads the catalogue beside itself; the lock and model claim are read from the same tree.
+    stack_root = Path(render_module.__file__).resolve().parent.parent
+    catalogue_path = stack_root / "models" / f"{profile['model']}.json"
+    lock_path = stack_root / "stack.lock"
+    lock = dict(line.split("=", 1) for line in lock_path.read_text().splitlines()
+                if line and not line.startswith("#") and "=" in line)
+
+    def single(flag, optional=False):
+        values = _last_values(argv, flag)
+        if optional and values is None:
+            return None
+        require(values is not None and len(values) == 1, f"serving profile must set exactly one value for {flag}")
+        return values[0]
+
+    numbers = {}
+    for flag, key in (("--context-length", "context_length"), ("--max-total-tokens", "max_total_tokens"),
+                      ("--max-running-requests", "max_running_requests"), ("--tp-size", "tp_size")):
+        value = single(flag)
+        require(re.fullmatch(r"[1-9][0-9]{0,6}", value) is not None, f"invalid {flag} in the serving profile")
+        numbers[key] = int(value)
+    require(numbers["max_total_tokens"] >= numbers["context_length"], "serving pool is below one context")
+    served = single("--served-model-name")
+    require(served == profile["served_model_name"], "served model name differs from the profile")
+    template_kwargs = json.loads(single("--default-chat-template-kwargs") or "{}")
+    require(isinstance(template_kwargs, dict) and isinstance(template_kwargs.get("enable_thinking"), bool),
+            "the profile must set an explicit boolean enable_thinking server default")
+    template_file = _catalogue_file(catalog, "chat_template.jinja")
+    template = VERIFIED_TEMPLATES.get(template_file.get("git_sha1"))
+    missing, blocking = [], []
+    if template is None:
+        blocking.append(f"reasoning parameters: chat template blob {template_file.get('git_sha1')} has not been read; "
+                        "record its accepted reasoning_effort values in service.VERIFIED_TEMPLATES from the template source")
+        accepted = []
+    else:
+        accepted = template["reasoning_efforts"]
+    server_effort = template_kwargs.get("reasoning_effort", template["default_effort"] if template else None)
+    require(template is None or server_effort in accepted,
+            f"the profile's server-default reasoning_effort {server_effort!r} is not accepted by the checkpoint template")
+    image_ok = isinstance(runtime_image, str) and any(re.fullmatch(pattern, runtime_image) for pattern in
+                                                      (render_module.IMAGE_RE, render_module.PUBLIC_IMAGE_RE))
+    if not image_ok:
+        blocking.append(f"runtime image: the serving owner supplies the {lock.get('IMAGE_REPOSITORY', 'lab registry')}"
+                        f"@sha256 digest built from stack.lock for arm {arm_name}; pass --runtime-image")
+    catalogue_status = catalog.get("status")
+    require(catalogue_status in CATALOGUE_STATES,
+            f"unknown model catalogue status {catalogue_status!r}; the serving owner must name the promoted value")
+    if not CATALOGUE_STATES[catalogue_status]:
+        missing.append(f"model promotion: models/{profile['model']}.json status is {catalogue_status!r}")
+    if profile.get("status") != "qualified":
+        missing.append(f"profile qualification: serving/{profile['profile']}.json status is {profile.get('status')!r}; "
+                       "the owner records the qualification Job result first")
+    status = "incomplete" if blocking else ("provisional" if missing else "active")
+    identity = f"{profile['profile']}.{arm_name}"
+    require(CONTRACT_ID.fullmatch(identity) is not None, "contract identity is not a bounded label value")
+    require(type(output_tokens) is int and 128 <= output_tokens <= numbers["context_length"] // 2,
+            "output allowance must be 128..half the context")
+    request_defaults = {"chat_template_kwargs": {"enable_thinking": template_kwargs["enable_thinking"]},
+                        "reasoning_effort": server_effort} if template else None
+    model, draft = catalog["model"], catalog["draft"]
+    claim = next(o for o in load_objects((stack_root / "k8s/models.yaml").read_text())
+                 if o["kind"] == "PersistentVolumeClaim")
+    return {
+        "schema": CONTRACT_SCHEMA, "contract": identity, "status": status,
+        "missing_inputs": blocking + missing,
+        "sources": {"profile": str(profile_path.relative_to(ROOT)) if profile_path.is_relative_to(ROOT) else profile_path.name,
+                    "profile_sha256": sha(profile_path), "catalogue_sha256": sha(catalogue_path),
+                    "stack_lock_sha256": sha(lock_path)},
+        "selection": {"profile": profile["profile"], "profile_status": profile.get("status"), "arm": arm_name,
+                      "arm_source": "explicit" if arm else "profile-default", "catalogue_status": catalogue_status},
+        "model": {"alias": served, "served_model": served, "repository": model["repository"],
+                  "revision": model["revision"], "draft_repository": draft["repository"],
+                  "draft_revision": draft["revision"]},
+        "tokenizer": {name: _catalogue_file(catalog, name) for name in ("tokenizer.json", "tokenizer_config.json")},
+        "chat_template": {"file": "chat_template.jinja", **template_file, "verified": template is not None,
+                          **({key: template[key] for key in ("reads", "reasoning_efforts", "default_effort", "rejects")}
+                             if template else {})},
+        "runtime": {"image": runtime_image if image_ok else None, "image_repository": lock.get("IMAGE_REPOSITORY"),
+                    "sglang_commit": lock.get("SGLANG_COMMIT"), "patchset_sha256": lock.get("SGLANG_PATCHSET_SHA256"),
+                    "gpu_target": lock.get("GPU_TARGET"),
+                    # Arms can differ only in environment, so both are hashed.
+                    "launch_sha256": hashlib.sha256(json.dumps([argv, environment]).encode()).hexdigest(),
+                    "environment": sorted(entry["name"] for entry in environment)},
+        "parsers": {"reasoning_parser": single("--reasoning-parser", True),
+                    "tool_call_parser": single("--tool-call-parser", True),
+                    "grammar_backend": single("--grammar-backend", True)},
+        "reasoning": {"server_default_template_kwargs": template_kwargs, "request_defaults": request_defaults,
+                      "client_efforts": client_efforts(accepted), "client_template_kwargs": list(CLIENT_TEMPLATE_KWARGS),
+                      "per_request_effort": "unverified: the pinned serving_chat.py fills the server-default "
+                                            "chat_template_kwargs after moving a request's reasoning_effort out of "
+                                            "them and lets those kwargs override the top-level effort at template "
+                                            "render, so a server-default effort appears to win over a per-request "
+                                            "one; confirm with one rendered prompt"},
+        "budgets": {**numbers, "output_tokens": output_tokens, "reserve_tokens": reserve_tokens,
+                    "input_tokens": numbers["context_length"] - output_tokens - reserve_tokens},
+        "concurrency": {"gateway_admission": GATEWAY_ADMISSION, "native_running": numbers["max_running_requests"]},
+        "deadlines": {"gateway_seconds": deadline_seconds, "route_seconds": deadline_seconds - 10,
+                      "client_milliseconds": deadline_seconds * 1000},
+        "assets": {"claim": claim["metadata"]["name"], "storage_class": claim["spec"]["storageClassName"],
+                   "access_modes": claim["spec"]["accessModes"],
+                   "model_path": single("--model-path"), "draft_path": single("--speculative-draft-model-path"),
+                   "verified_marker": "VERIFIED.json",
+                   "storage_note": "NAS-backed nas-nfs claim; the NAS storage guide recommends workstation-local "
+                                   "caching for active models. Recorded for the serving owner, not changed here."},
+        "requirements": {"gpus": numbers["tp_size"], "gpu_groups": list(render_module.GPU_GROUPS),
+                         "node_selector": {"ai-home-lab.local/gfx": lock.get("GPU_TARGET")},
+                         "pod_security": "restricted"},
+        "_render": {"argv": argv, "environment": environment, "server_label": render_module.SERVER_LABEL},
+    }
+
+
+def contract_view(contract):
+    """The fields candidate_render projects into each consumer layer."""
+    budgets = contract["budgets"]
+    return {"client_alias": contract["model"]["alias"], "served_model": contract["model"]["served_model"],
+            "context_length": budgets["context_length"], "max_total_tokens": budgets["max_total_tokens"],
+            "max_running_requests": budgets["max_running_requests"],
+            "request_defaults": contract["reasoning"]["request_defaults"]}
+
+
+def contract_deployment(contract, objects):
+    """Persistent SGLang Deployment for the contract; replicas stay zero.
+
+    Keeps the existing Deployment's probes, security context, cache volume,
+    strategy and grace period. Replaces the image, launch argv and environment
+    with the profile's own, mounts the catalogue's model claim read-only and
+    sets the GPU count from the profile.
+    """
+    base = next(o for o in objects if o["kind"] == "Deployment" and o["metadata"]["name"] == "sglang")
+    deployment = copy.deepcopy(base)
+    rendered = contract["_render"]
+    pod = deployment["spec"]["template"]
+    spec = pod["spec"]
+    container = spec["containers"][0]
+    container["image"] = contract["runtime"]["image"] or "registry.invalid/ai-home-lab/sglang-gfx1201:CONTRACT-INCOMPLETE"
+    container["imagePullPolicy"] = "IfNotPresent"
+    container["command"] = ["python3", "-m", "sglang.launch_server"]
+    container["args"] = list(rendered["argv"])
+    container.pop("envFrom", None)
+    container["env"] = [dict(entry) for entry in rendered["environment"]]
+    gpus = str(contract["requirements"]["gpus"])
+    for section in ("requests", "limits"):
+        container["resources"][section]["amd.com/gpu"] = gpus
+    container["securityContext"] = {**container.get("securityContext", {}), "readOnlyRootFilesystem": True}
+    spec["securityContext"]["supplementalGroups"] = contract["requirements"]["gpu_groups"]
+    spec["nodeSelector"] = {**spec.get("nodeSelector", {}), **contract["requirements"]["node_selector"]}
+    for volume in spec["volumes"]:
+        if volume["name"] == "models":
+            volume["persistentVolumeClaim"] = {"claimName": contract["assets"]["claim"], "readOnly": True}
+    # The qualification Job's Service selects this label; carrying it keeps the
+    # sglang Service and telemetry pointed at whichever server holds the GPUs.
+    pod["metadata"]["labels"].update({rendered["server_label"]: "true",
+                                      "ai-stack/profile": contract["selection"]["profile"],
+                                      "ai-stack/arm": contract["selection"]["arm"]})
+    deployment["spec"]["replicas"] = 0
+    deployment["metadata"].setdefault("annotations", {}).update({
+        "ai-home-lab.local/qualification": f"serving-contract-{contract['status']}-not-qualified",
+        "ai-home-lab.local/serving-contract": contract["contract"],
+        "ai-home-lab.local/serving-launch-sha256": contract["runtime"]["launch_sha256"]})
+    return deployment
+
+
+def gateway_policy(contract, rendered):
+    """Gateway allowlist read by boundary.apply_policy; the 9B split route is kept."""
+    return {"contract": contract["contract"], "status": contract["status"],
+            "chat_models": {**rendered["gateway"]["chat_models"], "Qwen3.5-9B": [4096, 1024]},
+            "reasoning_efforts": contract["reasoning"]["client_efforts"],
+            "template_kwargs": contract["reasoning"]["client_template_kwargs"],
+            "request_timeout": contract["deadlines"]["gateway_seconds"],
+            "admission_limit": contract["concurrency"]["gateway_admission"]}
+
+
+def apply_contract(objects, contract, mode, experience):
+    """Rewrite every consumer in a rendered composition from one contract."""
+    require(mode == "large", "the serving contract needs both GPUs; render it with --mode large")
+    require(experience.startswith("assistant"), "the serving contract applies to the assistant experiences")
+    if contract["reasoning"]["request_defaults"] is None:
+        # Without verified template parameters, clients carry no reasoning defaults.
+        view = dict(contract_view(contract), request_defaults=None)
+    else:
+        view = contract_view(contract)
+    budgets, deadlines = contract["budgets"], contract["deadlines"]
+    rendered = candidate_render(view, budgets["output_tokens"], deadlines["gateway_seconds"], budgets["reserve_tokens"])
+    alias = view["client_alias"]
+    annotation = {"ai-home-lab.local/serving-contract": contract["contract"]}
+    result = []
+    for obj in objects:
+        kind, name = obj["kind"], obj["metadata"]["name"]
+        data = obj.get("data", {})
+        if kind == "ConfigMap" and "MODEL_REVISION" in data:
+            continue  # the legacy sglang-profile; the contract Deployment does not read it
+        if kind == "Deployment" and name == "sglang":
+            obj = contract_deployment(contract, objects)
+        elif kind == "ConfigMap" and "litellm.yaml" in data:
+            config = yaml.safe_load(data["litellm.yaml"])
+            config["model_list"] = [rendered["route"]] + [route for route in config["model_list"]
+                                                          if route["model_name"] not in {LEGACY_ALIAS, alias}]
+            data["litellm.yaml"] = yaml.safe_dump(config, sort_keys=False)
+            data["gateway-policy.json"] = json.dumps(gateway_policy(contract, rendered), indent=2) + "\n"
+        elif kind == "ConfigMap" and data.get("MEMORY_LLM_MODEL") == LEGACY_ALIAS:
+            data["MEMORY_LLM_MODEL"] = alias
+        elif kind == "Deployment" and name in {"open-webui", "service-tools", "litellm"}:
+            template = obj["spec"]["template"]
+            template["metadata"].setdefault("annotations", {}).update(annotation)
+            container = template["spec"]["containers"][0]
+            env = container.setdefault("env", [])
+            if name == "open-webui":
+                values = rendered["webui"]
+            elif name == "service-tools":
+                values = {"SERVING_CONTRACT": contract["contract"], "SERVING_CONTRACT_STATUS": contract["status"]}
+            else:
+                values = {}
+            env[:] = [entry for entry in env if entry["name"] not in values]
+            env += [{"name": key, "value": value} for key, value in values.items()]
+        result.append(obj)
+    # Configuration only: the gateway's Python source keeps its legacy defaults,
+    # which the rendered gateway-policy.json replaces at startup.
+    configuration = [dict(o, data={k: v for k, v in o["data"].items() if not k.endswith(".py")})
+                     if o["kind"] == "ConfigMap" else o for o in result]
+    checks = rendered["checks"] + [
+        {"id": "no-legacy-route", "matches": LEGACY_ALIAS not in yaml.safe_dump_all(configuration)},
+        {"id": "deployment-argv", "matches": next(o for o in result if o["kind"] == "Deployment"
+                                                  and o["metadata"]["name"] == "sglang")["spec"]["template"]["spec"]
+                                             ["containers"][0]["args"] == contract["_render"]["argv"]},
+    ]
+    if contract["reasoning"]["request_defaults"] is None:
+        # Not a consistency failure: the missing template verification is listed.
+        checks = [check for check in checks if check["id"] != "request-defaults"]
+    require(all(check["matches"] for check in checks),
+            "contract render is inconsistent: " + ", ".join(c["id"] for c in checks if not c["matches"]))
+    return result, rendered, checks
+
+
+def public_contract(contract):
+    return {key: value for key, value in contract.items() if not key.startswith("_")}
+
+
 def protected(path):
     path = Path(path)
     require(path.is_file() and not path.is_symlink(), "credential must be a regular file")
@@ -590,6 +918,14 @@ def render(args):
     require(experience in {"service", "assistant", "assistant-memory"}, "unknown service experience")
     overlay = experience if args.mode == "large" else experience + "-split"
     objects = kustomize(ROOT / "apps/overlays" / overlay)
+    contract = None
+    if getattr(args, "serving_profile", None):
+        # Every consumer comes from one contract; an incomplete contract still
+        # renders, inactive, with its missing inputs listed in evidence.json.
+        contract = serving_contract(args.serving_profile, getattr(args, "arm", None),
+                                    getattr(args, "runtime_image", None),
+                                    getattr(args, "output_tokens", DEFAULT_OUTPUT_TOKENS))
+        objects, contract_rendered, contract_checks = apply_contract(objects, contract, args.mode, experience)
     existing = {}
     if getattr(args, "existing_claims", None):
         claims = json.loads(Path(args.existing_claims).read_text())
@@ -636,18 +972,34 @@ def render(args):
            "spec": {"backoffLimit": 0, "activeDeadlineSeconds": 660, "template": template}}
     (output / "migration.yaml").write_text(yaml.safe_dump(job, sort_keys=False))
     (output / "site.json").write_text(json.dumps(site, indent=2) + "\n")
+    values = client_profile(args.mode)
+    if contract:
+        values = {**contract_rendered["client"], "AGENT_SERVING_CONTRACT": contract["contract"]}
     (output / "client.conf").write_text(f'AGENT_BASE_URL=https://{site["api_host"]}:32443/v1\n' +
-        "".join(f"{key}={value}\n" for key, value in client_profile(args.mode).items()))
+        "".join(f"{key}={str(value).lower() if type(value) is bool else value}\n" for key, value in values.items()))
     if experience.startswith("assistant"):
+        tools = next(o for o in objects if o["kind"] == "Deployment" and o["metadata"]["name"] == "service-tools")
+        tools_env = {e["name"]: e.get("value") for e in tools["spec"]["template"]["spec"]["containers"][0].get("env", [])}
         with (output / "client.conf").open("a") as client:
             client.write('AGENT_RETRIEVAL_ENABLED=true\nAGENT_WEB_SEARCH_ENABLED=true\n')
             client.write(f'AGENT_MEMORY_ENABLED={"true" if experience == "assistant-memory" else "false"}\n')
+            # Handoff tools follow the rendered service: offered only when it serves them.
+            client.write(f'AGENT_HANDOFF_ENABLED={"true" if tools_env.get("HANDOFF_ENABLED") == "true" else "false"}\n')
+    files = ["workloads.yaml", "traefik.yaml", "migration.yaml", "site.json", "client.conf"]
+    if contract:
+        (output / "serving-contract.json").write_text(json.dumps(public_contract(contract), indent=2) + "\n")
+        files.append("serving-contract.json")
     (output / "evidence.json").write_text(json.dumps({"status": "source-rendered-not-deployed", "mode": args.mode,
         "experience": experience,
         "existing_claims": existing,
-        "files": {n: sha(output / n) for n in ("workloads.yaml", "traefik.yaml", "migration.yaml", "site.json", "client.conf")},
+        "serving_contract": ({"contract": contract["contract"], "status": contract["status"],
+                              "missing_inputs": contract["missing_inputs"], "checks": contract_checks}
+                             if contract else {"contract": None, "note": "legacy source composition; no serving contract"}),
+        "files": {n: sha(output / n) for n in files},
         "required": ["TLS Secret", "private DNS", "NodePort firewall review", "retained-PV migration",
-                     "backup restore acceptance", "database migration", "workload qualification"]}, indent=2) + "\n")
+                     "backup restore acceptance", "database migration", "workload qualification"]
+                    + (["serving contract: " + item for item in contract["missing_inputs"]] if contract else [])},
+        indent=2) + "\n")
     print("Rendered service source; replicas remain zero:", output)
 
 
@@ -822,6 +1174,11 @@ def main():
     p.add_argument("site"); p.add_argument("output"); p.add_argument("--mode", choices=["large", "split"], default="large")
     p.add_argument("--experience", choices=["service", "assistant", "assistant-memory"], default="service")
     p.add_argument("--existing-claims", help="operator-collected PVC JSON; preserve immutable storage classes")
+    p.add_argument("--serving-profile", help="AI-stack serving profile; renders every consumer from its contract")
+    p.add_argument("--arm", help="profile arm; default: the arm the profile marks default")
+    p.add_argument("--runtime-image", help="serving image pinned by digest, supplied by the serving owner")
+    p.add_argument("--output-tokens", type=int, default=DEFAULT_OUTPUT_TOKENS,
+                   help="client output allowance, at most half the contract context; unqualified")
     p = commands.add_parser("candidate-plan", help="compare a pinned selected native candidate with assistant source; offline only")
     p.add_argument("pointer"); p.add_argument("output")
     p.add_argument("--pointer-sha256", required=True)
