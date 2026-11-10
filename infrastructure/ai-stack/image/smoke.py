@@ -153,6 +153,13 @@ extend_attention_fwd(qv, kc[blk].contiguous(), vc[blk].contiguous(), oe, kc, vc,
                      torch.zeros(2, device="cuda", dtype=torch.int64), tv, 1.0, 1.0, sm_scale=1 / math.sqrt(hd))
 if not (ov.float() - oe.float()).abs().max().item() < 1e-2:
     raise SystemExit("IMAGE_SMOKE=fail: split-KV verify attention differs from extend_attention_fwd")
+# The one-request tile (serving patch 0021: BT 64, 8 warps, 64-column q chunks).
+ow = torch.empty_like(qv)
+va.verify_attention_gfx1151(qv, ow, kc, vc, r2t, torch.tensor([1], device="cuda"), torch.tensor([pv], device="cuda"),
+                            tv, 1 / math.sqrt(hd), nsplit=va.NSPLIT_GFX1201, bt=va.GFX1201_B1_TILE[0],
+                            num_warps=va.GFX1201_B1_TILE[1], qc=va.GFX1201_B1_TILE[2])
+if not (ow.float() - oe.float()).abs().max().item() < 1e-2:
+    raise SystemExit("IMAGE_SMOKE=fail: one-request verify attention tile differs from extend_attention_fwd")
 
 # P1 prefill route (serving patch 0015) on one 5120x3072 shard at 1024 rows: the
 # FP8 expansion must equal the dequantized MXFP4 weight exactly, and the output
