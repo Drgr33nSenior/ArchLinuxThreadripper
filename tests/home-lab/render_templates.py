@@ -41,6 +41,24 @@ assert 'eviction-hard=memory.available<2Gi,nodefs.available<10%,imagefs.availabl
 # DRA is locked on since 1.35 and its gate is removed in 1.38; never set it.
 assert not {'kube-apiserver-arg', 'kube-scheduler-arg', 'kube-controller-manager-arg'} & config.keys()
 assert not any('DynamicResourceAllocation' in arg for arg in config['kubelet-arg'])
+# Host guard: 443 only to the node address on the management interface from
+# approved clients (checked before kube-proxy DNAT); 6443 only from management
+# there or from in-cluster sources. It owns only its table.
+guard_template = environment.from_string((role / 'templates/k3s-host-guard.nft.j2').read_text())
+guard = guard_template.render(**dict(variables, lab_https_client_cidrs=['192.168.0.0/16']))
+assert 'type filter hook prerouting priority -150; policy accept;' in guard
+assert 'iifname "synthetic0" ip daddr 192.168.50.10 ip saddr @https_clients_v4 tcp dport 443 accept' in guard
+assert 'fib daddr type local tcp dport 443 counter drop' in guard
+assert 'elements = { 192.168.0.0/16 }' in guard
+assert 'iifname "synthetic0" ip daddr 192.168.50.10 ip saddr @api_clients_v4 tcp dport 6443 accept' in guard
+assert 'elements = { 192.168.50.0/24 }' in guard
+assert 'tcp dport 6443 ip saddr @cluster_v4 accept' in guard and 'tcp dport 6443 counter drop' in guard
+assert 'tcp dport 10250 counter drop' in guard and 'udp dport 8472 counter drop' in guard
+assert 'flush ruleset' not in guard and guard.count('destroy table inet k3s_host_guard') == 1
+assert 'elements' not in guard_template.render(**variables).split('set https_clients_v4')[1].split('}')[0]
+guard_unit = (role / 'files/k3s-host-guard.service').read_text()
+assert 'ExecStart=/usr/bin/nft -f /etc/nftables.d/k3s-host-guard.nft' in guard_unit
+assert 'RequiredBy=k3s.service' in guard_unit
 runtime = tomllib.loads((role / 'files/10-cdi.toml').read_text())['plugins']['io.containerd.cri.v1.runtime']
 assert runtime['enable_cdi'] is True
 assert runtime['cdi_spec_dirs'] == ['/etc/cdi', '/var/run/cdi']

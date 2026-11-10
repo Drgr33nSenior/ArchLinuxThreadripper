@@ -1,0 +1,16 @@
+[Unit]
+Description=Host guard for K3s control ports (nftables table inet k3s_host_guard)
+Documentation=file:///etc/nftables.d/k3s-host-guard.nft
+DefaultDependencies=no
+Before=network-pre.target k3s.service
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/nft -f /etc/nftables.d/k3s-host-guard.nft
+ExecStop=/usr/bin/nft destroy table inet k3s_host_guard
+
+[Install]
+WantedBy=multi-user.target
+RequiredBy=k3s.service

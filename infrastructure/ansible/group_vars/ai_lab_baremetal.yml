@@ -7,6 +7,10 @@ lab_service_cidr: ''
 lab_cluster_dns: ''
 lab_network_interface: ''
 lab_tls_sans: []
+# HTTPS (Traefik 443) clients admitted by the host guard on lab_network_interface
+# to lab_node_ip; use the service site file's client_cidrs. Empty admits none.
+# The Kubernetes API (6443) is admitted only from lab_management_cidr there.
+lab_https_client_cidrs: []
 lab_hardware_report: ''
 lab_manage_service: false
 lab_network_reviewed: false

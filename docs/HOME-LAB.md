@@ -325,9 +325,11 @@ The pinned K3s uses containerd 2.x. Its v3 filename is preferred over the legacy
 `nonroot-devices` setting. Protect `/etc/cdi` and `/var/run/cdi` from tenant writes.
 
 Flannel VXLAN uses the selected LAN interface. K3s's NetworkPolicy controller
-stays enabled. ServiceLB is disabled to avoid automatically binding host ports;
-Traefik's LoadBalancer service remains pending until a reviewed exposure method
-is supplied. Application services remain ClusterIP. The bundled local-path
+stays enabled. ServiceLB is disabled to avoid automatically binding host ports.
+The shared AI service exposes Traefik through the reviewed
+`infrastructure/service/traefik.yaml`. This is a ClusterIP Service whose only
+externalIP is the node address, on TCP 443. Until it is applied, the bundled
+LoadBalancer Service stays pending. Application services remain ClusterIP. The bundled local-path
 provisioner uses `/var/lib/rancher/k3s/storage` on encrypted root; local volumes
 are not replicated and their default reclaim policy is Delete. Keep off-array
 backups and review PVC retention before deleting a claim. The separate VM lab
@@ -335,8 +337,30 @@ uses its existing pinned Retain provisioner and embedded-etcd recovery workflow.
 
 `lab_manage_service` and `lab_restart_approved` default to false. Review/load the
 generated sysctls and modules before enabling service management. Also review
-NetworkManager's CNI handling and the host firewall: allow the API only from the
-management LAN; do not expose kubelet, etcd, supervisor or VXLAN ports to WAN.
+NetworkManager's CNI handling.
+
+The role installs the host guard `/etc/nftables.d/k3s-host-guard.nft` and its
+`k3s-host-guard.service`, which K3s requires. The guard owns only the
+`inet k3s_host_guard` table and never flushes the ruleset. The role validates
+the file with `nft -c` before installing it. It loads the file in one
+transaction only when `lab_manage_service` and `lab_network_reviewed` are both
+true. Rules:
+
+- TCP 443 is accepted only on `lab_network_interface`, to `lab_node_ip`, from
+  `lab_https_client_cidrs`. These are the service site's `client_cidrs`. TCP
+  443 to every other local address or interface is dropped. This check runs at
+  prerouting priority -150, before kube-proxy's DNAT to Traefik.
+- The Kubernetes API (6443) is accepted only from `lab_management_cidr` on that
+  interface to `lab_node_ip`, or from the Pod/Service CIDRs. Other 6443
+  traffic is dropped.
+- The kubelet (10250) and VXLAN (8472) rules are unchanged: Pods only, and no
+  peers.
+
+SSH and other host services are left to the existing host policy. No rule
+accepts traffic on another NIC. The second NIC (`eno1` on gr33nstein) is
+reserved for a future DMZ. It has no address and no bound service. Before it is
+configured, it needs its own reviewed default-drop policy. Public exposure is
+out of scope for the current service.
 This play does not flush the host firewall or disable its security services.
 No CIS certification is claimed for this Arch configuration.
 
