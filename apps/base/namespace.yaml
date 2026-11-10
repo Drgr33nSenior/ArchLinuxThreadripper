@@ -1,9 +1,14 @@
+# The only definition of the ai-home-lab Namespace. Other compositions that put
+# objects in it (infrastructure/ai-stack/k8s/models.yaml, the serving render's
+# qualification Jobs) reference it and must not redefine it. Enforcement is the
+# commissioned restricted level; every rendered workload meets it. A workload
+# that needs a weaker level gets its own namespace, not an exception here.
 apiVersion: v1
 kind: Namespace
 metadata:
   name: ai-home-lab
   labels:
-    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/enforce-version: v1.35
     pod-security.kubernetes.io/audit: restricted
     pod-security.kubernetes.io/warn: restricted

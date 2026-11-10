@@ -167,22 +167,19 @@ add a `serving/<profile>.json` for it, and run the tests. To stage it on the
 NAS:
 
 ```sh
+kubectl apply -f apps/base/namespace.yaml                     # once; owns ai-home-lab
 kubectl apply -f infrastructure/ai-stack/k8s/models.yaml      # once
 infrastructure/ai-stack/models/render-fetch.py \
   infrastructure/ai-stack/models/<alias>.json infrastructure/ai-stack/stack.lock | kubectl apply -f -
 ```
 
-**Namespace conflict.** `k8s/models.yaml` also defines the `ai-home-lab`
-Namespace with `enforce: restricted`. The `apps/` layer defines the same
-Namespace in [`apps/base/namespace.yaml`](../../apps/base/namespace.yaml) with
-`enforce: baseline` (audit and warn `restricted`). Whichever is applied last
-sets enforcement, without warning: applying the `apps/` layer after this file
-relaxes the namespace to baseline, and applying this file after the `apps/`
-layer makes the namespace reject new Pods that meet only baseline. The live
-namespace enforces restricted from this file; the `apps/` layer has not been
-applied since the reinstall. The owner must choose one source for the
-Namespace and one enforcement level before both layers are applied. Until
-then, apply only one of them.
+**Namespace.** [`apps/base/namespace.yaml`](../../apps/base/namespace.yaml) is
+the only definition of the `ai-home-lab` Namespace, with Pod Security
+`enforce: restricted` (audit and warn `restricted`), the level the live
+namespace already enforces. `k8s/models.yaml` holds only the `ai-models` claim
+and references that Namespace. The rendered fetch, qualification and bench
+Jobs and the `apps/` workloads set the fields the restricted level requires;
+confirm admission with `kubectl apply --dry-run=server` before the first apply.
 
 The `ai-models` claim uses the `nas-nfs` StorageClass from
 [`infrastructure/nfs-csi/`](../nfs-csi); install it first
