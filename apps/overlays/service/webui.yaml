@@ -15,6 +15,9 @@ spec:
             - {name: ENABLE_FORWARD_USER_INFO_HEADERS, value: 'true'}
             - {name: ENABLE_DIRECT_CONNECTIONS, value: 'false'}
             - {name: ENABLE_API_KEYS, value: 'true'}
+            # Users (not only admins) may create API keys: service-tools refuses admin
+            # credentials, so coding clients need a user-role key (default is off).
+            - {name: USER_PERMISSIONS_FEATURES_API_KEYS, value: 'true'}
             - {name: ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS, value: 'true'}
             # '/api/v1/knowledge/' (trailing slash) matches only the read-only
             # knowledge listing, the project authority for handoffs and project
