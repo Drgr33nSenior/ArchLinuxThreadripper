@@ -29,6 +29,8 @@ apps/overlays/parent/kustomization.yaml
 apps/overlays/parent/profile.yaml
 apps/overlays/rag-dense/kustomization.yaml
 apps/overlays/rag/SHA256SUMS
+apps/overlays/rag/RERANKER-SHA256SUMS
+apps/overlays/rag/check-reranker.py
 apps/overlays/rag/kustomization.yaml
 apps/overlays/rag/pvc.yaml
 apps/overlays/rag/rag.env
@@ -258,6 +260,9 @@ apps/base/shared-api/image-profile.json
 apps/components/assistant/kustomization.yaml
 apps/components/assistant/assistant.env
 apps/components/assistant/webui.yaml
+apps/components/rag-reranker/kustomization.yaml
+apps/components/rag-reranker/reranker.env
+apps/components/rag-reranker/webui.yaml
 apps/components/assistant/tools.yaml
 apps/components/assistant/network-policy.yaml
 apps/overlays/assistant/kustomization.yaml

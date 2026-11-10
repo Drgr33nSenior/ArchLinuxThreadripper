@@ -195,6 +195,12 @@ def steps():
              build=lambda o, out: ws(o, "rag", "stage-models", out)),
         Step("rag-verify-models", "Verify the staged RAG model", uses=("rag-stage-models",),
              build=lambda o, out: ws(o, "rag", "verify-models", o.output_of("rag-stage-models"))),
+        # The rendered assistant profile reranks with this model; its init container
+        # refuses to start without these verified files on the models volume.
+        Step("rag-stage-reranker", "Stage the pinned RAG cross-encoder reranker", output="dir",
+             build=lambda o, out: ws(o, "rag", "stage-reranker", out)),
+        Step("rag-verify-reranker", "Verify the staged RAG reranker", uses=("rag-stage-reranker",),
+             build=lambda o, out: ws(o, "rag", "verify-reranker", o.output_of("rag-stage-reranker"))),
         Step("telemetry-plan", "Telemetry admission plan", run_as="root",
              uses=("resources-plan", "telemetry-render"), output="dir",
              build=lambda o, out: ws(o, "telemetry", "plan", f"{o.output_of('resources-plan')}/resource-plan.json",

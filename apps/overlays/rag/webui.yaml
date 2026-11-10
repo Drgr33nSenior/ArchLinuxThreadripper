@@ -28,6 +28,12 @@ spec:
             - |
               bash /rag-config/validate-profile.sh
               bash /rag-config/verify-models.sh /rag-models /rag-config/SHA256SUMS
+              # A configured reranker must be present, hash-verified and loadable
+              # offline before startup; upstream would otherwise fall back silently.
+              if [[ $RAG_RERANKER_PROFILE != none ]]; then
+                bash /rag-config/verify-models.sh /rag-models /rag-config/RERANKER-SHA256SUMS reranker
+                python3 -I /rag-config/check-reranker.py
+              fi
               cp -R /app/backend/open_webui/static/. /runtime-static/
               cp -R /app/backend/data/cache/tiktoken/. /runtime-tiktoken/
           resources:
