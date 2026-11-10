@@ -206,6 +206,7 @@ apps/base/shared-api/litellm.yaml
 apps/base/shared-api/migrate.py
 apps/base/shared-api/network-policy.yaml
 apps/base/shared-api/sdxl-workflow.json
+apps/base/shared-api/assistant_metrics.py
 apps/base/shared-api/service_tools.py
 apps/base/shared-api/handoff.py
 apps/base/shared-api/project_scope.py
