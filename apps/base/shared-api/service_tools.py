@@ -7,6 +7,7 @@ returned images under the requesting user.
 """
 import asyncio
 import base64
+import contextlib
 import copy
 import hashlib
 import hmac
@@ -542,5 +543,14 @@ def create_app():
                            memory="http://graphiti-memory:8000" if os.environ.get("MEMORY_ENABLED", "false") == "true" else None,
                            memory_write=os.environ.get("MEMORY_WRITE_ENABLED", "false") == "true",
                            handoffs=handoffs)
-    service.app.add_event_handler("shutdown", client.aclose)
+    # Starlette 1.x (FastAPI 0.136, the pinned gateway image) removed
+    # add_event_handler/on_event; close the shared client from the lifespan.
+    @contextlib.asynccontextmanager
+    async def lifespan(_app):
+        try:
+            yield
+        finally:
+            await client.aclose()
+
+    service.app.router.lifespan_context = lifespan
     return service.app
