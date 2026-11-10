@@ -10,9 +10,25 @@ ws_agent_config_validate() {
   : "${AGENT_RETRIEVAL_ENABLED:=false}"
   : "${AGENT_WEB_SEARCH_ENABLED:=false}"
   : "${AGENT_MEMORY_ENABLED:=false}"
+  : "${AGENT_HANDOFF_ENABLED:=false}"
+  # Request defaults from the serving contract (service render client.conf).
+  # Empty means the client sends nothing and the server default applies.
+  : "${AGENT_ENABLE_THINKING:=}" "${AGENT_REASONING_EFFORT:=}" "${AGENT_SERVING_CONTRACT:=}"
+  : "${AGENT_TEMPERATURE:=}" "${AGENT_TOP_P:=}" "${AGENT_TOP_K:=}"
   case $AGENT_RETRIEVAL_ENABLED in true | false) ;; *) ws_die 'AGENT_RETRIEVAL_ENABLED must be true or false' ;; esac
   case $AGENT_WEB_SEARCH_ENABLED in true | false) ;; *) ws_die 'AGENT_WEB_SEARCH_ENABLED must be true or false' ;; esac
   case $AGENT_MEMORY_ENABLED in true | false) ;; *) ws_die 'AGENT_MEMORY_ENABLED must be true or false' ;; esac
+  case $AGENT_HANDOFF_ENABLED in true | false) ;; *) ws_die 'AGENT_HANDOFF_ENABLED must be true or false' ;; esac
+  case $AGENT_ENABLE_THINKING in '' | true | false) ;; *) ws_die 'AGENT_ENABLE_THINKING must be true, false or empty' ;; esac
+  # The gateway sends high as the template's xhigh level.
+  case $AGENT_REASONING_EFFORT in '' | low | medium | high | xhigh) ;; *) ws_die 'AGENT_REASONING_EFFORT must be low, medium, high, xhigh or empty' ;; esac
+  [[ -z $AGENT_SERVING_CONTRACT || $AGENT_SERVING_CONTRACT =~ ^[A-Za-z0-9._:-]{1,64}$ ]] ||
+    ws_die 'AGENT_SERVING_CONTRACT must be the rendered contract identity'
+  [[ -z $AGENT_TEMPERATURE || $AGENT_TEMPERATURE =~ ^(0|1|2)(\.[0-9]{1,4})?$ ]] || ws_die 'AGENT_TEMPERATURE must be 0..2'
+  [[ -z $AGENT_TOP_P || $AGENT_TOP_P =~ ^(0(\.[0-9]{1,4})?|1(\.0{1,4})?)$ ]] || ws_die 'AGENT_TOP_P must be 0..1'
+  [[ -z $AGENT_TOP_K || $AGENT_TOP_K =~ ^(-1|[1-9][0-9]{0,3})$ ]] || ws_die 'AGENT_TOP_K must be -1 or 1..9999'
+  [[ $AGENT_HANDOFF_ENABLED != true || $AGENT_BASE_URL == https://* ]] || ws_die 'task handoffs require the HTTPS service endpoint'
+  [[ $AGENT_HANDOFF_ENABLED != true || $AGENT_HARNESS == qwen ]] || ws_die 'task handoffs currently support Qwen Code; other clients need separate MCP qualification'
   [[ $AGENT_MEMORY_ENABLED != true || $AGENT_BASE_URL == https://* ]] || ws_die 'shared memory requires the HTTPS service endpoint'
   [[ $AGENT_MEMORY_ENABLED != true || $AGENT_HARNESS == qwen ]] || ws_die 'shared memory currently supports Qwen Code; other clients need separate MCP qualification'
   [[ $AGENT_RETRIEVAL_ENABLED != true || $AGENT_BASE_URL == https://* ]] || ws_die 'shared retrieval requires the HTTPS service endpoint'
@@ -60,11 +76,11 @@ ws_agent_hermes_config() {
 ws_agent_configure() (
   set -euo pipefail
   umask 077
-  local output=$1 qwen_commit dsh_commit hermes_commit qwen_version retrieval=''
+  local output=$1 qwen_commit dsh_commit hermes_commit qwen_version retrieval='' defaults
   common::require_command jq
   ws_agent_config_validate
-  [[ $AGENT_RETRIEVAL_ENABLED != true && $AGENT_WEB_SEARCH_ENABLED != true && $AGENT_MEMORY_ENABLED != true ]] ||
-    retrieval="${AGENT_BASE_URL%/v1}/mcp"
+  [[ $AGENT_RETRIEVAL_ENABLED != true && $AGENT_WEB_SEARCH_ENABLED != true && $AGENT_MEMORY_ENABLED != true &&
+    $AGENT_HANDOFF_ENABLED != true ]] || retrieval="${AGENT_BASE_URL%/v1}/mcp"
   [[ -n $output && ! -e $output && ! -L $output ]] || ws_die 'agent output directory must not already exist'
   qwen_commit=$(ws_read_lock QWEN_CODE_COMMIT)
   qwen_version=$(ws_read_lock QWEN_CODE_VERSION)
@@ -75,25 +91,35 @@ ws_agent_configure() (
   mkdir -p -- "$(dirname -- "$output")"
   mkdir -m 0700 -- "$output"
   mkdir -m 0700 -- "$output/qwen" "$output/dsh" "$output/hermes"
+  # Contract request defaults; only set values are sent. The pinned Qwen Code
+  # passes samplingParams keys to the request unchanged.
+  defaults=$(jq -n --arg thinking "$AGENT_ENABLE_THINKING" --arg effort "$AGENT_REASONING_EFFORT" \
+    --arg temperature "$AGENT_TEMPERATURE" --arg top_p "$AGENT_TOP_P" --arg top_k "$AGENT_TOP_K" \
+    '(if $effort == "" then {} else {reasoning_effort:$effort} end) +
+     (if $thinking == "" then {} else {chat_template_kwargs:{enable_thinking:($thinking == "true")}} end) +
+     (if $temperature == "" then {} else {temperature:($temperature|tonumber)} end) +
+     (if $top_p == "" then {} else {top_p:($top_p|tonumber)} end) +
+     (if $top_k == "" then {} else {top_k:($top_k|tonumber)} end)')
   # JSON is also valid YAML. No evaluation, interpolation of credential values,
   # writes to existing dotfiles, or secondary model services are involved.
   jq -n --arg url "$AGENT_BASE_URL" --arg model "$AGENT_MODEL" \
     --arg retrieval "$retrieval" \
     --argjson retrieval_enabled "$AGENT_RETRIEVAL_ENABLED" --argjson search_enabled "$AGENT_WEB_SEARCH_ENABLED" \
-    --argjson memory_enabled "$AGENT_MEMORY_ENABLED" \
-    --argjson context "$AGENT_CONTEXT_TOKENS" --argjson output "$AGENT_MAX_OUTPUT_TOKENS" \
+    --argjson memory_enabled "$AGENT_MEMORY_ENABLED" --argjson handoff_enabled "$AGENT_HANDOFF_ENABLED" \
+    --argjson context "$AGENT_CONTEXT_TOKENS" --argjson output "$AGENT_MAX_OUTPUT_TOKENS" --argjson defaults "$defaults" \
     '{general:{enableAutoUpdate:false},privacy:{usageStatisticsEnabled:false},telemetry:{enabled:false},
       security:{auth:{selectedType:"openai"},folderTrust:{enabled:true}},
       tools:{approvalMode:"default"},context:{fileName:["AGENTS.md","QWEN.md"]},
       model:{name:$model},modelProviders:{openai:[{id:$model,name:"Workstation local Qwen",
         baseUrl:$url,envKey:"WORKSTATION_AGENT_API_KEY",generationConfig:{contextWindowSize:$context,
           timeout:180000,streamIdleTimeoutMs:180000,maxRetries:0,
-          samplingParams:{max_tokens:$output}}}]} } +
+          samplingParams:({max_tokens:$output} + $defaults)}}]} } +
       (if $retrieval=="" then {} else {mcpServers:{workstationKnowledge:{httpUrl:$retrieval,
         headers:{Authorization:"Bearer ${WORKSTATION_RETRIEVAL_API_KEY}"},trust:false,timeout:35000,
-        includeTools:((if $retrieval_enabled then ["retrieve_project_passage"] else [] end) +
+        includeTools:((if $retrieval_enabled then ["retrieve_project_passage","read_project_source"] else [] end) +
                       (if $search_enabled then ["search_web","read_web_page"] else [] end) +
-                      (if $memory_enabled then ["recall_memory","remember","forget_memory"] else [] end))}}} end)' >"$output/qwen/settings.json"
+                      (if $memory_enabled then ["recall_memory","remember","forget_memory","inspect_memory_source"] else [] end) +
+                      (if $handoff_enabled then ["save_task_handoff","load_task_handoff","list_task_handoffs"] else [] end))}}} end)' >"$output/qwen/settings.json"
   jq -n --arg url "$AGENT_BASE_URL" --arg model "$AGENT_MODEL" \
     --argjson context "$AGENT_CONTEXT_TOKENS" --argjson output "$AGENT_MAX_OUTPUT_TOKENS" \
     '{"agent-default-model":{provider:"workstation",model:$model},
@@ -107,9 +133,13 @@ ws_agent_configure() (
     --arg qwen_config "$(common::sha256_file "$output/qwen/settings.json")" \
     --arg dsh_config "$(common::sha256_file "$output/dsh/settings.yaml")" \
     --arg hermes_config "$(common::sha256_file "$output/hermes/config.yaml")" \
+    --arg contract "$AGENT_SERVING_CONTRACT" --argjson defaults "$defaults" \
     '{schema:1,status:"configured-not-qualified",default_harness:$selected,
       preference_order:["qwen","dsh","hermes"],automatic_fallback:false,
       base_url:$url,model:$model,context_tokens:$context,max_output_tokens:$output,retrieval_url:$retrieval,
+      serving_contract:(if $contract == "" then null else $contract end),
+      request_defaults:$defaults,
+      request_defaults_support:{qwen:"request",dsh:"unsupported-server-default",hermes:"unsupported-server-default"},
       output_limit_support:{qwen:"request",dsh:"request-default",hermes:"unsupported-provider-owned"},
       config_sha256:{qwen:$qwen_config,dsh:$dsh_config,hermes:$hermes_config},
       sources:{qwen:{repository:"https://github.com/QwenLM/qwen-code",commit:$qwen,version:$version},
@@ -145,6 +175,13 @@ ws_agent_launch() {
   AGENT_MODEL=$(jq -er '.model' "$bundle/bundle.json")
   AGENT_CONTEXT_TOKENS=$(jq -er '.context_tokens' "$bundle/bundle.json")
   AGENT_MAX_OUTPUT_TOKENS=$(jq -er '.max_output_tokens' "$bundle/bundle.json")
+  # The bundle, not the inherited environment, supplies request defaults.
+  AGENT_SERVING_CONTRACT=$(jq -r '.serving_contract // ""' "$bundle/bundle.json")
+  AGENT_REASONING_EFFORT=$(jq -r '.request_defaults.reasoning_effort // ""' "$bundle/bundle.json")
+  # jq's // treats false as missing, so test for null explicitly.
+  AGENT_ENABLE_THINKING=$(jq -r '.request_defaults.chat_template_kwargs.enable_thinking |
+    if . == null then "" else tostring end' "$bundle/bundle.json")
+  AGENT_TEMPERATURE='' AGENT_TOP_P='' AGENT_TOP_K='' AGENT_HANDOFF_ENABLED=false
   ws_agent_config_validate
   case $mode in cli | acp) ;; *) ws_die 'agent launch mode must be cli or acp' ;; esac
   [[ $AGENT_HARNESS != dsh || $mode == acp ]] ||
@@ -165,7 +202,8 @@ ws_agent_launch() {
     if $client == "qwen" then
       .modelProviders.openai[0] as $p | .model.name == $b.model and $p.id == $b.model and
       $p.baseUrl == $b.base_url and $p.generationConfig.contextWindowSize == $b.context_tokens and
-      $p.generationConfig.samplingParams.max_tokens == $b.max_output_tokens
+      $p.generationConfig.samplingParams.max_tokens == $b.max_output_tokens and
+      ($p.generationConfig.samplingParams | del(.max_tokens)) == ($b.request_defaults // {})
     elif $client == "dsh" then
       .["llm-pi-ai"].providers.workstation as $p |
       .["agent-default-model"].provider == "workstation" and .["agent-default-model"].model == $b.model and

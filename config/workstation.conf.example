@@ -129,6 +129,12 @@ AGENT_RETRIEVAL_ENABLED=false
 AGENT_WEB_SEARCH_ENABLED=false
 # Qwen shared memory tools (opt-in assistant-memory profile) use the same MCP URL.
 AGENT_MEMORY_ENABLED=false
+# Qwen task handoff tools; service render sets this when service-tools serves them.
+AGENT_HANDOFF_ENABLED=false
+# A serving-contract render (service render --serving-profile) also writes
+# AGENT_SERVING_CONTRACT, AGENT_ENABLE_THINKING and AGENT_REASONING_EFFORT to
+# client.conf; copy them with the model and budget values. Unset or empty values
+# leave the server's defaults in force. See docs/ASSISTANT.md.
 # OpenAI-compatible /v1 route: HTTP only on localhost/127.0.0.1 via an owner-set
 # authenticated tunnel, or an authenticated HTTPS endpoint. No embedded passwords,
 # query strings or fragments. Supply WORKSTATION_AGENT_API_KEY via the environment.

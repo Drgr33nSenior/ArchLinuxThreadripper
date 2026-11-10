@@ -90,6 +90,25 @@ the 32,768-token context cap but cannot enforce this output limit. Do not make a
 strictly matched Hermes comparison until the server can enforce the same output
 budget; record it as an unqualified limitation instead.
 
+A serving-contract render (`service render --serving-profile`, see
+[ASSISTANT.md](ASSISTANT.md#serving-contract)) also writes these values to
+`client.conf`; copy them with the model and budget values:
+
+```sh
+AGENT_SERVING_CONTRACT=qwen3.8-27b-mxfp4-tp2.<arm>   # the render's identity, recorded in bundle.json
+AGENT_ENABLE_THINKING=true                           # sent as chat_template_kwargs.enable_thinking
+AGENT_REASONING_EFFORT=low                           # low, medium, high (sent as xhigh) or xhigh
+```
+
+`AGENT_TEMPERATURE`, `AGENT_TOP_P` and `AGENT_TOP_K` are written only when a
+contract fixes sampling; the current contract leaves sampling to the checkpoint
+defaults. An empty or absent value sends nothing, so the server default applies.
+The pinned Qwen Code passes these as `samplingParams`, which it sends unchanged
+(`openaiContentGenerator/pipeline.ts`). DSH and Hermes ignore them and use the
+server defaults; the bundle records that as `request_defaults_support`. The
+launcher takes the defaults from the bundle, not the caller's environment, and
+refuses a bundle whose recorded defaults differ from its checked Qwen file.
+
 Set `WORKSTATION_AGENT_API_KEY` only in the client process environment. The
 native client configurations refer to that environment variable; neither they
 nor the bundle stores a credential. Do not put it in `workstation.conf`, a
@@ -184,13 +203,34 @@ only its selected document/web tools with the caller's separate credential.
 Those permissions do not grant memory writes or raw Chroma access.
 
 The pinned Qwen Code supports local `AGENTS.md`/`QWEN.md` briefings and automatic
-Markdown memory. That capability is separate from a shared browser/coding store
+Markdown memory. This repository's [`QWEN.md`](../QWEN.md) imports the generated
+guardrails with Qwen Code's `@path` import (resolved inside the project root)
+and adds only a short working briefing: evidence order, project commands,
+completion claims, historical records and where to look by task. Do not copy
+policy into it; change the guardrails at their canonical source. The packaged
+installer `AGENTS.md` is a separate generated copy of the guardrails. That capability is separate from a shared browser/coding store
 and still needs model-specific qualification. The [continuity plan](MEMORY.md)
 selects Graphiti as the next shared memory pilot and keeps a short project
 handoff. Review memory-tool authentication, input handling, audit records and
 read/write scopes separately. With the opt-in `assistant-memory` profile,
-set `AGENT_MEMORY_ENABLED=true` to add the shared `recall_memory`, `remember`
-and `forget_memory` tools to Qwen Code; see [Deploy memory](MEMORY.md#deploy-memory-opt-in).
+set `AGENT_MEMORY_ENABLED=true` to add the shared `recall_memory`, `remember`,
+`forget_memory` and `inspect_memory_source` tools to Qwen Code; see
+[Deploy memory](MEMORY.md#deploy-memory-opt-in).
+
+The Qwen Code MCP tool list follows the switches, each on the same scoped
+endpoint and the caller's separate retrieval credential:
+
+| Switch | Tools |
+| --- | --- |
+| `AGENT_RETRIEVAL_ENABLED` | `retrieve_project_passage`, `read_project_source` |
+| `AGENT_WEB_SEARCH_ENABLED` | `search_web`, `read_web_page` |
+| `AGENT_MEMORY_ENABLED` | `recall_memory`, `remember`, `forget_memory`, `inspect_memory_source` |
+| `AGENT_HANDOFF_ENABLED` | `save_task_handoff`, `load_task_handoff`, `list_task_handoffs` |
+
+Each needs the HTTPS endpoint and Qwen Code. `service render` sets
+`AGENT_HANDOFF_ENABLED` only when the rendered `service-tools` serves handoffs
+(`HANDOFF_ENABLED=true`). Listing a tool does not grant it: the service still
+checks the caller's key, project and write permissions for every call.
 
 All clients address the same SGLang model instance. A second harness does not
 create another GPU allocation, extra model replica, or independent VRAM pool.

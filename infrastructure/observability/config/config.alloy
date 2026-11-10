@@ -20,6 +20,8 @@ prometheus.scrape "workstation" {
     {"__address__" = "ai-home-lab-metrics-exporter.kube-amd-gpu.svc:5000", "job" = "amd-gpu"},
     // Fixed-label gateway boundary metrics (phase, active requests, results).
     {"__address__" = "litellm.ai-home-lab.svc:4000", "__metrics_path__" = "/_service/metrics", "job" = "gateway"},
+    // Bounded-label assistant tool outcomes and the rendered serving contract.
+    {"__address__" = "service-tools.ai-home-lab.svc:8000", "__metrics_path__" = "/metrics", "job" = "assistant-tools"},
   ]
   scrape_interval = "30s"
   scrape_timeout = "10s"

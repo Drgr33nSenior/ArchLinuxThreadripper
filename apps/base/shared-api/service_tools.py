@@ -22,7 +22,7 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 
-from assistant_metrics import METRICS
+from assistant_metrics import METRICS, record_serving_contract
 from boundary import Refusal, browser_key, read_body, secret_json
 import handoff
 from project_scope import handoff_owner, memory_group, require_project, accessible_projects
@@ -572,6 +572,7 @@ class ServiceTools:
 
 
 def create_app():
+    record_serving_contract(os.environ)
     # All addresses are fixed internal Services. User input never chooses a URL.
     client = httpx.AsyncClient(follow_redirects=False, trust_env=False,
                                limits=httpx.Limits(max_connections=8, max_keepalive_connections=4))

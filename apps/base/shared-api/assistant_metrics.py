@@ -131,3 +131,10 @@ class Metrics:
 
 
 METRICS = Metrics()
+
+
+def record_serving_contract(environ):
+    """Publish the rendered serving contract identity, when the render set one."""
+    contract, status = environ.get("SERVING_CONTRACT"), environ.get("SERVING_CONTRACT_STATUS")
+    if contract and status:
+        METRICS.set_state("workstation_assistant_serving_contract_info", contract=contract, status=status)

@@ -428,6 +428,47 @@ Target checks, all **NOT RUN** until an owner records evidence:
 | Recovery | Complete independent SSD and S3 drills in SERVICE-RECOVERY.md, including login/conversation/document/retrieval/image, gateway keys and gaming-home state |
 | Alerts | Inject an authorized test alert, confirm owner receipt/resolution; maintenance inhibits model outage only; stop the observer's HTTPS target to verify independent failure detection |
 
+## Namespace, model storage and serving contract
+
+**Namespace.** [`apps/base/namespace.yaml`](../apps/base/namespace.yaml) is
+the only definition of the `ai-home-lab` Namespace. It enforces the
+commissioned Pod Security level, `restricted` (audit and warn `restricted`),
+which the live namespace already enforces from the earlier AI-stack file.
+[`infrastructure/ai-stack/k8s/models.yaml`](../infrastructure/ai-stack/k8s/models.yaml)
+now holds only the `ai-models` claim and references this Namespace; apply
+`apps/base/namespace.yaml` first. Every Pod template rendered from `apps/`
+overlays and the AI-stack fetch, qualification and bench Jobs set the fields
+the restricted level checks (non-root, no privilege escalation, all
+capabilities dropped, `RuntimeDefault` seccomp, allowed volume types); this was
+checked offline only, so confirm admission with `kubectl apply --dry-run=server`
+before the first apply. No workload needs `baseline`. A workload that does
+must use its own namespace, not a weaker label here.
+
+**Model storage (for the serving owner).** The AI stack mounts its weights
+from the NAS-backed `ai-models` claim (`nas-nfs`, ReadWriteMany). The NAS
+storage guide (HP-ProliantGen10-DebianNAS `docs/KUBERNETES-STORAGE.md`)
+recommends a workstation SSD/NVMe cache, populated from the NAS, for model
+files used during inference, to avoid repeated model-load traffic and NAS
+latency. The serving profile mitigates load cost (serial loading, no
+multithreaded NFS reads, page-cache release) but does not cache locally. This
+difference is recorded here and in the serving contract's `assets.storage_note`;
+it is not changed by the consumer work.
+
+**Serving contract.** `service render --serving-profile` renders the
+assistant composition from the AI-stack serving profile (see
+[ASSISTANT.md](ASSISTANT.md#serving-contract)). Operator steps, all owner-run:
+
+1. Obtain the runtime image digest for the profile's default arm from the
+   serving owner, and confirm the profile and catalogue status.
+2. Render with `--serving-profile` and `--runtime-image`; read `status` and
+   `missing_inputs` in `evidence.json`. Do not apply an `incomplete` render.
+3. Issue virtual keys for `Qwen3.8-27B-MXFP4` with `service provision`; keys
+   allowlisted only for the FP8 alias cannot call it.
+4. Copy the `client.conf` values into the client configuration and regenerate
+   the agent bundle.
+5. Apply only after the profile is qualified, `service plan` admits the
+   render, and `service_session.py`/`session.sh` accept the new alias.
+
 ## Rollback and remaining inputs
 
 Before each rollout retain the previous reviewed render, exact image IDs, current

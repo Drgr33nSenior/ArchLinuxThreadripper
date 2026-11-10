@@ -2,7 +2,7 @@
 import os
 from pathlib import Path
 
-from boundary import GatewayBoundary
+from boundary import GatewayBoundary, apply_policy
 
 # Native dependency exceptions/print statements are not a content-safe logging
 # contract. Discard their stdout/stderr at the process boundary, including C
@@ -11,6 +11,11 @@ from boundary import GatewayBoundary
 with open(os.devnull, "w") as diagnostic_sink:
     os.dup2(diagnostic_sink.fileno(), 1)
     os.dup2(diagnostic_sink.fileno(), 2)
+
+# A serving-contract render adds this policy beside litellm.yaml. An invalid
+# policy stops the process instead of falling back to the source defaults.
+policy = Path("/config/gateway-policy.json")
+request_timeout = apply_policy(policy) if policy.exists() else 180
 
 for variable, filename in {
     "DATABASE_URL": "database-url", "LITELLM_MASTER_KEY": "master-key",
@@ -24,4 +29,5 @@ os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] = "True"
 
 from litellm.proxy.proxy_server import app as native_app  # noqa: E402
 
-app = GatewayBoundary(native_app, "/run/browser/mapping.json", "/run/gateway/control-key")
+app = GatewayBoundary(native_app, "/run/browser/mapping.json", "/run/gateway/control-key",
+                      request_timeout=request_timeout)
