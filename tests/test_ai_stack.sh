@@ -154,6 +154,42 @@ for profile in "$dir"/serving/*.json; do
   if python3 -I "$render" bench "$profile" "$digest" --serving "$work/serving-repo" --top-p 0 >/dev/null 2>&1; then
     fail 'bench accepted top-p 0'
   fi
+  # The standalone folder (published image, podman/docker) carries the default
+  # arm's exact argv and environment and refuses to start without its models.
+  public=ghcr.io/owner/sglang-gfx1201@sha256:$(printf '0%.0s' {1..64})
+  sa=$work/standalone-$(basename "$profile" .json)
+  python3 -I "$render" standalone "$profile" "$public" --serving "$work/serving-repo" --out "$sa" ||
+    fail "standalone render: $profile"
+  for f in run.sh server-args.json server.env models.txt README.md cosign.pub bench/bench.py bench/betterbench.tar.gz; do
+    [[ -s $sa/$f ]] || fail "standalone folder lacks $f"
+  done
+  [[ -x $sa/run.sh ]] && bash -n "$sa/run.sh" || fail 'standalone run.sh is not valid bash'
+  grep -q "^image=$public$" "$sa/run.sh" || fail 'standalone run.sh does not pin the image digest'
+  cmp -s "$sa/cosign.pub" "$dir/signing/cosign.pub" || fail 'standalone folder does not carry the signing key'
+  ! grep -q '@[A-Z_]*@' "$sa/README.md" "$sa/run.sh" || fail 'standalone placeholders left unfilled'
+  python3 -I "$render" argv "$profile" >"$work/argv-default.json"
+  python3 -I -c 'import json,sys; assert json.load(open(sys.argv[1])) == json.load(open(sys.argv[2]))' \
+    "$sa/server-args.json" "$work/argv-default.json" || fail 'standalone argv differs from the default arm'
+  python3 -I - "$profile" "$sa/server.env" <<'PY' || fail 'standalone env differs from the default arm'
+import json, sys
+p = json.load(open(sys.argv[1]))
+arm = next(spec for spec in p["arms"].values() if spec["default"])
+env = dict(line.split("=", 1) for line in open(sys.argv[2]).read().splitlines())
+for e in p["env"] + arm.get("env", []):
+    assert env[e["name"]] == e["value"], e["name"]
+assert env["SERVED_MODEL_NAME"] == p["served_model_name"]
+PY
+  if ENGINE=false MODELS_DIR= "$sa/run.sh" serve >/dev/null 2>&1; then fail 'standalone ran without MODELS_DIR'; fi
+  mkdir -p "$work/no-models"
+  out=$(ENGINE=false MODELS_DIR="$work/no-models" "$sa/run.sh" bench 2>&1) && fail 'standalone ran without its models'
+  [[ $out == missing* ]] || fail "standalone did not name the missing model: $out"
+  if python3 -I "$render" standalone "$profile" "$public" --serving "$work/serving-repo" --out "$sa" >/dev/null 2>&1; then
+    fail 'standalone overwrote an existing folder'
+  fi
+  if python3 -I "$render" standalone "$profile" ghcr.io/owner/sglang-gfx1201:latest --serving "$work/serving-repo" \
+    --out "$work/sa-tag" >/dev/null 2>&1; then
+    fail 'standalone accepted an image without a digest'
+  fi
   # An arm may only drop flags the profile sets.
   python3 -I -c 'import json,sys; p=json.load(open(sys.argv[1])); a=next(iter(p["arms"])); p["arms"][a]["drop"]=["--not-a-profile-flag"]; json.dump(p, open(sys.argv[2], "w"))' \
     "$profile" "$work/bad-drop.json"
@@ -333,6 +369,21 @@ top_p = json.loads(top_p.extractfile("profile.json").read())
 assert top_p["config"]["top_p"] == 1 and top_p["name"].endswith("-top-p-1")
 PY
 done
+
+# publish.sh only takes a digest-pinned lab image and a ghcr.io destination, and
+# stops before any network call without a ghcr.io login.
+pub=$dir/publish/publish.sh
+bash -n "$pub" || fail 'publish.sh is not valid bash'
+lab=registry.lan.thespry.family/local/sglang-gfx1201@sha256:$(printf '0%.0s' {1..64})
+for bad in "" "$lab" "$lab ghcr.io/Owner/x" "registry.lan.thespry.family/local/x:latest ghcr.io/owner/x" "$lab docker.io/owner/x"; do
+  # shellcheck disable=SC2086
+  out=$(REGISTRY_AUTH_FILE=/nonexistent bash "$pub" $bad 2>&1) && fail "publish.sh accepted: $bad"
+  [[ $out == STOP:\ usage* || $out == STOP:\ DEST* ]] || fail "publish.sh did not reject arguments: $bad -> $out"
+done
+printf '{"auths": {"registry.lan.thespry.family": {}}}\n' >"$work/auth-lab-only.json"
+out=$(REGISTRY_AUTH_FILE=$work/auth-lab-only.json bash "$pub" "$lab" ghcr.io/owner/sglang-gfx1201 2>&1) &&
+  fail 'publish.sh ran without a ghcr.io login'
+[[ $out == *'no ghcr.io login'* ]] || fail "publish.sh did not ask for a ghcr.io login: $out"
 
 # Stage metrics: start/finish states, failure, ccache ratio, and a missing
 # directory never failing the build.
