@@ -21,11 +21,13 @@ for key in OPEN_WEBUI_VERSION OPEN_WEBUI_COMMIT OPEN_WEBUI_IMAGE RAG_EMBEDDING_R
 done
 if k3s_allowed_key OPEN_WEBUI_UNREVIEWED; then exit 1; fi
 
+# Qwen3-Embedding query prefix; "$@" may still override it per case.
+query_prefix=$'Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:'
+
 profile_check() (
   set -a
   source "$root/apps/overlays/rag/rag.env"
-  export RAG_EMBEDDING_QUERY_PREFIX=$'Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:'
-  env "$@" bash "$root/apps/overlays/rag/validate-profile.sh"
+  env RAG_EMBEDDING_QUERY_PREFIX="$query_prefix" "$@" bash "$root/apps/overlays/rag/validate-profile.sh"
 )
 profile_check >/dev/null
 profile_check ENABLE_RAG_HYBRID_SEARCH=false RAG_TOP_K=3 CHUNK_SIZE=160 CHUNK_OVERLAP=24 RAG_EMBEDDING_BATCH_SIZE=2 >/dev/null
@@ -47,8 +49,7 @@ reranker_check() (
   set -a
   source "$root/apps/overlays/rag/rag.env"
   source "$root/apps/components/rag-reranker/reranker.env"
-  export RAG_EMBEDDING_QUERY_PREFIX=$'Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:'
-  env "$@" bash "$root/apps/overlays/rag/validate-profile.sh"
+  env RAG_EMBEDDING_QUERY_PREFIX="$query_prefix" "$@" bash "$root/apps/overlays/rag/validate-profile.sh"
 )
 reranker_check >/dev/null
 reranker_check RAG_TOP_K=16 RAG_TOP_K_RERANKER=8 RAG_RERANKING_BATCH_SIZE=32 >/dev/null

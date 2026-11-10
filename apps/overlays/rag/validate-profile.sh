@@ -40,8 +40,9 @@ case ${RAG_RERANKER_PROFILE:-} in
     [[ $ENABLE_RAG_HYBRID_SEARCH == true ]] || fail 'the cross-encoder profile requires hybrid search'
     ((RAG_TOP_K <= 16)) || fail 'reranker candidate budget exceeded: RAG_TOP_K above 16 (32 scored pairs)'
     ((RAG_TOP_K_RERANKER <= 8 && RAG_TOP_K_RERANKER <= RAG_TOP_K)) || fail 'final passages must be at most 8 and at most RAG_TOP_K'
-    [[ ${RAG_RERANKING_BATCH_SIZE:-} =~ ^[1-9][0-9]?$ ]] && ((RAG_RERANKING_BATCH_SIZE <= 32)) ||
+    if ! { [[ ${RAG_RERANKING_BATCH_SIZE:-} =~ ^[1-9][0-9]?$ ]] && ((RAG_RERANKING_BATCH_SIZE <= 32)); }; then
       fail 'RAG_RERANKING_BATCH_SIZE must be 1..32'
+    fi
     [[ ${SENTENCE_TRANSFORMERS_CROSS_ENCODER_BACKEND:-torch} == torch ]] || fail 'reranker backend must remain torch'
     [[ -z ${SENTENCE_TRANSFORMERS_CROSS_ENCODER_MODEL_KWARGS:-} ]] || fail 'reranker model kwargs need separate qualification'
     [[ ${SENTENCE_TRANSFORMERS_CROSS_ENCODER_SIGMOID_ACTIVATION_FUNCTION:-true} == true ]] ||
