@@ -14,6 +14,7 @@ import httpx
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "apps/base/shared-api"))
+from assistant_metrics import METRICS
 from boundary import Refusal
 from service_tools import ServiceTools
 from web_search import WebSearch
@@ -146,6 +147,37 @@ class SearchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(2, self.search.status()["monthly_reserved"])
         self.empty_extract = True
         self.assertEqual(502, (await self.mcp("read_web_page", {"url": url})).status_code)
+
+    async def test_read_web_page_continues_with_a_validated_offset(self):
+        url = "https://docs.sglang.io/"
+        first = json.loads((await self.mcp("read_web_page", {"url": url})).json()["result"]["content"][0]["text"])
+        meta = first["pages"][0]["metadata"]
+        self.assertEqual((0, 6000, "truncated"), (meta["offset"], meta["next_offset"], meta["completeness"]))
+        response = await self.mcp("read_web_page", {"url": url, "offset": meta["next_offset"]})
+        self.assertEqual(200, response.status_code)
+        page = json.loads(response.json()["result"]["content"][0]["text"])["pages"][0]
+        self.assertEqual(self.page_text[6000:12000], page["page_content"])
+        self.assertEqual((url, 6000, 12000), (page["metadata"]["source"], page["metadata"]["offset"],
+                                              page["metadata"]["next_offset"]))
+        self.assertEqual(hashlib.sha256(page["page_content"].encode()).hexdigest(), page["metadata"]["content_sha256"])
+        self.assertEqual("2026-11-02T10:00:00+00:00", page["metadata"]["retrieved_at"])
+        self.assertEqual(2, self.search.status()["monthly_reserved"])
+        # Offsets are validated before a provider request is reserved.
+        for offset in (-1, True, "6000", 1.5, 42001, 48000):
+            self.assertEqual(400, (await self.mcp("read_web_page", {"url": url, "offset": offset})).status_code, offset)
+        self.assertEqual(400, (await self.mcp("read_web_page", {"url": url, "offset": 0, "count": 1})).status_code)
+        self.assertEqual(400, (await self.mcp("read_web_page", {"offset": 6000})).status_code)
+        self.assertEqual(2, self.search.status()["monthly_reserved"])
+        # Past the provider text is no evidence; a provider failure stays distinct.
+        self.page_text = "short"
+        self.assertEqual(502, (await self.mcp("read_web_page", {"url": url, "offset": 6000})).status_code)
+        self.status_code = 503
+        self.assertEqual(503, (await self.mcp("read_web_page", {"url": url, "offset": 6000})).status_code)
+        metrics = METRICS.render()
+        for outcome in ("ok", "no_results", "provider_error", "invalid"):
+            self.assertIn('workstation_assistant_web_requests_total{client="webui",outcome="%s",tool="read_continue"}'
+                          % outcome, metrics)
+        self.assertNotIn("docs.sglang.io", metrics)
 
     async def test_provider_capped_page_is_never_labelled_complete(self):
         url = "https://docs.sglang.io/"

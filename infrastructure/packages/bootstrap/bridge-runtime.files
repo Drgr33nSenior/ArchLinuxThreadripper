@@ -207,6 +207,8 @@ apps/base/shared-api/migrate.py
 apps/base/shared-api/network-policy.yaml
 apps/base/shared-api/sdxl-workflow.json
 apps/base/shared-api/service_tools.py
+apps/base/shared-api/handoff.py
+apps/base/shared-api/project_scope.py
 apps/base/shared-api/storage.yaml
 apps/base/shared-api/workloads.yaml
 apps/overlays/service-split/kustomization.yaml
