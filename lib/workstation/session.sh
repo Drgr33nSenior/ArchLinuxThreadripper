@@ -32,9 +32,14 @@ ws_session_service() {
 ws_session_service_model() {
   local document config model
   document="$(ws_session_deployment "$SESSION_AI_DEPLOYMENT")"
-  config="$(jq -er '[.spec.template.spec.containers[].envFrom[]?.configMapRef.name | select(startswith("sglang-profile"))] | unique | select(length==1) | .[0]' <<<"$document")" || ws_die 'one authoritative model ConfigMap required'
-  model="$(ws_session_kubectl -n "$SESSION_NAMESPACE" get configmap "$config" -o json | jq -er .data.SERVED_MODEL_NAME)" || ws_die 'cannot read served model identity'
-  case "$model" in Qwen3.8-27B-FP8 | Qwen3.5-9B) ;; *) ws_die 'unqualified service model identity' ;; esac
+  config="$(jq -r '[.spec.template.spec.containers[].envFrom[]?.configMapRef.name | select(startswith("sglang-profile"))] | unique | if length==1 then .[0] elif length==0 then "" else error("several") end' <<<"$document")" || ws_die 'one authoritative model ConfigMap required'
+  if [[ -n $config ]]; then
+    model="$(ws_session_kubectl -n "$SESSION_NAMESPACE" get configmap "$config" -o json | jq -er .data.SERVED_MODEL_NAME)" || ws_die 'cannot read served model identity'
+  else
+    # Serving-contract renders carry the launch argv on the Deployment itself.
+    model="$(jq -er '[.spec.template.spec.containers[] | select(.name=="sglang") | .args // [] | to_entries[] | select(.value=="--served-model-name") | .key] as $i | [.spec.template.spec.containers[] | select(.name=="sglang") | .args][0][$i[0] + 1]' <<<"$document")" || ws_die 'cannot read served model identity'
+  fi
+  case "$model" in Qwen3.8-27B-FP8 | Qwen3.5-9B | Qwen3.8-27B-MXFP4) ;; *) ws_die 'unqualified service model identity' ;; esac
   printf '%s\n' "$model"
 }
 

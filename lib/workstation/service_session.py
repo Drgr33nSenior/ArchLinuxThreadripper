@@ -35,7 +35,7 @@ def main():
     parser.add_argument("address")
     parser.add_argument("credential")
     parser.add_argument("phase", choices=("ready", "starting", "draining", "maintenance", "unavailable"))
-    parser.add_argument("model", choices=("Qwen3.8-27B-FP8", "Qwen3.5-9B", "none"))
+    parser.add_argument("model", choices=("Qwen3.8-27B-FP8", "Qwen3.5-9B", "Qwen3.8-27B-MXFP4", "none"))
     parser.add_argument("--images", action="store_true")
     args = parser.parse_args()
     try:
