@@ -11,16 +11,25 @@ spec:
     blacklist: false
     upgradePolicy:
       enable: false
+  # GPUs are allocated through Kubernetes DRA (ResourceClaims), not the device
+  # plugin: shared claims let two pods use one card (SGLang + SwarmUI). The
+  # operator rejects running both; the labeller (gfx node labels) stays on.
+  # Rollback: set enableDevicePlugin true and draDriver.enable false.
   devicePlugin:
-    enableDevicePlugin: true
+    enableDevicePlugin: false
     enableNodeLabeller: true
     devicePluginImage: docker.io/rocm/k8s-device-plugin:1.31.0.12@sha256:6437c74f6566e5d11c20c42369fca7194315943aea91f7bd6c98de1b19caf117
     nodeLabellerImage: docker.io/rocm/k8s-device-plugin:labeller-1.31.0.12@sha256:c7a7a8634b0a29f230e923858c4bd8c670446d6ae3f1f4f60a96fcd26632c6c3
     devicePluginArguments:
       resource_naming_strategy: single
     kubeletSocketPath: /var/lib/kubelet/device-plugins
+  # v1.0.1 is required: it publishes GPUs when the in-kernel amdgpu module
+  # reports no version (this host). The operator's default is :latest; pinned.
+  # Upstream documents Instinct GPUs; Radeon gfx1201 is qualified by the pilot
+  # in infrastructure/gpu-operator/dra-pilot.
   draDriver:
-    enable: false
+    enable: true
+    image: docker.io/rocm/k8s-gpu-dra-driver:v1.0.1@sha256:f173c8e78bc819e2b8adc15192afefaf69a11307d49fca5382bda82885975830
   # AMD device metrics exporter: power, temperatures, clocks, activity and VRAM
   # for each R9700, readable while the card is runtime-suspended. Its PCIe
   # fields are MI2xx/MI3xx-only (PCIE_SPEED read 2 GT/s on a 32 GT/s link), so

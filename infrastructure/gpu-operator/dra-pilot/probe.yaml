@@ -1,0 +1,39 @@
+# Pilot probe: proves a restricted pod receives exactly the claimed card through
+# DRA/CDI. Uses the already-pulled, signed SGLang image (no new pull). It shares
+# gpu-1 with whatever else holds it and only enumerates devices; no kernels run.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: dra-probe
+  namespace: ai-home-lab
+  labels: {app.kubernetes.io/name: dra-probe}
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  nodeSelector: {ai-home-lab.local/gfx: gfx1201, kubernetes.io/arch: amd64, kubernetes.io/os: linux}
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    supplementalGroups: [987, 983]   # render, video on this host
+    seccompProfile: {type: RuntimeDefault}
+  resourceClaims:
+    - name: gpu
+      resourceClaimName: gpu-1
+  containers:
+    - name: probe
+      image: registry.lan.thespry.family/local/sglang-gfx1201@sha256:4b157a4eddd3b214e3092ff84eec6a0ffd4e3b3c5398d2a30d937970510dd865
+      imagePullPolicy: IfNotPresent
+      command: [sh, -c]
+      args:
+        - |
+          echo "render nodes: $(ls /dev/dri | grep -c renderD)"; ls -l /dev/kfd /dev/dri
+          python3 -c 'import torch; n=torch.cuda.device_count(); print("visible GPUs:", n); [print(i, torch.cuda.get_device_properties(i).gcnArchName) for i in range(n)]'
+      resources:
+        claims: [{name: gpu}]
+        requests: {cpu: '1', memory: 2Gi}
+        limits: {cpu: '1', memory: 2Gi}
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities: {drop: [ALL]}
