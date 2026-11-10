@@ -313,6 +313,10 @@ assert argv["X"] == argv["W"]
 assert ([e["name"] for e in profile["arms"]["X"]["env"]] ==
         [e["name"] for e in profile["arms"]["W"]["env"]] + ["SGLANG_GFX1201_PCIE_CUSTOM_AR_MAX_BYTES"])
 assert profile["arms"]["X"]["env"][-1]["value"] == str(24 << 20)
+# Y is X without V's not-bitwise prefill-attention tile, so its output is U's.
+assert argv["Y"] == argv["U"]
+assert ([e["name"] for e in profile["arms"]["Y"]["env"]] ==
+        [e["name"] for e in profile["arms"]["U"]["env"]] + ["SGLANG_GFX1201_P1_FROM_KQ3", "SGLANG_GFX1201_PCIE_CUSTOM_AR_MAX_BYTES"])
 for arm in profile["arms"]:
     items = json.loads((work / f"job-{arm}.json").read_text())["items"]
     config, job, service = items
