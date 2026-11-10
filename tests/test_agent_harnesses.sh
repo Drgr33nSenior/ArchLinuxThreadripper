@@ -64,15 +64,15 @@ jq -e '.model.name == "Fixture-Model-1" and
   .modelProviders.openai[0].baseUrl == "http://localhost:18001/v1" and
   .modelProviders.openai[0].generationConfig.contextWindowSize == 8192 and
   .modelProviders.openai[0].generationConfig.samplingParams.max_tokens == 1024 and
-  .modelProviders.openai[0].envKey == "WORKSTATION_AGENT_API_KEY"' "$work/bundle/qwen/settings.json" >/dev/null
+  .modelProviders.openai[0].envKey == "WORKSTATION_AGENT_API_KEY"' "$work/bundle/qwen/system-settings.json" >/dev/null
 ruby -e 'require "yaml"; y=YAML.load_file(ARGV.fetch(0)); abort unless y.dig("agent-default-model", "model") == "Fixture-Model-1" && y.dig("llm-pi-ai", "providers", "workstation", "baseURL") == "http://localhost:18001/v1"' "$work/bundle/dsh/settings.yaml"
 # shellcheck disable=SC2016 # The literal placeholder is required in the native config.
 ruby -e 'require "yaml"; y=YAML.load_file(ARGV.fetch(0)); abort unless y.dig("model", "provider") == "custom" && y.dig("model", "base_url") == "http://localhost:18001/v1" && y.dig("model", "api_key") == "${WORKSTATION_AGENT_API_KEY}" && y.dig("model", "context_length") == 8192 && y.dig("approvals", "mode") == "manual" && y.fetch("fallback_providers") == []' "$work/bundle/hermes/config.yaml"
-for harness_file in qwen/settings.json dsh/settings.yaml hermes/config.yaml; do
+for harness_file in qwen/system-settings.json dsh/settings.yaml hermes/config.yaml; do
   harness=${harness_file%%/*}
   [[ $(jq -er --arg harness "$harness" '.config_sha256[$harness]' "$work/bundle/bundle.json") == "$(common::sha256_file "$work/bundle/$harness_file")" ]]
 done
-[[ $(file_mode "$work/bundle") == 700 && $(file_mode "$work/bundle/qwen/settings.json") == 600 &&
+[[ $(file_mode "$work/bundle") == 700 && $(file_mode "$work/bundle/qwen/system-settings.json") == 600 &&
 $(file_mode "$work/bundle/dsh/settings.yaml") == 600 && $(file_mode "$work/bundle/hermes/config.yaml") == 600 &&
 $(file_mode "$work/bundle/bundle.json") == 600 ]]
 if grep -Rq 'fixture-secret\|WORKSTATION_AGENT_API_KEY=' "$work/bundle"; then exit 1; fi
@@ -134,11 +134,21 @@ grep -Fxq -- '--auth-type' "$work/client-args"
 grep -Fxq -- '--acp' "$work/client-args"
 grep -Fxq "QWEN_HOME=$work/bundle/qwen" "$work/client-env"
 grep -Fxq "QWEN_RUNTIME_DIR=$work/bundle/qwen" "$work/client-env"
-grep -Fxq "QWEN_CODE_SYSTEM_SETTINGS_PATH=$work/bundle/qwen/settings.json" "$work/client-env"
+grep -Fxq "QWEN_CODE_SYSTEM_SETTINGS_PATH=$work/bundle/qwen/system-settings.json" "$work/client-env"
 # Folder trust lives outside the bundle, so regenerating a bundle keeps it.
 grep -Fxq "QWEN_CODE_TRUSTED_FOLDERS_PATH=${XDG_CONFIG_HOME:-$HOME/.config}/workstation-agent/qwen-trustedFolders.json" "$work/client-env"
 (QWEN_CODE_TRUSTED_FOLDERS_PATH=$work/own-trust.json ws_agent_launch "$work/bundle" qwen acp) >/dev/null
 grep -Fxq "QWEN_CODE_TRUSTED_FOLDERS_PATH=$work/own-trust.json" "$work/client-env"
+# Qwen writes "Always allow" rules to its user settings (QWEN_HOME/settings.json);
+# that file is not the hash-checked system configuration and must not block launch.
+printf '{"permissions": {"allow": ["Bash(ls *)"]}}\n' >"$work/bundle/qwen/settings.json"
+rm -f "$work/client-called"
+(ws_agent_launch "$work/bundle" qwen acp) >/dev/null
+[[ -s $work/client-called ]] || {
+  printf 'a Qwen-written user settings.json blocked the launch\n' >&2
+  exit 1
+}
+rm -f "$work/bundle/qwen/settings.json"
 grep -Fxq 'OPENAI_BASE_URL=http://localhost:18001/v1' "$work/client-env"
 grep -Fxq 'OPENAI_MODEL=Fixture-Model-1' "$work/client-env"
 grep -Fxq 'KEY_LENGTH=12' "$work/client-env"
@@ -167,17 +177,17 @@ mv "$work/bundle-manifest-original" "$work/bundle/bundle.json"
 
 # The selected native file is pinned to the manifest. Refuse a changed file or
 # symlink before the client execution boundary, then restore fixture state.
-cp "$work/bundle/qwen/settings.json" "$work/qwen-settings-original"
-printf 'tampered\n' >>"$work/bundle/qwen/settings.json"
+cp "$work/bundle/qwen/system-settings.json" "$work/qwen-settings-original"
+printf 'tampered\n' >>"$work/bundle/qwen/system-settings.json"
 reject ws_agent_launch "$work/bundle" qwen cli
 [[ ! -e $work/client-called ]]
-cp "$work/qwen-settings-original" "$work/bundle/qwen/settings.json"
-mv "$work/bundle/qwen/settings.json" "$work/qwen-settings-for-symlink"
-ln -s "$work/qwen-settings-for-symlink" "$work/bundle/qwen/settings.json"
+cp "$work/qwen-settings-original" "$work/bundle/qwen/system-settings.json"
+mv "$work/bundle/qwen/system-settings.json" "$work/qwen-settings-for-symlink"
+ln -s "$work/qwen-settings-for-symlink" "$work/bundle/qwen/system-settings.json"
 reject ws_agent_launch "$work/bundle" qwen cli
 [[ ! -e $work/client-called ]]
-mv "$work/bundle/qwen/settings.json" "$work/qwen-settings-symlink"
-mv "$work/qwen-settings-for-symlink" "$work/bundle/qwen/settings.json"
+mv "$work/bundle/qwen/system-settings.json" "$work/qwen-settings-symlink"
+mv "$work/qwen-settings-for-symlink" "$work/bundle/qwen/system-settings.json"
 
 # A managed system policy or a conflicting process policy must be left intact.
 printf 'managed policy\n' >"$work/managed-qwen-policy"
@@ -214,7 +224,7 @@ jq -e '.mcpServers.workstationKnowledge.httpUrl == "https://agents.example.test/
   .mcpServers.workstationKnowledge.headers.Authorization == "Bearer ${WORKSTATION_RETRIEVAL_API_KEY}" and
   .mcpServers.workstationKnowledge.trust == false and
   .mcpServers.workstationKnowledge.includeTools == ["retrieve_project_passage","read_project_source"]' \
-  "$work/retrieval-bundle/qwen/settings.json" >/dev/null
+  "$work/retrieval-bundle/qwen/system-settings.json" >/dev/null
 (
   WORKSTATION_AGENT_API_KEY=fixture-secret
   export WORKSTATION_AGENT_API_KEY
@@ -238,7 +248,7 @@ for retrieval in true false; do
     .mcpServers.workstationKnowledge as $m |
     $m.httpUrl == "https://agents.example.test/mcp" and $m.trust == false and
     $m.includeTools == ((if $retrieval then ["retrieve_project_passage","read_project_source"] else [] end) + ["search_web","read_web_page"])' \
-    "$work/search-$retrieval/qwen/settings.json" >/dev/null
+    "$work/search-$retrieval/qwen/system-settings.json" >/dev/null
 done
 sed 's|^AGENT_WEB_SEARCH_ENABLED=.*|AGENT_WEB_SEARCH_ENABLED=true|' "$work/agent.conf" >"$work/loopback-search.conf"
 reject "$root/bin/workstationctl" --config "$work/loopback-search.conf" agent configure "$work/unsafe-search"
@@ -250,9 +260,9 @@ sed -e 's|^AGENT_HARNESS=.*|AGENT_HARNESS=qwen|' -e 's|^AGENT_MEMORY_ENABLED=.*|
   "$work/https.conf" >"$work/memory.conf"
 "$root/bin/workstationctl" --config "$work/memory.conf" agent configure "$work/memory" >/dev/null
 jq -e '.mcpServers.workstationKnowledge.includeTools == ["recall_memory","remember","forget_memory","inspect_memory_source"]' \
-  "$work/memory/qwen/settings.json" >/dev/null
+  "$work/memory/qwen/system-settings.json" >/dev/null
 jq -e '.mcpServers.workstationKnowledge.includeTools | index("recall_memory") == null' \
-  "$work/search-true/qwen/settings.json" >/dev/null
+  "$work/search-true/qwen/system-settings.json" >/dev/null
 sed 's|^AGENT_MEMORY_ENABLED=.*|AGENT_MEMORY_ENABLED=true|' "$work/agent.conf" >"$work/loopback-memory.conf"
 reject "$root/bin/workstationctl" --config "$work/loopback-memory.conf" agent configure "$work/unsafe-memory"
 sed 's|^AGENT_HARNESS=.*|AGENT_HARNESS=hermes|' "$work/memory.conf" >"$work/unsupported-memory.conf"
@@ -263,9 +273,9 @@ sed -e 's|^AGENT_HARNESS=.*|AGENT_HARNESS=qwen|' -e 's|^AGENT_HANDOFF_ENABLED=.*
   "$work/https.conf" >"$work/handoff.conf"
 "$root/bin/workstationctl" --config "$work/handoff.conf" agent configure "$work/handoff" >/dev/null
 jq -e '.mcpServers.workstationKnowledge.includeTools == ["save_task_handoff","load_task_handoff","list_task_handoffs"]' \
-  "$work/handoff/qwen/settings.json" >/dev/null
+  "$work/handoff/qwen/system-settings.json" >/dev/null
 jq -e '.mcpServers.workstationKnowledge.includeTools | index("save_task_handoff") == null' \
-  "$work/memory/qwen/settings.json" >/dev/null
+  "$work/memory/qwen/system-settings.json" >/dev/null
 sed 's|^AGENT_HANDOFF_ENABLED=.*|AGENT_HANDOFF_ENABLED=true|' "$work/agent.conf" >"$work/loopback-handoff.conf"
 reject "$root/bin/workstationctl" --config "$work/loopback-handoff.conf" agent configure "$work/unsafe-handoff"
 sed 's|^AGENT_HARNESS=.*|AGENT_HARNESS=hermes|' "$work/handoff.conf" >"$work/unsupported-handoff.conf"
@@ -281,12 +291,12 @@ reject "$root/bin/workstationctl" --config "$work/unsupported-handoff.conf" agen
 "$root/bin/workstationctl" --config "$work/contract.conf" agent configure "$work/contract" >/dev/null
 jq -e '.modelProviders.openai[0].generationConfig.samplingParams ==
   {"max_tokens":1024,"reasoning_effort":"low","chat_template_kwargs":{"enable_thinking":true}}' \
-  "$work/contract/qwen/settings.json" >/dev/null
+  "$work/contract/qwen/system-settings.json" >/dev/null
 jq -e '.serving_contract == "qwen3.8-27b-mxfp4-tp2.Y" and
   .request_defaults == {"reasoning_effort":"low","chat_template_kwargs":{"enable_thinking":true}}' \
   "$work/contract/bundle.json" >/dev/null
 jq -e '.modelProviders.openai[0].generationConfig.samplingParams == {"max_tokens":1024}' \
-  "$work/https-bundle/qwen/settings.json" >/dev/null
+  "$work/https-bundle/qwen/system-settings.json" >/dev/null
 jq -e '.serving_contract == null and .request_defaults == {}' "$work/https-bundle/bundle.json" >/dev/null
 (
   WORKSTATION_AGENT_API_KEY=fixture-secret
