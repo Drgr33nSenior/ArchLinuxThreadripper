@@ -48,7 +48,7 @@ class SearchTests(unittest.IsolatedAsyncioTestCase):
         async def upstream(request):
             self.calls.append(request)
             if request.url.host == "webui":
-                self.assertEqual("/api/v1/auths/", request.url.path)
+                self.assertEqual("/api/v1/users/user/status", request.url.path)
                 return httpx.Response(200, json={"id": "alice", "role": self.role})
             self.assertEqual("api.exa.ai" if self.provider == "exa" else "api.tavily.com", request.url.host)
             self.assertEqual("https", request.url.scheme)

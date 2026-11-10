@@ -46,7 +46,7 @@ class ToolTests(unittest.IsolatedAsyncioTestCase):
                     "Bearer bob-token": [{"id": "kb-shared", "name": "Shared"}]}
 
         async def upstream(request):
-            if request.url.path == "/api/v1/auths/":
+            if request.url.path == "/api/v1/users/user/status":
                 user = users.get(request.headers.get("authorization"))
                 return httpx.Response(200 if user else 401, json=user or {})
             if request.url.path == "/api/v1/knowledge/":

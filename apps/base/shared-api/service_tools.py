@@ -218,7 +218,10 @@ class ServiceTools:
         if not auth.startswith("Bearer ") or len(auth) > 8192:
             raise Refusal(401, "user_credential_required")
         headers = {"Authorization": auth}
-        user = await self.upstream_json("GET", self.webui + "/api/v1/auths/", headers=headers)
+        # /api/v1/auths/ refuses API keys from Open WebUI 0.12 ("A human session
+        # is required"); /users/user/status returns the caller's own record to an
+        # API key or a session token on both pinned versions (ENABLE_USER_STATUS).
+        user = await self.upstream_json("GET", self.webui + "/api/v1/users/user/status", headers=headers)
         if user.get("role") != "user":
             # Do not turn an admin credential into a broad retrieval capability.
             raise Refusal(403, "restricted_user_required")

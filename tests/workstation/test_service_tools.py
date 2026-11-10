@@ -62,7 +62,7 @@ class ToolsTests(unittest.IsolatedAsyncioTestCase):
             if path.startswith("/api/") and environment.get("ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS", "false").lower() == "true" and not any(path == endpoint or path.startswith(endpoint + "/")
                                                       for endpoint in allowed):
                 return httpx.Response(403)
-            if path == "/api/v1/auths/":
+            if path == "/api/v1/users/user/status":
                 return httpx.Response(200, json={"id": "alice", "role": "user"})
             if path == "/api/v1/retrieval/query/collection":
                 body = json.loads(req.content)
