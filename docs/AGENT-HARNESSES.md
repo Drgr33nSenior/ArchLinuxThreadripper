@@ -122,8 +122,8 @@ credential or silently downgrade the connection.
 
 Install the selected client manually from its pinned upstream source before this
 step. The project does not run npm, pip, or installer scripts for harnesses.
-The reviewed sources are [Qwen Code 0.23.2 at
-`f56de980b316cd5410f067fbb62357481ebd66b8`](https://github.com/QwenLM/qwen-code/commit/f56de980b316cd5410f067fbb62357481ebd66b8),
+The reviewed sources are [Qwen Code 0.27.1 at
+`c2eccf7459c8d6d4b2a5df3733d2f3833153763b`](https://github.com/QwenLM/qwen-code/commit/c2eccf7459c8d6d4b2a5df3733d2f3833153763b),
 [DSH at `c389f96bf3a9b6807cb71ed6bdad5849be0df6d8`](https://github.com/deepseek-ai/deepseek-harness/commit/c389f96bf3a9b6807cb71ed6bdad5849be0df6d8),
 and [Hermes Agent 0.21.1 at
 `13fb5e1eceba51fc45a48b5d95a357e144d42689`](https://github.com/NousResearch/hermes-agent/commit/13fb5e1eceba51fc45a48b5d95a357e144d42689).
