@@ -5,11 +5,11 @@ apiVersion: kustomize.config.k8s.io/v1alpha1
 kind: Component
 resources: [workloads.yaml, storage.yaml, network-policy.yaml]
 images:
-  # Graphiti 0.31.2 service image built from infrastructure/graphiti/Containerfile.
-  # Replace with the local build digest; an unbuilt image cannot start.
+  # Graphiti 0.31.2 service image built from infrastructure/graphiti/Containerfile
+  # and imported into K3s containerd (imagePullPolicy Never; see docs/MEMORY.md).
+  # The tag is the build's image ID; rebuild and replace it when the lock changes.
   - name: localhost/workstation/graphiti-memory
-    newName: registry.invalid/ai-home-lab/graphiti-memory
-    newTag: UNBUILT
+    newTag: img-7efceaa880da
 # Each overlay generates memory-profile with the chat model it serves.
 patches:
   - target: {kind: Deployment, name: service-tools}

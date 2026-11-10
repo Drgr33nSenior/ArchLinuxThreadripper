@@ -199,9 +199,15 @@ implemented.
 
 To enable it on the installed workstation:
 
-1. Build the image and record its digest in
+1. Build the image, import it into K3s containerd (the Deployment uses
+   `imagePullPolicy: Never`), and record its tag in
    `apps/components/memory/kustomization.yaml`:
-   `podman build -f infrastructure/graphiti/Containerfile -t localhost/workstation/graphiti-memory infrastructure/graphiti`.
+   ```sh
+   podman build -f infrastructure/graphiti/Containerfile -t localhost/workstation/graphiti-memory:build infrastructure/graphiti
+   T=localhost/workstation/graphiti-memory:img-$(podman image inspect localhost/workstation/graphiti-memory:build --format '{{.Id}}' | cut -c1-12)
+   podman tag localhost/workstation/graphiti-memory:build "$T"
+   podman save --format docker-archive "$T" | sudo k3s ctr -n k8s.io images import -
+   ```
 2. Render with `service render <site.json> <new-dir> --experience assistant-memory`.
    Run `service plan` with fresh resources. Memory adds about 7 GiB of declared
    limits. These are estimates, not measurements, and `service plan` counts

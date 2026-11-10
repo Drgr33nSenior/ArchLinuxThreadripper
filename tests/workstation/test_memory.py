@@ -7,6 +7,7 @@ embedding or Neo4j calls and are not semantic memory qualification.
 import asyncio
 from datetime import datetime, timezone
 import json
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -337,7 +338,11 @@ class DeploymentTests(unittest.TestCase):
             deployment = self.find(self.memory, "Deployment", name)
             self.assertEqual(0, deployment["spec"]["replicas"])
             container = deployment["spec"]["template"]["spec"]["containers"][0]
-            self.assertTrue("@sha256:" in container["image"] or container["image"].endswith(":UNBUILT"), container["image"])
+            # Registry images pin a digest; the locally built Graphiti image is
+            # pinned by its image-ID tag and never pulled.
+            local = re.fullmatch(r"localhost/workstation/graphiti-memory:img-[0-9a-f]{12}", container["image"])
+            self.assertTrue("@sha256:" in container["image"] or (local and container["imagePullPolicy"] == "Never"),
+                            container["image"])
             self.assertTrue(deployment["spec"]["template"]["spec"]["securityContext"]["runAsNonRoot"])
             self.assertFalse(container["securityContext"]["allowPrivilegeEscalation"])
         claim = self.find(self.memory, "PersistentVolumeClaim", "graphiti-neo4j")
