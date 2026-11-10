@@ -121,12 +121,12 @@ ws_agent_exec() {
   printf '%s\n' "$@" >"$work/client-args"
   printf 'called\n' >"$work/client-called"
   # shellcheck disable=SC2031 # This mock intentionally observes launch-subshell exports.
-  printf 'QWEN_HOME=%s\nQWEN_RUNTIME_DIR=%s\nQWEN_CODE_SYSTEM_SETTINGS_PATH=%s\nDSH_HOME=%s\nDSH_TELEMETRY_MODE=%s\nHERMES_HOME=%s\nOPENAI_BASE_URL=%s\nOPENAI_MODEL=%s\nKEY_LENGTH=%s\n' \
+  printf 'QWEN_HOME=%s\nQWEN_RUNTIME_DIR=%s\nQWEN_CODE_SYSTEM_SETTINGS_PATH=%s\nDSH_HOME=%s\nDSH_TELEMETRY_MODE=%s\nHERMES_HOME=%s\nOPENAI_BASE_URL=%s\nOPENAI_MODEL=%s\nKEY_LENGTH=%s\nQWEN_CODE_TRUSTED_FOLDERS_PATH=%s\n' \
     "${QWEN_HOME:-}" "${QWEN_RUNTIME_DIR:-}" "${QWEN_CODE_SYSTEM_SETTINGS_PATH:-}" "${DSH_HOME:-}" "${DSH_TELEMETRY_MODE:-}" "${HERMES_HOME:-}" "${OPENAI_BASE_URL:-}" "${OPENAI_MODEL:-}" \
-    "${#WORKSTATION_AGENT_API_KEY}" >"$work/client-env"
+    "${#WORKSTATION_AGENT_API_KEY}" "${QWEN_CODE_TRUSTED_FOLDERS_PATH:-}" >"$work/client-env"
 }
 unset WORKSTATION_AGENT_API_KEY
-unset QWEN_CODE_SYSTEM_SETTINGS_PATH
+unset QWEN_CODE_SYSTEM_SETTINGS_PATH QWEN_CODE_TRUSTED_FOLDERS_PATH
 (ws_agent_launch "$work/bundle" qwen acp) >"$work/acp-stdout"
 [[ ! -s $work/acp-stdout ]]
 grep -Fxq qwen "$work/client-args"
@@ -135,6 +135,10 @@ grep -Fxq -- '--acp' "$work/client-args"
 grep -Fxq "QWEN_HOME=$work/bundle/qwen" "$work/client-env"
 grep -Fxq "QWEN_RUNTIME_DIR=$work/bundle/qwen" "$work/client-env"
 grep -Fxq "QWEN_CODE_SYSTEM_SETTINGS_PATH=$work/bundle/qwen/settings.json" "$work/client-env"
+# Folder trust lives outside the bundle, so regenerating a bundle keeps it.
+grep -Fxq "QWEN_CODE_TRUSTED_FOLDERS_PATH=${XDG_CONFIG_HOME:-$HOME/.config}/workstation-agent/qwen-trustedFolders.json" "$work/client-env"
+(QWEN_CODE_TRUSTED_FOLDERS_PATH=$work/own-trust.json ws_agent_launch "$work/bundle" qwen acp) >/dev/null
+grep -Fxq "QWEN_CODE_TRUSTED_FOLDERS_PATH=$work/own-trust.json" "$work/client-env"
 grep -Fxq 'OPENAI_BASE_URL=http://localhost:18001/v1' "$work/client-env"
 grep -Fxq 'OPENAI_MODEL=Fixture-Model-1' "$work/client-env"
 grep -Fxq 'KEY_LENGTH=12' "$work/client-env"

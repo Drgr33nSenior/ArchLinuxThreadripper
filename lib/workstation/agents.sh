@@ -246,6 +246,10 @@ ws_agent_launch() {
   case $AGENT_HARNESS in
     qwen)
       export QWEN_HOME="$bundle/qwen" QWEN_RUNTIME_DIR="$bundle/qwen" QWEN_MODEL="$AGENT_MODEL"
+      # Folder trust (which projects may load MCP tools) is the user's decision, not
+      # the bundle's: keep it in one stable file so regenerating a bundle keeps it.
+      # Qwen Code reads QWEN_CODE_TRUSTED_FOLDERS_PATH; an explicit value wins.
+      export QWEN_CODE_TRUSTED_FOLDERS_PATH="${QWEN_CODE_TRUSTED_FOLDERS_PATH:-${XDG_CONFIG_HOME:-$HOME/.config}/workstation-agent/qwen-trustedFolders.json}"
       export QWEN_USAGE_STATISTICS_ENABLED=false QWEN_TELEMETRY_ENABLED=false
       if [[ $mode == acp ]]; then
         ws_agent_exec qwen --auth-type openai --model "$AGENT_MODEL" --approval-mode default --acp
