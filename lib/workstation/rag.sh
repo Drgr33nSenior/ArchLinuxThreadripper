@@ -148,7 +148,7 @@ ws_rag_stage_reranker() (
 ws_rag_corpus() (
   set -euo pipefail
   umask 077
-  local output=$1 root source directory file hash name total=0 bytes commit captured lock_hash
+  local output=$1 root source directory file hash name total=0 bytes commit captured lock_hash blob revision
   shift
   (($# > 0 && $# <= 20)) || ws_die 'select 1..20 reviewed docs/*.md files explicitly'
   common::require_command jq
@@ -177,15 +177,28 @@ ws_rag_corpus() (
     # Snapshot bytes first: provenance must describe the copy even in a dirty tree.
     cp "$file" "$output/document.pending"
     hash=$(common::sha256_file "$output/document.pending")
-    name="${source//\//__}--$hash.md"
+    # A Git revision is recorded only when the copied bytes equal the file's blob
+    # at HEAD; it names the last commit that changed the file. Dirty, untracked
+    # or Git-less copies carry their content hash only.
+    revision=''
+    if [[ -n $commit ]] && blob=$(git -C "$root" rev-parse --verify --quiet "HEAD:$source" 2>/dev/null) &&
+      [[ $blob == "$(git -C "$root" hash-object --path="$source" "$output/document.pending" 2>/dev/null)" ]]; then
+      revision=$(git -C "$root" rev-list -1 HEAD -- "$source" 2>/dev/null) || revision=''
+    fi
+    [[ $revision =~ ^[a-f0-9]{40}([a-f0-9]{24})?$ ]] || revision=''
+    # Uploaded names keep path, revision and content hash: conflicting versions
+    # stay identifiable in citations and in service-tools results.
+    name="${source//\//__}${revision:+--rev-$revision}--$hash.md"
     mv "$output/document.pending" "$output/documents/$name"
-    jq -cn --arg source "$source" --arg sha256 "$hash" --arg file "documents/$name" \
-      '{source_path:$source,source_sha256:$sha256,file:$file}' >>"$output/sources.jsonl"
+    jq -cn --arg source "$source" --arg sha256 "$hash" --arg file "documents/$name" --arg revision "$revision" \
+      '{source_path:$source,source_sha256:$sha256,git_revision:(if $revision == "" then null else $revision end),file:$file}' \
+      >>"$output/sources.jsonl"
   done
   jq -s --arg captured "$captured" --arg commit "$commit" --arg lock "$lock_hash" \
     '{schema:1,status:"prepared-not-ingested",captured_at:$captured,
       git_head:(if $commit == "" then null else $commit end),
-      revision_basis:"file SHA-256, not a clean-tree claim",versions_lock_sha256:$lock,sources:.}' \
+      revision_basis:"file SHA-256; git_revision only when the copied bytes equal the HEAD blob, not a clean-tree claim",
+      versions_lock_sha256:$lock,sources:.}' \
     "$output/sources.jsonl" >"$output/corpus.json"
   ws_note "wrote $output; review documents before upload. This is not a secret scanner or an automatic ingestion job"
 )
