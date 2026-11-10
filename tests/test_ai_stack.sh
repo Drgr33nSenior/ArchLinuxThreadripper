@@ -178,12 +178,11 @@ for e in profile["args"]:
 for e in profile["env"]:
     assert e["reason"] and e["source"] and e["confidence"] in ("H", "M", "L"), e
 assert sum(1 for arm in profile["arms"].values() if arm["default"]) == 1
-# Arm U (the qualified ports, the PCIe custom all-reduce, P1 prefill, 8-warp
-# prefill attention, the fused split-K reduce, the fused norm and SiLU*mul
-# MXFP4 reads, the one-request attention tile and the kq3 verify GEMM) is the
-# default; arm A stays as the baseline arm, and K, M, N, O, Q, R, S and T as
-# the comparisons for each addition.
-assert profile["arms"]["U"]["default"] and not profile["arms"]["A"]["default"]
+# Arm Y (arm U's ports and fusions plus P1 expansion from kq3 records and
+# prefill all-reduces on the PCIe custom all-reduce, without arm V's
+# prefill-attention tile) is the default; arm A stays as the baseline arm, and
+# K-X as the comparisons for each addition.
+assert profile["arms"]["Y"]["default"] and not profile["arms"]["A"]["default"]
 flags = [e["flag"] for e in profile["args"]]
 assert len(flags) == len(set(flags)), "duplicate flag"
 unset = {e["name"] for e in profile["must_unset_env"]}

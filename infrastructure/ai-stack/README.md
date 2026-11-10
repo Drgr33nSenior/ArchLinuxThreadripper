@@ -181,16 +181,19 @@ runtime it replaces is guidance there, not a target. The model catalog keeps
 only model and draft identity.
 
 A profile has arms for the A/B decisions that need measurement; one is the
-default. For `qwen3.8-27b-mxfp4-tp2`, arm U is the default: arm A's flags
+default. For `qwen3.8-27b-mxfp4-tp2`, arm Y is the default: arm A's flags
 (`no_buffer`, overlap off, as op234) with the six qualified gfx1201 ports
 switched on, SGLang's custom all-reduce in place of RCCL for verify and
 decode reductions, the P1 FP8 route for prefill GEMMs, 8-warp prefill
 attention, the fused split-K reduce, the fused MXFP4 quantization of the
-norm and SiLU*mul outputs, the one-request verify-attention tile and the kq3
-verify GEMM. Arm A stays as the baseline that every other arm is compared
-with; arms K, M, N, O, Q, R, S and T each lack one later addition (the custom
-all-reduce, P1, 8-warp prefill attention, the fused reduce, the fused norm
-read, the fused SiLU*mul, the attention tile, kq3). Arm B
+norm and SiLU*mul outputs, the one-request verify-attention tile, the kq3
+verify GEMM, P1 expansion from kq3 records and prefill all-reduces on the
+PCIe custom all-reduce. Arm A stays as the baseline that every other arm is
+compared with; arms K, M, N, O, Q, R, S, T and U each lack one later addition
+(the custom all-reduce, P1, 8-warp prefill attention, the fused reduce, the
+fused norm read, the fused SiLU*mul, the attention tile, kq3, the prefill
+pair). Arms V-X carry the 32 x 32 prefill-attention tile, which is not the
+default (see the results below). Arm B
 (`extra_buffer_lazy` with the overlap scheduler) is an experiment.
 
 An arm may list base flags under `drop` (arm `M` drops
@@ -277,11 +280,11 @@ variables, which the Job adds to the profile's.
 | `R` | `Q` plus `SGLANG_GFX1201_ADD_NORM_MXFP4=1` (the boundary norm read also quantizes to MXFP4 on verify batches, bitwise equal; serving patch 0019); the comparison for `S` |
 | `S` | `R` plus `SGLANG_GFX1201_SILU_MUL_MXFP4=1` (SiLU*mul and the down projection's MXFP4 quantization in one kernel on verify batches, bitwise equal; serving patch 0020); the comparison for `T` |
 | `T` | `S` plus `SGLANG_GFX1201_VERIFY_ATTENTION_B1_TILE=1` (one-request verify batches run the verify-attention kernel with a wider tile, BT 64 / 8 warps / QC 64; serving patch 0021; not bitwise, so it needs the quality phase); the comparison for `U` |
-| `U` | `T` plus `SGLANG_GFX1201_MXFP4_KQ3=1` (verify GEMMs of at most 16 rows run the kq3 kernel over pre-packed weight records, bitwise equal; the records replace the weight and prefill rebuilds it into a scratch, about 26 ms per forward; serving patch 0022), **the default** |
+| `U` | `T` plus `SGLANG_GFX1201_MXFP4_KQ3=1` (verify GEMMs of at most 16 rows run the kq3 kernel over pre-packed weight records, bitwise equal; the records replace the weight and prefill rebuilds it into a scratch, about 26 ms per forward; serving patch 0022); the comparison for `V`-`Y` |
 | `V` | `U` plus `SGLANG_GFX1201_EXTEND_TILE32=1` (head-dim-256 prefill attention with a 32 x 32 tile and 4 warps, -11% to -15% per chunk; serving patch 0023; not bitwise, so it needs the quality phase) |
 | `W` | `V` plus `SGLANG_GFX1201_P1_FROM_KQ3=1` (P1 expands its FP8 weight directly from kq3 records, removing the prefill weight rebuild, about -27 ms per chunk, bitwise equal; serving patch 0024) |
 | `X` | `W` plus `SGLANG_GFX1201_PCIE_CUSTOM_AR_MAX_BYTES=25165824` (prefill-chunk all-reduces on the PCIe custom all-reduce instead of RCCL, about -10 ms per chunk, bitwise equal; serving patch 0025 grows its buffer to the cap) |
-| `Y` | `U` plus `SGLANG_GFX1201_P1_FROM_KQ3=1` and the 24 MiB `SGLANG_GFX1201_PCIE_CUSTOM_AR_MAX_BYTES` (0024, 0025) without `V`'s prefill-attention tile: output bitwise equal to `U` |
+| `Y` | `U` plus `SGLANG_GFX1201_P1_FROM_KQ3=1` and the 24 MiB `SGLANG_GFX1201_PCIE_CUSTOM_AR_MAX_BYTES` (0024, 0025) without `V`'s prefill-attention tile; output bitwise equal to `U`), **the default** |
 
 Enable an item in arm A only after its arm matches arm A's quality result and
 greedy acceptance.
@@ -429,6 +432,26 @@ weight. Arm `T`'s tile gave 0.67 / 1.26 ms at 47K / 88K against arm `S`
 JSON-graded cases and capturing the raw answers showed correct JSON wrapped in
 a ```` ```json ```` fence (and `k8s-troubleshoot` naming `CACHE_SHARDS=4` where
 the grader expects the variable name).
+
+Results on 2026-11-10 (image `sha256:4b157a4e`, series `bf388330`, U-X run back
+to back, then Y three times; the verify step was 26.93-26.96 ms in every arm,
+so C1 / C2 differences between single runs are sampling noise):
+
+| Arm | C1 / C2 | Prefill at 2K / 8K / 16K | First token at 23.5K / 47K / 88K | Quality |
+| --- | --- | --- | --- | --- |
+| `U` | 138.0 / 222.9 tokens/s | 2,544 / 3,593 / 3,383 tokens/s | 7.81 / 18.61 / 45.58 s | 11 passed, 0 failed |
+| `V` | 145.0 / 242.9 tokens/s | 3,629 / 3,639 / 3,451 tokens/s | 7.59 / 18.16 / 42.99 s | 11 passed, 1 failed (`rag-and-web-version`) |
+| `W` | 139.2 / 242.0 tokens/s | 3,846 / 3,842 / 3,642 tokens/s | 7.20 / 17.24 / 41.79 s | as `V` |
+| `X` | 148.4 / 259.1 tokens/s | 3,913 / 3,904 / 3,695 tokens/s | 7.69 / 16.91 / 41.53 s | as `V` |
+| `Y` (median of 3) | 139.2 / 254.7 tokens/s | 3,868 / 3,853 / 3,618 tokens/s | 7.41 / 17.87 / 44.21 s | 11 passed, 0 failed (each run) |
+
+Arm `Y` became the default. P1 expansion from kq3 records and the prefill
+custom all-reduce are bitwise equal and together add 7-9% prefill throughput.
+The 32 x 32 prefill-attention tile (arm `V`) took a further 2.6 s off an 88K
+prompt but is not bitwise: with it, `rag-and-web-version` thinks for 712
+tokens and stops without an answer, deterministically, where arm `U` answers.
+Against op233/op234's 96.3-104.3 / 172.8-194.5 tokens/s, arm `Y`'s three runs
+measured C1 135.0-145.3 and C2 230.2-257.8 (per-request decode medians 156-160).
 
 After BetterBench, the Job runs the assistant acceptance menu
 ([`assistant-quality.json`](../sglang/assistant-quality.json) through
