@@ -1,7 +1,16 @@
 {
   "schema": 1,
   "profile": "qwen3.8-27b-mxfp4-tp2",
-  "status": "unqualified",
+  "status": "qualified",
+  "qualification": {
+    "date": "2026-11-10",
+    "decision": "owner",
+    "arm": "Y",
+    "image": "registry.lan.thespry.family/local/sglang-gfx1201@sha256:4b157a4eddd3b214e3092ff84eec6a0ffd4e3b3c5398d2a30d937970510dd865",
+    "stack_lock_patchset": "bf388330f6af1fb8f67dd8f8ea0670de954c5a1ffad0397869632daa33d04321",
+    "evidence": "Three BetterBench bench Jobs of arm Y on this image (sglang-bench-y-0113d00cca-r1..r3): C1 / C2 median 139.2 / 254.7 tokens/s (135.0-145.3 / 230.2-257.8), verify step 26.93-26.96 ms, prefill 3,868 / 3,853 / 3,618 tokens/s at 2K / 8K / 16K, first token 17.9 / 44.2 s at 47K / 88K; assistant quality menu 11 passed, 0 failed, 1 needs-review, 14 not run (no sandbox or long-context budget) in every run; no tracebacks; 0024/0025 routes on both ranks.",
+    "limits": "The quality menu leaves 14 cases NOT RUN and has known evaluator gaps (long-context bodies, rag-and-web-version prompt); qualification covers the measured profile only. Re-qualify after any image, patch-series or default-arm change."
+  },
   "model": "qwen3.8-27b-mxfp4",
   "served_model_name": "Qwen3.8-27B-MXFP4",
   "stack": "SGLang main fcb3274646e43c16d70fd83806ebb3a5134d5e81 with serving patches 0001-0004 (stack.lock)",
