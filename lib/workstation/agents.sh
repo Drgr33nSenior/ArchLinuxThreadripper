@@ -122,7 +122,7 @@ ws_agent_configure() (
         includeTools:((if $retrieval_enabled then ["retrieve_project_passage","read_project_source"] else [] end) +
                       (if $search_enabled then ["search_web","read_web_page"] else [] end) +
                       (if $memory_enabled then ["recall_memory","remember","forget_memory","inspect_memory_source"] else [] end) +
-                      (if $handoff_enabled then ["save_task_handoff","load_task_handoff","list_task_handoffs"] else [] end))}}} end)' >"$output/qwen/settings.json"
+                      (if $handoff_enabled then ["save_task_handoff","load_task_handoff","list_task_handoffs"] else [] end))}}} end)' >"$output/qwen/system-settings.json"
   jq -n --arg url "$AGENT_BASE_URL" --arg model "$AGENT_MODEL" \
     --argjson context "$AGENT_CONTEXT_TOKENS" --argjson output "$AGENT_MAX_OUTPUT_TOKENS" \
     '{"agent-default-model":{provider:"workstation",model:$model},
@@ -133,7 +133,7 @@ ws_agent_configure() (
   jq -n --arg selected "$AGENT_HARNESS" --arg url "$AGENT_BASE_URL" --arg model "$AGENT_MODEL" \
     --argjson context "$AGENT_CONTEXT_TOKENS" --argjson output "$AGENT_MAX_OUTPUT_TOKENS" \
     --arg qwen "$qwen_commit" --arg version "$qwen_version" --arg dsh "$dsh_commit" --arg hermes "$hermes_commit" --arg retrieval "$retrieval" \
-    --arg qwen_config "$(common::sha256_file "$output/qwen/settings.json")" \
+    --arg qwen_config "$(common::sha256_file "$output/qwen/system-settings.json")" \
     --arg dsh_config "$(common::sha256_file "$output/dsh/settings.yaml")" \
     --arg hermes_config "$(common::sha256_file "$output/hermes/config.yaml")" \
     --arg contract "$AGENT_SERVING_CONTRACT" --argjson defaults "$defaults" \
@@ -190,7 +190,7 @@ ws_agent_launch() {
   [[ $AGENT_HARNESS != dsh || $mode == acp ]] ||
     ws_die 'the pinned DSH has no interactive CLI profile; select dsh acp in an ACP-capable IDE'
   case $AGENT_HARNESS in
-    qwen) native_file=qwen/settings.json ;;
+    qwen) native_file=qwen/system-settings.json ;;
     dsh) native_file=dsh/settings.yaml ;;
     hermes) native_file=hermes/config.yaml ;;
   esac
@@ -227,9 +227,12 @@ ws_agent_launch() {
     policy_file=$(ws_agent_qwen_policy_path)
     [[ ! -e $policy_file && ! -L $policy_file ]] ||
       ws_die 'existing Qwen system policy requires an owner-reviewed merge; it has not been overridden'
-    [[ -z ${QWEN_CODE_SYSTEM_SETTINGS_PATH:-} || $QWEN_CODE_SYSTEM_SETTINGS_PATH == "$bundle/qwen/settings.json" ]] ||
+    [[ -z ${QWEN_CODE_SYSTEM_SETTINGS_PATH:-} || $QWEN_CODE_SYSTEM_SETTINGS_PATH == "$bundle/qwen/system-settings.json" ]] ||
       ws_die 'existing QWEN_CODE_SYSTEM_SETTINGS_PATH requires owner review; it has not been overridden'
-    export QWEN_CODE_SYSTEM_SETTINGS_PATH="$bundle/qwen/settings.json"
+    # The reviewed, hash-checked configuration is Qwen's *system* settings, which
+    # override every other scope. QWEN_HOME/settings.json stays Qwen's own user file:
+    # "Always allow" choices are written there and must not break the bundle hash.
+    export QWEN_CODE_SYSTEM_SETTINGS_PATH="$bundle/qwen/system-settings.json"
   fi
   common::require_command "$AGENT_HARNESS"
   if [[ -z ${WORKSTATION_AGENT_API_KEY:-} ]]; then

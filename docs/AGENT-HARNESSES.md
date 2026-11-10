@@ -141,6 +141,12 @@ launcher keeps the trust list outside the bundle, in
 bundle keeps it. Trust a project by running the CLI launcher once in it and
 accepting the prompt, or with an IDE helper that edits that file.
 
+The bundle's reviewed Qwen configuration is `qwen/system-settings.json`, loaded
+as Qwen's system settings, which override every other scope; it is the file the
+launcher hash-checks. `qwen/settings.json` is Qwen's own user file: "Always
+allow" choices made in the CLI or an IDE are saved there and do not break the
+bundle.
+
 Qwen Code disables automatic update in its generated configuration and disables
 usage statistics and telemetry in both that configuration and its process
 environment. DSH starts with `DSH_TELEMETRY_MODE=DISABLED`. These controls do
