@@ -724,6 +724,18 @@ class ResourceTests(unittest.TestCase):
 
 
 
+class KubeYamlTests(unittest.TestCase):
+    """Manifests are read as YAML 1.1 by Kubernetes and Prometheus: y/n/yes/no/on/off are booleans there."""
+
+    def test_yaml11_boolean_like_strings_are_quoted(self):
+        for value in ("Y", "y", "N", "yes", "No", "on", "OFF", "true", "False", "null", "~"):
+            text = service.kube_yaml({"metadata": {"labels": {"ai-stack/arm": value}}})
+            self.assertIn(f"'{value}'", text, value)
+            self.assertEqual(value, yaml.safe_load(text)["metadata"]["labels"]["ai-stack/arm"])
+        self.assertIn("ai-stack/arm: X\n", service.kube_yaml({"ai-stack/arm": "X"}))
+        self.assertIn("|", service.kube_yaml({"script": "a\nb"}))
+
+
 class ServingContractTests(unittest.TestCase):
     """One contract, read from the serving owner's profile, drives every consumer (offline)."""
 
