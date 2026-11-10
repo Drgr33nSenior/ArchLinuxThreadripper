@@ -1,8 +1,8 @@
 {
   "schema": 1,
   "alias": "qwen3.8-27b-mxfp4",
-  "status": "candidate",
-  "notes": "Native 128K candidate (ASSISTANT.md): Quark MXFP4 weights with the DFlash2 draft. Serving flags and environment live in serving/qwen3.8-27b-mxfp4-tp2.json.",
+  "status": "selected",
+  "notes": "Selected 2026-11-10 (owner decision): Quark MXFP4 weights with the DFlash2 draft, served by profile serving/qwen3.8-27b-mxfp4-tp2.json at its default arm. Serving flags and environment live in that profile.",
   "model": {
     "repository": "amd/Qwen3.8-27B-Quark-AWQ-MXFP4",
     "revision": "5233554c5fa56afda40150556b95573c2d7d29c0",
