@@ -1,0 +1,14 @@
+diff --git a/src/BuiltinExtensions/ComfyUIBackend/ComfyUISelfStartBackend.cs b/src/BuiltinExtensions/ComfyUIBackend/ComfyUISelfStartBackend.cs
+--- a/src/BuiltinExtensions/ComfyUIBackend/ComfyUISelfStartBackend.cs
++++ b/src/BuiltinExtensions/ComfyUIBackend/ComfyUISelfStartBackend.cs
+@@ -501,6 +501,10 @@ public class ComfyUISelfStartBackend : ComfyUIAPIAbstractBackend
+             async Task pipCall(string reason, string call)
+             {
+                 AddLoadStatus($"{reason} for ComfyUI...");
++                // Workstation offline image: every package SwarmUI checks is baked in
++                // and verified at build time (ai-stack creative stage), so a runtime
++                // pip call means the image is incomplete. Fail instead of installing.
++                throw new InvalidOperationException($"Offline image refuses runtime pip ({reason}); rebuild the image with the missing dependency.");
+                 Process p = DoPythonCall($"-s -m pip {call}");
+                 NetworkBackendUtils.ReportLogsFromProcess(p, $"ComfyUI ({reason})", "");
+                 await p.WaitForExitAsync(Program.GlobalProgramCancel);

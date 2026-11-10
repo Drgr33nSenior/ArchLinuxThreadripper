@@ -15,9 +15,9 @@ lock=$here/stack.lock
 series=$1/serving/patches/sglang-main
 get() { awk -F= -v key="$1" '$1 == key {print substr($0, index($0, "=") + 1)}' "$lock"; }
 head_of() {
-  local sha
-  sha=$(git ls-remote "$1" refs/heads/main | cut -f1)
-  [[ $sha =~ ^[a-f0-9]{40}$ ]] || stop "cannot resolve main of $1"
+  local sha branch=${2:-main}
+  sha=$(git ls-remote "$1" "refs/heads/$branch" | cut -f1)
+  [[ $sha =~ ^[a-f0-9]{40}$ ]] || stop "cannot resolve $branch of $1"
   printf '%s\n' "$sha"
 }
 raw() { curl -fsSL --max-time 60 "https://raw.githubusercontent.com/$1/$2/$3"; }
@@ -35,6 +35,8 @@ new[TRITON_COMMIT]=$(raw "$(slug "$(get PYTORCH_REPOSITORY)")" "${new[PYTORCH_CO
 [[ ${new[TRITON_COMMIT]} =~ ^[a-f0-9]{40}$ ]] || stop 'PyTorch does not pin a Triton commit'
 new[SGLANG_COMMIT]=$(head_of "$(get SGLANG_REPOSITORY)")
 new[SGLANG_PATCHSET_SHA256]=$(bash "$here/patchset-hash.sh" "$series")
+new[SWARMUI_COMMIT]=$(head_of "$(get SWARMUI_REPOSITORY)" master)
+new[COMFYUI_COMMIT]=$(head_of "$(get COMFYUI_REPOSITORY)" master)
 
 # Resolve the runtime base tag to its current manifest-list digest (Docker Hub).
 tag=$(get RUNTIME_BASE_TAG)

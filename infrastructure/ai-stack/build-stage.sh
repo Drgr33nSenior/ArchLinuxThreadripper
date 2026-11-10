@@ -3,7 +3,7 @@
 # from stack.lock. Each run directory is keyed by the pins that affect it, so a
 # refresh rebuilds only stages whose inputs changed; ccache and source clones
 # persist under $AI_STACK_ROOT across runs.
-# Usage: build-stage.sh rocm|torch|sglang|image
+# Usage: build-stage.sh rocm|torch|sglang|image|comfyui|swarmui|creative
 set -euo pipefail
 stop() {
   printf 'STOP: %s\n' "$*" >&2
@@ -11,7 +11,8 @@ stop() {
 }
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 stage=${1:-}
-[[ $stage =~ ^(rocm|torch|sglang|image)$ ]] || stop 'usage: build-stage.sh rocm|torch|sglang|image'
+[[ $stage =~ ^(rocm|torch|sglang|image|comfyui|swarmui|creative)$ ]] ||
+  stop 'usage: build-stage.sh rocm|torch|sglang|image|comfyui|swarmui|creative'
 lock=$here/stack.lock
 read_lock() {
   awk -F= -v key="$1" '$1 == key {print substr($0, index($0, "=") + 1); n++} END {exit n != 1}' "$lock" ||
@@ -69,6 +70,23 @@ sglang_run=$root/builds/sglang-$sglang_key
 # into it) and with the smoke test that gates it.
 image_key=$(key_of "$sglang_key" "$(cat -- "$lock" "$here/image/Containerfile" "$here/image/smoke.py" | sha256sum | cut -c1-64)")
 image_run=$root/builds/image-$image_key
+# Image generation: the ComfyUI wheelhouse on the same ROCm/PyTorch builds,
+# SwarmUI built with the pinned .NET SDK, and the creative image from both.
+export COMFYUI_REPOSITORY COMFYUI_COMMIT SWARMUI_REPOSITORY SWARMUI_COMMIT
+COMFYUI_REPOSITORY=$(read_lock COMFYUI_REPOSITORY)
+COMFYUI_COMMIT=$(commit COMFYUI_COMMIT)
+SWARMUI_REPOSITORY=$(read_lock SWARMUI_REPOSITORY)
+SWARMUI_COMMIT=$(commit SWARMUI_COMMIT)
+DOTNET_IMAGE=$(digest_image DOTNET_SDK_IMAGE)
+content() { cat -- "$@" | sha256sum | cut -c1-64; }
+comfyui_key=$(key_of "${torch_run##*/}" "$COMFYUI_COMMIT" "$SWARMUI_COMMIT" \
+  "$(content "$here/comfyui/build.sh" "$here/comfyui/requirements.py")")
+comfyui_run=$root/builds/comfyui-$comfyui_key
+swarmui_key=$(key_of "$SWARMUI_COMMIT" "$DOTNET_IMAGE" "$(content "$here/swarmui/build.sh" "$here"/swarmui/*.patch)")
+swarmui_run=$root/builds/swarmui-$swarmui_key
+creative_files=("$here"/creative/{Containerfile,smoke.py,launch.sh,check_swarm_deps.py,Backends.fds})
+creative_key=$(key_of "$comfyui_key" "$swarmui_key" "$(content "$lock" "${creative_files[@]}")")
+creative_run=$root/builds/creative-$creative_key
 patches=$root/patches/$SGLANG_PATCHSET_SHA256
 need() { [[ -s $1/out/RECEIPT.json ]] || stop "build the $2 stage first ($1)"; }
 
@@ -82,6 +100,84 @@ track() {
   trap "python3 '$here/stage-metrics.py' '$metrics_dir' '$stage' finish --status \$? --ccache-stats '$stats'" EXIT
 }
 
+# Scan before push, then sign and attest; image.digest is written only once
+# the pushed image verifies, so a failed step is retried on the next run.
+# Usage: publish TAG RUN_DIR SCAN_ALLOWLIST
+publish() {
+  local tag=$1 run=$2 allowlist=$3 keys authfile cosign_image trivy_image scan ref
+  keys=${AI_STACK_SIGNING_DIR:-$HOME/.config/ai-stack/signing}
+  [[ -s $here/signing/cosign.pub && -s $keys/cosign.key && -s $keys/cosign_password.cred ]] ||
+    stop 'image signing is not set up: run signing/init-key.sh and commit signing/cosign.pub'
+  authfile=${REGISTRY_AUTH_FILE:-${XDG_RUNTIME_DIR:-/run/user/$UID}/containers/auth.json}
+  [[ -s $authfile ]] || stop "no registry login at $authfile; run podman login first"
+  cosign_image=$(digest_image COSIGN_IMAGE)
+  trivy_image=$(digest_image TRIVY_IMAGE)
+  scan=$run/out/scan
+  mkdir -p "$scan" "$root/scan" "$root/trivy-cache"
+  rm -f -- "$scan/pushed.digest"
+  podman save --format docker-archive -o "$root/scan/image.tar" "$tag"
+  trivy() {
+    podman run --rm --pull=missing --network host --user 0:0 -v "$root/scan:/scan:ro" \
+      -v "$root/trivy-cache:/cache" -v "$scan:/out" "$trivy_image" image --cache-dir /cache \
+      --input /scan/image.tar --scanners vuln --quiet "$@"
+  }
+  if ! { trivy --format json --output /out/vulns.json &&
+    trivy --format cyclonedx --output /out/sbom.cdx.json &&
+    trivy --format cosign-vuln --output /out/vuln.cosign.json; }; then
+    rm -f -- "$root/scan/image.tar"
+    stop 'vulnerability scan failed'
+  fi
+  rm -f -- "$root/scan/image.tar"
+  # Record the scanner and vulnerability-database versions the reports used.
+  podman run --rm --pull=never --network none --user 0:0 -v "$root/trivy-cache:/cache:ro" "$trivy_image" \
+    version --cache-dir /cache --format json >"$scan/trivy-version.json"
+  python3 "$here/image/scan-policy.py" "$scan/vulns.json" "$allowlist" >"$scan/policy.json" ||
+    stop "vulnerability policy blocks this image; see $scan/policy.json"
+  podman push --digestfile "$scan/pushed.digest" "$tag"
+  ref=${tag%:*}@$(<"$scan/pushed.digest")
+  COSIGN_PASSWORD=$(systemd-creds --user decrypt --name=cosign_password "$keys/cosign_password.cred" -)
+  export COSIGN_PASSWORD
+  # signing-config.json lists no transparency log or timestamp service, so
+  # nothing is uploaded to Rekor; signatures live beside the image in Zot.
+  cosign() {
+    podman run --rm --pull=missing --network host --user 0:0 -e COSIGN_PASSWORD -e DOCKER_CONFIG=/auth \
+      -v "$keys:/keys:ro" -v "$authfile:/auth/config.json:ro" -v "$scan:/scan:ro" -v "$here/signing:/signing:ro" \
+      "$cosign_image" "$@"
+  }
+  cosign sign --key /keys/cosign.key --signing-config /signing/signing-config.json --yes "$ref" >/dev/null
+  cosign attest --key /keys/cosign.key --signing-config /signing/signing-config.json --yes \
+    --type cyclonedx --predicate /scan/sbom.cdx.json "$ref" >/dev/null
+  cosign attest --key /keys/cosign.key --signing-config /signing/signing-config.json --yes \
+    --type vuln --predicate /scan/vuln.cosign.json "$ref" >/dev/null
+  unset COSIGN_PASSWORD
+  bash "$here/signing/verify-image.sh" "$ref"
+  mv -- "$scan/pushed.digest" "$run/out/image.digest"
+  printf 'PUSHED=%s\nSIGNED=%s\n' "$ref" "$ref"
+}
+if [[ $stage == creative ]]; then
+  need "$comfyui_run" comfyui
+  need "$swarmui_run" swarmui
+  base=$(digest_image RUNTIME_BASE_IMAGE)
+  tag=$(read_lock CREATIVE_IMAGE_REPOSITORY):$creative_key
+  if podman image exists "$tag" && [[ ${AI_STACK_PUSH:-0} != 1 || -s $creative_run/out/image.digest ]]; then
+    printf 'BUILT=creative %s\n' "$tag"
+    exit 0
+  fi
+  track /dev/null
+  mkdir -p "$creative_run/out"
+  podman build --pull=missing --build-arg RUNTIME_BASE_IMAGE="$base" --build-arg STACK_ID="$creative_key" \
+    --build-context swarmui="$swarmui_run/out" --build-context comfyui="$comfyui_run/out" \
+    -f "$here/creative/Containerfile" -t "$tag" "$here/creative"
+  # GPU, ComfyUI and SwarmUI start-up smoke on the build host's GPUs before push.
+  # Container root is the invoking (render-group) user under rootless Podman.
+  podman run --rm --pull=never --network none --user 0:0 --tmpfs /tmp --device /dev/kfd --device /dev/dri \
+    --group-add keep-groups --security-opt label=disable -e HOME=/tmp \
+    -v "$here/creative/smoke.py:/smoke.py:ro" -v "$here/creative/Backends.fds:/smoke/Backends.fds:ro" \
+    --entrypoint /SwarmUI/dlbackend/ComfyUI/venv/bin/python "$tag" /smoke.py /smoke/Backends.fds
+  printf 'IMAGE=%s\n' "$tag"
+  [[ ${AI_STACK_PUSH:-0} != 1 ]] || publish "$tag" "$creative_run" "$here/creative/scan-allowlist.json"
+  exit 0
+fi
 if [[ $stage == image ]]; then
   need "$sglang_run" sglang
   base=$(digest_image RUNTIME_BASE_IMAGE)
@@ -103,58 +199,7 @@ if [[ $stage == image ]]; then
     -e SGLANG_USE_AITER=false -e SGLANG_USE_AITER_MHA=false -e SGLANG_USE_AITER_MOE=false \
     -v "$here/image/smoke.py:/smoke.py:ro" --entrypoint python3 "$tag" /smoke.py
   printf 'IMAGE=%s\n' "$tag"
-  if [[ ${AI_STACK_PUSH:-0} == 1 ]]; then
-    # Scan before push, then sign and attest; image.digest is written only once
-    # the pushed image verifies, so a failed step is retried on the next run.
-    keys=${AI_STACK_SIGNING_DIR:-$HOME/.config/ai-stack/signing}
-    [[ -s $here/signing/cosign.pub && -s $keys/cosign.key && -s $keys/cosign_password.cred ]] ||
-      stop 'image signing is not set up: run signing/init-key.sh and commit signing/cosign.pub'
-    authfile=${REGISTRY_AUTH_FILE:-${XDG_RUNTIME_DIR:-/run/user/$UID}/containers/auth.json}
-    [[ -s $authfile ]] || stop "no registry login at $authfile; run podman login first"
-    cosign_image=$(digest_image COSIGN_IMAGE)
-    trivy_image=$(digest_image TRIVY_IMAGE)
-    scan=$image_run/out/scan
-    mkdir -p "$scan" "$root/scan" "$root/trivy-cache"
-    rm -f -- "$scan/pushed.digest"
-    podman save --format docker-archive -o "$root/scan/image.tar" "$tag"
-    trivy() {
-      podman run --rm --pull=missing --network host --user 0:0 -v "$root/scan:/scan:ro" \
-        -v "$root/trivy-cache:/cache" -v "$scan:/out" "$trivy_image" image --cache-dir /cache \
-        --input /scan/image.tar --scanners vuln --quiet "$@"
-    }
-    if ! { trivy --format json --output /out/vulns.json &&
-      trivy --format cyclonedx --output /out/sbom.cdx.json &&
-      trivy --format cosign-vuln --output /out/vuln.cosign.json; }; then
-      rm -f -- "$root/scan/image.tar"
-      stop 'vulnerability scan failed'
-    fi
-    rm -f -- "$root/scan/image.tar"
-    # Record the scanner and vulnerability-database versions the reports used.
-    podman run --rm --pull=never --network none --user 0:0 -v "$root/trivy-cache:/cache:ro" "$trivy_image" \
-      version --cache-dir /cache --format json >"$scan/trivy-version.json"
-    python3 "$here/image/scan-policy.py" "$scan/vulns.json" "$here/image/scan-allowlist.json" >"$scan/policy.json" ||
-      stop "vulnerability policy blocks this image; see $scan/policy.json"
-    podman push --digestfile "$scan/pushed.digest" "$tag"
-    ref=${tag%:*}@$(<"$scan/pushed.digest")
-    COSIGN_PASSWORD=$(systemd-creds --user decrypt --name=cosign_password "$keys/cosign_password.cred" -)
-    export COSIGN_PASSWORD
-    # signing-config.json lists no transparency log or timestamp service, so
-    # nothing is uploaded to Rekor; signatures live beside the image in Zot.
-    cosign() {
-      podman run --rm --pull=missing --network host --user 0:0 -e COSIGN_PASSWORD -e DOCKER_CONFIG=/auth \
-        -v "$keys:/keys:ro" -v "$authfile:/auth/config.json:ro" -v "$scan:/scan:ro" -v "$here/signing:/signing:ro" \
-        "$cosign_image" "$@"
-    }
-    cosign sign --key /keys/cosign.key --signing-config /signing/signing-config.json --yes "$ref" >/dev/null
-    cosign attest --key /keys/cosign.key --signing-config /signing/signing-config.json --yes \
-      --type cyclonedx --predicate /scan/sbom.cdx.json "$ref" >/dev/null
-    cosign attest --key /keys/cosign.key --signing-config /signing/signing-config.json --yes \
-      --type vuln --predicate /scan/vuln.cosign.json "$ref" >/dev/null
-    unset COSIGN_PASSWORD
-    bash "$here/signing/verify-image.sh" "$ref"
-    mv -- "$scan/pushed.digest" "$image_run/out/image.digest"
-    printf 'PUSHED=%s\nSIGNED=%s\n' "$ref" "$ref"
-  fi
+  [[ ${AI_STACK_PUSH:-0} != 1 ]] || publish "$tag" "$image_run" "$here/image/scan-allowlist.json"
   exit 0
 fi
 
@@ -183,6 +228,20 @@ case $stage in
       -v "$patches:/patches:ro")
     envs+=(-e SGLANG_REPOSITORY -e SGLANG_COMMIT -e SGLANG_PATCHSET_SHA256)
     ;;
+  comfyui)
+    need "$rocm_run" rocm
+    need "$torch_run" torch
+    run=$comfyui_run
+    mounts+=(-v "$run:/work/run" -v "$rocm_run/out:/work/rocm-out:ro" -v "$torch_run/out:/work/torch-out:ro")
+    envs+=(-e COMFYUI_REPOSITORY -e COMFYUI_COMMIT -e SWARMUI_REPOSITORY -e SWARMUI_COMMIT)
+    ;;
+  swarmui)
+    # The .NET SDK image, not TheRock's: no ROCm or compiler cache involved.
+    run=$swarmui_run
+    container_image=$DOTNET_IMAGE
+    mounts=(-v "$root/src:/work/src" -v "$here:/pipeline:ro" -v "$run:/work/run")
+    envs=(-e SWARMUI_REPOSITORY -e SWARMUI_COMMIT)
+    ;;
 esac
 mkdir -p "$run/out"
 if [[ -s $run/out/RECEIPT.json ]]; then
@@ -195,4 +254,4 @@ track "$run/out/ccache-stats.tsv"
 # Root inside the rootless container maps to the invoking user on the host.
 podman run --rm --pull=missing --name "ai-stack-$stage-${run##*-}" \
   --network host --memory 48g --memory-swap 48g --pids-limit 32768 \
-  "${mounts[@]}" "${envs[@]}" "$BUILD_IMAGE" "/pipeline/$stage/build.sh" 2>&1 | tee "$run/out/build.log"
+  "${mounts[@]}" "${envs[@]}" "${container_image:-$BUILD_IMAGE}" "/pipeline/$stage/build.sh" 2>&1 | tee "$run/out/build.log"
