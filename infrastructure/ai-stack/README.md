@@ -181,15 +181,16 @@ runtime it replaces is guidance there, not a target. The model catalog keeps
 only model and draft identity.
 
 A profile has arms for the A/B decisions that need measurement; one is the
-default. For `qwen3.8-27b-mxfp4-tp2`, arm S is the default: arm A's flags
+default. For `qwen3.8-27b-mxfp4-tp2`, arm U is the default: arm A's flags
 (`no_buffer`, overlap off, as op234) with the six qualified gfx1201 ports
 switched on, SGLang's custom all-reduce in place of RCCL for verify and
 decode reductions, the P1 FP8 route for prefill GEMMs, 8-warp prefill
-attention, the fused split-K reduce and the fused MXFP4 quantization of the
-norm and SiLU*mul outputs. Arm A stays as the baseline that every other arm is
-compared with; arms K, M, N, O, Q and R each lack one later addition (the
-custom all-reduce, P1, 8-warp prefill attention, the fused reduce, the fused
-norm read, the fused SiLU*mul). Arm B
+attention, the fused split-K reduce, the fused MXFP4 quantization of the
+norm and SiLU*mul outputs, the one-request verify-attention tile and the kq3
+verify GEMM. Arm A stays as the baseline that every other arm is compared
+with; arms K, M, N, O, Q, R, S and T each lack one later addition (the custom
+all-reduce, P1, 8-warp prefill attention, the fused reduce, the fused norm
+read, the fused SiLU*mul, the attention tile, kq3). Arm B
 (`extra_buffer_lazy` with the overlap scheduler) is an experiment.
 
 An arm may list base flags under `drop` (arm `M` drops
@@ -274,9 +275,9 @@ variables, which the Job adds to the profile's.
 | `P` | `O` with the draft quantized to FP8 at load (as `L`) and `SGLANG_DFLASH_FUSED_KV_FP8=1`, which keeps DFLASH's fused KV materialization for it (serving patch 0017) |
 | `Q` | `O` plus `SGLANG_GFX1201_SPLITK_FUSED_REDUCE=1` (split-K verify GEMMs as one kernel with the reduce fused, bitwise equal; serving patch 0018); the comparison for `R` and `S` |
 | `R` | `Q` plus `SGLANG_GFX1201_ADD_NORM_MXFP4=1` (the boundary norm read also quantizes to MXFP4 on verify batches, bitwise equal; serving patch 0019); the comparison for `S` |
-| `S` | `R` plus `SGLANG_GFX1201_SILU_MUL_MXFP4=1` (SiLU*mul and the down projection's MXFP4 quantization in one kernel on verify batches, bitwise equal; serving patch 0020), **the default** |
-| `T` | `S` plus `SGLANG_GFX1201_VERIFY_ATTENTION_B1_TILE=1` (one-request verify batches run the verify-attention kernel with a wider tile, BT 64 / 8 warps / QC 64; serving patch 0021; not bitwise, so it needs the quality phase) |
-| `U` | `T` plus `SGLANG_GFX1201_MXFP4_KQ3=1` (verify GEMMs of at most 16 rows run the kq3 kernel over pre-packed weight records, bitwise equal; the records replace the weight and prefill rebuilds it into a scratch, about 26 ms per forward; serving patch 0022) |
+| `S` | `R` plus `SGLANG_GFX1201_SILU_MUL_MXFP4=1` (SiLU*mul and the down projection's MXFP4 quantization in one kernel on verify batches, bitwise equal; serving patch 0020); the comparison for `T` |
+| `T` | `S` plus `SGLANG_GFX1201_VERIFY_ATTENTION_B1_TILE=1` (one-request verify batches run the verify-attention kernel with a wider tile, BT 64 / 8 warps / QC 64; serving patch 0021; not bitwise, so it needs the quality phase); the comparison for `U` |
+| `U` | `T` plus `SGLANG_GFX1201_MXFP4_KQ3=1` (verify GEMMs of at most 16 rows run the kq3 kernel over pre-packed weight records, bitwise equal; the records replace the weight and prefill rebuilds it into a scratch, about 26 ms per forward; serving patch 0022), **the default** |
 
 Enable an item in arm A only after its arm matches arm A's quality result and
 greedy acceptance.
@@ -407,6 +408,23 @@ together take 0.39 ms off the verify step. The fused norm read gave 0.13 ms,
 about half of its isolated measurement; the fused SiLU*mul gave 0.26 ms. Arm
 `Q` reproduced its previous verify step within 0.03 ms; its 2K prefill figure
 is the low first-of-sequence outlier seen before.
+
+Results on 2026-11-10 (image `sha256:cf668efe`, series `b91fcdb3`, run back to
+back; median and 25th percentile verify step below 8K, then the median at 47K
+and 88K):
+
+| Arm | Verify step | At 47K / 88K | Two-request step | C1 / C2 | Prefill at 2K / 8K / 16K | First token at 23.5K / 47K / 88K | Quality |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `T` | 32.37 / 32.12 ms | 35.90 / 38.18 ms | 35.04 ms | 116.7 / 202.0 tokens/s | 3,830 / 3,779 / 3,558 tokens/s | 7.49 / 18.01 / 44.37 s | 9 passed, 2 failed (`incident-analysis`, `k8s-troubleshoot`) |
+| `U` | 26.95 / 26.76 ms | 30.16 / 32.44 ms | 29.87 ms | 153.1 / 245.0 tokens/s | 3,572 / 3,600 / 3,386 tokens/s | 7.83 / 18.96 / 45.74 s | same, identical answers |
+
+Arm `U` became the default: kq3 takes 5.4-5.7 ms off every verify step with
+the output bitwise equal to arm `T`'s; prefill pays 5-7% for rebuilding the
+weight. Arm `T`'s tile gave 0.67 / 1.26 ms at 47K / 88K against arm `S`
+(image `sha256:99c96e62`). The two failures are format only: re-sending the
+JSON-graded cases and capturing the raw answers showed correct JSON wrapped in
+a ```` ```json ```` fence (and `k8s-troubleshoot` naming `CACHE_SHARDS=4` where
+the grader expects the variable name).
 
 After BetterBench, the Job runs the assistant acceptance menu
 ([`assistant-quality.json`](../sglang/assistant-quality.json) through
