@@ -26,6 +26,16 @@ SGLANG_PATCHSET_SHA256=bf388330f6af1fb8f67dd8f8ea0670de954c5a1ffad0397869632daa3
 RUNTIME_BASE_TAG=docker.io/library/python:3.14-slim-trixie
 RUNTIME_BASE_IMAGE=docker.io/library/python@sha256:9aaa474097d094040649f2162a627c0049b408f52138d980916788d80f04802f
 IMAGE_REPOSITORY=registry.lan.thespry.family/local/sglang-gfx1201
+# Image generation (SwarmUI + its self-started ComfyUI) on the same ROCm and
+# PyTorch build. Both track their default branch (master); refresh.sh moves them.
+SWARMUI_REPOSITORY=https://github.com/mcmonkeyprojects/SwarmUI.git
+SWARMUI_COMMIT=70b9a9c7885b5538450cf853bb7cdc36437d1ab4
+COMFYUI_REPOSITORY=https://github.com/Comfy-Org/ComfyUI.git
+COMFYUI_COMMIT=0228a9d73cd7c2daf8f61fe13d56b12efe307171
+# SwarmUI builds with the .NET 10 SDK (self-contained); pinned by review.
+# Tag 10.0.404-noble (manifest list, amd64 included).
+DOTNET_SDK_IMAGE=mcr.microsoft.com/dotnet/sdk@sha256:fe0fd4e93bd2fbb47c883b7a6369e5c8d3db8bf01cdc5981f6ee35fbdf3ff4fb
+CREATIVE_IMAGE_REPOSITORY=registry.lan.thespry.family/local/creative-gfx1201
 # Supply-chain tools, pinned by digest and upgraded by review (refresh.sh
 # leaves them unchanged). Releases at least two weeks old when pinned.
 COSIGN_IMAGE=ghcr.io/sigstore/cosign/cosign:v3.1.4@sha256:0f06154836d2de34f887a5c273506d52ca43edaa1d9e53e6510fa78a48f69c2d

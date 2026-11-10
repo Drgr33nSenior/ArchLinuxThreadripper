@@ -1,0 +1,37 @@
+# gfx1201 image generation runtime: SwarmUI (swarmui stage) self-starting its
+# packaged ComfyUI, whose venv installs exactly the comfyui stage's wheelhouse
+# offline (same ROCm and PyTorch builds as the SGLang image). Nothing installs on
+# boot: the build fails if SwarmUI's start-up dependency checks would pip-install,
+# and the patched SwarmUI refuses runtime pip.
+# Build contexts: the default context is this directory; `swarmui` and `comfyui`
+# are those stages' out/ directories (podman build --build-context).
+ARG RUNTIME_BASE_IMAGE
+FROM ${RUNTIME_BASE_IMAGE}
+ARG STACK_ID
+# torch needs libgomp/libatomic; ultralytics' opencv-python needs libGL, GLib and xcb.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends libgomp1 libatomic1 libgl1 libglib2.0-0t64 libxcb1 \
+ && rm -rf /var/lib/apt/lists/*
+COPY --from=swarmui SwarmUI/ /SwarmUI/
+COPY --from=comfyui ComfyUI/ /SwarmUI/dlbackend/ComfyUI/
+COPY --from=comfyui swarm-python-checks.json /usr/share/workstation-creative/swarm-python-checks.json
+COPY check_swarm_deps.py /usr/share/workstation-creative/check_swarm_deps.py
+COPY launch.sh /usr/local/bin/workstation-creative
+# SwarmUI runs ComfyUI with the venv beside its start script.
+RUN --mount=type=bind,from=comfyui,source=wheelhouse,target=/wheelhouse \
+    python3 -m venv --without-pip /SwarmUI/dlbackend/ComfyUI/venv \
+ && PYTHONPATH="$(ls /wheelhouse/pip-*.whl)" /SwarmUI/dlbackend/ComfyUI/venv/bin/python -m pip install \
+      --no-cache-dir --no-index --find-links /wheelhouse /wheelhouse/*.whl \
+ && /SwarmUI/dlbackend/ComfyUI/venv/bin/python -m pip check \
+ && /SwarmUI/dlbackend/ComfyUI/venv/bin/python -I /usr/share/workstation-creative/check_swarm_deps.py \
+      /usr/share/workstation-creative/swarm-python-checks.json \
+ && /SwarmUI/dlbackend/ComfyUI/venv/bin/python -m pip freeze >/usr/share/workstation-creative/python-freeze.txt \
+ && chmod 755 /usr/local/bin/workstation-creative \
+ && mkdir -p /SwarmUI/Data /SwarmUI/Output /SwarmUI/Models /SwarmUI/src/BuiltinExtensions/ComfyUIBackend/DLNodes \
+ && chown -R 1000:1000 /SwarmUI/Data /SwarmUI/Output /SwarmUI/Models /SwarmUI/src/BuiltinExtensions/ComfyUIBackend/DLNodes
+ENV HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PIP_NO_INDEX=1 PYTHONDONTWRITEBYTECODE=1 HOME=/tmp \
+    DOTNET_CLI_TELEMETRY_OPTOUT=1
+USER 1000:1000
+WORKDIR /SwarmUI
+ENTRYPOINT ["/usr/local/bin/workstation-creative"]
+LABEL org.opencontainers.image.title="creative-gfx1201" ai-stack.id="${STACK_ID}"

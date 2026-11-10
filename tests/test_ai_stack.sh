@@ -14,15 +14,16 @@ fail() {
 [[ -z $(grep -v '^#' "$lock" | cut -d= -f1 | sort | uniq -d) ]] || fail 'stack.lock repeats a key'
 
 # Sources are HTTPS repositories pinned to full commits; the image to a digest.
-for name in THEROCK PYTORCH TORCHVISION TRITON SGLANG; do
+for name in THEROCK PYTORCH TORCHVISION TRITON SGLANG SWARMUI COMFYUI; do
   grep -Eq "^${name}_REPOSITORY=https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\.git$" "$lock" || fail "$name repository"
   grep -Eq "^${name}_COMMIT=[a-f0-9]{40}$" "$lock" || fail "$name commit is not a full SHA"
 done
-for image in THEROCK_BUILD_IMAGE RUNTIME_BASE_IMAGE; do
+for image in THEROCK_BUILD_IMAGE RUNTIME_BASE_IMAGE DOTNET_SDK_IMAGE; do
   grep -Eq "^$image=[a-z0-9./_-]+@sha256:[a-f0-9]{64}$" "$lock" || fail "$image is not pinned by digest"
 done
 grep -Eq '^SGLANG_PATCHSET_SHA256=[a-f0-9]{64}$' "$lock" || fail 'patch series hash'
 grep -Eq '^IMAGE_REPOSITORY=registry\.lan\.thespry\.family/local/[a-z0-9-]+$' "$lock" || fail 'image repository'
+grep -Eq '^CREATIVE_IMAGE_REPOSITORY=registry\.lan\.thespry\.family/local/[a-z0-9-]+$' "$lock" || fail 'creative image repository'
 
 # The patch-series hash is order-independent of the filesystem and content-sensitive.
 work=$(mktemp -d)
@@ -410,7 +411,7 @@ python3 -I "$dir/stage-metrics.py" "$metrics" torch start
 python3 -I "$dir/stage-metrics.py" "$metrics" torch finish --status 2
 grep -q '^workstation_ai_stack_stage_last_result{stage="torch"} 0$' "$metrics/ai-stack.prom" || fail 'failure not reported'
 grep -q '^workstation_ai_stack_stage_last_result{stage="rocm"} 1$' "$metrics/ai-stack.prom" || fail 'other stage state lost'
-! grep -v -E '^workstation_ai_stack_[a-z_]+(\{stage="(rocm|torch|sglang|image)"\})? [0-9.]+$' "$metrics/ai-stack.prom" | grep -q . ||
+! grep -v -E '^workstation_ai_stack_[a-z_]+(\{stage="(rocm|torch|sglang|image|comfyui|swarmui|creative)"\})? [0-9.]+$' "$metrics/ai-stack.prom" | grep -q . ||
   fail 'unexpected textfile line'
 python3 -I "$dir/stage-metrics.py" "$work/absent" rocm start 2>/dev/null || fail 'missing metrics directory failed the build'
 # The driver's EXIT trap records the real exit status of a failing stage.
@@ -515,6 +516,82 @@ if python3 -I "$policy" "$work/trivy.json" "$work/allow-bad.json" 2026-11-09 >/d
 fi
 python3 -I -c 'import json,sys; assert json.load(open(sys.argv[1])) == []' "$dir/image/scan-allowlist.json" ||
   fail 'the committed allowlist must be reviewed; start empty'
+
+# Image generation (comfyui, swarmui, creative stages).
+for stage in comfyui swarmui creative; do
+  grep -q " $stage" "$dir/build-all.sh" || fail "build-all.sh skips the $stage stage"
+done
+cmp -s "$dir/creative/Backends.fds" "$root/apps/base/swarmui/Backends.fds" ||
+  fail 'creative/Backends.fds (smoke test) differs from apps/base/swarmui/Backends.fds (deployment)'
+# shellcheck disable=SC2016 # literal text in build-stage.sh
+grep -Fq 'publish "$tag" "$creative_run" "$here/creative/scan-allowlist.json"' "$dir/build-stage.sh" ||
+  fail 'creative image skips the shared scan/sign/push path'
+# shellcheck disable=SC2016 # literal text in build-stage.sh
+grep -Fq -- '--build-context swarmui="$swarmui_run/out" --build-context comfyui="$comfyui_run/out"' "$dir/build-stage.sh" ||
+  fail 'creative image is not built from the swarmui and comfyui stage outputs'
+# shellcheck disable=SC2016 # literal text in build-stage.sh
+grep -Fq 'creative_files=("$here"/creative/{Containerfile,smoke.py,launch.sh,check_swarm_deps.py,Backends.fds})' "$dir/build-stage.sh" ||
+  fail 'creative key ignores one of its input files'
+python3 -I -c 'import json,sys; assert json.load(open(sys.argv[1])) == []' "$dir/creative/scan-allowlist.json" ||
+  fail 'the creative allowlist must be reviewed; start empty'
+grep -Fq 'check_swarm_deps.py' "$dir/creative/Containerfile" || fail 'creative image does not verify SwarmUI start-up dependencies'
+grep -Fq 'throw new InvalidOperationException' "$dir/swarmui/offline-pip.patch" || fail 'SwarmUI offline pip guard missing'
+# requirements.py: SwarmUI's lists come from its source; comments, interpolated
+# names and pipeline-supplied torch packages are excluded; unknown relations fail.
+cat >"$work/req.txt" <<'TXT'
+torch
+torchvision
+comfyui-frontend-package==1.58.5
+numpy>=1.25.0 # inline comment
+#non essential
+kornia>=0.7.1
+TXT
+cat >"$work/selfstart.cs" <<'CS'
+    public static List<(string, string)> RequiredPythonPackages =
+    [
+        ("kornia", "kornia"),
+        ("comfyui_frontend_package", $"comfyui_frontend_package=={SwarmValidatedFrontendVersion}"),
+        //("mesonpy", "meson-python")
+        ("rembg", "rembg"),
+    ];
+    public static List<(string, string, string, string)> RequiredVersionPythonPackages =
+    [
+        ("ultralytics", "ultralytics", "==", "8.3.197"),
+        ("pip", "pip", ">=", "25.0") // trailing comment
+    ];
+CS
+python3 -I "$dir/comfyui/requirements.py" "$work/req.txt" "$work/selfstart.cs" "$work/req.in" "$work/checks.json" >/dev/null ||
+  fail 'requirements.py rejected a valid fixture'
+python3 -I - "$work/req.in" "$work/checks.json" <<'PY' || fail 'requirements.py produced the wrong requirements or checks'
+import json, sys
+lines = open(sys.argv[1]).read().split()
+assert "torch" not in lines and "torchvision" not in lines, lines
+assert {"comfyui-frontend-package==1.58.5", "numpy>=1.25.0", "kornia>=0.7.1", "kornia", "rembg",
+        "ultralytics==8.3.197", "pip>=25.0", "numpy>=1.25"} == set(lines), lines
+checks = json.load(open(sys.argv[2]))
+assert [e["folder"] for e in checks["plain"]] == ["kornia", "comfyui_frontend_package", "rembg"], checks
+assert checks["plain"][1]["pip"] is None and not any(e["folder"] == "mesonpy" for e in checks["plain"])
+assert [(e["pip"], e["relation"]) for e in checks["versioned"]] == [("ultralytics", "=="), ("pip", ">=")]
+PY
+sed 's/"==", "8.3.197"/"~=", "8.3.197"/' "$work/selfstart.cs" >"$work/bad.cs"
+if python3 -I "$dir/comfyui/requirements.py" "$work/req.txt" "$work/bad.cs" "$work/r2" "$work/c2" 2>/dev/null; then
+  fail 'requirements.py accepted an unknown SwarmUI version relation'
+fi
+# check_swarm_deps.py mirrors SwarmUI: missing folders and failed relations block.
+mkdir -p "$work/site/kornia" "$work/site/pip-25.1.dist-info"
+python3 -I - "$dir/creative/check_swarm_deps.py" "$work/site" <<'PY' || fail 'check_swarm_deps.py misjudged a fixture'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("deps", sys.argv[1]); deps = importlib.util.module_from_spec(spec); spec.loader.exec_module(deps)
+V = deps.dotnet_version
+assert V("2.4.0rc1") is None and V("2.0.0+rocm7") == V("2.0.0") and V("1.2") < V("1.2.0") and V("25.0.dev3") == V("25.0")
+deps.version_of = lambda folder: {"numpy": V("2.0"), "pip": V("25.1"), "ultralytics": V("8.3.100")}.get(folder)
+checks = {"plain": [{"folder": "kornia", "pip": "kornia"}, {"folder": "pip", "pip": "pip"}, {"folder": "rembg", "pip": "rembg"}],
+          "versioned": [{"folder": "pip", "pip": "pip", "relation": ">=", "version": "25.0"},
+                        {"folder": "ultralytics", "pip": "ultralytics", "relation": "==", "version": "8.3.197"}],
+          "numpy_minimum": "1.25"}
+problems = deps.violations(checks, sys.argv[2])
+assert len(problems) == 2 and "rembg" in problems[0] and "ultralytics" in problems[1], problems
+PY
 
 # The driver rejects unknown stages before touching the host.
 if bash "$dir/build-stage.sh" nonsense 2>/dev/null; then fail 'unknown stage accepted'; fi

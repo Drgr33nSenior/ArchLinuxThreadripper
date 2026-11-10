@@ -17,7 +17,7 @@ import sys
 import tempfile
 import time
 
-STAGES = ("rocm", "torch", "sglang", "image")
+STAGES = ("rocm", "torch", "sglang", "image", "comfyui", "swarmui", "creative")
 STATE = "ai-stack-state.json"
 TEXTFILE = "ai-stack.prom"
 

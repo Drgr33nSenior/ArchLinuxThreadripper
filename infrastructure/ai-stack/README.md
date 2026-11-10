@@ -27,6 +27,9 @@ a refresh that only moves SGLang rebuilds only the SGLang stage and the image.
 | `torch` | PyTorch, Triton and TorchVision wheels, built with TheRock's helpers |
 | `sglang` | The patched SGLang and gfx1201 AOT kernel wheels, plus the complete resolved wheelhouse |
 | `image` | `registry.lan.thespry.family/local/sglang-gfx1201:<key>`, installed offline from the wheelhouse |
+| `comfyui` | A complete wheelhouse for ComfyUI as SwarmUI self-starts it, on the same ROCm and PyTorch builds, plus the pinned ComfyUI source |
+| `swarmui` | SwarmUI built self-contained with the pinned .NET SDK image, with the offline-pip guard patch |
+| `creative` | `registry.lan.thespry.family/local/creative-gfx1201:<key>`: SwarmUI plus ComfyUI, installed offline |
 
 Each stage also records its progress for monitoring: `stage-metrics.py` writes
 `/var/lib/workstation-ai-stack/ai-stack.prom`, which node-exporter reads. The
@@ -79,13 +82,34 @@ The `image` stage is keyed by the sglang stage plus `stack.lock`,
 `image/Containerfile` and `image/smoke.py`, so a change to any of them builds,
 smoke-tests and (with push) publishes a new tag.
 
+### Image generation stages
+
+SwarmUI checks its ComfyUI environment on every start and runs `pip install`
+for anything missing. The image must never install at runtime, so:
+
+- `comfyui/requirements.py` reads SwarmUI's required-package lists from the
+  pinned SwarmUI source and merges them with ComfyUI's `requirements.txt`
+  (dropping torch, torchvision and torchaudio, which the pipeline supplies or
+  does not build). `comfyui/build.sh` resolves that against the torch stage.
+- `creative/check_swarm_deps.py` repeats SwarmUI's start-up checks, including
+  how it parses versions, when the image is built; the build fails on a gap.
+- `swarmui/offline-pip.patch` makes SwarmUI throw instead of calling pip.
+
+The `creative` stage's GPU smoke test (`creative/smoke.py`) checks FP16 work on
+the GPU, runs ComfyUI's `--quick-test-for-ci` (all built-in nodes must import),
+then starts SwarmUI with `creative/Backends.fds` and waits until it reports its
+self-started ComfyUI backend up. `creative/Backends.fds` must stay identical to
+`apps/base/swarmui/Backends.fds` (tested). No model is loaded; SDXL generation
+is qualified on the cluster.
+
 Set `AI_STACK_PUSH=1` for the `image` stage to push it to the lab registry.
 This needs a one-time `podman login registry.lan.thespry.family` as the
 publisher account.
 
 ### Scanning and signing
 
-With `AI_STACK_PUSH=1` the `image` stage, after its GPU smoke test:
+With `AI_STACK_PUSH=1` the `image` and `creative` stages, after their GPU smoke
+tests, run the same `publish` path (each with its own scan allowlist):
 
 1. Scans the image with Trivy (`TRIVY_IMAGE` in `stack.lock`) and writes, under
    the image stage's `builds/image-<key>/out/scan/`, the full report (`vulns.json`), a CycloneDX
