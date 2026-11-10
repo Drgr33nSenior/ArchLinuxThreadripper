@@ -285,6 +285,23 @@ for km in (8, 16):
         raise SystemExit(f"IMAGE_SMOKE=fail: kq3 differs from the split-K GEMM at {km} rows")
 g.SPLITK_DOWNOUT = downout
 
+# P1 expansion from kq3 records (serving patch 0024) on the P1 shard above: the
+# records of its weight must expand, bit for bit, to P1's validated expansion of the
+# canonical pair (validate_records raises otherwise), and P1's 1024-row output must
+# equal the canonical route's.
+g.SPLITK_DOWNOUT = True
+pholder = types.SimpleNamespace()
+precs = kq3.pack_weight(pw.contiguous(), ps.contiguous(), ((pholder, 0),))
+g.SPLITK_DOWNOUT = downout
+if precs is None:
+    raise SystemExit("IMAGE_SMOKE=fail: kq3 did not admit the P1 shard")
+route2 = p1.PrefillRoute(torch, p1.SETTING)
+route2.validate_layer(precs.canonical(), pn, pk)
+route2.validate_records(precs, pn, pk)
+py2 = route2.apply(precs.canon, px, pn, pk, records=precs).float()
+if not (route2.has_records(precs) and torch.equal(py2, py)):
+    raise SystemExit("IMAGE_SMOKE=fail: P1 expansion from kq3 records differs from the canonical route")
+
 # Fused add + Gemma RMSNorm + MXFP4 (serving patch 0019): bitwise equal to the add+norm
 # kernel followed by the MXFP4 quantizer, residual included.
 from sglang.kernels.ops.layernorm.minimax_m3_rmsnorm import gemma_fused_add_rmsnorm

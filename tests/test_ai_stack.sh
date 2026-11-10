@@ -268,6 +268,10 @@ assert ([e["name"] for e in profile["arms"]["U"]["env"]] ==
 assert argv["V"] == argv["U"]
 assert ([e["name"] for e in profile["arms"]["V"]["env"]] ==
         [e["name"] for e in profile["arms"]["U"]["env"]] + ["SGLANG_GFX1201_EXTEND_TILE32"])
+# W is V with P1 expanding from kq3 records: same flags, one env switch added.
+assert argv["W"] == argv["V"]
+assert ([e["name"] for e in profile["arms"]["W"]["env"]] ==
+        [e["name"] for e in profile["arms"]["V"]["env"]] + ["SGLANG_GFX1201_P1_FROM_KQ3"])
 for arm in profile["arms"]:
     items = json.loads((work / f"job-{arm}.json").read_text())["items"]
     config, job, service = items
