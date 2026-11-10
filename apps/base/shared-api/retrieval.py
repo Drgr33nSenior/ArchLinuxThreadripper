@@ -12,8 +12,8 @@ Where access control applies (caller's own restricted WebUI API key throughout):
 
 Ranking is not chosen here: the query omits k, k_reranker and r, so Open WebUI
 applies the same webui-rag-profile settings as browser chat. The same profile
-keys are mounted into this container (apps/overlays/service/tools.yaml) to bound
-and describe results; nothing here adds a hidden result count.
+keys are injected into this container's environment (apps/overlays/service/
+tools.yaml) to bound and describe results; nothing here adds a hidden count.
 """
 import asyncio
 import hashlib

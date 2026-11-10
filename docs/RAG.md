@@ -8,6 +8,12 @@ application-restart checks. Retrieval misses remain; see the
 [verification record](VERIFICATION.md#webui-retrieval-evidence). This does not
 qualify the deployed assistant or generated answers.
 
+The assistant overlays add a pinned CPU cross-encoder reranker and an exact
+source-read tool to this retrieval path; see
+[Assistant reranker profile](#assistant-reranker-profile). The `rag`, `rag-dense`
+and `service` overlays keep the baseline profile described below. The reranker
+profile has source checks only; it has not run on the workstation.
+
 The optional [disposable Linux retrieval test](../tests/rag/README.md) exercises
 real CPU embeddings, retrieval, access revocation and same-volume
 restart without using the workstation or starting a language model. It is
@@ -27,7 +33,7 @@ it is not a substitute for any of those stores.
 | Local Chroma | Reuse the embedded database with one worker and one replica at most | [Open WebUI deployment guidance](https://docs.openwebui.com/getting-started/essentials/); no separate database service needed for this pilot |
 | PostgreSQL/pgvector | Next candidate when chat and IDE tools need a shared store | [pgvector](https://github.com/pgvector/pgvector); keep structured benchmark numbers and provenance alongside vectors, with separate application-owned schemas |
 | Qdrant | Alternative to pgvector, not an additional default service | Open WebUI currently treats its connector as non-core; qualify the connector before upgrades |
-| Cross-encoder reranking | Deferred until the baseline has measured retrieval failures | Pin a model and test citation/retrieval accuracy versus added latency; no cross-encoder is loaded in this pilot |
+| Cross-encoder reranking | Assistant overlays only: pinned `cross-encoder/ms-marco-MiniLM-L6-v2` on CPU; `rag`/`service` keep the baseline | [Assistant reranker profile](#assistant-reranker-profile); measure citation/retrieval accuracy against added latency before relying on it |
 | Qwen3-Embedding-0.6B | Replace MiniLM for the disabled CPU pilot | [Author model card](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B); use the native query prefix, 1,024 dimensions and a new index |
 | Persistent project memory | [Graphiti is primary](MEMORY.md); native 6.0.3 storage fixtures passed, shared integration remains planned | Compare with native client memory plus a compact handoff; qualify real-model corrections/recall, authenticated isolation and measured resource use |
 | GraphRAG | Optional on-demand [document-analysis pilot](GRAPHRAG.md), standard indexing/global search with local completions | Retain cross-document comparisons; Graphiti is the preferred memory pilot. No standing graph service or installation gate |
@@ -113,6 +119,18 @@ and adds its configuration and two PVCs. Other overlays are unchanged.
 - Open WebUI: **0.11.4**, source commit
   `8bd8b4fac5e059578ac0c74b3c18d11139f88b7d`. The Linux/amd64 image manifest is
   digest-pinned; its registry configuration identifies the same source revision.
+  This is the `rag`/`service` image and the only Open WebUI pin in
+  `versions.lock`.
+- Assistant overlays: Open WebUI **0.12.5**, source commit
+  `f7ac7ee10962ddec0017f5c29b6740d9b9c5faca`, digest-pinned in
+  `apps/components/assistant/kustomization.yaml`. The lock does not record this
+  pin. Both pins are recorded here rather than merged: changing the lock would
+  also change the `rag` pilot and the disposable test image. The reranker
+  profile was reviewed against the 0.12.5 source.
+- Reranker (assistant overlays only): `cross-encoder/ms-marco-MiniLM-L6-v2`,
+  revision `233902d25c440f23af6f7d6e94d2946bac0bee0a`, Apache-2.0, CPU; per-file
+  SHA-256 hashes in `RERANKER-SHA256SUMS`. See
+  [Assistant reranker profile](#assistant-reranker-profile).
 - Embeddings: `Qwen/Qwen3-Embedding-0.6B`, revision
   `97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3`, 1,024 dimensions, CPU. The
   allowlisted safetensors, tokenizer and configuration files have individual
@@ -147,7 +165,7 @@ clearance for 0.11.4.
 | Open WebUI resources | Request 2 CPUs / 4 GiB; limit 2 CPUs / 6 GiB; no GPU request |
 | Workers and threads | One Uvicorn worker; two BLAS/OpenMP threads; embedding batch 1 (qualify 2 separately) |
 | Chunking | Local Qwen tokenizer, 192 tokens with 32 overlap; retain this initial comparison shape |
-| Retrieval | Three hits per retriever and three final hits per merged query; no full-document context bypass |
+| Retrieval | Baseline: three hits per retriever and three final hits per merged query. Assistant: ten per retriever, up to 20 reranked, five final. No full-document context bypass |
 | Uploads | One file per request, up to 2 MiB, `md` or `txt`; start with one small knowledge collection |
 | Persistent data | `webui-rag-qwen3-data`: 20 GiB requested for the new chat DB, source uploads, Chroma and caches |
 | Model assets | `webui-rag-qwen3-models`: 3 GiB requested, read-only to init/application containers |
@@ -205,6 +223,8 @@ model. It never runs at install time.
 ```sh
 ./bin/workstationctl rag stage-models artifacts/rag-models-01
 ./bin/workstationctl rag verify-models artifacts/rag-models-01
+./bin/workstationctl rag stage-reranker artifacts/rag-reranker-01
+./bin/workstationctl rag verify-reranker artifacts/rag-reranker-01
 ./bin/workstationctl rag corpus artifacts/rag-corpus-01 \
   docs/AI-PERFORMANCE.md docs/ROCM.md docs/HOME-LAB.md
 kubectl kustomize apps/overlays/rag > artifacts/rag-pilot.yaml
@@ -214,13 +234,19 @@ bash tests/test_rag.sh
 `stage-models` writes `provenance.json` only after checksum verification. A failed
 download leaves partial output for inspection; use a new directory to retry.
 `verify-models` always uses the repository's checksums, not a checksum file from
-an untrusted download directory.
+an untrusted download directory. `stage-reranker`/`verify-reranker` follow the
+same contract for the six reranker files (about 92 MB, 100 MB staging bound)
+against `apps/overlays/rag/RERANKER-SHA256SUMS`.
 
 `corpus` accepts only explicitly named repository `docs/*.md` files, rejects
 escaping paths/symlinks and limits each preparation to 20 files / 20 MiB. It
 copies the document bytes without inserting instructions. Filenames retain the
-source path and full content hash; `corpus.json` records those identities, the
-capture time and the lock hash. Git HEAD is nullable and is not a claim that the
+source path and full content hash, for example
+`docs__RAG.md--rev-<commit>--<sha256>.md`. The `--rev-<commit>` part is present
+only when the copied bytes equal the file's blob at HEAD; it names the last
+commit that changed the file. Dirty, untracked or Git-less copies omit it.
+`corpus.json` records those identities (`git_revision` per source), the capture
+time and the lock hash. Git HEAD is nullable and is not a claim that the
 worktree was clean. This is provenance, not secret detection. Review every
 selected document; do not upload credentials, customer data or private incident
 material without authority. `corpus.json` is a sidecar record, not automatically
@@ -237,9 +263,12 @@ installer or relax namespace security to enable RAG.
    and upstream security notices before the first deployment.
 2. Through the existing operator-controlled storage/deployment process, provision
    `webui-rag-qwen3-models` and copy the staged `Qwen3-Embedding-0.6B` directory to that
-   volume's root. Preserve the directory name. Make the files readable by UID/GID
-   1000; do not make the model mount writable to the application. Validate the
-   transferred bytes with `rag verify-models` against the mounted volume path.
+   volume's root. For the assistant overlays, also copy the staged
+   `ms-marco-MiniLM-L6-v2` directory beside it. Preserve the directory names.
+   Make the files readable by UID/GID 1000; do not make the model mount
+   writable to the application. Validate the
+   transferred bytes with `rag verify-models` (and `rag verify-reranker`) against
+   the mounted volume path. The 3 GiB request covers both models; no resize.
    Local-path may defer provisioning until a consumer is scheduled; populate
    through a reviewed temporary volume consumer if required. No downloader Job
    or internet egress exception is supplied by this overlay.
@@ -267,6 +296,157 @@ Open WebUI persistent settings, not just RAG. Admin UI changes are not a durable
 configuration source in this pilot. Export/review needed settings before reuse;
 never point this profile at an existing WebUI database without a migration review.
 See [configuration precedence](https://docs.openwebui.com/reference/env-configuration/).
+
+## Assistant reranker profile
+
+`apps/components/rag-reranker` merges `reranker.env` over `rag.env` in the
+`assistant` and `assistant-split` overlays (the memory overlays inherit it). Open
+WebUI, browser chat and the service-tools MCP tools read the same merged
+`webui-rag-profile` ConfigMap. Source checks render it; it has not been loaded,
+measured or qualified on the workstation.
+
+### Model
+
+| Item | Value |
+| --- | --- |
+| Model | [`cross-encoder/ms-marco-MiniLM-L6-v2`](https://huggingface.co/cross-encoder/ms-marco-MiniLM-L6-v2), revision `233902d25c440f23af6f7d6e94d2946bac0bee0a` (`versions.lock` `RAG_RERANKER_*`) |
+| Licence | Apache-2.0 (model card); English MS MARCO passage ranking |
+| Architecture | `BertForSequenceClassification`, 6 layers, 384 hidden, about 22.7 M parameters, one logit |
+| Files | `config.json`, `model.safetensors` (90,870,598 bytes), `special_tokens_map.json`, `tokenizer.json`, `tokenizer_config.json`, `vocab.txt`; SHA-256 in `apps/overlays/rag/RERANKER-SHA256SUMS`. No pickle weights, ONNX/OpenVINO variants or remote code |
+| Runtime path | `/rag-models/ms-marco-MiniLM-L6-v2` on the existing `webui-rag-qwen3-models` volume |
+| Scoring | Open WebUI scores each (query, passage) pair with `CrossEncoder.predict`; sigmoid of the logit, 0 to 1 |
+| Pair limit | 512 WordPiece tokens for query plus passage, fixed by the hash-pinned `tokenizer_config.json`; longer pairs are truncated. Open WebUI 0.12.5 has no max-length setting |
+
+Open WebUI 0.12.5 (`routers/retrieval.py` `get_rf`) loads a local model with
+`sentence_transformers.CrossEncoder(path, device="cpu", trust_remote_code=…,
+backend="torch", activation_fn=Sigmoid())`. `get_model_path` returns an existing
+local path unchanged, and `OFFLINE_MODE` forces local files. The pinned
+sentence-transformers 5.5.1 treats a model whose architecture ends in
+`ForCausalLM` as a generic yes/no-token scorer without that model's prompt
+template, so Qwen3-Reranker is not used through this path. BERT sequence
+classification is the plain supported case. `BAAI/bge-reranker-base` (278 M
+parameters) would cost roughly ten times more CPU per pair;
+`mxbai-rerank-*-v1` (DeBERTa) needs additional tokenizer qualification. No
+adapter is needed.
+
+### Settings
+
+| Setting | Baseline (`rag.env`) | Assistant (`reranker.env`) | Meaning in 0.12.5 |
+| --- | --- | --- | --- |
+| `RAG_RERANKER_PROFILE` | `none` | `ms-marco-minilm-l6-v2` | Named mode enforced by `validate-profile.sh` and reported by service-tools |
+| `RAG_RERANKING_MODEL` | empty | `/rag-models/ms-marco-MiniLM-L6-v2` | Loaded at startup only while `ENABLE_RAG_HYBRID_SEARCH=true` |
+| `RAG_TOP_K` | 3 | 10 (max 16) | BM25 top-k and vector top-k; their deduplicated union, at most 2 × k, is scored. Also the cross-collection merge limit |
+| `RAG_TOP_K_RERANKER` | 3 | 5 (max 8, at most `RAG_TOP_K`) | Final passages per collection after scoring |
+| `RAG_RELEVANCE_THRESHOLD` | 0.0 | 0.0 | Drops scores below the value before the final cut; upstream skips 0 |
+| `RAG_RERANKING_BATCH_SIZE` | unset | 8 (1..32) | Pairs per forward pass |
+| `OMP/MKL/OPENBLAS_NUM_THREADS` | 2 | 2 | Shared by embeddings and reranking in the one WebUI process |
+| `RAG_PASSAGE_CHAR_LIMIT` | 1600 | 1600 | MCP text per passage (characters) |
+| `RAG_CONTEXT_CHAR_BUDGET` | 4800 | 8000 | MCP text across all returned passages |
+| `RAG_EXPANSION_CHAR_LIMIT` | 800 | 800 | MCP neighbouring text per side for `expand` |
+| `RAG_SOURCE_READ_CHAR_LIMIT` | 8000 | 8000 | Maximum `read_project_source` excerpt |
+
+Open WebUI keeps `min(RAG_TOP_K, RAG_TOP_K_RERANKER)` per collection and merges
+several collections to `RAG_TOP_K`. Browser chat queries each attached knowledge
+item separately, so each item contributes up to five passages. The model runs
+in the WebUI process on CPU; no GPU is requested. The application container keeps
+its 2 CPU / 4 GiB request and 2 CPU / 6 GiB limit: the model adds about 91 MB of
+weights plus activations for at most 8 pairs of 512 tokens. That estimate is
+unmeasured; record peak memory and query latency during qualification. The init
+container's limit rises to 2 GiB for the offline load check, still below the
+application limit, so the admitted pod budget is unchanged.
+
+Token and character limits are separate. Chunks are 192 Qwen embedding tokens.
+Reranker pairs are at most 512 MiniLM tokens. Browser chat inserts whole chunks
+(up to five per knowledge item) and has no character budget. MCP results are
+bounded in characters by the four `RAG_*_CHAR_*` settings. None of these is the
+serving model's context; measure the final prompt with the serving tokenizer.
+
+### Startup checks and failure behaviour
+
+The `rag-inputs` init container validates the profile, verifies the embedding
+files and, when the profile is not `none`, verifies the six reranker files with
+`verify-models.sh … reranker` and runs `check-reranker.py`. The script loads the
+model with the same constructor arguments as Open WebUI, offline, checks the
+512-token limit and scores a relevant pair above an irrelevant one. It prints one
+JSON line (`kubectl logs <pod> -c rag-inputs`).
+
+| Condition | Behaviour | Where it is visible |
+| --- | --- | --- |
+| Missing, symlinked or altered reranker file | Init container fails, naming the file; WebUI does not start | Init logs; MCP calls return `503 retrieval_unavailable` |
+| Model or runtime cannot load or score | Init container fails with a fixed token such as `reranker_load_failed` | Init logs |
+| Load fails in WebUI after the init check passed (for example OOM at startup) | Upstream logs `CrossEncoder: …` and `Error updating models`, then continues with embedding-cosine scoring | WebUI logs only. Not detectable by service-tools; check the logs after each start |
+| Reranker error during an MCP query | WebUI returns 400; the tool fails with `503 retrieval_unavailable`. No fallback | `workstation_assistant_retrieval_requests_total{outcome="unavailable"}` |
+| Reranker error during a browser chat query | Upstream falls back to vector-only search with `RAG_TOP_K` (10) passages | WebUI debug log only |
+| `none` profile (rollback) | No cross-encoder; deliberate, documented mode | Tool result `retrieval.fallback: disabled_by_profile`; `workstation_assistant_reranker_fallback_total{reason="disabled_by_profile"}` per call; state gauge `disabled` |
+| Profile keys invalid or inconsistent in service-tools | Results are labelled; WebUI's own validation refuses the same profile | State gauge `incompatible`; `reranker_fallback_total{reason="unavailable"}` |
+
+The two upstream fallbacks in the table are Open WebUI behaviour, not settings
+in this repository. Only WebUI logs show them. The service-tools MCP path never
+retries or degrades on its own.
+
+service-tools `/health` includes a `retrieval` object (profile, state, fallback,
+score kind, counts and any invalid profile keys), and `/metrics` sets
+`workstation_assistant_reranker_state{state}` from the mounted profile. That
+state reflects configuration plus the init-container gate; it is not a probe of
+the loaded model.
+
+### MCP tools
+
+`retrieve_project_passage(collection, query, expand?)` posts the query to
+`/api/v1/retrieval/query/collection` without `k`, `k_reranker` or `r`, so Open
+WebUI applies the same profile as browser chat. Each hit carries `rank`, `score`
+and `score_kind` (`cross-encoder-sigmoid`, `embedding-cosine` or
+`vector-similarity`), `file_id`, `source` (filename), `source_path`,
+`git_revision`, `source_sha256`, `content_sha256`, `hash_verified`, `section`
+(Markdown heading path), `location` (character offsets and line numbers),
+`text_basis`, `truncated`, `incomplete`, `version_conflict`, `historical`,
+`content_trust` and `citation`.
+
+`snippet` is the exact source text when the chunk is found in the file. Open
+WebUI's Markdown splitter strips indentation and heading metadata from stored
+chunks, so the stored chunk is returned only as a fallback
+(`text_basis: index-chunk`). `expand=neighbours` adds up to
+`RAG_EXPANSION_CHAR_LIMIT` characters on each side, snapped to lines;
+`expand=section` returns the enclosing heading section. Both are bounded by
+`RAG_PASSAGE_CHAR_LIMIT + 2 × RAG_EXPANSION_CHAR_LIMIT` per hit and by
+`RAG_CONTEXT_CHAR_BUDGET` overall. `historical` is always null: the index does
+not record which version is current. `version_conflict` marks hits whose
+`source_path` appears with different content hashes in the same result.
+
+`read_project_source(file_id, offset?, limit?, section?)` returns an exact
+excerpt of an authorised file's extracted text with the same identity fields,
+`total_chars`, `offset`, `end`, line numbers and `next_offset`. `limit` is
+1..`RAG_SOURCE_READ_CHAR_LIMIT`; `offset` and `section` are exclusive; the server
+checks all bounds. Offsets count Unicode characters of the text Open WebUI
+extracted, which equals the uploaded bytes for UTF-8 Markdown/text;
+`hash_verified` confirms this for corpus files.
+
+Access control applies at three points, always with the caller's restricted
+WebUI API key:
+
+1. Open WebUI checks read access to the requested collection before it retrieves
+   or reranks anything. The cross-encoder runs inside WebUI on chunks of that
+   collection only; no candidate text reaches service-tools before final
+   selection.
+2. service-tools re-reads each final hit's file (`GET /api/v1/files/{id}`) and
+   drops 403/404 results before returning text.
+3. Expansion and `read_project_source` use only that ACL-checked file record.
+
+The tools share the existing two-request concurrency limit and 30 s deadline.
+They count `workstation_assistant_retrieval_*{client="mcp"}` and
+`workstation_assistant_source_reads_total`; browser chat retrieval runs inside
+WebUI and is not counted there.
+
+### Rollback to the baseline mode
+
+Remove `../../components/rag-reranker` from the `components` list in
+`apps/overlays/assistant/kustomization.yaml` and
+`apps/overlays/assistant-split/kustomization.yaml`, render, and confirm that the
+rendered `webui-rag-profile` equals the `service` render's profile
+(`RAG_RERANKER_PROFILE=none`, three candidates, three final hits). Apply through
+the existing maintenance process. Reranking does not change embeddings or chunks,
+so no reindexing is needed in either direction; the staged reranker directory can
+stay on the models volume.
 
 ## Paired evaluation and acceptance
 
@@ -322,8 +502,9 @@ three times. Separate first-load/cold-cache results from warmed queries. Record:
   question IDs, generation settings, cache state and concurrency.
 
 Keep hybrid search only if retrieval/citation results justify its latency and RAM.
-Next, compare a pinned CPU cross-encoder, then a shared pgvector store if another
-client needs it. Changing embeddings, dimensions or chunking requires a new
+Compare the assistant cross-encoder profile with the baseline by the same
+protocol (it changes candidate and final counts as well as scoring), then a shared
+pgvector store if another client needs it. Changing embeddings, dimensions or chunking requires a new
 index/reingestion; do not query old vectors with new embeddings. A memory/graph
 experiment must beat this baseline on its intended questions. No published
 percentage is an expected local gain.
@@ -337,7 +518,8 @@ The previous MiniLM `webui-rag-data` and `webui-rag-models` PVCs are retained;
 the Qwen overlay intentionally uses distinct PVCs and requires a new index and
 reingestion. Do not delete either generation of pilot PVCs to switch profiles:
 the StorageClass may use `Delete` reclaim policy. Retain/export useful sources
-and results first.
+and results first. The assistant reranker has its own
+[rollback](#rollback-to-the-baseline-mode); it uses the same PVCs and index.
 
 PVC sizes are advisory, not filesystem quotas. Monitor the 20 GiB data and
 3 GiB asset budgets. Use the existing off-array NAS/Restic backup approach;
@@ -350,4 +532,7 @@ Source validation covers the lock, query bridge, bundle/refusal paths and RAG
 profile rendering with synthetic fixtures. It does not stage real model files,
 start Open WebUI or Chroma, ingest private content, establish retrieval quality,
 or qualify resource use, network policy, backup or migration. Keep replicas at
-zero until the workstation qualification procedure passes.
+zero until the workstation qualification procedure passes. The reranker profile,
+its init-container load check and the MCP retrieval/source-read tools have the
+same source-only status: the reranker has not been loaded in the pinned image,
+and its latency, memory and retrieval effect are unmeasured.

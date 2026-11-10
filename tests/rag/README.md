@@ -11,8 +11,12 @@ timings do not predict workstation performance or answer quality.
 Use the image/source/model pins in `versions.lock` and model hashes in
 `apps/overlays/rag/SHA256SUMS`. Keep the pilot's Qwen tokenizer, 192/32 chunking,
 query-only native instruction prefix, batch 1, two CPU threads, three final
-hits and no cross-encoder. Ingest full, source-hashed copies of these public
-documents through the existing `rag corpus` and authenticated upload interfaces:
+hits and no cross-encoder. This is the `rag` overlay's baseline profile
+(`RAG_RERANKER_PROFILE=none`); the assistant overlays' cross-encoder profile is
+not exercised by this test (see
+[RAG.md](../../docs/RAG.md#assistant-reranker-profile)). Ingest full, source-hashed
+copies of these public documents through the existing `rag corpus` and
+authenticated upload interfaces:
 
 - `docs/AI-PERFORMANCE.md`
 - `docs/ROCM.md`
