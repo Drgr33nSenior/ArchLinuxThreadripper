@@ -92,9 +92,13 @@ spec:
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: {drop: [ALL]}
+          # SGLang's /health runs a one-token generation and then waits
+          # asyncio.sleep(1), so it answers in just over a second (measured
+          # 1.000-1.007 s). The 1 s default timeout failed nearly every probe.
           startupProbe:
             httpGet: {path: /health, port: api}
             periodSeconds: 10
+            timeoutSeconds: 5
             failureThreshold: 180
           readinessProbe:
             httpGet: {path: /health, port: api}
