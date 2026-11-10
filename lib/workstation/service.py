@@ -18,6 +18,35 @@ import urllib.request
 
 import yaml
 
+
+# Kubernetes reads manifests as YAML 1.1, where bare y/n/yes/no/on/off (any case)
+# are booleans; PyYAML only quotes the strings it would itself resolve, so a label
+# such as ai-stack/arm: Y reached the API server as true. Quote every such string.
+YAML11_SPECIAL = re.compile(r"(?i:y|n|yes|no|on|off|true|false|null|~)\Z")
+
+
+class KubeDumper(yaml.SafeDumper):
+    pass
+
+
+def _kube_str(dumper, value):
+    if "\n" in value:
+        return dumper.represent_scalar("tag:yaml.org,2002:str", value, style="|")
+    if YAML11_SPECIAL.match(value):
+        return dumper.represent_scalar("tag:yaml.org,2002:str", value, style="'")
+    return dumper.represent_str(value)
+
+
+KubeDumper.add_representer(str, _kube_str)
+
+
+def kube_yaml(document):
+    return yaml.dump(document, Dumper=KubeDumper, sort_keys=False)
+
+
+def kube_yaml_all(documents):
+    return yaml.dump_all(documents, Dumper=KubeDumper, sort_keys=False)
+
 from telemetry import kustomize, load_objects, new_directory, pod_budget, pod_spec, sha, verify
 
 
@@ -532,7 +561,7 @@ def candidate_plan(args):
                      "procedure": "Do not apply this render; re-render the active profile with service render."}},
         indent=2) + "\n")
     (output / "quality-menu.json").write_text(json.dumps(menu, indent=2) + "\n")
-    (output / "candidate-sglang.yaml").write_text(yaml.safe_dump(native["deployment"], sort_keys=False))
+    (output / "candidate-sglang.yaml").write_text(kube_yaml(native["deployment"]))
     (output / "candidate-runtime.json").write_text(json.dumps({key: native[key] for key in
         ("deviations", "blockers", "readiness", "shutdown", "rollback")}, indent=2) + "\n")
     status = ("blocked-missing-evidence" if contract["missing_evidence"]
@@ -963,14 +992,10 @@ def traefik_config(site):
                         for port in values["ports"].values()),
             "Traefik source must expose only HTTPS 443 through the site address")
     spec["externalIPs"] = [site["node_address"]]
-    config["spec"]["valuesContent"] = yaml.safe_dump(values, sort_keys=False)
+    config["spec"]["valuesContent"] = kube_yaml(values)
 
-    class Dumper(yaml.SafeDumper):
-        pass
-    # Keep the embedded chart values reviewable as a block, as in the source.
-    Dumper.add_representer(str, lambda dumper, value: dumper.represent_scalar(
-        "tag:yaml.org,2002:str", value, style="|" if "\n" in value else None))
-    return yaml.dump(config, Dumper=Dumper, sort_keys=False)
+    # KubeDumper keeps the embedded chart values reviewable as a block, as in the source.
+    return kube_yaml(config)
 
 
 def certificates(site):
@@ -1031,10 +1056,10 @@ def render(args):
                     "metadata": {"name": "private-clients", "namespace": "ai-home-lab"},
                     "spec": {"ipAllowList": {"sourceRange": site["client_cidrs"]}}})
     output = new_directory(args.output)
-    (output / "workloads.yaml").write_text(yaml.safe_dump_all(objects, sort_keys=False))
+    (output / "workloads.yaml").write_text(kube_yaml_all(objects))
     (output / "traefik.yaml").write_text(traefik_config(site))
     for name, certificate in certificates(site).items():
-        (output / name).write_text(yaml.safe_dump(certificate, sort_keys=False))
+        (output / name).write_text(kube_yaml(certificate))
     gateway = next(o for o in objects if o["kind"] == "Deployment" and o["metadata"]["name"] == "litellm")
     template = copy.deepcopy(gateway["spec"]["template"])
     template["metadata"]["labels"]["app.kubernetes.io/name"] = "litellm"
@@ -1046,7 +1071,7 @@ def render(args):
     job = {"apiVersion": "batch/v1", "kind": "Job",
            "metadata": {"generateName": "litellm-migrate-1-106-2-", "namespace": "ai-home-lab"},
            "spec": {"backoffLimit": 0, "activeDeadlineSeconds": 660, "template": template}}
-    (output / "migration.yaml").write_text(yaml.safe_dump(job, sort_keys=False))
+    (output / "migration.yaml").write_text(kube_yaml(job))
     (output / "site.json").write_text(json.dumps(site, indent=2) + "\n")
     values = client_profile(args.mode)
     if contract:
@@ -1227,17 +1252,17 @@ def notifications(args):
     prometheus["alerting"] = {"alertmanagers": [{"static_configs": [{"targets": ["alertmanager:9093"]}], "timeout": "10s"}]}
     prometheus["scrape_configs"] = [{"job_name": "workstation-service", "metrics_path": "/_service/metrics",
         "scrape_timeout": "5s", "static_configs": [{"targets": ["litellm.ai-home-lab.svc:4000"]}]}]
-    config["data"]["prometheus.yml"] = yaml.safe_dump(prometheus, sort_keys=False)
+    config["data"]["prometheus.yml"] = kube_yaml(prometheus)
     rules = yaml.safe_load(config["data"]["alerts.yml"])
     rules["groups"] += yaml.safe_load((ROOT / "infrastructure/service/alerts.yaml").read_text())["groups"]
-    config["data"]["alerts.yml"] = yaml.safe_dump(rules, sort_keys=False)
+    config["data"]["alerts.yml"] = kube_yaml(rules)
     objects += load_objects((ROOT / "infrastructure/service/alertmanager.yaml").read_text())
     for obj in objects:
         if obj["kind"] == "NetworkPolicy" and obj["metadata"]["name"] == "service-alertmanager":
             obj["spec"]["egress"] = [{"to": [{"ipBlock": {"cidr": str(network)}}],
                                       "ports": [{"protocol": "TCP", "port": args.receiver_port}]}]
     output = new_directory(args.output)
-    (output / "stack.yaml").write_text(yaml.safe_dump_all(objects, sort_keys=False))
+    (output / "stack.yaml").write_text(kube_yaml_all(objects))
     (output / "evidence.json").write_text(json.dumps({"status": "source-rendered-not-deployed",
         "base_evidence_sha256": sha(Path(args.telemetry) / "evidence.json"), "stack_sha256": sha(output / "stack.yaml")}, indent=2))
     print("Notification composition prepared; receiver Secret and delivery acceptance still required.")
