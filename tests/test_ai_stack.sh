@@ -264,6 +264,10 @@ assert ([e["name"] for e in profile["arms"]["T"]["env"]] ==
 assert argv["U"] == argv["T"]
 assert ([e["name"] for e in profile["arms"]["U"]["env"]] ==
         [e["name"] for e in profile["arms"]["T"]["env"]] + ["SGLANG_GFX1201_MXFP4_KQ3"])
+# V is U with the 32 x 32 prefill-attention tile: same flags, one env switch added.
+assert argv["V"] == argv["U"]
+assert ([e["name"] for e in profile["arms"]["V"]["env"]] ==
+        [e["name"] for e in profile["arms"]["U"]["env"]] + ["SGLANG_GFX1201_EXTEND_TILE32"])
 for arm in profile["arms"]:
     items = json.loads((work / f"job-{arm}.json").read_text())["items"]
     config, job, service = items

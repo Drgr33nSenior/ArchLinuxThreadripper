@@ -160,6 +160,19 @@ va.verify_attention_gfx1151(qv, ow, kc, vc, r2t, torch.tensor([1], device="cuda"
                             num_warps=va.GFX1201_B1_TILE[1], qc=va.GFX1201_B1_TILE[2])
 if not (ow.float() - oe.float()).abs().max().item() < 1e-2:
     raise SystemExit("IMAGE_SMOKE=fail: one-request verify attention tile differs from extend_attention_fwd")
+# The 32 x 32 prefill-attention tile (serving patch 0023), switched on for one call:
+# it must take the route and stay within BF16 rounding of the default tile.
+from sglang.kernels.ops.attention import extend_attention as ea
+
+os.environ["SGLANG_GFX1201_EXTEND_TILE32"] = "1"
+o32 = torch.empty_like(qv)
+extend_attention_fwd(qv, kc[blk].contiguous(), vc[blk].contiguous(), o32, kc, vc,
+                     torch.tensor([0, tv], device="cuda", dtype=torch.int32),
+                     torch.tensor([0, pv], device="cuda", dtype=torch.int32), r2t[1, :pv].contiguous(), None, True,
+                     torch.zeros(2, device="cuda", dtype=torch.int64), tv, 1.0, 1.0, sm_scale=1 / math.sqrt(hd))
+del os.environ["SGLANG_GFX1201_EXTEND_TILE32"]
+if not ea._EXTEND_TILE32_LOGGED or not (o32.float() - oe.float()).abs().max().item() < 1e-2:
+    raise SystemExit("IMAGE_SMOKE=fail: 32 x 32 extend attention tile missing or differs from the default tile")
 
 # P1 prefill route (serving patch 0015) on one 5120x3072 shard at 1024 rows: the
 # FP8 expansion must equal the dequantized MXFP4 weight exactly, and the output
