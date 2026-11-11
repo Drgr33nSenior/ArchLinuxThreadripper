@@ -244,3 +244,11 @@ assert set(registries) == {'mirrors'}
 assert list(registries['mirrors']) == ['docker.io', 'ghcr.io', 'registry.k8s.io', 'quay.io']
 for upstream, mirror in registries['mirrors'].items():
     assert mirror == {'endpoint': ['https://registry.example.invalid'], 'rewrite': {'^(.*)$': upstream + '/$1'}}, upstream
+
+# Read-only command tasks (changed_when: false) must also run under --check: Ansible skips
+# command tasks in check mode, so a registered read would be empty and the assertions that
+# follow it (no active swap, boot identity, runtime version) fail every dry run.
+for tasks_file in sorted((root / 'infrastructure/ansible/roles').glob('*/tasks/*.yml')):
+    for task in yaml.safe_load(tasks_file.read_text()) or []:
+        if any(key in task for key in ('ansible.builtin.command', 'ansible.builtin.shell')) and task.get('changed_when') is False:
+            assert task.get('check_mode') is False, (tasks_file.name, task['name'])

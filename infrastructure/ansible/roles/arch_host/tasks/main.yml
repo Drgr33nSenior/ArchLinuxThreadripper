@@ -3,11 +3,15 @@
   ansible.builtin.command:
     argv: [pacman, -Q, mdadm, cryptsetup, xfsprogs, mkinitcpio, systemd-ukify, sbctl, tpm2-tss, tpm2-tools, libfido2]
   changed_when: false
+  # Read-only: run under --check too, so a dry run sees real values.
+  check_mode: false
 
 - name: Read active swap metadata
   ansible.builtin.command: cat /proc/swaps
   register: lab_swaps
   changed_when: false
+  # Read-only: run under --check too, so a dry run sees real values.
+  check_mode: false
 
 - name: Verify no active swap and a supplied hardware report
   ansible.builtin.assert:
@@ -30,6 +34,8 @@
   ansible.builtin.command: cat /proc/sys/kernel/random/boot_id
   register: lab_current_boot
   changed_when: false
+  # Read-only: run under --check too, so a dry run sees real values.
+  check_mode: false
 
 - name: Require both detected amdgpu devices and the expected ROCm target
   ansible.builtin.assert:
