@@ -185,8 +185,8 @@ class SearchTests(unittest.IsolatedAsyncioTestCase):
         self.web_error(await self.mcp("read_web_page", {"url": url, "offset": 6000}))
         metrics = METRICS.render()
         for outcome in ("ok", "no_results", "provider_error", "invalid"):
-            self.assertIn('workstation_assistant_web_requests_total{client="webui",outcome="%s",tool="read_continue"}'
-                          % outcome, metrics)
+            self.assertRegex(metrics, r'(?m)^workstation_assistant_web_requests_total\{client="webui",outcome="%s",'
+                                      r'tool="read_continue"\} [1-9]' % outcome)
         self.assertNotIn("docs.sglang.io", metrics)
 
     async def test_provider_capped_page_is_never_labelled_complete(self):

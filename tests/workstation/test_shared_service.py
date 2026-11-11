@@ -1153,6 +1153,28 @@ class GatewayPolicyTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('workstation_assistant_serving_contract_info{contract="qwen3.8-27b-mxfp4-tp2.Y",'
                       'status="incomplete"} 1', metrics.render())
 
+    def test_every_tool_series_exists_at_zero_before_the_first_call(self):
+        # Dashboards show zero, not "No data", for a tool unused since the pod started,
+        # and rate() sees the first event. Every label value is enumerated, so this is bounded.
+        import assistant_metrics
+        metrics = assistant_metrics.Metrics()
+        text = metrics.render()
+        for line in ('workstation_assistant_retrieval_requests_total{client="webui",outcome="error"} 0',
+                     'workstation_assistant_reranker_fallback_total{reason="unavailable"} 0',
+                     'workstation_assistant_memory_operations_total{client="mcp",op="recall",outcome="ok"} 0',
+                     'workstation_assistant_retrieval_duration_seconds_count{client="mcp"} 0',
+                     'workstation_assistant_retrieval_duration_seconds_bucket{client="mcp",le="+Inf"} 0'):
+            self.assertIn(line, text.splitlines())
+        series = [line for line in text.splitlines() if line and not line.startswith("#")]
+        self.assertLess(len(series), 400)
+        self.assertFalse(any('="other"' in line for line in series))  # only enumerated values are seeded
+        # Gauges are not seeded: no contract or reranker state until it is known.
+        self.assertFalse(any(line.startswith(("workstation_assistant_serving_contract_info",
+                                              "workstation_assistant_reranker_state")) for line in series))
+        metrics.inc("workstation_assistant_retrieval_requests_total", client="webui", outcome="error")
+        self.assertIn('workstation_assistant_retrieval_requests_total{client="webui",outcome="error"} 1',
+                      metrics.render().splitlines())
+
 
 if __name__ == "__main__":
     unittest.main()

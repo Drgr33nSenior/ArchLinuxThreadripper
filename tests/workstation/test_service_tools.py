@@ -171,7 +171,7 @@ class ToolsTests(unittest.IsolatedAsyncioTestCase):
         self.deleted = True
         self.assertEqual(404, (await self.tool("read_project_source", {"file_id": "doc1"})).status_code)
         self.assertTrue(all(r.headers.get("authorization") == "Bearer fixture-user-token" for r in self.calls))
-        self.assertIn('workstation_assistant_source_reads_total{client="mcp",outcome="invalid"}', METRICS.render())
+        self.assertRegex(METRICS.render(), r'(?m)^workstation_assistant_source_reads_total\{client="mcp",outcome="invalid"\} [1-9]')
 
     def test_shared_profile_sets_counts_and_reranker_state(self):
         baseline = profile("apps/overlays/rag/rag.env")
