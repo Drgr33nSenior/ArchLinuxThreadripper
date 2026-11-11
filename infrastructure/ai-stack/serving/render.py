@@ -62,7 +62,15 @@ def arm_of(profile, arm):
     return arm, arms[arm]
 
 
-def server_argv(profile, catalog, arm):
+# Which server produced a metric: SGLang adds --extra-metric-labels to its scheduler and
+# tokenizer metrics, so dashboards can tell the family service from bench, qualification
+# and capture Jobs behind the same sglang Service. A fixed, small value set; no discovery.
+SERVER_ROLES = ("family", "bench", "qualify", "capture", "standalone")
+
+
+def server_argv(profile, catalog, arm, server="family"):
+    if server not in SERVER_ROLES:
+        raise SystemExit(f"STOP: unknown server role {server}")
     _, spec = arm_of(profile, arm)
     model, draft = catalog["model"], catalog["draft"]
     argv = ["--model-path", f"/models/{model['repository']}/{model['revision']}",
@@ -77,7 +85,8 @@ def server_argv(profile, catalog, arm):
         raise SystemExit(f"STOP: arm {arm} drops flags the profile does not set: {sorted(unknown)}")
     for entry in [e for e in profile["args"] if e["flag"] not in drop] + spec["args"]:
         argv += [entry["flag"], *entry["value"]]
-    return argv + ["--host", "0.0.0.0", "--port", str(PORT)]
+    return argv + ["--extra-metric-labels", json.dumps({"server": server}, separators=(",", ":")),
+                   "--host", "0.0.0.0", "--port", str(PORT)]
 
 
 def environment(profile, arm=None):
@@ -147,8 +156,8 @@ def job(profile, catalog, image, arm, bench=None, capture=None):
     if not re.fullmatch(IMAGE_RE, image):
         raise SystemExit("STOP: IMAGE must be a lab registry image pinned by digest")
     arm, _ = arm_of(profile, arm)
-    argv = server_argv(profile, catalog, arm)
     kind = "capture" if capture is not None else ("qualify" if bench is None else "bench")
+    argv = server_argv(profile, catalog, arm, server=kind)
     probe = (HERE / f"{kind}.py").read_text()
     data, binary = {f"{kind}.py": probe}, {}
     extra_env = []
@@ -324,7 +333,7 @@ def standalone(profile, catalog, image, arm, bench, out):
     arm, _ = arm_of(profile, arm)
     out = pathlib.Path(out)
     (out / "bench").mkdir(parents=True, exist_ok=False)
-    (out / "server-args.json").write_text(json.dumps(server_argv(profile, catalog, arm), indent=1) + "\n")
+    (out / "server-args.json").write_text(json.dumps(server_argv(profile, catalog, arm, server="standalone"), indent=1) + "\n")
     env = environment(profile, arm) + [{"name": "SERVED_MODEL_NAME", "value": profile["served_model_name"]}]
     for e in env:
         if "\n" in e["value"]:
@@ -356,6 +365,8 @@ def main():
     parser.add_argument("profile")
     parser.add_argument("image", nargs="?")
     parser.add_argument("--arm")
+    parser.add_argument("--server", choices=SERVER_ROLES, default="family",
+                        help="argv: the role label the server adds to its metrics (default family)")
     parser.add_argument("--serving", help="serving repository root (bench)")
     parser.add_argument("--greedy", action="store_true", help="bench at temperature 0 (acceptance bisection)")
     parser.add_argument("--top-p", type=float, help="bench with this top-p instead of the profile's 0.95")
@@ -363,7 +374,7 @@ def main():
     args = parser.parse_args()
     profile, catalog = load(args.profile)
     if args.mode == "argv":
-        print(json.dumps(server_argv(profile, catalog, args.arm)))
+        print(json.dumps(server_argv(profile, catalog, args.arm, server=args.server)))
         return
     if not args.image:
         raise SystemExit(f"STOP: {args.mode} needs IMAGE")
