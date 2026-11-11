@@ -12,6 +12,14 @@ unknown route or profiling options without an explicit route cause refusal.
 The packet must pin this adapter and apply its returned mounts and environment
 before appending its returned command to the existing bwrap arguments.
 
+The serving runtime, SwarmUI and the second ComfyUI set
+`ROCPROFILER_REGISTER_ENABLED=0`. With AMD's profiler SDK registered as an HSA tool,
+HIP's start-up uses up the process's KFD events, and ROCr then spins a CPU core in every
+waiting thread while the GPU is idle (measured 2026-11-11 on rocm_sdk 10.3.0.dev20261108).
+The component routes below do not inherit it. To profile a running server with
+`torch.profiler` or rocprofv3, start that session with the variable set to `1`; expect
+the idle spin while it runs.
+
 ## rocprofv3 kernel tracing
 
 Select `route='rocprofv3'` and supply the interpreter, ROCm SDK root and trace
