@@ -97,6 +97,37 @@ for key in ("model", "draft"):
                hashes == ["git_sha1"] and re.fullmatch(r"[a-f0-9]{40}", f["git_sha1"])
 PY
 done
+# The SDXL VRAM measurement Job: digest-pinned image, the catalog's exact
+# revision read-only, its own one-card claim by PCI address, restricted pod.
+if python3 -I "$dir/creative/measure.py" registry.example/creative:latest >/dev/null 2>&1; then
+  fail 'measure.py accepted an image without a digest'
+fi
+python3 -I - "$dir/creative/measure.py" "$dir/creative/measure_vram.py" "$dir/models/sdxl-base-1.0.json" "$root/apps/base/shared-api/sdxl-workflow.json" <<'PY' ||
+import importlib.util, json, subprocess, sys
+image = "registry.example/creative@sha256:" + "a" * 64
+items = json.loads(subprocess.run([sys.executable, "-I", sys.argv[1], image], capture_output=True, text=True, check=True).stdout)["items"]
+config, claim, job = items
+entry = json.load(open(sys.argv[3]))["model"]
+pod = job["spec"]["template"]["spec"]; c = pod["containers"][0]
+assert c["image"] == image and job["spec"]["backoffLimit"] == 0
+mount = next(m for m in c["volumeMounts"] if m["name"] == "models")
+assert mount == {"name": "models", "mountPath": "/checkpoint", "subPath": f'{entry["repository"]}/{entry["revision"]}', "readOnly": True}
+assert next(v for v in pod["volumes"] if v["name"] == "models")["persistentVolumeClaim"] == {"claimName": "ai-models", "readOnly": True}
+assert pod["resourceClaims"] == [{"name": "gpu", "resourceClaimTemplateName": job["metadata"]["name"]}] and c["resources"]["claims"] == [{"name": "gpu"}]
+request = claim["spec"]["spec"]["devices"]["requests"][0]["exactly"]
+assert request["count"] == 1 and '"0000:c3:00.0"' in request["selectors"][0]["cel"]["expression"]
+assert "amd.com/gpu" not in c["resources"]["limits"]
+assert pod["securityContext"]["runAsNonRoot"] and pod["securityContext"]["seccompProfile"]["type"] == "RuntimeDefault"
+assert c["securityContext"] == {"allowPrivilegeEscalation": False, "capabilities": {"drop": ["ALL"]}}
+assert config["data"]["workflow.json"] == open(sys.argv[4]).read()
+spec = importlib.util.spec_from_file_location("m", sys.argv[2]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+graph = m.workflow(json.loads(open(sys.argv[4]).read()), 512, 7)
+assert graph["7"]["class_type"] == "SaveImage" and graph["4"]["inputs"]["width"] == 512 and graph["5"]["inputs"]["seed"] == 7
+assert graph["1"]["inputs"]["ckpt_name"] == next(f["path"] for f in entry["files"] if f["path"].endswith(".safetensors"))
+assert all(n["class_type"] != "SwarmSaveImageWS" for n in graph.values())
+PY
+  fail 'the SDXL VRAM measurement Job is not what measure.py should render'
+
 # Fetch Jobs need public HTTPS through the namespace's default-deny, and only that.
 python3 -I - "$dir/k8s/models.yaml" "$dir/models/render-fetch.py" "$dir/models/sdxl-base-1.0.json" "$lock" <<'PY' ||
 import json, subprocess, sys
