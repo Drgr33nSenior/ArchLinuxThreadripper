@@ -770,9 +770,15 @@ def serving_contract(profile_path=SERVING_PROFILE, arm=None, runtime_image=None,
         accepted = []
     else:
         accepted = template["reasoning_efforts"]
-    server_effort = template_kwargs.get("reasoning_effort", template["default_effort"] if template else None)
+    # The pinned SGLang lets a server-default reasoning_effort override every request's own
+    # (serving_chat.py refills it from the defaults after moving the request's value out), so
+    # the default effort is a separate profile value the gateway applies to requests without one.
+    require("reasoning_effort" not in template_kwargs,
+            "reasoning_effort in --default-chat-template-kwargs overrides every per-request effort in the "
+            "pinned SGLang; set the profile's request_reasoning_effort instead")
+    server_effort = profile.get("request_reasoning_effort", template["default_effort"] if template else None)
     require(template is None or server_effort in accepted,
-            f"the profile's server-default reasoning_effort {server_effort!r} is not accepted by the checkpoint template")
+            f"the profile's request_reasoning_effort {server_effort!r} is not accepted by the checkpoint template")
     image_ok = isinstance(runtime_image, str) and any(re.fullmatch(pattern, runtime_image) for pattern in
                                                       (render_module.IMAGE_RE, render_module.PUBLIC_IMAGE_RE))
     if not image_ok:
@@ -831,11 +837,10 @@ def serving_contract(profile_path=SERVING_PROFILE, arm=None, runtime_image=None,
                     "grammar_backend": single("--grammar-backend", True)},
         "reasoning": {"server_default_template_kwargs": template_kwargs, "request_defaults": request_defaults,
                       "client_efforts": client_efforts(accepted), "client_template_kwargs": list(CLIENT_TEMPLATE_KWARGS),
-                      "per_request_effort": "unverified: the pinned serving_chat.py fills the server-default "
-                                            "chat_template_kwargs after moving a request's reasoning_effort out of "
-                                            "them and lets those kwargs override the top-level effort at template "
-                                            "render, so a server-default effort appears to win over a per-request "
-                                            "one; confirm with one rendered prompt"},
+                      "per_request_effort": "honoured: the server defaults carry no reasoning_effort (the pinned "
+                                            "serving_chat.py let a server-default effort override every request's, "
+                                            "measured 2026-11-11); the gateway applies the default effort only to "
+                                            "requests that name none"},
         "budgets": {**numbers, "output_tokens": output_tokens, "reserve_tokens": reserve_tokens,
                     "input_tokens": numbers["context_length"] - output_tokens - reserve_tokens},
         "concurrency": {"gateway_admission": GATEWAY_ADMISSION, "native_running": numbers["max_running_requests"]},
@@ -919,6 +924,7 @@ def gateway_policy(contract, rendered, mode="large"):
             "chat_models": {**rendered["gateway"]["chat_models"], "Qwen3.5-9B": [4096, 1024]},
             "image_models": image_models,
             "reasoning_efforts": contract["reasoning"]["client_efforts"],
+            "default_reasoning_effort": (contract["reasoning"]["request_defaults"] or {}).get("reasoning_effort"),
             "template_kwargs": contract["reasoning"]["client_template_kwargs"],
             "request_timeout": contract["deadlines"]["gateway_seconds"],
             "admission_limit": contract["concurrency"]["gateway_admission"]}

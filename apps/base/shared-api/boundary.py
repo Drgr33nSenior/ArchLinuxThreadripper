@@ -27,6 +27,9 @@ CHAT_FIELDS = {
 # "high" level, which that template would reject, so it is sent as its
 # nearest level, xhigh. The selected profile uses low.
 REASONING_EFFORTS = {"low": "low", "medium": "medium", "high": "xhigh", "xhigh": "xhigh"}
+# Effort for requests that name none (the contract's request default). Applied here, not as an
+# SGLang server default: the pinned SGLang lets a server-default effort override every request's.
+DEFAULT_REASONING_EFFORT = None
 # Template variables a client may set. Other variables can change the rendered
 # prompt in unreviewed ways, so they are refused rather than forwarded.
 TEMPLATE_KWARGS = {"enable_thinking": bool}
@@ -44,7 +47,7 @@ def apply_policy(path):
     models, budgets and reasoning values. The defaults are replaced, not merged:
     a model the contract omits is no longer admitted. Returns the deadline.
     """
-    global ADMISSION_LIMIT
+    global ADMISSION_LIMIT, DEFAULT_REASONING_EFFORT
     policy = json.loads(Path(path).read_text())
     models = policy["chat_models"]
     efforts = policy["reasoning_efforts"]
@@ -59,7 +62,8 @@ def apply_policy(path):
             or not isinstance(kwargs, list) or not set(kwargs) <= POLICY_TEMPLATE_KWARGS
             or type(timeout) is not int or not 30 <= timeout <= 3600
             or type(admission) is not int or not 1 <= admission <= 16
-            or not isinstance(image_models, list) or not set(image_models) <= set(models)):
+            or not isinstance(image_models, list) or not set(image_models) <= set(models)
+            or policy.get("default_reasoning_effort") not in (None, *efforts)):
         raise ValueError("invalid gateway policy")
     CHAT_MODELS.clear()
     CHAT_MODELS.update({name: tuple(limits) for name, limits in models.items()})
@@ -70,6 +74,7 @@ def apply_policy(path):
     IMAGE_MODELS.clear()
     IMAGE_MODELS.update(image_models)
     ADMISSION_LIMIT = admission
+    DEFAULT_REASONING_EFFORT = policy.get("default_reasoning_effort")
     return timeout
 
 
@@ -241,6 +246,8 @@ class GatewayBoundary:
         if "reasoning_effort" in data and (type(data["reasoning_effort"]) is not str
                                            or data["reasoning_effort"] not in REASONING_EFFORTS):
             raise Refusal(400, "invalid_reasoning_effort")
+        if "reasoning_effort" not in data and DEFAULT_REASONING_EFFORT is not None:
+            data["reasoning_effort"] = DEFAULT_REASONING_EFFORT
         if "reasoning_effort" in data:
             data["reasoning_effort"] = REASONING_EFFORTS[data["reasoning_effort"]]
         kwargs = data.get("chat_template_kwargs", {})

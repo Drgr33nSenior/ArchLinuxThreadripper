@@ -201,6 +201,15 @@ class BoundaryTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(200, result[0]["status"])
             # "high" is accepted and sent as the template's xhigh level.
             self.assertEqual(sent, self.seen[-1][1]["reasoning_effort"])
+        # The contract's default effort fills only requests that name none; a request's own wins.
+        with patch.object(boundary, "DEFAULT_REASONING_EFFORT", "low"):
+            await request(self.gateway, "/v1/chat/completions", dict(self.chat))
+            self.assertEqual("low", self.seen[-1][1]["reasoning_effort"])
+            await request(self.gateway, "/v1/chat/completions", {**self.chat, "reasoning_effort": "high"})
+            self.assertEqual("xhigh", self.seen[-1][1]["reasoning_effort"])
+        with patch.object(boundary, "DEFAULT_REASONING_EFFORT", None):
+            await request(self.gateway, "/v1/chat/completions", dict(self.chat))
+            self.assertNotIn("reasoning_effort", self.seen[-1][1])
 
     async def test_candidate_alias_tool_roundtrip_with_reasoning_and_later_turn(self):
         """Fixture backend only: proves the boundary path, not native parsing or model behaviour."""
@@ -936,8 +945,11 @@ class ServingContractTests(unittest.TestCase):
         self.assertEqual(["low", "medium", "xhigh"], template["reasoning_efforts"])
         server = json.loads(next(entry["value"][0] for entry in self.profile["args"]
                                  if entry["flag"] == "--default-chat-template-kwargs"))
+        # The default effort is the profile's request_reasoning_effort, never an SGLang server default.
+        self.assertNotIn("reasoning_effort", server)
         self.assertEqual({"chat_template_kwargs": {"enable_thinking": server["enable_thinking"]},
-                          "reasoning_effort": server["reasoning_effort"]}, contract["reasoning"]["request_defaults"])
+                          "reasoning_effort": self.profile["request_reasoning_effort"]},
+                         contract["reasoning"]["request_defaults"])
         # high is not a template value; clients that offer it get the nearest accepted level.
         self.assertEqual({"low": "low", "medium": "medium", "xhigh": "xhigh", "high": "xhigh"},
                          contract["reasoning"]["client_efforts"])
@@ -947,10 +959,13 @@ class ServingContractTests(unittest.TestCase):
         self.assertEqual("incomplete", unread["status"])
         self.assertIsNone(unread["reasoning"]["request_defaults"])
         self.assertTrue(any(item.startswith("reasoning parameters") for item in unread["missing_inputs"]))
+        with self.assertRaisesRegex(ValueError, "not accepted by the checkpoint template"):
+            service.serving_contract(self.write_profile(dict(self.profile, request_reasoning_effort="high")))
+        # A server-default effort would override every request's own in the pinned SGLang.
         for entry in self.profile["args"]:
             if entry["flag"] == "--default-chat-template-kwargs":
-                entry["value"] = [json.dumps({"enable_thinking": True, "reasoning_effort": "high"})]
-        with self.assertRaisesRegex(ValueError, "not accepted by the checkpoint template"):
+                entry["value"] = [json.dumps({"enable_thinking": True, "reasoning_effort": "low"})]
+        with self.assertRaisesRegex(ValueError, "overrides every per-request effort"):
             service.serving_contract(self.write_profile(self.profile))
 
     def test_a_gateway_config_change_rolls_litellm(self):
@@ -1083,7 +1098,7 @@ class ServingContractTests(unittest.TestCase):
 class GatewayPolicyTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         saved = (dict(boundary.CHAT_MODELS), dict(boundary.REASONING_EFFORTS), dict(boundary.TEMPLATE_KWARGS),
-                 boundary.ADMISSION_LIMIT, set(boundary.IMAGE_MODELS))
+                 boundary.ADMISSION_LIMIT, set(boundary.IMAGE_MODELS), boundary.DEFAULT_REASONING_EFFORT)
         def restore():
             for target, value in zip((boundary.CHAT_MODELS, boundary.REASONING_EFFORTS, boundary.TEMPLATE_KWARGS), saved):
                 target.clear()
@@ -1091,6 +1106,7 @@ class GatewayPolicyTests(unittest.IsolatedAsyncioTestCase):
             boundary.ADMISSION_LIMIT = saved[3]
             boundary.IMAGE_MODELS.clear()
             boundary.IMAGE_MODELS.update(saved[4])
+            boundary.DEFAULT_REASONING_EFFORT = saved[5]
         self.addCleanup(restore)
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
@@ -1101,6 +1117,7 @@ class GatewayPolicyTests(unittest.IsolatedAsyncioTestCase):
         rendered = service.candidate_render(service.contract_view(contract), 4096, 180, 16)
         self.path.write_text(json.dumps(service.gateway_policy(contract, rendered)))
         self.assertEqual(contract["deadlines"]["gateway_seconds"], boundary.apply_policy(self.path))
+        self.assertEqual(contract["reasoning"]["request_defaults"]["reasoning_effort"], boundary.DEFAULT_REASONING_EFFORT)
         self.assertNotIn("Qwen3.8-27B-FP8", boundary.CHAT_MODELS)
         self.assertEqual((contract["budgets"]["context_length"], 4096), boundary.CHAT_MODELS["Qwen3.8-27B-MXFP4"])
         self.assertEqual("xhigh", boundary.REASONING_EFFORTS["high"])
@@ -1110,7 +1127,8 @@ class GatewayPolicyTests(unittest.IsolatedAsyncioTestCase):
                                {"model": "Qwen3.8-27B-FP8", "messages": [{"role": "user", "content": "x"}]})
         self.assertEqual("unknown_model", json.loads(result[-1]["body"])["error"]["code"])
         for change in ({"template_kwargs": ["chat_template"]}, {"admission_limit": 0},
-                       {"chat_models": {"m": [4096, 4096]}}, {"request_timeout": 5}):
+                       {"chat_models": {"m": [4096, 4096]}}, {"request_timeout": 5},
+                       {"default_reasoning_effort": "extreme"}):
             self.path.write_text(json.dumps({**service.gateway_policy(contract, rendered), **change}))
             with self.subTest(change=change), self.assertRaises(ValueError):
                 boundary.apply_policy(self.path)
