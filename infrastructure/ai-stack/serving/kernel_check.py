@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Render the Job that runs the serving repository's fp8 KV kernel check on one card.
 
-The Job runs tools/check_fp8_kv_dequant.py (serving patch 0026, "UQ2") in the SGLang
-image built with the series: kernel error on an fp8 cache against an fp32 reference, and
-target-verify time against a bf16 cache. It needs no model. It gets one card through its
+The Job runs tools/check_fp8_kv_dequant.py (serving patches 0026/0027, "UQ2") in the SGLang
+image built with the series: the hardware fp8 decode against torch's cast on every code,
+kernel outputs against the Triton cast (bitwise) and an fp32 reference, and verify / extend
+time against a bf16 cache (16 layers, DRAM-fed). It needs no model. It gets one card through its
 own DRA claim, selected by PCI address. DRA never allocates a device to two claims, so the
 Job stays Pending while SGLang or SwarmUI hold that card; pause them first.
 Output is a JSON List: ConfigMap, ResourceClaimTemplate and Job.
@@ -23,7 +24,7 @@ TOOL = "tools/check_fp8_kv_dequant.py"
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("image", help="SGLang image built with patch 0026, pinned by digest")
+    parser.add_argument("image", help="SGLang image built with patches 0026/0027, pinned by digest")
     parser.add_argument("--serving", required=True, help="serving repository root (holds the check tool)")
     parser.add_argument("--pci", default="0000:c3:00.0", help="card to use (default gpu-1)")
     parser.add_argument("--quick", action="store_true", help="1k and 8k prefixes only")

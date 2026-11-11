@@ -420,7 +420,7 @@ assert argv["Y"] == argv["U"]
 assert ([e["name"] for e in profile["arms"]["Y"]["env"]] ==
         [e["name"] for e in profile["arms"]["U"]["env"]] + ["SGLANG_GFX1201_P1_FROM_KQ3", "SGLANG_GFX1201_PCIE_CUSTOM_AR_MAX_BYTES"])
 # Z, ZF and UQ are Y with fp8 KV caches: Z the draft's, ZF also the target's (stock
-# kernels, a control), UQ ZF plus patch 0026's bf16-compute reader switch.
+# kernels, a control), UQ ZF plus patch 0026/0027's bf16-compute reader switch.
 def kv(arm):
     a = argv[arm]
     return a[a.index("--kv-cache-dtype") + 1], a[a.index("--speculative-draft-kv-cache-dtype") + 1]
