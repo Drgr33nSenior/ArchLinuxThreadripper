@@ -156,6 +156,12 @@ left on one card cost BetterBench about 5.8 ms per verify step on every arm.
 With `auto`, the cap trades speed for heat: 210 / 235 / 300 W gave 30.1 / 29.4 / 28.6 ms
 per verify step, and 300 W reached about 100 °C junction temperature.
 
+An idle card runtime-suspends, and amdgpu answers power-file reads with EBUSY rather
+than waking it. `check` reports such a card as `"runtime_status": "suspended"` with
+`"ok": null` and does not fail; amdgpu restores the cap, level and profile when the
+card wakes. `apply` keeps each card awake while it writes, then restores its runtime
+power setting.
+
 To see whether the cards still match the policy (exit status 1 if not):
 
 ```sh

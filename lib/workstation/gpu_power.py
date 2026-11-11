@@ -7,12 +7,20 @@ the cap, selects the profile (amdgpu only accepts a profile in the ``manual`` le
 sets the level, reads everything back and exits 1 if any card differs. ``check`` only reads
 and exits 1 on any difference, for example after a manual ``rocm-smi --setperflevel``.
 
+An idle card runtime-suspends, and amdgpu then answers power-file reads and writes with
+EBUSY instead of waking it. ``apply`` holds each card awake (``power/control`` = ``on``)
+while it writes and verifies, then restores the previous value. ``check`` does not wake a
+card: a suspended one is reported as asleep (``ok`` null) and is not a failure. amdgpu
+restores the cap, level and profile on resume (checked on both R9700s on 2026-11-11).
+
 Both cards must match: SGLang splits the model across them (TP2), so every step waits for
 the slower card. A GPU reset returns a card to the driver defaults; run ``apply`` again.
 
 Usage: gpu_power.py {apply,check} POLICY [--sysfs-root DIR]
 """
 import argparse
+import contextlib
+import errno
 import json
 import re
 import sys
@@ -59,6 +67,10 @@ class Card:
     def read(self, name):
         return (self.device / name).read_text().strip()
 
+    def runtime_status(self):
+        path = self.device / "power/runtime_status"
+        return path.read_text().strip() if path.exists() else "active"
+
     def profiles(self):
         """{name: index} and the selected profile name."""
         table, selected = {}, None
@@ -71,14 +83,38 @@ class Card:
         return table, selected
 
     def state(self):
-        hw = self.hwmon()
-        return {"card": self.address,
-                "performance_level": self.read("power_dpm_force_performance_level"),
-                "power_profile": self.profiles()[1],
-                "power_cap_watts": int((hw / "power1_cap").read_text()) // 1_000_000}
+        asleep = {"card": self.address, "runtime_status": "suspended"}
+        if self.runtime_status() == "suspended":
+            return asleep
+        try:
+            hw = self.hwmon()
+            return {"card": self.address,
+                    "performance_level": self.read("power_dpm_force_performance_level"),
+                    "power_profile": self.profiles()[1],
+                    "power_cap_watts": int((hw / "power1_cap").read_text()) // 1_000_000}
+        except OSError as exc:
+            if exc.errno == errno.EBUSY:  # suspended between the status read and this one
+                return asleep
+            raise
+
+
+@contextlib.contextmanager
+def awake(card, write):
+    """Hold the card out of runtime suspend, then restore its power/control value."""
+    control = card.device / "power/control"
+    previous = control.read_text().strip() if control.exists() else None
+    if previous not in (None, "on"):
+        write(control, "on")
+    try:
+        yield
+    finally:
+        if previous not in (None, "on"):
+            write(control, previous)
 
 
 def matches(state, policy):
+    if state.get("runtime_status") == "suspended":
+        return None
     return (state["performance_level"] == policy["performance_level"]
             and state["power_profile"] == policy["power_profile"]
             and state["power_cap_watts"] == policy["power_cap_watts"])
@@ -122,12 +158,14 @@ def main(argv=None, write=sysfs_write, wait=WAIT_SECONDS):
         for card in cards:
             if not card.ready():
                 raise SystemExit(f"{card.address}: GPU power files not present after {wait} s")
-            apply_card(card, policy, write)
     failed = False
     for card in cards:
-        state = card.state()
+        with awake(card, write) if args.action == "apply" else contextlib.nullcontext():
+            if args.action == "apply":
+                apply_card(card, policy, write)
+            state = card.state()
         state["ok"] = matches(state, policy)
-        failed |= not state["ok"]
+        failed |= state["ok"] is False or (args.action == "apply" and state["ok"] is not True)
         print(json.dumps(state), flush=True)
     return 1 if failed else 0
 
