@@ -206,12 +206,17 @@ class AssistantTests(unittest.TestCase):
     def test_shared_mode_adds_a_second_comfyui_on_gpu0_only_in_shared_renders(self):
         shared = service.kustomize(ROOT / "apps/overlays/assistant-shared")
         memory = service.kustomize(ROOT / "apps/overlays/assistant-memory-shared")
+        tools_env = lambda objects: {e["name"]: e.get("value") for e in next(
+            c for c in named(objects, "Deployment", "service-tools")["spec"]["template"]["spec"]["containers"]
+            if c["name"] == "tools").get("env", [])}
         for objects in (self.large, self.split):
             self.assertNotIn("comfyui-gpu0", {o["metadata"]["name"] for o in objects if o["kind"] == "Deployment"})
+            self.assertNotIn("IMAGE_CONCURRENCY", tools_env(objects))  # one picture at a time
         for objects in (shared, memory):
             webui = named(objects, "Deployment", "open-webui")["spec"]["template"]["spec"]["containers"][0]
             env = {e["name"]: e.get("value") for e in webui["env"]}
             self.assertEqual("true", env["ENABLE_IMAGE_GENERATION"])
+            self.assertEqual("2", tools_env(objects)["IMAGE_CONCURRENCY"])  # one per card
         # large-model budgets, not the 9B split ones
         self.assertEqual({e["name"]: e.get("value") for e in named(self.large, "Deployment", "open-webui")["spec"]["template"]["spec"]["containers"][0]["env"]}["WEB_SEARCH_RESULT_COUNT"],
                          {e["name"]: e.get("value") for e in named(shared, "Deployment", "open-webui")["spec"]["template"]["spec"]["containers"][0]["env"]}["WEB_SEARCH_RESULT_COUNT"])

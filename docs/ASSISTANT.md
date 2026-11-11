@@ -408,11 +408,20 @@ weights; the existing creative staging and runtime checks remain required.
 Cancellation uncertainty retains the durable in-flight marker and blocks another
 job. An interrupt acknowledgement is not proof that GPU work has stopped.
 
+The adapter runs one picture at a time, or two in shared mode (`IMAGE_CONCURRENCY=2`
+on `service-tools`), one per SwarmUI backend. Each running picture owns its own
+marker under `/state`: `image-inflight.json` for the first and `image-inflight-1.json`
+for the second. A marker no running request owns blocks new pictures in every mode
+until an operator has checked the backend and removed it. `/health` reports
+`image_active`, `image_slots` and `image_recovery_required`.
+
 ## Speech and later model experiments
 
-Server speech is not deployed by this profile. Default regular-user microphone
-transcription permission is disabled until a local provider is qualified; browser speech
-recognition can use external services and is not a local-ASR substitute.
+Voice input is local: Open WebUI's built-in faster-whisper (`Systran/faster-whisper-base`,
+CPU int8) loads the pinned, hash-checked model from the RAG models volume
+(`rag stage-whisper`, docs/RAG.md), and the microphone is allowed for every account.
+Audio never leaves the workstation. Server speech synthesis is not deployed; browser
+speech recognition can use external services and is not a local-ASR substitute.
 No hosted speech credentials or automatic model downloads are configured.
 
 The refreshed official Qwen sources have incompatible dependency pins:
