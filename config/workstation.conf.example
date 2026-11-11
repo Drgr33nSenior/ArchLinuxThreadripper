@@ -208,6 +208,8 @@ SESSION_GAME_DEPLOYMENT=parent-steam-headless
 # Opt-in service admission and image ownership; configure only after qualification.
 SESSION_SERVICE_ENABLED=false
 SESSION_IMAGE_DEPLOYMENT=swarmui
+# Shared mode's second image generator on the model's other card (needs the service enabled).
+# SESSION_IMAGE2_DEPLOYMENT=comfyui-gpu0
 # SESSION_SERVICE_CONTROL_FILE=/etc/workstation/gateway-control-key
 # Positive timeout in seconds for handover waits; not a request/stream duration.
 SESSION_TIMEOUT_SECONDS=300

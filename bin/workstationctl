@@ -57,8 +57,8 @@ Commands:
   telemetry plan <resource-plan.json> <rendered-directory> <new-output-directory>
   telemetry status                      (read-only local monitoring readiness)
   secure-boot check                     (read-only: firmware trusts this install's sbctl keys; run as root)
-  session plan <ai|split|gaming|maintenance>
-  session switch <ai|split|gaming|maintenance> <hardware.json> <state-directory> --execute
+  session plan <ai|split|shared|gaming|maintenance>
+  session switch <ai|split|shared|gaming|maintenance> <hardware.json> <state-directory> --execute
   session restore <hardware.json> <state-directory> --execute
   session status <state-directory>
   sunshine profile <new-output-directory>

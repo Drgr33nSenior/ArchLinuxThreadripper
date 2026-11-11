@@ -170,10 +170,20 @@ it leaves free on both cards. Render it from the contract's shared arm:
 - Image access stays per user: bind the Admin and Parents accounts with
   `service browser-bind --images`.
 - Shared mode needs the `assistant` or `assistant-memory` experience and a serving
-  profile. The session tooling's `shared` mode is a separate change.
+  profile.
 
-Before activation, also extend `service_session.py` and `session.sh`, which
-still accept only the FP8 and 9B aliases when they set the gateway phase.
+Switch to it with `session switch shared` once the host config sets
+`SESSION_IMAGE2_DEPLOYMENT=comfyui-gpu0` beside `SESSION_IMAGE_DEPLOYMENT=swarmui`
+(docs/AI-SERVICE.md step 8). The switch:
+- refuses unless the running contract model is `Qwen3.8-27B-MXFP4` on `gpu-0` and
+  `gpu-1`, with each image generator on one of those cards and on different cards;
+- checks CPU and memory for all three pods together, before anything stops;
+- starts SGLang first, so it sizes its KV pool before any image VRAM is in use, then
+  SwarmUI, then the second ComfyUI;
+- admits images at the gateway only after all three are ready. If either generator
+  fails to start, the session is marked failed and the gateway stays closed.
+
+`maintenance`, `split` and `ai` stop the second generator with everything else.
 
 #### Reasoning parameters
 
