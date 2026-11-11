@@ -2,6 +2,10 @@ apiVersion: v1
 kind: Service
 metadata: {name: sglang}
 spec:
-  selector: {app.kubernetes.io/name: sglang}
+  # Whichever SGLang server holds the GPUs: this Deployment, or an AI-stack bench or
+  # qualification Job (infrastructure/ai-stack/serving/render.py), which carry the same
+  # label and run only while this Deployment is paused. One owner: those Jobs ship no
+  # Service of their own, so a bench never replaces the family service's routing.
+  selector: {ai-stack/sglang-server: 'true'}
   ports: [{name: api, port: 30000, targetPort: api}]
   type: ClusterIP

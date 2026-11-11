@@ -459,17 +459,19 @@ assert strip(argv["UQS"]) == strip(argv["UQ"])
 assert profile["arms"]["UQS"]["env"] == profile["arms"]["UQ"]["env"] and not profile["arms"]["UQS"]["default"]
 for arm in profile["arms"]:
     items = json.loads((work / f"job-{arm}.json").read_text())["items"]
-    config, job, service, claims = items
+    config, job, claims = items
     # Bench Jobs get their own two-GPU claim so DRA keeps them off cards that the
     # serving Deployment (shared gpu-0/gpu-1 claims) still holds.
     assert claims["kind"] == "ResourceClaimTemplate" and claims["metadata"]["name"] == job["metadata"]["name"]
     assert claims["spec"]["spec"]["devices"]["requests"] == [{"name": "gpus", "exactly": {
         "deviceClassName": "gpu.amd.com", "allocationMode": "ExactCount", "count": 2}}]
-    # The Service gives telemetry's fixed sglang target to the running server.
-    assert service["kind"] == "Service" and service["metadata"]["name"] == "sglang"
-    assert service["spec"]["ports"] == [{"name": "http", "port": 30000, "targetPort": 30000}]
-    for key, value in service["spec"]["selector"].items():
-        assert job["spec"]["template"]["metadata"]["labels"][key] == value
+    # No Service: the serving sglang Service selects the server label this pod
+    # carries, so a bench never replaces the family service's routing.
+    assert not any(item["kind"] == "Service" for item in items)
+    assert job["spec"]["template"]["metadata"]["labels"]["ai-stack/sglang-server"] == "true"
+    apps = root.parents[1] / "apps/base/sglang"
+    assert "  selector: {ai-stack/sglang-server: 'true'}\n" in (apps / "service.yaml").read_text()
+    assert "labels: {app.kubernetes.io/name: sglang, ai-stack/sglang-server: 'true'}" in (apps / "deployment.yaml").read_text()
     pod = job["spec"]["template"]["spec"]
     c = pod["containers"][0]
     assert config["data"]["qualify.py"] == (root / "serving" / "qualify.py").read_text()
@@ -494,8 +496,9 @@ default_arm = next(name for name, spec in profile["arms"].items() if spec["defau
 qualify = json.loads((work / f"job-{default_arm}.json").read_text())["items"][1]
 bundles = {}
 for variant in ("bench", "bench-greedy"):
-    config, job, service, _claims = json.loads((work / f"{variant}.json").read_text())["items"]
-    assert service["metadata"]["name"] == "sglang"
+    items = json.loads((work / f"{variant}.json").read_text())["items"]
+    config, job, _claims = items
+    assert not any(item["kind"] == "Service" for item in items)  # bench Jobs never replace the sglang Service
     assert config["data"] == {"bench.py": (root / "serving" / "bench.py").read_text()}
     archive = tarfile.open(fileobj=io.BytesIO(base64.b64decode(config["binaryData"]["betterbench.tar.gz"])))
     names = archive.getnames()

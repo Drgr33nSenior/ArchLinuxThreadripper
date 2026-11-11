@@ -186,19 +186,15 @@ def job(profile, catalog, image, arm, bench=None):
     claims = {"apiVersion": "resource.k8s.io/v1", "kind": "ResourceClaimTemplate", "metadata": meta,
               "spec": {"spec": {"devices": {"requests": [{"name": "gpus", "exactly": {
                   "deviceClassName": "gpu.amd.com", "allocationMode": "ExactCount", "count": 2}}]}}}}
-    # Telemetry scrapes sglang.ai-home-lab.svc:30000 (job "sglang"); this Service
-    # points it at whichever qualification or bench server is running. Only one
-    # Job (or the serving Deployment) can hold the GPUs, so only one matches.
-    service = {"apiVersion": "v1", "kind": "Service",
-               "metadata": {"name": "sglang", "namespace": NAMESPACE, "labels": labels},
-               "spec": {"type": "ClusterIP", "selector": {SERVER_LABEL: "true"},
-                        "ports": [{"name": "http", "port": PORT, "targetPort": PORT}]}}
+    # No Service here. The serving `sglang` Service (apps/base/sglang/service.yaml)
+    # selects SERVER_LABEL, which this pod carries, so telemetry's fixed target
+    # sglang.ai-home-lab.svc:30000 follows whichever server holds the GPUs. A Service
+    # in this List replaced the family service's own on every bench (2026-11-11).
     return {"apiVersion": "v1", "kind": "List", "items": [
         {"apiVersion": "v1", "kind": "ConfigMap", "metadata": meta, "data": data, **({"binaryData": binary} if binary else {})},
         {"apiVersion": "batch/v1", "kind": "Job", "metadata": meta,
          "spec": {"backoffLimit": 0, "activeDeadlineSeconds": 4500, "ttlSecondsAfterFinished": 172800,
                   "template": {"metadata": {"labels": {**labels, SERVER_LABEL: "true"}}, "spec": pod}}},
-        service,
         claims,
     ]}
 

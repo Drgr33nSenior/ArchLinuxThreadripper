@@ -275,11 +275,12 @@ Before applying the Job:
 - The `apps/` layer is not required; the Job needs only the namespace, the
   `ai-models` claim and the image.
 
-Each rendered Job also includes a Service named `sglang`, the address the
-telemetry stack scrapes as the `sglang` job, so the Workloads dashboard's
-serving panels follow whichever qualification or bench server is running.
-Do not run a Job while the serving Deployment is up: only one can hold the
-GPUs, and both use that Service name.
+Rendered Jobs ship no Service. Their pods carry `ai-stack/sglang-server: "true"`, the
+label the serving layer's `sglang` Service selects (`apps/base/sglang/service.yaml`), so
+telemetry's `sglang` target and the Workloads dashboard's serving panels follow
+whichever server holds the GPUs, without a bench replacing the family service's
+routing. Do not run a Job while the serving Deployment is up: only one can hold the
+GPUs. Without the `apps/` layer, apply that Service file alone to keep the dashboards.
 
 To clean up a run, including its probe ConfigMap:
 
