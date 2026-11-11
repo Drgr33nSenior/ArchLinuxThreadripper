@@ -147,8 +147,9 @@ AGENT_MODEL=Qwen3.8-27B-FP8
 # Raising this does not increase the server's context or available GPU memory.
 AGENT_CONTEXT_TOKENS=32768
 # Generated request cap: 128..half AGENT_CONTEXT_TOKENS. The pinned Hermes adapter
-# does not enforce this setting; its output cap remains provider-owned.
-AGENT_MAX_OUTPUT_TOKENS=4096
+# does not enforce this setting; its output cap remains provider-owned. Copy the value
+# from `service render`'s client.conf (12288: whole-file tool writes need it).
+AGENT_MAX_OUTPUT_TOKENS=12288
 
 # --- Pinned llama.cpp inference and paired benchmarks ---
 # Applies to `rocm inference` / `rocm benchmark-llama`, not SGLang or other engines.

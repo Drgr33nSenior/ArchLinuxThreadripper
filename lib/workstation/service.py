@@ -627,7 +627,11 @@ CLIENT_TEMPLATE_KWARGS = ("enable_thinking",)
 # value is an assumption until the serving owner names it; any other value is
 # refused rather than guessed.
 CATALOGUE_STATES = {"candidate": False, "selected": True}
-DEFAULT_OUTPUT_TOKENS = 4096
+# Per-request output allowance for the gateway and coding clients. 4096 truncated
+# single-file tool writes (Qwen Code refused a cut-off write_file, 2026-11-11); thinking
+# shares the same budget. 12288 tokens decode in ~105-135 s (113-117 tok/s at 32-64K,
+# ~92 at 120K, measured), inside the route's 170 s timeout and the 180 s deadline.
+DEFAULT_OUTPUT_TOKENS = 12288
 
 
 def ai_stack_render():

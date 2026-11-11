@@ -123,7 +123,7 @@ Deployment starts exactly what the qualification Job starts.
 | `runtime` | `--runtime-image` (lab registry or its `ghcr.io` copy, pinned by digest); SGLang commit, patch series and GPU target from `stack.lock`; digest of the launch argv and environment |
 | `parsers` | Profile `--reasoning-parser`, `--tool-call-parser`, `--grammar-backend` |
 | `reasoning` | Profile `--default-chat-template-kwargs`; template-accepted efforts; client mapping |
-| `budgets`, `concurrency`, `deadlines` | Profile context, pool and running-request limits; `--output-tokens` (default 4,096, at most half the context, unqualified); gateway admission 4 and 180-second deadline |
+| `budgets`, `concurrency`, `deadlines` | Profile context, pool and running-request limits; `--output-tokens` (default 12,288, at most half the context, unqualified); gateway admission 4 and 180-second deadline |
 | `assets`, `requirements` | Model and draft paths from the argv; `ai-models` claim from `k8s/models.yaml`; GPU count, groups and node label from the profile, `render.py` and `stack.lock` |
 
 `status` is `incomplete` while a deployment input is missing, `provisional`
