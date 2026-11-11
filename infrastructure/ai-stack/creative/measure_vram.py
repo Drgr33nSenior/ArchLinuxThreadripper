@@ -21,6 +21,7 @@ Variant (environment, set by measure.py):
   COMFYUI_ENABLE_MIOPEN=1    keep MIOpen (cuDNN) on; ComfyUI turns it off on RDNA3+
   MEASURE_HOLD_SECONDS=N     stay alive N seconds after RESULT so the images in
                              /tmp/comfy-output can be copied out (seam review)
+  MEASURE_COMFY_FLAGS="..."  extra ComfyUI memory flags, each one of COMFY_FLAGS
 """
 
 import json
@@ -35,6 +36,11 @@ COMFY = "/SwarmUI/dlbackend/ComfyUI"
 PORT = 8188
 PROMPT = "a red wooden cabin beside a calm mountain lake at sunrise, pine trees, photograph"
 NEGATIVE = "blurry, low quality, text, watermark"
+# ComfyUI flags a variant may add: fp8 weight storage, and text encoders on the CPU
+# (--lowvram only moves them when dynamic VRAM is off).
+COMFY_FLAGS = ("--fp8_e4m3fn-unet", "--fp8_e4m3fn-text-enc", "--lowvram", "--disable-dynamic-vram")
+# ComfyUI startup lines that say which memory and attention mode it chose.
+LOG_FACTS = ("vram state", "dynamic", "aimdo", "attention", "fp8", "weight dtype", "cudnn", "miopen", "text encoder")
 
 
 class Sampler(threading.Thread):
@@ -93,6 +99,10 @@ def render(graph, sampler):
 def main(workflow_path, checkpoint_dir, pci):
     decode = os.environ.get("MEASURE_DECODE", "full")
     miopen = os.environ.get("COMFYUI_ENABLE_MIOPEN") == "1"
+    flags = os.environ.get("MEASURE_COMFY_FLAGS", "").split()
+    unknown = [f for f in flags if f not in COMFY_FLAGS]
+    if unknown:
+        raise SystemExit(f"unknown ComfyUI flags {unknown}")
     counter = f"/sys/bus/pci/devices/{pci}/mem_info_vram_used"
     total = int(open(f"/sys/bus/pci/devices/{pci}/mem_info_vram_total").read())
     template = json.load(open(workflow_path))
@@ -107,7 +117,7 @@ def main(workflow_path, checkpoint_dir, pci):
     comfy = subprocess.Popen([sys.executable, f"{COMFY}/main.py", "--listen", "127.0.0.1", "--port", str(PORT),
                               "--extra-model-paths-config", paths, "--output-directory", "/tmp/comfy-output",
                               "--temp-directory", "/tmp/comfy-temp", "--input-directory", "/tmp/comfy-input",
-                              "--user-directory", "/tmp/comfy-user", "--disable-auto-launch"],
+                              "--user-directory", "/tmp/comfy-user", "--disable-auto-launch", *flags],
                              cwd=COMFY, stdout=log, stderr=subprocess.STDOUT)
     try:
         deadline = time.monotonic() + 300
@@ -130,7 +140,11 @@ def main(workflow_path, checkpoint_dir, pci):
             print(f"RUN {label} {size}px {seconds:.2f}s card_peak={peak >> 20} MiB", flush=True)
         sampler.running = False
         overall = max(r["card_peak_mib"] for r in runs)
-        result = {"schema": 1, "variant": {"decode": decode, "miopen": miopen},
+        log.flush()
+        for line in open("/tmp/comfy.log", errors="replace"):
+            if any(fact in line.lower() for fact in LOG_FACTS):
+                print("COMFY " + line.rstrip()[:200], flush=True)
+        result = {"schema": 1, "variant": {"decode": decode, "miopen": miopen, "comfy_flags": flags},
                   "pci": pci, "card_total_mib": total >> 20, "baseline_mib": baseline >> 20,
                   "peak_mib": overall, "sdxl_peak_above_baseline_mib": overall - (baseline >> 20),
                   "runs": runs, "steps": template["5"]["inputs"]["steps"],

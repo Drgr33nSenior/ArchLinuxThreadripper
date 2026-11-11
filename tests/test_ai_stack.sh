@@ -133,6 +133,12 @@ for argv, decode, miopen, hold in (([], "full", False, "0"), (["--decode", "tile
     assert env["MEASURE_DECODE"] == decode and env["MEASURE_HOLD_SECONDS"] == hold and (env.get("COMFYUI_ENABLE_MIOPEN") == "1") == miopen, env
     assert j["metadata"]["name"].startswith(f"sdxl-vram-{decode}{'-miopen' if miopen else ''}-")
 assert subprocess.run([sys.executable, "-I", sys.argv[1], image, "--hold-seconds", "901"], capture_output=True).returncode != 0
+j = json.loads(subprocess.run([sys.executable, "-I", sys.argv[1], image, "--decode", "tiled", "--miopen", "--fp8-unet", "--text-enc-cpu"],
+                              capture_output=True, text=True, check=True).stdout)["items"][2]
+env = {e["name"]: e["value"] for e in j["spec"]["template"]["spec"]["containers"][0]["env"]}
+assert env["MEASURE_COMFY_FLAGS"].split() == ["--fp8_e4m3fn-unet", "--disable-dynamic-vram", "--lowvram"], env
+assert j["metadata"]["name"].startswith("sdxl-vram-tiled-miopen-fp8u-tecpu-") and len(j["metadata"]["name"]) <= 52
+assert set(m.COMFY_FLAGS) == {"--fp8_e4m3fn-unet", "--fp8_e4m3fn-text-enc", "--lowvram", "--disable-dynamic-vram"}
 PY
   fail 'the SDXL VRAM measurement Job is not what measure.py should render'
 
