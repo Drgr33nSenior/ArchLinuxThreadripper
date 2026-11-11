@@ -916,7 +916,8 @@ class ServingContractTests(unittest.TestCase):
     def test_measured_host_resources_come_from_the_qualification_record(self):
         measured = {"requests": {"cpu": "8", "memory": "12Gi"}, "limits": {"cpu": "16", "memory": "24Gi"},
                     "evidence": "fixture"}
-        record = {"arm": "Y", "image": self.IMAGE, "host_resources": measured}
+        default = next(name for name, arm in self.profile["arms"].items() if arm.get("default"))
+        record = {"arm": default, "image": self.IMAGE, "host_resources": measured}
         contract = service.serving_contract(self.write_profile(dict(self.profile, qualification=record)))
         self.assertEqual({k: measured[k] for k in ("requests", "limits")},
                          {k: contract["requirements"]["host_resources"][k] for k in ("requests", "limits")})
@@ -967,6 +968,24 @@ class ServingContractTests(unittest.TestCase):
         self.assertEqual(name_a, name_b)  # why the name alone cannot roll the gateway
         self.assertTrue(digest_a and digest_b and digest_a != digest_b)
         self.assertEqual(digest_a, digest_a2)  # deterministic: an unchanged config does not roll it
+
+    def test_each_mode_has_its_own_deadline_and_no_gateway_timeout_undercuts_it(self):
+        # Large mode serves 262K contexts (a cold 235K-token prompt takes ~240 s to its first
+        # token); shared mode keeps 180 s. LiteLLM's global fallbacks must not cap the route.
+        for mode, deadline in (("large", 300), ("shared", 180)):
+            contract = service.serving_contract(self.PROFILE, mode=mode)
+            self.assertEqual({"gateway_seconds": deadline, "route_seconds": deadline - 10,
+                              "client_milliseconds": deadline * 1000}, contract["deadlines"])
+            objects, _, _ = service.apply_contract(service.kustomize(ROOT / "apps/overlays/assistant"),
+                                                  contract, mode, "assistant")
+            data = next(o for o in objects if o["kind"] == "ConfigMap" and "litellm.yaml" in o.get("data", {}))["data"]
+            config = yaml.safe_load(data["litellm.yaml"])
+            route = next(r for r in config["model_list"] if r["model_name"] == contract["model"]["alias"])
+            self.assertEqual(deadline - 10, route["litellm_params"]["timeout"])
+            self.assertEqual(deadline - 10, config["router_settings"]["timeout"])
+            self.assertEqual(deadline - 10, config["litellm_settings"]["request_timeout"])
+            self.assertEqual(deadline, json.loads(data["gateway-policy.json"])["request_timeout"])
+        self.assertEqual(180, service.serving_contract(self.PROFILE, mode="large", deadline_seconds=180)["deadlines"]["gateway_seconds"])
 
     def test_every_consumer_is_rendered_from_the_contract_and_none_targets_fp8(self):
         contract = service.serving_contract(self.PROFILE)
@@ -1081,7 +1100,7 @@ class GatewayPolicyTests(unittest.IsolatedAsyncioTestCase):
         contract = service.serving_contract(ServingContractTests.PROFILE)
         rendered = service.candidate_render(service.contract_view(contract), 4096, 180, 16)
         self.path.write_text(json.dumps(service.gateway_policy(contract, rendered)))
-        self.assertEqual(180, boundary.apply_policy(self.path))
+        self.assertEqual(contract["deadlines"]["gateway_seconds"], boundary.apply_policy(self.path))
         self.assertNotIn("Qwen3.8-27B-FP8", boundary.CHAT_MODELS)
         self.assertEqual((contract["budgets"]["context_length"], 4096), boundary.CHAT_MODELS["Qwen3.8-27B-MXFP4"])
         self.assertEqual("xhigh", boundary.REASONING_EFFORTS["high"])
