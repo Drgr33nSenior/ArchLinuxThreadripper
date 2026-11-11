@@ -97,6 +97,18 @@ for key in ("model", "draft"):
                hashes == ["git_sha1"] and re.fullmatch(r"[a-f0-9]{40}", f["git_sha1"])
 PY
 done
+# The image model's catalog entry and the browser image profile pin the same
+# revision and checkpoint hash.
+python3 -I - "$dir/models/sdxl-base-1.0.json" "$root/apps/base/shared-api/image-profile.json" <<'PY' ||
+import json, sys
+entry, profile = (json.load(open(p)) for p in sys.argv[1:3])
+model = entry["model"]
+assert model["repository"] == profile["model_repository"] and model["revision"] == profile["model_revision"]
+checkpoints = [f for f in model["files"] if f["path"].endswith(".safetensors")]
+assert len(checkpoints) == 1 and checkpoints[0]["sha256"] == profile["model_sha256"], checkpoints
+assert "draft" not in entry
+PY
+  fail 'sdxl-base-1.0 catalog entry and apps/base/shared-api/image-profile.json disagree'
 
 # fetch.py accepts files that already verify (git blob and SHA-256) without
 # any network access, marks the revision complete, and refuses unsafe paths.
