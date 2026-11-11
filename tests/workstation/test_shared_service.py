@@ -612,9 +612,15 @@ class ResourceTests(unittest.TestCase):
         self.assertIsNone(result["observed_dimms"])
         self.assertFalse(service.capacity(resources, self.large, {"reserve_mib": 6144}, self.telemetry,
                                          "large", vm_mib=100000)["fits"])
+        # SwarmUI at its measured 4 CPUs (2026-11-11): the 9B split mode now fits 42 CPUs ...
         split = service.capacity(resources, self.split, {"reserve_mib": 6144}, self.telemetry, "split")
-        self.assertFalse(split["fits"])
-        self.assertLess(split["remaining_cpus"], 0)
+        self.assertTrue(split["fits"])
+        self.assertGreaterEqual(split["remaining_cpus"], 0)
+        # ... and the same plan on a smaller node is still reported over budget.
+        smaller = {**resources, "allocatable_logical_cpus": 36}
+        over = service.capacity(smaller, self.split, {"reserve_mib": 6144}, self.telemetry, "split")
+        self.assertFalse(over["fits"])
+        self.assertLess(over["remaining_cpus"], 0)
 
     def test_private_ingress_has_no_native_admin_route(self):
         ingress = next(o for o in self.large if o["kind"] == "Ingress" and o["metadata"]["name"] == "shared-model-api")
