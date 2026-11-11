@@ -126,6 +126,8 @@ assert graph["7"]["class_type"] == "SaveImage" and graph["4"]["inputs"]["width"]
 assert graph["1"]["inputs"]["ckpt_name"] == next(f["path"] for f in entry["files"] if f["path"].endswith(".safetensors"))
 assert all(n["class_type"] != "SwarmSaveImageWS" for n in graph.values())
 tiled = m.workflow(json.loads(open(sys.argv[4]).read()), 1024, 1, "tiled")["6"]
+full = m.workflow(json.loads(open(sys.argv[4]).read()), 1024, 1, "full")["6"]
+assert full == {"class_type": "VAEDecode", "inputs": {"samples": ["5", 0], "vae": ["1", 2]}}, full
 assert tiled["class_type"] == "VAEDecodeTiled" and tiled["inputs"]["tile_size"] == 512 and tiled["inputs"]["samples"] == ["5", 0]
 for argv, decode, miopen, hold in (([], "full", False, "0"), (["--decode", "tiled", "--miopen", "--hold-seconds", "300"], "tiled", True, "300")):
     j = json.loads(subprocess.run([sys.executable, "-I", sys.argv[1], image, *argv], capture_output=True, text=True, check=True).stdout)["items"][2]

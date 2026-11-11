@@ -71,7 +71,9 @@ def workflow(template, size, seed, decode="full"):
     if decode == "tiled":
         graph["6"] = {"class_type": "VAEDecodeTiled", "inputs": {"samples": ["5", 0], "vae": ["1", 2], "tile_size": 512,
                                                                  "overlap": 64, "temporal_size": 64, "temporal_overlap": 8}}
-    elif decode != "full":
+    elif decode == "full":
+        graph["6"] = {"class_type": "VAEDecode", "inputs": {"samples": ["5", 0], "vae": ["1", 2]}}
+    else:
         raise SystemExit(f"unknown decode variant {decode!r}")
     graph["1"]["inputs"]["ckpt_name"] = "sd_xl_base_1.0.safetensors"
     graph["2"]["inputs"]["text"], graph["3"]["inputs"]["text"] = PROMPT, NEGATIVE
