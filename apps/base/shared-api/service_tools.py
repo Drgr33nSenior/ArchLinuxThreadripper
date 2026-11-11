@@ -122,9 +122,14 @@ def load_image_profile(directory):
     return profile, workflow, hashlib.sha256(raw).hexdigest()
 
 
+# Image slots: one per SwarmUI backend. Shared mode runs two (SwarmUI's own ComfyUI on
+# gpu-1 and comfyui-gpu0); every other mode one. Markers are checked for all of them.
+MAX_IMAGE_SLOTS = 2
+
+
 class ServiceTools:
     def __init__(self, client, webui, swarm, gateway, browser_file, state_dir, image_timeout=120, public_webui="", web_search=None,
-                 memory=None, memory_key_file="/run/memory/service-key", memory_write=False, handoffs=None):
+                 memory=None, memory_key_file="/run/memory/service-key", memory_write=False, handoffs=None, image_slots=1):
         self.client = client
         self.webui, self.swarm, self.gateway = webui, swarm, gateway
         self.browser_file = browser_file
@@ -137,7 +142,10 @@ class ServiceTools:
         # Task handoffs: a handoff.HandoffStore on /state, or None when disabled.
         self.handoffs = handoffs
         self.image_profile, self.image_workflow, self.workflow_sha256 = load_image_profile(Path(__file__).parent)
-        self.busy = False
+        if type(image_slots) is not int or not 1 <= image_slots <= MAX_IMAGE_SLOTS:
+            raise ValueError("image_slots must be 1 or 2")
+        self.image_slots = image_slots
+        self.active = set()  # slots with a request in flight in this process
         # Project retrieval tools (retrieval.py) share the webui-rag-profile settings.
         self.retrieval = Retrieval(self.upstream_json, webui, self.public_webui, os.environ)
         self.app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
@@ -152,9 +160,19 @@ class ServiceTools:
     async def metrics(self):
         return PlainTextResponse(METRICS.render(), media_type="text/plain; version=0.0.4")
 
+    def marker(self, slot):
+        # Slot 0 keeps the original name, so existing recovery steps still apply.
+        return self.state_dir / ("image-inflight.json" if slot == 0 else f"image-inflight-{slot}.json")
+
+    def stale_markers(self):
+        # A marker no running request owns: a crash or an unacknowledged cancellation.
+        # Checked for every slot, so leaving shared mode does not hide slot 1's.
+        return [slot for slot in range(MAX_IMAGE_SLOTS) if slot not in self.active and self.marker(slot).exists()]
+
     async def health(self):
-        return {"status": "process-ready", "image_busy": self.busy,
-                "image_recovery_required": (self.state_dir / "image-inflight.json").exists(),
+        return {"status": "process-ready", "image_busy": len(self.active) >= self.image_slots,
+                "image_active": len(self.active), "image_slots": self.image_slots,
+                "image_recovery_required": bool(self.stale_markers()),
                 "image_profile": self.image_profile["id"], "workflow_sha256": self.workflow_sha256,
                 "retrieval": self.retrieval.status(),
                 "web_search": self.web_search.status() if self.web_search else {"status": "disabled"}}
@@ -425,8 +443,8 @@ class ServiceTools:
             await asyncio.sleep(0.25)
         return False
 
-    async def generate(self, request, prompt, size):
-        marker = self.state_dir / "image-inflight.json"
+    async def generate(self, request, prompt, size, slot=0):
+        marker = self.marker(slot)
         session = None
         completed = False
         try:
@@ -519,14 +537,16 @@ class ServiceTools:
                 raise Refusal(400, "image_limits_exceeded")
             if "${" in prompt:
                 raise Refusal(400, "workflow_macros_not_supported")
-            if self.busy or (self.state_dir / "image-inflight.json").exists():
+            if self.stale_markers() or len(self.active) >= self.image_slots:
                 raise Refusal(429, "image_busy_or_recovery_required")
-            self.busy = True
+            # No await between the check and the claim: slots cannot be double-booked.
+            slot = min(set(range(self.image_slots)) - self.active)
+            self.active.add(slot)
             try:
                 async with asyncio.timeout(165):
-                    result = await self.generate(request, prompt, data.get("size", "1024x1024"))
+                    result = await self.generate(request, prompt, data.get("size", "1024x1024"), slot)
             finally:
-                self.busy = False
+                self.active.discard(slot)
             return JSONResponse(result, headers={"Cache-Control": "no-store"})
         except Refusal as exc:
             return JSONResponse({"error": {"code": exc.code, "message": exc.code}}, status_code=exc.status,
@@ -552,7 +572,7 @@ def create_app():
                            public_webui=os.environ["PUBLIC_WEBUI_BASE_URL"], web_search=search,
                            memory="http://graphiti-memory:8000" if os.environ.get("MEMORY_ENABLED", "false") == "true" else None,
                            memory_write=os.environ.get("MEMORY_WRITE_ENABLED", "false") == "true",
-                           handoffs=handoffs)
+                           handoffs=handoffs, image_slots=int(os.environ.get("IMAGE_CONCURRENCY", "1")))
     # Starlette 1.x (FastAPI 0.136, the pinned gateway image) removed
     # add_event_handler/on_event; close the shared client from the lifespan.
     @contextlib.asynccontextmanager

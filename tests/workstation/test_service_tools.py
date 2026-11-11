@@ -47,6 +47,7 @@ class ToolsTests(unittest.IsolatedAsyncioTestCase):
         self.deleted = False
         self.available = True
         self.slow = False
+        self.gate = None
         self.cancel_ack = True
         self.artifact_path = "View/local/raw/fixture.png"
         webui = yaml.safe_load((ROOT / "apps/overlays/service/webui.yaml").read_text())
@@ -85,6 +86,8 @@ class ToolsTests(unittest.IsolatedAsyncioTestCase):
             if path == "/API/GenerateText2Image":
                 if self.slow:
                     await asyncio.sleep(10)
+                if self.gate is not None:
+                    await self.gate.wait()
                 return httpx.Response(200, json={"images": [self.artifact_path]})
             if path == "/" + self.artifact_path:
                 return httpx.Response(200, content=b"\x89PNG\r\n\x1a\nfixture", headers={"Content-Type": "image/png"})
@@ -243,7 +246,7 @@ class ToolsTests(unittest.IsolatedAsyncioTestCase):
         response = await self.client.post("/webui/images/generations", headers=self.headers, json=self.image)
         self.assertEqual(503, response.status_code)
         self.assertTrue((self.root / "state/image-inflight.json").is_file())
-        self.tools.busy = False  # The in-memory state of a restarted process.
+        self.tools.active.clear()  # The in-memory state of a restarted process.
         response = await self.client.post("/webui/images/generations", headers=self.headers, json=self.image)
         self.assertEqual(429, response.status_code)
         self.assertEqual(1, sum(r.url.path == "/API/GenerateText2Image" for r in self.calls))
@@ -254,10 +257,48 @@ class ToolsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(503, response.status_code)
         self.assertTrue(any(r.url.path == "/API/GetCurrentStatus" for r in self.calls))
         self.assertTrue((self.root / "state/image-inflight.json").is_file())
-        self.tools.busy = False
+        self.tools.active.clear()
         response = await self.client.post("/webui/images/generations", headers=self.headers, json=self.image)
         self.assertEqual(429, response.status_code)
         self.assertEqual(1, sum(r.url.path == "/API/GenerateText2Image" for r in self.calls))
+
+    async def test_two_slots_run_two_images_at_once_and_refuse_a_third(self):
+        tools = ServiceTools(self.upstream, "http://webui", "http://swarm", "http://gateway",
+                             self.mapping, self.root / "state2", image_timeout=5, image_slots=2)
+        client = httpx.AsyncClient(transport=httpx.ASGITransport(app=tools.app), base_url="http://tools")
+        self.addAsyncCleanup(client.aclose)
+        post = lambda: client.post("/webui/images/generations", headers=self.headers, json=self.image)
+        self.gate = asyncio.Event()
+        first, second = asyncio.create_task(post()), asyncio.create_task(post())
+        while sum(r.url.path == "/API/GenerateText2Image" for r in self.calls) < 2:
+            await asyncio.sleep(0.01)
+        # Both in flight, each with its own durable marker; a third is refused.
+        self.assertTrue((self.root / "state2/image-inflight.json").is_file())
+        self.assertTrue((self.root / "state2/image-inflight-1.json").is_file())
+        health = (await client.get("/health")).json()
+        self.assertEqual((True, 2, 2, False), (health["image_busy"], health["image_active"], health["image_slots"],
+                                               health["image_recovery_required"]))
+        self.assertEqual(429, (await post()).status_code)
+        self.gate.set()
+        self.assertEqual([200, 200], [(await first).status_code, (await second).status_code])
+        self.assertEqual([], sorted(p.name for p in (self.root / "state2").glob("image-inflight*")))
+        self.assertEqual(2, sum(r.url.path == "/API/GenerateText2Image" for r in self.calls))
+
+    async def test_a_stale_second_slot_marker_blocks_every_mode(self):
+        self.gate = None
+        (self.root / "state").mkdir(mode=0o700)
+        (self.root / "state/image-inflight-1.json").write_text("{}")
+        # The one-slot adapter (any mode after shared) still sees slot 1's marker.
+        response = await self.client.post("/webui/images/generations", headers=self.headers, json=self.image)
+        self.assertEqual(429, response.status_code)
+        self.assertTrue((await self.client.get("/health")).json()["image_recovery_required"])
+        self.assertFalse(any(r.url.path == "/API/GenerateText2Image" for r in self.calls))
+
+    def test_image_slots_are_bounded(self):
+        for slots in (0, 3, "2", True):
+            with self.assertRaises(ValueError, msg=slots):
+                ServiceTools(self.upstream, "http://webui", "http://swarm", "http://gateway",
+                             self.mapping, self.root / "state3", image_slots=slots)
 
 
 if __name__ == "__main__":
