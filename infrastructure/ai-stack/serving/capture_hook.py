@@ -48,10 +48,16 @@ class _Capture:
 
 
 def _rank():
+    """Global rank of this process; TP rank 0 is global rank 0 (one node, TP2, no DP).
+
+    torch.distributed, not an SGLang helper: the pinned build does not export
+    get_tensor_model_parallel_rank from sglang.srt.distributed (a capture on 2026-11-11 saw
+    every process as "not rank 0" and recorded nothing).
+    """
     try:
-        from sglang.srt.distributed import get_tensor_model_parallel_rank
-        return get_tensor_model_parallel_rank()
-    except Exception:  # noqa: BLE001 - not initialised yet (launcher process)
+        import torch.distributed as dist
+        return dist.get_rank() if dist.is_available() and dist.is_initialized() else -1
+    except Exception:  # noqa: BLE001
         return -1
 
 
