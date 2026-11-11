@@ -10,7 +10,9 @@ import endpoint (/api/v1/models/import, Open WebUI 0.12.5) and grants read acces
 named groups only. It needs the admin account's session token (Settings > Account > API keys >
 JWT Token), not an API key: this deployment restricts API keys to a few user endpoints
 (ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS), so an sk- key gets 403 here even for an admin.
-The token is read from a file and never printed; delete the file afterwards.
+Run it from a LAN client such as the owner's Mac: on the workstation itself the request reaches
+Traefik from the pod network and its private-clients allowlist answers 403. The token is read
+from a file and never printed; delete the file afterwards.
 
 Usage: webui_presets.py apply PRESETS.json --url https://chat.example --key-file FILE --group NAME...
 """
@@ -61,9 +63,11 @@ def _request(method, url, key, body=None, context=None):
             return json.loads(response.read(4 << 20) or b"null")
     except urllib.error.HTTPError as error:
         if error.code in (401, 403):
-            raise ValueError(f"Open WebUI refused {method} {url.split('/api/', 1)[-1]} ({error.code}): use the admin "
-                             "account's session token (JWT), not an sk- API key; API keys are restricted to the "
-                             "coding clients' endpoints here") from None
+            raise ValueError(f"refused {method} {url.split('/api/', 1)[-1]} ({error.code}). Run this from a LAN "
+                             "client, not on the workstation itself (Traefik's private-clients allowlist sees the "
+                             "host's own requests from the pod network), and use the admin account's session "
+                             "token (JWT), not an sk- API key (API keys are restricted to the coding clients' "
+                             "endpoints)") from None
         raise
 
 

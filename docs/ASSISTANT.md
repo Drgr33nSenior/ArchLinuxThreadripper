@@ -164,8 +164,10 @@ Open WebUI keeps presets in its database. Apply them with the admin account's **
 token** (Settings → Account → API keys → JWT Token), saved in a `chmod 600` file. An API
 key does not work here: `ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS` limits `sk-` keys to the
 coding clients' endpoints, so the groups and model-import calls answer 403 even for an
-admin's key. Each `--group` gets read access, so presets are never public. Delete the token
-file afterwards:
+admin's key. Run it from a LAN client such as your Mac, not on the workstation itself: the
+host's own requests reach Traefik from the pod network, outside the `private-clients`
+allowlist, and are refused with 403 before Open WebUI sees them. Each `--group` gets read
+access, so presets are never public. Delete the token file afterwards:
 
 ```sh
 python3 lib/workstation/webui_presets.py apply RENDER/webui-presets.json \
