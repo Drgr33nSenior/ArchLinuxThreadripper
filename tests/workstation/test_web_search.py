@@ -99,6 +99,16 @@ class SearchTests(unittest.IsolatedAsyncioTestCase):
         return await self.client.post("/mcp", headers={"Authorization": "Bearer caller-fixture-only"}, json={
             "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": name, "arguments": arguments}})
 
+    def web_error(self, response):
+        # Runtime refusals are MCP tool errors (HTTP 200), so clients keep the session;
+        # returns the refusal detail the model sees.
+        self.assertEqual(200, response.status_code, response.text)
+        result = response.json()["result"]
+        self.assertTrue(result["isError"])
+        detail = json.loads(result["content"][0]["text"])
+        self.assertTrue(detail["error"].startswith("web_"), detail)
+        return detail
+
     def provider_calls(self):
         return [c for c in self.calls if c.url.host == ("api.exa.ai" if self.provider == "exa" else "api.tavily.com")]
 
@@ -146,7 +156,7 @@ class SearchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(2, len(response.json()))
         self.assertEqual(2, self.search.status()["monthly_reserved"])
         self.empty_extract = True
-        self.assertEqual(502, (await self.mcp("read_web_page", {"url": url})).status_code)
+        self.web_error(await self.mcp("read_web_page", {"url": url}))
 
     async def test_read_web_page_continues_with_a_validated_offset(self):
         url = "https://docs.sglang.io/"
@@ -170,9 +180,9 @@ class SearchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(2, self.search.status()["monthly_reserved"])
         # Past the provider text is no evidence; a provider failure stays distinct.
         self.page_text = "short"
-        self.assertEqual(502, (await self.mcp("read_web_page", {"url": url, "offset": 6000})).status_code)
+        self.web_error(await self.mcp("read_web_page", {"url": url, "offset": 6000}))
         self.status_code = 503
-        self.assertEqual(503, (await self.mcp("read_web_page", {"url": url, "offset": 6000})).status_code)
+        self.web_error(await self.mcp("read_web_page", {"url": url, "offset": 6000}))
         metrics = METRICS.render()
         for outcome in ("ok", "no_results", "provider_error", "invalid"):
             self.assertIn('workstation_assistant_web_requests_total{client="webui",outcome="%s",tool="read_continue"}'
@@ -276,7 +286,7 @@ class SearchTests(unittest.IsolatedAsyncioTestCase):
         self.search.policy["monthly_requests"] = 2
         self.status_code = 503
         response = await self.mcp("search_web", {"query": "docs"})
-        self.assertEqual(503, response.status_code)
+        self.web_error(response)
         self.assertNotIn("provider response", response.text)
         self.status_code = 200
         await self.search.search({"query": "docs"})
@@ -289,6 +299,21 @@ class SearchTests(unittest.IsolatedAsyncioTestCase):
         self.now = datetime(2026, 12, 1, tzinfo=timezone.utc)
         await restarted.search({"query": "docs"})
         self.assertEqual(1, restarted.status()["monthly_reserved"])
+
+    async def test_mcp_budget_refusals_tell_the_model_when_to_retry(self):
+        # A coding agent fired ~15 web calls in one minute (2026-11-11): the over-budget
+        # ones must reach the model as tool errors it can act on, not as HTTP failures.
+        self.search.policy.update(requests_per_minute=1, daily_requests=2)
+        self.now = self.now.replace(second=20)
+        self.assertEqual(200, (await self.mcp("search_web", {"query": "docs"})).status_code)
+        self.assertEqual({"error": "web_search_minute_limit", "retry_after_seconds": 40},
+                         self.web_error(await self.mcp("read_web_page", {"url": "https://docs.sglang.io/"})))
+        self.now = self.now.replace(minute=self.now.minute + 1)
+        self.assertEqual(200, (await self.mcp("search_web", {"query": "docs"})).status_code)
+        self.now = self.now.replace(minute=self.now.minute + 1)
+        day = self.web_error(await self.mcp("search_web", {"query": "docs"}))
+        self.assertEqual("web_search_day_limit", day["error"])
+        self.assertIn("continue without web sources", day["note"])
 
     async def test_minute_daily_limits_and_parallel_credit_reservations(self):
         self.search.policy["requests_per_minute"] = 1
@@ -317,33 +342,36 @@ class SearchTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_missing_key_corrupt_ledger_redirect_and_oversize_fail_closed(self):
         self.key.unlink()
-        self.assertEqual(503, (await self.mcp("search_web", {"query": "docs"})).status_code)
+        self.web_error(await self.mcp("search_web", {"query": "docs"}))
         self.assertFalse(self.search.database.exists())
         self.assertEqual("web_search_credential_missing", self.search.status()["status"])
         self.key.write_text("provider-test-credential-only")
         self.status_code = 302
-        self.assertEqual(503, (await self.mcp("search_web", {"query": "docs"})).status_code)
+        self.web_error(await self.mcp("search_web", {"query": "docs"}))
         self.assertEqual(1, len(self.provider_calls()))
         self.status_code, self.large = 200, True
-        self.assertEqual(502, (await self.mcp("search_web", {"query": "docs"})).status_code)
+        self.web_error(await self.mcp("search_web", {"query": "docs"}))
         with sqlite3.connect(self.search.database) as db:
             db.execute("UPDATE usage SET requests = -1")
-        self.assertEqual(503, (await self.mcp("search_web", {"query": "docs"})).status_code)
+        self.web_error(await self.mcp("search_web", {"query": "docs"}))
         self.assertEqual("web_search_accounting_unavailable", self.search.status()["status"])
         with sqlite3.connect(self.search.database) as db:
             db.execute("DROP TABLE usage")
         self.search.database.write_bytes(b"corrupt")
-        self.assertEqual(503, (await self.mcp("search_web", {"query": "docs"})).status_code)
+        self.web_error(await self.mcp("search_web", {"query": "docs"}))
         self.search.database.write_bytes(b"")
-        self.assertEqual(503, (await self.mcp("search_web", {"query": "docs"})).status_code)
+        self.web_error(await self.mcp("search_web", {"query": "docs"}))
         self.assertEqual(2, len(self.provider_calls()))
 
     async def test_provider_throttling_concurrency_and_disabled_legacy(self):
         self.status_code = 429
-        self.assertEqual(429, (await self.mcp("search_web", {"query": "docs"})).status_code)
+        self.assertEqual("web_search_provider_limit", self.web_error(await self.mcp("search_web", {"query": "docs"}))["error"])
         self.status_code, self.slow = 200, True
         responses = await asyncio.gather(*(self.mcp("search_web", {"query": "docs"}) for _ in range(3)))
-        self.assertEqual([200, 200, 429], sorted(r.status_code for r in responses))
+        # Two run, the third is told to wait; none drops the client's connection.
+        self.assertEqual([200, 200, 200], [r.status_code for r in responses])
+        refused = [self.web_error(r) for r in responses if r.json()["result"]["isError"]]
+        self.assertEqual([{"error": "web_search_busy", "retry_after_seconds": 5}], refused)
         self.tools.web_search = None
         self.assertEqual(503, (await self.mcp("search_web", {"query": "docs"})).status_code)
         catalog = await self.client.post("/mcp", headers={"Authorization": "Bearer caller-fixture-only"},
