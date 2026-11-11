@@ -907,8 +907,15 @@ def contract_deployment(contract, objects):
                                       "ai-stack/profile": contract["selection"]["profile"],
                                       "ai-stack/arm": contract["selection"]["arm"]})
     deployment["spec"]["replicas"] = 0
+    # session.sh admits a GPU Deployment only with workstation.ai/qualification: qualified,
+    # the reviewed marker. For SGLang that evidence is the contract status: "active" means an
+    # owner qualification record covers exactly this arm and image digest. Anything else stays
+    # pending, so the session gate keeps refusing it before any workload is stopped.
+    qualified = contract["status"] == "active"
     deployment["metadata"].setdefault("annotations", {}).update({
-        "ai-home-lab.local/qualification": f"serving-contract-{contract['status']}-not-qualified",
+        "workstation.ai/qualification": "qualified" if qualified else f"pending-serving-contract-{contract['status']}",
+        "ai-home-lab.local/qualification": ("serving-contract-active-owner-qualification-record" if qualified
+                                            else f"serving-contract-{contract['status']}-not-qualified"),
         "ai-home-lab.local/serving-contract": contract["contract"],
         "ai-home-lab.local/serving-launch-sha256": contract["runtime"]["launch_sha256"]})
     return deployment
