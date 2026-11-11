@@ -13,4 +13,4 @@ configMapGenerator:
   - name: webui-rag-profile
     envs: [rag.env]
   - name: webui-rag-inputs
-    files: [SHA256SUMS, RERANKER-SHA256SUMS, verify-models.sh, validate-profile.sh, check-reranker.py]
+    files: [SHA256SUMS, RERANKER-SHA256SUMS, WHISPER-SHA256SUMS, verify-models.sh, validate-profile.sh, check-reranker.py]

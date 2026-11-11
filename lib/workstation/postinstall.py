@@ -201,6 +201,11 @@ def steps():
              build=lambda o, out: ws(o, "rag", "stage-reranker", out)),
         Step("rag-verify-reranker", "Verify the staged RAG reranker", uses=("rag-stage-reranker",),
              build=lambda o, out: ws(o, "rag", "verify-reranker", o.output_of("rag-stage-reranker"))),
+        # Local voice input: Open WebUI loads this faster-whisper model from the models volume.
+        Step("rag-stage-whisper", "Stage the pinned speech-to-text model", output="dir",
+             build=lambda o, out: ws(o, "rag", "stage-whisper", out)),
+        Step("rag-verify-whisper", "Verify the staged speech-to-text model", uses=("rag-stage-whisper",),
+             build=lambda o, out: ws(o, "rag", "verify-whisper", o.output_of("rag-stage-whisper"))),
         Step("telemetry-plan", "Telemetry admission plan", run_as="root",
              uses=("resources-plan", "telemetry-render"), output="dir",
              build=lambda o, out: ws(o, "telemetry", "plan", f"{o.output_of('resources-plan')}/resource-plan.json",

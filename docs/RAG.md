@@ -225,6 +225,8 @@ model. It never runs at install time.
 ./bin/workstationctl rag verify-models artifacts/rag-models-01
 ./bin/workstationctl rag stage-reranker artifacts/rag-reranker-01
 ./bin/workstationctl rag verify-reranker artifacts/rag-reranker-01
+./bin/workstationctl rag stage-whisper artifacts/stt-whisper-01
+./bin/workstationctl rag verify-whisper artifacts/stt-whisper-01
 ./bin/workstationctl rag corpus artifacts/rag-corpus-01 \
   docs/AI-PERFORMANCE.md docs/ROCM.md docs/HOME-LAB.md
 kubectl kustomize apps/overlays/rag > artifacts/rag-pilot.yaml
@@ -237,6 +239,19 @@ download leaves partial output for inspection; use a new directory to retry.
 an untrusted download directory. `stage-reranker`/`verify-reranker` follow the
 same contract for the six reranker files (about 92 MB, 100 MB staging bound)
 against `apps/overlays/rag/RERANKER-SHA256SUMS`.
+
+`stage-whisper`/`verify-whisper` do the same for local voice input: the four
+`Systran/faster-whisper-base` files at the revision pinned in `versions.lock`
+(about 148 MB, 160 MB staging bound, MIT) against
+`apps/overlays/rag/WHISPER-SHA256SUMS`. Copy `faster-whisper-base/` beside
+`Qwen3-Embedding-0.6B/` on the models volume.
+- Open WebUI loads it with `WHISPER_MODEL=/rag-models/faster-whisper-base`: a
+  directory, so faster-whisper reads it from disk on the CPU (int8) with no Hub
+  lookup, and audio never leaves the workstation.
+- The init container verifies it whenever the directory exists. Before it is staged,
+  Open WebUI still starts and voice input reports the missing model.
+- The assistant experience allows the microphone for every account
+  (`USER_PERMISSIONS_CHAT_STT=true`).
 
 `corpus` accepts only explicitly named repository `docs/*.md` files, rejects
 escaping paths/symlinks and limits each preparation to 20 files / 20 MiB. It

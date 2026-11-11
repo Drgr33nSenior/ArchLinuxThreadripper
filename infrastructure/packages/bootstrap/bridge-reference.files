@@ -30,6 +30,7 @@ apps/overlays/parent/profile.yaml
 apps/overlays/rag-dense/kustomization.yaml
 apps/overlays/rag/SHA256SUMS
 apps/overlays/rag/RERANKER-SHA256SUMS
+apps/overlays/rag/WHISPER-SHA256SUMS
 apps/overlays/rag/check-reranker.py
 apps/overlays/rag/kustomization.yaml
 apps/overlays/rag/pvc.yaml
