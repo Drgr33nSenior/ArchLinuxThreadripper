@@ -488,8 +488,11 @@ for arm in profile["arms"]:
     # carries, so a bench never replaces the family service's routing.
     assert not any(item["kind"] == "Service" for item in items)
     assert job["spec"]["template"]["metadata"]["labels"]["ai-stack/sglang-server"] == "true"
+    # ... and declares the port the Service targets by name (targetPort: api).
+    assert job["spec"]["template"]["spec"]["containers"][0]["ports"] == [{"name": "api", "containerPort": 30000}]
     apps = root.parents[1] / "apps/base/sglang"
     assert "  selector: {ai-stack/sglang-server: 'true'}\n" in (apps / "service.yaml").read_text()
+    assert "targetPort: api}" in (apps / "service.yaml").read_text()
     assert "labels: {app.kubernetes.io/name: sglang, ai-stack/sglang-server: 'true'}" in (apps / "deployment.yaml").read_text()
     pod = job["spec"]["template"]["spec"]
     c = pod["containers"][0]

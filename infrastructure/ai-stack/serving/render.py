@@ -150,6 +150,9 @@ def job(profile, catalog, image, arm, bench=None):
         "imagePullPolicy": "IfNotPresent",
         "command": ["bash", "-c", script, f"sglang-{kind}"],
         "args": argv,
+        # The serving `sglang` Service targets the port named "api"; without it the Service
+        # has no endpoint for this pod and telemetry cannot scrape the running server.
+        "ports": [{"name": "api", "containerPort": PORT}],
         "env": environment(profile, arm) + [{"name": "SERVED_MODEL_NAME", "value": profile["served_model_name"]}],
         # The serving Deployment's 24Gi plus room for the bench client. 38Gi stopped fitting on
         # gr33nstein (44.1 GiB allocatable) once the assistant services requested 12.4 GiB, and
