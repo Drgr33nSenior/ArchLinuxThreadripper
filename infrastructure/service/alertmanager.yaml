@@ -96,8 +96,9 @@ spec:
         - podSelector: {matchLabels: {app.kubernetes.io/name: prometheus}}
       ports: [{protocol: TCP, port: 9093}]
   # Owner adds only the chosen notification receiver IP/port. No general
-  # Internet egress. DNS is allowed by the existing namespace policy.
-  egress: []
+  # Internet egress. DNS is allowed by the existing namespace policy. Egress in
+  # policyTypes with no egress rules denies all; an empty list is not written,
+  # because the API server drops it and every apply would then re-save the policy.
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
