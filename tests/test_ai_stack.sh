@@ -163,6 +163,30 @@ for private in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16
     assert f"- {private}" in policy, private
 PY
   fail 'model-fetch-egress must give the fetch Job pods public HTTPS only'
+# kernel_check.py renders the UQ2 kernel check: one card by PCI address, digest-pinned
+# image, the serving repository's tool in a ConfigMap, both gfx1201 switches, no model.
+serving_fake=$(mktemp -d)
+mkdir -p "$serving_fake/tools" && printf 'print("check")\n' >"$serving_fake/tools/check_fp8_kv_dequant.py"
+python3 -I - "$root/infrastructure/ai-stack/serving/kernel_check.py" "$serving_fake" <<'PY' ||
+import json, subprocess, sys
+render = lambda *a: subprocess.run([sys.executable, "-I", sys.argv[1], *a], capture_output=True, text=True)
+image = "registry.lan.thespry.family/local/sglang-gfx1201@sha256:" + "a" * 64
+assert render("registry.lan.thespry.family/local/sglang-gfx1201:latest", "--serving", sys.argv[2]).returncode != 0
+items = json.loads(render(image, "--serving", sys.argv[2], "--quick").stdout)["items"]
+config, claim, job = items
+assert config["data"] == {"check_fp8_kv_dequant.py": 'print("check")\n'}
+request = claim["spec"]["spec"]["devices"]["requests"][0]["exactly"]
+assert request["count"] == 1 and "0000:c3:00.0" in request["selectors"][0]["cel"]["expression"]
+pod = job["spec"]["template"]["spec"]
+c = pod["containers"][0]
+assert c["image"] == image and c["command"][-1] == "--quick" and c["securityContext"]["readOnlyRootFilesystem"]
+env = {e["name"]: e["value"] for e in c["env"]}
+assert env["SGLANG_GFX1201_VERIFY_ATTENTION"] == env["SGLANG_GFX1201_FP8_KV_DEQUANT"] == "1"
+assert pod["securityContext"]["supplementalGroups"] == [987, 983] and pod["resourceClaims"][0]["resourceClaimTemplateName"] == job["metadata"]["name"]
+assert not any("persistentVolumeClaim" in v for v in pod["volumes"])
+PY
+  fail 'kernel_check.py must render a one-card, digest-pinned UQ2 kernel check'
+rm -r "$serving_fake"
 # The image model's catalog entry and the browser image profile pin the same
 # revision and checkpoint hash.
 python3 -I - "$dir/models/sdxl-base-1.0.json" "$root/apps/base/shared-api/image-profile.json" <<'PY' ||
@@ -395,6 +419,20 @@ assert profile["arms"]["X"]["env"][-1]["value"] == str(24 << 20)
 assert argv["Y"] == argv["U"]
 assert ([e["name"] for e in profile["arms"]["Y"]["env"]] ==
         [e["name"] for e in profile["arms"]["U"]["env"]] + ["SGLANG_GFX1201_P1_FROM_KQ3", "SGLANG_GFX1201_PCIE_CUSTOM_AR_MAX_BYTES"])
+# Z, ZF and UQ are Y with fp8 KV caches: Z the draft's, ZF also the target's (stock
+# kernels, a control), UQ ZF plus patch 0026's bf16-compute reader switch.
+def kv(arm):
+    a = argv[arm]
+    return a[a.index("--kv-cache-dtype") + 1], a[a.index("--speculative-draft-kv-cache-dtype") + 1]
+assert (kv("Y"), kv("Z"), kv("ZF"), kv("UQ")) == (("bf16", "bf16"), ("bf16", "fp8_e4m3"), ("fp8_e4m3", "fp8_e4m3"), ("fp8_e4m3", "fp8_e4m3"))
+for arm in ("Z", "ZF", "UQ"):
+    # Only the two KV dtypes differ from Y.
+    assert sorted("bf16" if x == "fp8_e4m3" else x for x in argv[arm]) == sorted(argv["Y"]), arm
+    assert not profile["arms"][arm]["default"], arm
+    assert argv[arm].count("--kv-cache-dtype") == argv[arm].count("--speculative-draft-kv-cache-dtype") == 1, arm
+assert profile["arms"]["Z"]["env"] == profile["arms"]["ZF"]["env"] == profile["arms"]["Y"]["env"]
+assert ([e["name"] for e in profile["arms"]["UQ"]["env"]] ==
+        [e["name"] for e in profile["arms"]["Y"]["env"]] + ["SGLANG_GFX1201_FP8_KV_DEQUANT"])
 for arm in profile["arms"]:
     items = json.loads((work / f"job-{arm}.json").read_text())["items"]
     config, job, service, claims = items
