@@ -330,19 +330,20 @@ for e in profile["args"]:
 for e in profile["env"]:
     assert e["reason"] and e["source"] and e["confidence"] in ("H", "M", "L"), e
 assert sum(1 for arm in profile["arms"].values() if arm["default"]) == 1
-# Shared mode's own default (UQS); the general default stays Y for the large mode.
+# Shared mode's own default (UQS); the general default is UQL for the large mode.
 assert [n for n, a in profile["arms"].items() if a.get("shared_default")] == ["UQS"]
 # One qualification record per qualified arm, each pinned to the image it was measured on.
 records = profile["qualification"] if isinstance(profile["qualification"], list) else [profile["qualification"]]
-assert sorted(r["arm"] for r in records) == ["UQS", "Y"] and len({r["arm"] for r in records}) == len(records)
+assert sorted(r["arm"] for r in records) == ["UQL", "UQS", "Y"] and len({r["arm"] for r in records}) == len(records)
 for r in records:
     assert r["arm"] in profile["arms"] and re.fullmatch(r"registry\.lan\.thespry\.family/local/sglang-gfx1201@sha256:[a-f0-9]{64}", r["image"]), r["arm"]
     assert r["evidence"] and r["host_resources"]["requests"] == r["host_resources"]["limits"], r["arm"]
-# Arm Y (arm U's ports and fusions plus P1 expansion from kq3 records and
-# prefill all-reduces on the PCIe custom all-reduce, without arm V's
-# prefill-attention tile) is the default; arm A stays as the baseline arm, and
+# Arm UQL (arm Y's ports and fusions with FP8 KV at the model's full context) is the
+# default since 2026-11-11; arm Y (arm U's ports and fusions plus P1 expansion from kq3
+# records and prefill all-reduces on the PCIe custom all-reduce, without arm V's
+# prefill-attention tile) stays as its BF16 comparison, arm A as the baseline arm, and
 # K-X as the comparisons for each addition.
-assert profile["arms"]["Y"]["default"] and not profile["arms"]["A"]["default"]
+assert profile["arms"]["UQL"]["default"] and not profile["arms"]["Y"]["default"] and not profile["arms"]["A"]["default"]
 flags = [e["flag"] for e in profile["args"]]
 assert len(flags) == len(set(flags)), "duplicate flag"
 unset = {e["name"] for e in profile["must_unset_env"]}
@@ -474,7 +475,7 @@ assert 2 * (int(flag("UQL", "--context-length")) + 32) <= int(flag("UQL", "--max
 assert int(flag("UQL", "--context-length")) + 32 == 262144  # max_position_embeddings
 assert int(flag("UQL", "--max-total-tokens")) * (16 + 5) == int(flag("Y", "--max-total-tokens")) * (32 + 10)  # KiB/token/card
 assert strip(argv["UQL"]) == strip(argv["UQ"])
-assert profile["arms"]["UQL"]["env"] == profile["arms"]["UQ"]["env"] and not profile["arms"]["UQL"]["default"]
+assert profile["arms"]["UQL"]["env"] == profile["arms"]["UQ"]["env"]
 assert not profile["arms"]["UQL"].get("shared_default")
 for arm in profile["arms"]:
     items = json.loads((work / f"job-{arm}.json").read_text())["items"]

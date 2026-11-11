@@ -123,7 +123,7 @@ Deployment starts exactly what the qualification Job starts.
 | `runtime` | `--runtime-image` (lab registry or its `ghcr.io` copy, pinned by digest); SGLang commit, patch series and GPU target from `stack.lock`; digest of the launch argv and environment |
 | `parsers` | Profile `--reasoning-parser`, `--tool-call-parser`, `--grammar-backend` |
 | `reasoning` | Profile `--default-chat-template-kwargs`; template-accepted efforts; client mapping |
-| `budgets`, `concurrency`, `deadlines` | Profile context, pool and running-request limits; `--output-tokens` (default 12,288, at most half the context, unqualified); gateway admission 4 and 180-second deadline |
+| `budgets`, `concurrency`, `deadlines` | Profile context, pool and running-request limits; `--output-tokens` (default 12,288, at most half the context, unqualified); gateway admission 4; deadline 300 s in large mode (a cold 235K-token prompt takes ~240 s to its first token), 180 s in shared mode |
 | `assets`, `requirements` | Model and draft paths from the argv; `ai-models` claim from `k8s/models.yaml`; GPU count, groups and node label from the profile, `render.py` and `stack.lock` |
 
 `status` is `incomplete` while a deployment input is missing, `provisional`
@@ -153,8 +153,9 @@ as before.
 
 `--mode shared` keeps the two-GPU contract model and adds image generation in the VRAM
 it leaves free on both cards. It renders the profile's shared default arm, UQS (`--arm`
-can still choose another); the large mode keeps the general default, Y. Each arm has its
-own qualification record on its own image, so each mode's contract is `active`:
+can still choose another); the large mode renders the general default, UQL (FP8 KV, the
+model's full 262,112-token context). Each arm has its own qualification record on its own
+image, so each mode's contract is `active`:
 
 ```sh
 ./bin/workstationctl service render /private/service-site.json /private/assistant-shared \

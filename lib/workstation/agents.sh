@@ -107,6 +107,8 @@ ws_agent_configure() (
   # failed behind TLS-inspecting networks (DEPTH_ZERO_SELF_SIGNED_CERT, 2026-11-11); a
   # whole-tool permissions.deny removes it from the registry. Its built-in web_search is
   # registered only for Qwen-cloud auth, which this bundle never selects.
+  # Client timeouts cover the longest gateway deadline (large mode, 300 s: a cold 235K-token
+  # prompt streams nothing for ~240 s), so the gateway, not the client, ends a request.
   # "$version" is Qwen Code's settings schema (SETTINGS_VERSION 4 since 0.27);
   # without it the client migrates the file on first run and the launcher's
   # SHA-256 check then rejects the bundle.
@@ -120,7 +122,7 @@ ws_agent_configure() (
       tools:{approvalMode:"default"},permissions:{deny:["WebFetch"]},context:{fileName:["AGENTS.md","QWEN.md"]},
       model:{name:$model},modelProviders:{openai:[{id:$model,name:"Workstation local Qwen",
         baseUrl:$url,envKey:"WORKSTATION_AGENT_API_KEY",generationConfig:{contextWindowSize:$context,
-          timeout:180000,streamIdleTimeoutMs:180000,maxRetries:0,
+          timeout:300000,streamIdleTimeoutMs:300000,maxRetries:0,
           samplingParams:({max_tokens:$output} + $defaults)}}]} } +
       (if $retrieval=="" then {} else {mcpServers:{workstationKnowledge:{httpUrl:$retrieval,
         headers:{Authorization:"Bearer ${WORKSTATION_RETRIEVAL_API_KEY}"},trust:false,timeout:35000,

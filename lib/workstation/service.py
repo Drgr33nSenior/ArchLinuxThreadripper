@@ -632,6 +632,11 @@ CATALOGUE_STATES = {"candidate": False, "selected": True}
 # shares the same budget. 12288 tokens decode in ~105-135 s (113-117 tok/s at 32-64K,
 # ~92 at 120K, measured), inside the route's 170 s timeout and the 180 s deadline.
 DEFAULT_OUTPUT_TOKENS = 12288
+# Gateway deadline per mode (the route times out 10 s earlier). Large mode serves 262K
+# contexts: a cold 235K-token prompt took 238.7 s to its first token (arm UQL, 2026-11-11),
+# so 300 s leaves ~60 s of answer for it. Shared mode's 81,888-token context prefills in
+# under 30 s and keeps 180 s, so a stuck request frees its slot sooner beside the images.
+DEADLINE_SECONDS = {"large": 300, "shared": 180}
 
 
 def ai_stack_render():
@@ -717,8 +722,10 @@ def host_resources(profile, arm_name):
 
 
 def serving_contract(profile_path=SERVING_PROFILE, arm=None, runtime_image=None,
-                     output_tokens=DEFAULT_OUTPUT_TOKENS, deadline_seconds=180, reserve_tokens=16, mode="large"):
+                     output_tokens=DEFAULT_OUTPUT_TOKENS, deadline_seconds=None, reserve_tokens=16, mode="large"):
     """Build the serving contract from the owner's profile, catalogue and stack lock."""
+    if deadline_seconds is None:
+        deadline_seconds = DEADLINE_SECONDS.get(mode, 180)
     render_module = ai_stack_render()
     profile_path = Path(profile_path).resolve()
     profile, catalog = render_module.load(profile_path)
@@ -942,6 +949,10 @@ def apply_contract(objects, contract, mode, experience):
             config = yaml.safe_load(data["litellm.yaml"])
             config["model_list"] = [rendered["route"]] + [route for route in config["model_list"]
                                                           if route["model_name"] not in {LEGACY_ALIAS, alias}]
+            # The global fallbacks must not undercut the contract route's own timeout.
+            route_timeout = rendered["route"]["litellm_params"]["timeout"]
+            config.setdefault("router_settings", {})["timeout"] = route_timeout
+            config.setdefault("litellm_settings", {})["request_timeout"] = route_timeout
             data["litellm.yaml"] = yaml.safe_dump(config, sort_keys=False)
             data["gateway-policy.json"] = json.dumps(gateway_policy(contract, rendered, mode), indent=2) + "\n"
         elif kind == "ConfigMap" and data.get("MEMORY_LLM_MODEL") == LEGACY_ALIAS:
