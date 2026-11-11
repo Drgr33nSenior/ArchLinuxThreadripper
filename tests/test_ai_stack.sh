@@ -237,6 +237,17 @@ PY
 render=$dir/serving/render.py
 digest=registry.lan.thespry.family/local/sglang-gfx1201@sha256:$(printf '0%.0s' {1..64})
 python3 -I -m py_compile "$render" "$dir/serving/qualify.py" "$dir/serving/bench.py" || fail 'serving scripts do not compile'
+# bench.py's long-context phase skips depths beyond the server's context length (UQS:
+# 81,888), and runs every depth for the full-context arms (131,040) or an unknown limit.
+python3 -I - "$dir/serving" <<'PY' || fail 'bench.py must skip only long-context depths that do not fit'
+import sys
+sys.path.insert(0, sys.argv[1])
+import bench
+fits = lambda limit: [bench.long_context_fits(d, limit) for d in bench.LONG_CONTEXT_DEPTHS]
+assert bench.LONG_CONTEXT_DEPTHS == (32000, 64000, 120000)
+assert fits(131040) == [True, True, True] and fits(None) == [True, True, True]
+assert fits(81888) == [True, True, False]
+PY
 # A minimal stand-in for the serving repository's vendored BetterBench.
 bb=$work/serving-repo/benchmarks/betterbench/native-v2
 mkdir -p "$bb/upstream/betterbench" "$bb/upstream/corpus/v1" "$bb/upstream/docs"
@@ -433,6 +444,19 @@ for arm in ("Z", "ZF", "UQ"):
 assert profile["arms"]["Z"]["env"] == profile["arms"]["ZF"]["env"] == profile["arms"]["Y"]["env"]
 assert ([e["name"] for e in profile["arms"]["UQ"]["env"]] ==
         [e["name"] for e in profile["arms"]["Y"]["env"]] + ["SGLANG_GFX1201_FP8_KV_DEQUANT"])
+# UQS (shared mode: chat + pictures) is UQ with a smaller KV pool; two full conversations
+# still fit it, and nothing else differs.
+def flag(arm, name):
+    a = argv[arm]
+    assert a.count(name) == 1, (arm, name)
+    return a[a.index(name) + 1]
+assert (flag("UQS", "--max-total-tokens"), flag("UQS", "--context-length")) == ("163840", "81888")
+assert 2 * (int(flag("UQS", "--context-length")) + 32) <= int(flag("UQS", "--max-total-tokens"))
+assert int(flag("UQS", "--max-total-tokens")) < int(flag("UQ", "--max-total-tokens"))
+strip = lambda a: [x for i, x in enumerate(a) if x not in ("--max-total-tokens", "--context-length")
+                   and (i == 0 or a[i - 1] not in ("--max-total-tokens", "--context-length"))]
+assert strip(argv["UQS"]) == strip(argv["UQ"])
+assert profile["arms"]["UQS"]["env"] == profile["arms"]["UQ"]["env"] and not profile["arms"]["UQS"]["default"]
 for arm in profile["arms"]:
     items = json.loads((work / f"job-{arm}.json").read_text())["items"]
     config, job, service, claims = items

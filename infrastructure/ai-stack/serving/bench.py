@@ -54,11 +54,32 @@ REQUEST_TIMEOUT_SECONDS = 300  # op233 used 120; a timeout only fails a request,
 LONG_CONTEXT_DEPTHS = (32000, 64000, 120000)
 LONG_CONTEXT_OUTPUT = 1024
 LONG_CONTEXT_TIMEOUT_SECONDS = 900
+# Prompt tokens per unit of depth for the filler document (measured: depths 32000 / 64000 /
+# 120000 gave about 23.6k / 47.0k / 88.1k tokens), and room for the chat template.
+LONG_CONTEXT_TOKENS_PER_DEPTH = 0.74
+LONG_CONTEXT_TEMPLATE_MARGIN = 256
 
 
 def get(base, path, timeout=10):
     with urllib.request.urlopen(base + path, timeout=timeout) as resp:
         return resp.status, resp.read().decode()
+
+
+def context_limit(base):
+    """The served model's context length (max_model_len from /v1/models), or None if unknown."""
+    try:
+        models = json.loads(get(base, "/v1/models")[1])["data"]
+        return int(models[0]["max_model_len"])
+    except (OSError, ValueError, KeyError, IndexError, TypeError):
+        return None
+
+
+def long_context_fits(depth, limit):
+    """Whether a long-context depth's prompt plus its output fits the server's context length."""
+    if limit is None:
+        return True
+    need = int(depth * LONG_CONTEXT_TOKENS_PER_DEPTH) + LONG_CONTEXT_TEMPLATE_MARGIN + LONG_CONTEXT_OUTPUT
+    return need <= limit
 
 
 def counters(base):
@@ -146,7 +167,12 @@ def main():
     from betterbench.prefill import _filler
 
     raw["long_context"], long_context = [], {}
+    limit = context_limit(base)
     for depth in LONG_CONTEXT_DEPTHS:
+        if not long_context_fits(depth, limit):
+            # An arm with a smaller context (UQS) skips the depths it cannot serve; skipped, not failed.
+            long_context[str(depth)] = {"skipped": f"prompt and output exceed context length {limit}"}
+            continue
         nonce = f"{salt}long-{depth}"
         document = _filler(depth * 4, nonce)
         messages = [{"role": "user", "content": (
