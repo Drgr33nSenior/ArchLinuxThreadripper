@@ -107,6 +107,10 @@ ws_agent_configure() (
   # failed behind TLS-inspecting networks (DEPTH_ZERO_SELF_SIGNED_CERT, 2026-11-11); a
   # whole-tool permissions.deny removes it from the registry. Its built-in web_search is
   # registered only for Qwen-cloud auth, which this bundle never selects.
+  # tools.eager keeps only the coding core's schemas in every request (Qwen Code 0.27.1
+  # names). Other eager-by-default built-ins (skill, agent, memory, plan mode, web) are
+  # deferred: still registered, loaded on demand through the tool_search/tool_call bridge,
+  # so a local model's context is not spent on tools a session may never use.
   # Client timeouts cover the longest gateway deadline (large mode, 300 s: a cold 235K-token
   # prompt streams nothing for ~240 s), so the gateway, not the client, ends a request.
   # "$version" is Qwen Code's settings schema (SETTINGS_VERSION 4 since 0.27);
@@ -119,7 +123,8 @@ ws_agent_configure() (
     --argjson context "$AGENT_CONTEXT_TOKENS" --argjson output "$AGENT_MAX_OUTPUT_TOKENS" --argjson defaults "$defaults" \
     '{"$version":4,general:{enableAutoUpdate:false},privacy:{usageStatisticsEnabled:false},telemetry:{enabled:false},
       security:{auth:{selectedType:"openai"},folderTrust:{enabled:true}},
-      tools:{approvalMode:"default"},permissions:{deny:["WebFetch"]},context:{fileName:["AGENTS.md","QWEN.md"]},
+      tools:{approvalMode:"default",eager:["read_file","edit","write_file","list_directory","grep_search","glob",
+        "run_shell_command","todo_write","ask_user_question"]},permissions:{deny:["WebFetch"]},context:{fileName:["AGENTS.md","QWEN.md"]},
       model:{name:$model},modelProviders:{openai:[{id:$model,name:"Workstation local Qwen",
         baseUrl:$url,envKey:"WORKSTATION_AGENT_API_KEY",generationConfig:{contextWindowSize:$context,
           timeout:300000,streamIdleTimeoutMs:300000,maxRetries:0,
