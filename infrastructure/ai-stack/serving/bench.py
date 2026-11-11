@@ -51,7 +51,11 @@ REQUEST_TIMEOUT_SECONDS = 300  # op233 used 120; a timeout only fails a request,
 # Long-context decode: one request per depth over a unique filler document,
 # exactly LONG_CONTEXT_OUTPUT generated tokens so every arm decodes the same
 # amount. Not part of op233's profile; added to measure verify cost at depth.
-LONG_CONTEXT_DEPTHS = (32000, 64000, 120000)
+# 320000 (about 237k prompt tokens) runs only on full-context arms (UQL, 262,112).
+LONG_CONTEXT_DEPTHS = (32000, 64000, 120000, 320000)
+# Depths an unknown context limit still runs (the original three), so an older server
+# never fails a depth it cannot hold.
+LONG_CONTEXT_LEGACY_MAX_DEPTH = 120000
 LONG_CONTEXT_OUTPUT = 1024
 LONG_CONTEXT_TIMEOUT_SECONDS = 900
 # Prompt tokens per unit of depth for the filler document (measured: depths 32000 / 64000 /
@@ -77,7 +81,7 @@ def context_limit(base):
 def long_context_fits(depth, limit):
     """Whether a long-context depth's prompt plus its output fits the server's context length."""
     if limit is None:
-        return True
+        return depth <= LONG_CONTEXT_LEGACY_MAX_DEPTH
     need = int(depth * LONG_CONTEXT_TOKENS_PER_DEPTH) + LONG_CONTEXT_TEMPLATE_MARGIN + LONG_CONTEXT_OUTPUT
     return need <= limit
 

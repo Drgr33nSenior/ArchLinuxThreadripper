@@ -47,7 +47,7 @@ grep -Fq 'install -y --no-install-recommends libgomp1 libatomic1 gcc g++ libc6-d
 grep -Fq 'HIP_DEVICE_LIB_PATH=/usr/local/lib/python3.14/site-packages/_rocm_sdk_devel/amdgcn/bitcode' "$dir/image/Containerfile" ||
   fail 'runtime image does not point hipcc at the device bitcode (SGLang JIT kernels fail to build)'
 grep -Fq 'HIP C++ JIT compile failed' "$dir/image/smoke.py" || fail 'image smoke test does not compile a HIP C++ JIT kernel'
-grep -Fq 'LONG_CONTEXT_DEPTHS = (32000, 64000, 120000)' "$dir/serving/bench.py" || fail 'bench has no long-context decode phase'
+grep -Fq 'LONG_CONTEXT_DEPTHS = (32000, 64000, 120000, 320000)' "$dir/serving/bench.py" || fail 'bench has no long-context decode phase'
 grep -Fq 'min_tokens=LONG_CONTEXT_OUTPUT' "$dir/serving/bench.py" || fail 'long-context phase does not fix its output length'
 for check in 'split-K down/out GEMM outside the op234 limits' 'packed GDN projection differs' 'FP8 LM head route missing' \
   'fused GDN norm quantization differs'; do
@@ -238,15 +238,17 @@ render=$dir/serving/render.py
 digest=registry.lan.thespry.family/local/sglang-gfx1201@sha256:$(printf '0%.0s' {1..64})
 python3 -I -m py_compile "$render" "$dir/serving/qualify.py" "$dir/serving/bench.py" || fail 'serving scripts do not compile'
 # bench.py's long-context phase skips depths beyond the server's context length (UQS:
-# 81,888), and runs every depth for the full-context arms (131,040) or an unknown limit.
+# 81,888; Y: 131,040), runs every depth at the model's full context (UQL: 262,112), and
+# only the original three for an unknown limit.
 python3 -I - "$dir/serving" <<'PY' || fail 'bench.py must skip only long-context depths that do not fit'
 import sys
 sys.path.insert(0, sys.argv[1])
 import bench
 fits = lambda limit: [bench.long_context_fits(d, limit) for d in bench.LONG_CONTEXT_DEPTHS]
-assert bench.LONG_CONTEXT_DEPTHS == (32000, 64000, 120000)
-assert fits(131040) == [True, True, True] and fits(None) == [True, True, True]
-assert fits(81888) == [True, True, False]
+assert bench.LONG_CONTEXT_DEPTHS == (32000, 64000, 120000, 320000)
+assert fits(262112) == [True, True, True, True]
+assert fits(131040) == [True, True, True, False] and fits(None) == [True, True, True, False]
+assert fits(81888) == [True, True, False, False]
 PY
 # A minimal stand-in for the serving repository's vendored BetterBench.
 bb=$work/serving-repo/benchmarks/betterbench/native-v2
@@ -465,6 +467,15 @@ strip = lambda a: [x for i, x in enumerate(a) if x not in ("--max-total-tokens",
                    and (i == 0 or a[i - 1] not in ("--max-total-tokens", "--context-length"))]
 assert strip(argv["UQS"]) == strip(argv["UQ"])
 assert profile["arms"]["UQS"]["env"] == profile["arms"]["UQ"]["env"] and not profile["arms"]["UQS"]["default"]
+# UQL (large mode at the model's full context) is UQ with a full-size pool: two complete
+# 262,112-token conversations, and the same bytes per card as Y's BF16 pool.
+assert (flag("UQL", "--max-total-tokens"), flag("UQL", "--context-length")) == ("524288", "262112")
+assert 2 * (int(flag("UQL", "--context-length")) + 32) <= int(flag("UQL", "--max-total-tokens"))
+assert int(flag("UQL", "--context-length")) + 32 == 262144  # max_position_embeddings
+assert int(flag("UQL", "--max-total-tokens")) * (16 + 5) == int(flag("Y", "--max-total-tokens")) * (32 + 10)  # KiB/token/card
+assert strip(argv["UQL"]) == strip(argv["UQ"])
+assert profile["arms"]["UQL"]["env"] == profile["arms"]["UQ"]["env"] and not profile["arms"]["UQL"]["default"]
+assert not profile["arms"]["UQL"].get("shared_default")
 for arm in profile["arms"]:
     items = json.loads((work / f"job-{arm}.json").read_text())["items"]
     config, job, claims = items
