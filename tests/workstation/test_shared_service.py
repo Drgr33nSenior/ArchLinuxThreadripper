@@ -895,6 +895,33 @@ class ServingContractTests(unittest.TestCase):
                 self.assertRaisesRegex(ValueError, "unknown model catalogue status"):
             service.serving_contract(self.PROFILE)
 
+    def test_session_gate_admits_sglang_only_with_an_owner_qualified_contract(self):
+        # Run session.sh's own Deployment gate (extracted, so it cannot drift) on the rendered
+        # SGLang Deployment: an active contract (owner record for this arm and image) passes,
+        # a provisional one is refused before any workload would be stopped.
+        import re
+        import shutil
+        import subprocess
+        if shutil.which("jq") is None:
+            self.skipTest("jq is required to run the session gate")
+        source = (ROOT / "lib/workstation/session.sh").read_text()
+        gate = re.search(r"jq -e '(\.metadata\.annotations\[\"workstation\.ai/qualification\"\].*?)' <<<\"\$document\"",
+                         source, re.S).group(1)
+        default = next(name for name, arm in self.profile["arms"].items() if arm.get("default"))
+        records = [{"arm": default, "image": self.IMAGE}]
+        path = self.write_profile(dict(self.profile, status="qualified", qualification=records))
+        with patch.dict(service.CATALOGUE_STATES, {"candidate": True, "selected": True}):
+            for image, status, admitted in ((self.IMAGE, "active", True), (self.IMAGE[:-1] + "b", "provisional", False)):
+                contract = service.serving_contract(path, runtime_image=image)
+                self.assertEqual(status, contract["status"])
+                objects, _, _ = service.apply_contract(service.kustomize(ROOT / "apps/overlays/assistant"),
+                                                       contract, "large", "assistant")
+                sglang = next(o for o in objects if o["kind"] == "Deployment" and o["metadata"]["name"] == "sglang")
+                marker = sglang["metadata"]["annotations"]["workstation.ai/qualification"]
+                self.assertEqual("qualified" if admitted else "pending-serving-contract-provisional", marker)
+                result = subprocess.run(["jq", "-e", gate], input=json.dumps(sglang), capture_output=True, text=True)
+                self.assertEqual(admitted, result.returncode == 0, (status, result.stderr))
+
     def test_each_qualified_arm_is_active_on_its_own_image_and_shared_mode_defaults_to_its_arm(self):
         default = next(name for name, arm in self.profile["arms"].items() if arm.get("default"))
         other = next(name for name in self.profile["arms"] if name != default)
