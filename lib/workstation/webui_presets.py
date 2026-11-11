@@ -7,7 +7,12 @@ contract's request defaults (thinking at its default effort); the presets add:
   Fast   thinking off
 Open WebUI stores presets in its database, so `apply` upserts them through the admin
 import endpoint (/api/v1/models/import, Open WebUI 0.12.5) and grants read access to the
-named groups only. The admin API key is read from a file and never printed.
+named groups only. It needs the admin account's session token (Settings > Account > API keys >
+JWT Token), not an API key: this deployment restricts API keys to a few user endpoints
+(ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS), so an sk- key gets 403 here even for an admin.
+Run it from a LAN client such as the owner's Mac: on the workstation itself the request reaches
+Traefik from the pod network and its private-clients allowlist answers 403. The token is read
+from a file and never printed; delete the file afterwards.
 
 Usage: webui_presets.py apply PRESETS.json --url https://chat.example --key-file FILE --group NAME...
 """
@@ -16,6 +21,7 @@ import json
 import re
 import ssl
 import sys
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -52,8 +58,17 @@ def _request(method, url, key, body=None, context=None):
     data = None if body is None else json.dumps(body).encode()
     request = urllib.request.Request(url, data=data, method=method,
                                      headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"})
-    with urllib.request.urlopen(request, timeout=30, context=context) as response:
-        return json.loads(response.read(4 << 20) or b"null")
+    try:
+        with urllib.request.urlopen(request, timeout=30, context=context) as response:
+            return json.loads(response.read(4 << 20) or b"null")
+    except urllib.error.HTTPError as error:
+        if error.code in (401, 403):
+            raise ValueError(f"refused {method} {url.split('/api/', 1)[-1]} ({error.code}). Run this from a LAN "
+                             "client, not on the workstation itself (Traefik's private-clients allowlist sees the "
+                             "host's own requests from the pod network), and use the admin account's session "
+                             "token (JWT), not an sk- API key (API keys are restricted to the coding clients' "
+                             "endpoints)") from None
+        raise
 
 
 def apply(rows, url, key, groups, context=None):
@@ -81,7 +96,8 @@ def main(argv=None):
     run = sub.add_parser("apply", help="upsert rendered presets into Open WebUI")
     run.add_argument("presets", type=Path)
     run.add_argument("--url", required=True, help="Open WebUI base URL, e.g. https://chat.lan.example")
-    run.add_argument("--key-file", required=True, type=Path, help="file holding an admin API key (0600)")
+    run.add_argument("--key-file", required=True, type=Path,
+                     help="file holding the admin account's session token (JWT), mode 0600")
     run.add_argument("--group", action="append", default=[], help="group granted read access (repeatable)")
     args = parser.parse_args(argv)
     if not args.url.startswith("https://"):
@@ -92,7 +108,10 @@ def main(argv=None):
     if not key or any(c.isspace() for c in key):
         parser.error("--key-file must hold one API key")
     rows = json.loads(args.presets.read_text())
-    applied = apply(rows, args.url, key, args.group, context=ssl.create_default_context())
+    try:
+        applied = apply(rows, args.url, key, args.group, context=ssl.create_default_context())
+    except ValueError as error:
+        parser.exit(1, f"webui_presets: {error}\n")
     print("applied presets: " + ", ".join(applied) + "; read access: " + ", ".join(args.group))
 
 
