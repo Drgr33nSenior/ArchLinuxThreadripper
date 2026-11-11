@@ -9,7 +9,7 @@ configMapGenerator:
     namespace: workstation-observability-host
     files: [config.alloy]
 patches:
-  # Room for the collector beside node-exporter in the host namespace.
+  # Room for the collector (2Gi) beside node-exporter (192Mi) in the host namespace.
   - target:
       kind: ResourceQuota
       name: host-collector-budget
@@ -17,7 +17,7 @@ patches:
     patch: |-
       - op: replace
         path: /spec/hard/limits.memory
-        value: 1536Mi
+        value: 2560Mi
       - op: replace
         path: /spec/hard/pods
         value: '3'
