@@ -317,7 +317,7 @@ PY
     fail 'qualification Job accepted an image without a digest'
   fi
   python3 -I - "$profile" "$work" "$dir" <<'PY' || fail "serving profile: $profile"
-import json, pathlib, sys
+import json, pathlib, re, sys
 profile, work, root = json.load(open(sys.argv[1])), pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3])
 assert profile["schema"] == 1 and profile["status"] in ("unqualified", "qualified")
 assert (root / "models" / f"{profile['model']}.json").exists()
@@ -328,6 +328,14 @@ for e in profile["args"]:
 for e in profile["env"]:
     assert e["reason"] and e["source"] and e["confidence"] in ("H", "M", "L"), e
 assert sum(1 for arm in profile["arms"].values() if arm["default"]) == 1
+# Shared mode's own default (UQS); the general default stays Y for the large mode.
+assert [n for n, a in profile["arms"].items() if a.get("shared_default")] == ["UQS"]
+# One qualification record per qualified arm, each pinned to the image it was measured on.
+records = profile["qualification"] if isinstance(profile["qualification"], list) else [profile["qualification"]]
+assert sorted(r["arm"] for r in records) == ["UQS", "Y"] and len({r["arm"] for r in records}) == len(records)
+for r in records:
+    assert r["arm"] in profile["arms"] and re.fullmatch(r"registry\.lan\.thespry\.family/local/sglang-gfx1201@sha256:[a-f0-9]{64}", r["image"]), r["arm"]
+    assert r["evidence"] and r["host_resources"]["requests"] == r["host_resources"]["limits"], r["arm"]
 # Arm Y (arm U's ports and fusions plus P1 expansion from kq3 records and
 # prefill all-reduces on the PCIe custom all-reduce, without arm V's
 # prefill-attention tile) is the default; arm A stays as the baseline arm, and

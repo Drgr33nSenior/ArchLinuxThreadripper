@@ -886,6 +886,33 @@ class ServingContractTests(unittest.TestCase):
                 self.assertRaisesRegex(ValueError, "unknown model catalogue status"):
             service.serving_contract(self.PROFILE)
 
+    def test_each_qualified_arm_is_active_on_its_own_image_and_shared_mode_defaults_to_its_arm(self):
+        default = next(name for name, arm in self.profile["arms"].items() if arm.get("default"))
+        other = next(name for name in self.profile["arms"] if name != default)
+        other_image = self.IMAGE[:-1] + "b"
+        arms = {name: dict(spec, shared_default=(name == other)) for name, spec in self.profile["arms"].items()}
+        records = [{"arm": default, "image": self.IMAGE}, {"arm": other, "image": other_image}]
+        path = self.write_profile(dict(self.profile, status="qualified", qualification=records, arms=arms))
+        with patch.dict(service.CATALOGUE_STATES, {"candidate": True, "selected": True}):
+            large = service.serving_contract(path, runtime_image=self.IMAGE)
+            self.assertEqual((default, "profile-default", "active"),
+                             (large["selection"]["arm"], large["selection"]["arm_source"], large["status"]))
+            shared = service.serving_contract(path, runtime_image=other_image, mode="shared")
+            self.assertEqual((other, "profile-shared-default", "active"),
+                             (shared["selection"]["arm"], shared["selection"]["arm_source"], shared["status"]))
+            # Each record covers its own image only; an explicit arm still wins.
+            self.assertEqual("provisional", service.serving_contract(path, runtime_image=self.IMAGE, mode="shared")["status"])
+            explicit = service.serving_contract(path, arm=default, runtime_image=self.IMAGE, mode="shared")
+            self.assertEqual((default, "explicit", "active"),
+                             (explicit["selection"]["arm"], explicit["selection"]["arm_source"], explicit["status"]))
+        # Without a shared default, shared mode uses the general default; two are refused.
+        unmarked = {name: {k: v for k, v in spec.items() if k != "shared_default"} for name, spec in self.profile["arms"].items()}
+        plain = self.write_profile(dict(self.profile, qualification=records, arms=unmarked))
+        self.assertEqual(default, service.serving_contract(plain, mode="shared")["selection"]["arm"])
+        both = {name: dict(spec, shared_default=True) for name, spec in self.profile["arms"].items()}
+        with self.assertRaisesRegex(ValueError, "at most one arm"):
+            service.serving_contract(self.write_profile(dict(self.profile, arms=both)), mode="shared")
+
     def test_measured_host_resources_come_from_the_qualification_record(self):
         measured = {"requests": {"cpu": "8", "memory": "12Gi"}, "limits": {"cpu": "16", "memory": "24Gi"},
                     "evidence": "fixture"}

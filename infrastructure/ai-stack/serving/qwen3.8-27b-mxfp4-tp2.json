@@ -2,26 +2,48 @@
   "schema": 1,
   "profile": "qwen3.8-27b-mxfp4-tp2",
   "status": "qualified",
-  "qualification": {
-    "date": "2026-11-10",
-    "decision": "owner",
-    "arm": "Y",
-    "image": "registry.lan.thespry.family/local/sglang-gfx1201@sha256:4b157a4eddd3b214e3092ff84eec6a0ffd4e3b3c5398d2a30d937970510dd865",
-    "stack_lock_patchset": "bf388330f6af1fb8f67dd8f8ea0670de954c5a1ffad0397869632daa33d04321",
-    "evidence": "Three BetterBench bench Jobs of arm Y on this image (sglang-bench-y-0113d00cca-r1..r3): C1 / C2 median 139.2 / 254.7 tokens/s (135.0-145.3 / 230.2-257.8), verify step 26.93-26.96 ms, prefill 3,868 / 3,853 / 3,618 tokens/s at 2K / 8K / 16K, first token 17.9 / 44.2 s at 47K / 88K; assistant quality menu 11 passed, 0 failed, 1 needs-review, 14 not run (no sandbox or long-context budget) in every run; no tracebacks; 0024/0025 routes on both ranks.",
-    "host_resources": {
-      "requests": {
-        "cpu": "16",
-        "memory": "14Gi"
+  "qualification": [
+    {
+      "date": "2026-11-10",
+      "decision": "owner",
+      "arm": "Y",
+      "image": "registry.lan.thespry.family/local/sglang-gfx1201@sha256:4b157a4eddd3b214e3092ff84eec6a0ffd4e3b3c5398d2a30d937970510dd865",
+      "stack_lock_patchset": "bf388330f6af1fb8f67dd8f8ea0670de954c5a1ffad0397869632daa33d04321",
+      "evidence": "Three BetterBench bench Jobs of arm Y on this image (sglang-bench-y-0113d00cca-r1..r3): C1 / C2 median 139.2 / 254.7 tokens/s (135.0-145.3 / 230.2-257.8), verify step 26.93-26.96 ms, prefill 3,868 / 3,853 / 3,618 tokens/s at 2K / 8K / 16K, first token 17.9 / 44.2 s at 47K / 88K; assistant quality menu 11 passed, 0 failed, 1 needs-review, 14 not run (no sandbox or long-context budget) in every run; no tracebacks; 0024/0025 routes on both ranks.",
+      "host_resources": {
+        "requests": {
+          "cpu": "16",
+          "memory": "14Gi"
+        },
+        "limits": {
+          "cpu": "16",
+          "memory": "14Gi"
+        },
+        "evidence": "Measured on the workstation (NAS Prometheus, cAdvisor, container sglang): arm Y bench runs RSS 8.0 GiB, working set 9.65 GiB, CPU peak 7.0 cores (2-minute rate); the highest working set of any U-Y run was 19.7 GiB (first load of a new image, page cache); RSS peak over all 62 SGLang runs 9.2 GiB. The earlier 38 GiB / 24 CPU allowance was an unmeasured estimate. Requests equal limits (14 GiB, 16 CPU) because session switch admits only Guaranteed-QoS GPU workloads. Lowered from 24 GiB on 2026-11-11: a UQS bench with the whole pod (server plus bench client) limited to 16 GiB passed every phase with no OOM kill, anon peak 8.01 GiB, and the same speed and quality as at 30 GiB (29.8 / 31.0 ms per verify step at 32k / 64k, 11 / 0 / 1); the excess was model-file page cache, which fills any limit and is reclaimable. 14 GiB leaves ~4.8 GiB above the highest RSS of any run (9.2 GiB) and frees room for the shared-mode image generators."
       },
-      "limits": {
-        "cpu": "16",
-        "memory": "14Gi"
-      },
-      "evidence": "Measured on the workstation (NAS Prometheus, cAdvisor, container sglang): arm Y bench runs RSS 8.0 GiB, working set 9.65 GiB, CPU peak 7.0 cores (2-minute rate); the highest working set of any U-Y run was 19.7 GiB (first load of a new image, page cache); RSS peak over all 62 SGLang runs 9.2 GiB. The earlier 38 GiB / 24 CPU allowance was an unmeasured estimate. Requests equal limits (14 GiB, 16 CPU) because session switch admits only Guaranteed-QoS GPU workloads. Lowered from 24 GiB on 2026-11-11: a UQS bench with the whole pod (server plus bench client) limited to 16 GiB passed every phase with no OOM kill, anon peak 8.01 GiB, and the same speed and quality as at 30 GiB (29.8 / 31.0 ms per verify step at 32k / 64k, 11 / 0 / 1); the excess was model-file page cache, which fills any limit and is reclaimable. 14 GiB leaves ~4.8 GiB above the highest RSS of any run (9.2 GiB) and frees room for the shared-mode image generators."
+      "limits": "The quality menu leaves 14 cases NOT RUN and has known evaluator gaps (long-context bodies, rag-and-web-version prompt); qualification covers the measured profile only. Re-qualify after any image, patch-series or default-arm change."
     },
-    "limits": "The quality menu leaves 14 cases NOT RUN and has known evaluator gaps (long-context bodies, rag-and-web-version prompt); qualification covers the measured profile only. Re-qualify after any image, patch-series or default-arm change."
-  },
+    {
+      "arm": "UQS",
+      "date": "2026-11-11",
+      "decision": "owner",
+      "image": "registry.lan.thespry.family/local/sglang-gfx1201@sha256:9fc1a58ca06ae493a2e76ebab3d325245b740e98552b7db3214ef543e01e1c9c",
+      "stack_lock_patchset": "142d0ae78fa1a4a48b7aa1e1a78baa28b2df10533b9304b178d89803279db10f",
+      "evidence": "BetterBench bench Job of arm UQS on this image (sglang-bench-uqs-43df10abf5, auto/235 W): C1 / C2 135.1 / 224.8 tokens/s, verify step 30.0 / 31.0 ms at 32K / 64K (Y on the same clocks 29.7 / 31.2), prefill 3,622 / 3,583 / 3,367 tokens/s at 2K / 8K / 16K; the 120K depth is skipped (over the 81,888-token context); 9.04 GB free per card after startup; assistant quality menu 11 passed, 0 failed, 1 needs-review; no tracebacks. Live shared mode 2026-11-11 (render service-a4ac4d562d3c-shared): chat with SDXL on both cards, warm simultaneous 1024^2 pairs 6.6 / 7.2 s, 8.35 GB free per card, no out-of-memory, SGLang anon 7.1 GiB.",
+      "host_resources": {
+        "requests": {
+          "cpu": "16",
+          "memory": "14Gi"
+        },
+        "limits": {
+          "cpu": "16",
+          "memory": "14Gi"
+        },
+        "evidence": "Live shared mode 2026-11-11, 1 s host cgroup samples over 5 minutes with chat and both image generators: SGLang anon peak 7.1 GiB (memory.peak 14.0 GiB is reclaimable page cache at the limit), CPU peak 2.1 cores idle-to-light chat; same envelope as arm Y."
+      },
+      "limits": "Qualified for shared mode: 81,888 tokens per conversation, two conversations in a 163,840-token FP8 pool. The quality menu leaves the same cases NOT RUN as arm Y. Re-qualify after any image, patch-series or arm change."
+    }
+  ],
   "model": "qwen3.8-27b-mxfp4",
   "served_model_name": "Qwen3.8-27B-MXFP4",
   "stack": "SGLang main fcb3274646e43c16d70fd83806ebb3a5134d5e81 with serving patches 0001-0004 (stack.lock)",
@@ -518,7 +540,7 @@
                   {"name": "SGLANG_GFX1201_FP8_KV_DEQUANT", "value": "1", "confidence": "L", "reason": "UQ2 (patches 0026 + 0027): read the fp8 target and draft KV caches as bf16 in the extend, grouped decode and verify kernels, keeping q and p in bf16, and let the verify kernel take fp8 caches; 0027 decodes with v_cvt_f32_fp8 (bitwise equal to the Triton cast). Kernel check on the R9700 (16 layers, DRAM-fed, against the bf16 cache on its serving tile): verify 0.96-1.04x at 8k-123k, grouped decode 0.80x at 47k, extend 1.15-1.18x per 2048-token chunk; kernel error within the bf16 cache's. Serving quality unmeasured.", "source": "serving repository serving/patches/sglang-main/0026-gfx1201-fp8-kv-dequant.patch, 0027-gfx1201-fp8-kv-hw-decode.patch; serving PR #30"}],
           "reason": "UQ2 candidate for sharing gpu-1 with SDXL: target and draft KV in FP8 e4m3 (16 + 5 KiB/token/card against 32 + 10 at bf16), read as bf16 by patches 0026/0027 so the attention arithmetic matches a bf16 cache and DFLASH verify keeps its kernel at bf16 speed. Unit KV scales (Qwen3.5 loads none; e4m3fn saturates). Accept only after the kernel-check Job on the built image, the quality menu and a BF16-control drift screen at 8k/47k/88k.",
           "source": "Fable/Exa KV research 2026-11-11; serving patches 0026/0027; RESEARCH-20261108.md memory worksheet"},
-    "UQS": {"default": false,
+    "UQS": {"default": false, "shared_default": true,
           "drop": ["--disable-custom-all-reduce", "--speculative-draft-kv-cache-dtype", "--kv-cache-dtype", "--max-total-tokens", "--context-length"],
           "args": [{"flag": "--mamba-radix-cache-strategy", "value": ["no_buffer"]},
                    {"flag": "--disable-overlap-schedule", "value": []},

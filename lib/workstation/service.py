@@ -675,9 +675,27 @@ HOST_CPU = re.compile(r"[1-9][0-9]?\Z")
 HOST_MEMORY = re.compile(r"[1-9][0-9]{0,2}Gi\Z")
 
 
-def host_resources(profile):
-    """The qualification record's measured SGLang CPU/RAM requests and limits, validated, or None."""
-    record = profile.get("qualification")
+def qualification_record(profile, arm_name):
+    """The profile's qualification record for this arm, or None.
+
+    `qualification` is one record or a list of them, one per qualified arm (Y for the
+    large mode, UQS for shared mode). Each record names the arm and image it covers.
+    """
+    value = profile.get("qualification")
+    records = value if isinstance(value, list) else [value]
+    return next((r for r in records if isinstance(r, dict) and r.get("arm") == arm_name), None)
+
+
+def shared_default_arm(profile):
+    """The arm shared mode renders when no --arm is given; the general default otherwise."""
+    marked = [name for name, spec in profile["arms"].items() if spec.get("shared_default")]
+    require(len(marked) <= 1, "at most one arm may be the shared-mode default")
+    return marked[0] if marked else None
+
+
+def host_resources(profile, arm_name):
+    """The arm's qualification record's measured SGLang CPU/RAM requests and limits, validated, or None."""
+    record = qualification_record(profile, arm_name)
     value = record.get("host_resources") if isinstance(record, dict) else None
     if value is None:
         return None
@@ -695,11 +713,14 @@ def host_resources(profile):
 
 
 def serving_contract(profile_path=SERVING_PROFILE, arm=None, runtime_image=None,
-                     output_tokens=DEFAULT_OUTPUT_TOKENS, deadline_seconds=180, reserve_tokens=16):
+                     output_tokens=DEFAULT_OUTPUT_TOKENS, deadline_seconds=180, reserve_tokens=16, mode="large"):
     """Build the serving contract from the owner's profile, catalogue and stack lock."""
     render_module = ai_stack_render()
     profile_path = Path(profile_path).resolve()
     profile, catalog = render_module.load(profile_path)
+    arm_source = "explicit" if arm else "profile-default"
+    if arm is None and mode == "shared" and shared_default_arm(profile):
+        arm, arm_source = shared_default_arm(profile), "profile-shared-default"
     arm_name, _ = render_module.arm_of(profile, arm)
     argv = render_module.server_argv(profile, catalog, arm_name)
     environment = render_module.environment(profile, arm_name)
@@ -755,11 +776,13 @@ def serving_contract(profile_path=SERVING_PROFILE, arm=None, runtime_image=None,
         missing.append(f"profile qualification: serving/{profile['profile']}.json status is {profile.get('status')!r}; "
                        "the owner records the qualification Job result first")
     else:
-        # A qualified profile is qualified for one arm on one image: anything else is provisional.
-        record = profile.get("qualification") if isinstance(profile.get("qualification"), dict) else {}
-        if record.get("arm") != arm_name:
-            missing.append(f"profile qualification covers arm {record.get('arm')!r}, not the rendered arm {arm_name!r}")
-        if image_ok and record.get("image") != runtime_image:
+        # Each record qualifies one arm on one image: any other arm or image is provisional.
+        record = qualification_record(profile, arm_name) or {}
+        if not record:
+            value = profile.get("qualification")
+            covered = [r.get("arm") for r in (value if isinstance(value, list) else [value]) if isinstance(r, dict)]
+            missing.append(f"profile qualification covers arm(s) {covered!r}, not the rendered arm {arm_name!r}")
+        if image_ok and record and record.get("image") != runtime_image:
             missing.append(f"profile qualification covers image {record.get('image')!r}, not --runtime-image")
     status = "incomplete" if blocking else ("provisional" if missing else "active")
     identity = f"{profile['profile']}.{arm_name}"
@@ -778,7 +801,7 @@ def serving_contract(profile_path=SERVING_PROFILE, arm=None, runtime_image=None,
                     "profile_sha256": sha(profile_path), "catalogue_sha256": sha(catalogue_path),
                     "stack_lock_sha256": sha(lock_path)},
         "selection": {"profile": profile["profile"], "profile_status": profile.get("status"), "arm": arm_name,
-                      "arm_source": "explicit" if arm else "profile-default", "catalogue_status": catalogue_status},
+                      "arm_source": arm_source, "catalogue_status": catalogue_status},
         "model": {"alias": served, "served_model": served, "repository": model["repository"],
                   "revision": model["revision"], "draft_repository": draft["repository"],
                   "draft_revision": draft["revision"]},
@@ -817,7 +840,7 @@ def serving_contract(profile_path=SERVING_PROFILE, arm=None, runtime_image=None,
                          "node_selector": {"ai-home-lab.local/gfx": lock.get("GPU_TARGET")},
                          "pod_security": "restricted",
                          # Measured host CPU/RAM from the qualification record; None keeps the base Deployment's.
-                         "host_resources": host_resources(profile)},
+                         "host_resources": host_resources(profile, arm_name)},
         "_render": {"argv": argv, "environment": environment, "server_label": render_module.SERVER_LABEL},
     }
 
@@ -1045,7 +1068,7 @@ def render(args):
         # renders, inactive, with its missing inputs listed in evidence.json.
         contract = serving_contract(args.serving_profile, getattr(args, "arm", None),
                                     getattr(args, "runtime_image", None),
-                                    getattr(args, "output_tokens", DEFAULT_OUTPUT_TOKENS))
+                                    getattr(args, "output_tokens", DEFAULT_OUTPUT_TOKENS), mode=args.mode)
         objects, contract_rendered, contract_checks = apply_contract(objects, contract, args.mode, experience)
     existing = {}
     if getattr(args, "existing_claims", None):
@@ -1309,7 +1332,8 @@ def main():
     p.add_argument("--experience", choices=["service", "assistant", "assistant-memory"], default="service")
     p.add_argument("--existing-claims", help="operator-collected PVC JSON; preserve immutable storage classes")
     p.add_argument("--serving-profile", help="AI-stack serving profile; renders every consumer from its contract")
-    p.add_argument("--arm", help="profile arm; default: the arm the profile marks default")
+    p.add_argument("--arm", help="profile arm; default: the arm the profile marks default "
+                   "(shared mode: the arm it marks shared_default, if any)")
     p.add_argument("--runtime-image", help="serving image pinned by digest, supplied by the serving owner")
     p.add_argument("--output-tokens", type=int, default=DEFAULT_OUTPUT_TOKENS,
                    help="client output allowance, at most half the contract context; unqualified")

@@ -152,7 +152,9 @@ as before.
 ### Shared mode (chat and pictures together)
 
 `--mode shared` keeps the two-GPU contract model and adds image generation in the VRAM
-it leaves free on both cards. Render it from the contract's shared arm:
+it leaves free on both cards. It renders the profile's shared default arm, UQS (`--arm`
+can still choose another); the large mode keeps the general default, Y. Each arm has its
+own qualification record on its own image, so each mode's contract is `active`:
 
 ```sh
 ./bin/workstationctl service render /private/service-site.json /private/assistant-shared \
