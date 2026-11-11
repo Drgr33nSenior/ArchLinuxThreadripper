@@ -1,39 +1,39 @@
 {
   "schema_version": 1,
-  "reviewed_at": "2026-09-11",
+  "reviewed_at": "2026-11-11",
   "status": "source-and-config-validated-not-target-qualified",
   "platform": "linux/amd64",
   "resolution": "Official GitHub release metadata and registry manifest inspection; digests are immutable multi-platform index identities except the deferred AMD manifest.",
   "images": [
     {
       "component": "prometheus",
-      "version": "3.14.0",
-      "image": "docker.io/prom/prometheus:v3.14.0@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0",
-      "source": "https://github.com/prometheus/prometheus/releases/tag/v3.14.0"
+      "version": "3.16.0",
+      "image": "docker.io/prom/prometheus:v3.16.0@sha256:e04987641b57704f408e31f6373ba4138ecf27cb4a165d24aabb6c38fddd0f06",
+      "source": "https://github.com/prometheus/prometheus/releases/tag/v3.16.0"
     },
     {
       "component": "grafana",
-      "version": "13.2.1",
-      "image": "docker.io/grafana/grafana:13.2.1@sha256:f772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283",
-      "source": "https://github.com/grafana/grafana/releases/tag/v13.2.1"
+      "version": "13.3.1",
+      "image": "docker.io/grafana/grafana:13.3.1@sha256:0615ec4fbd4072004b7d86b46ded63013a74b7d6eb1119273dd89e8fa25c13cf",
+      "source": "https://github.com/grafana/grafana/releases/tag/v13.3.1"
     },
     {
       "component": "loki",
-      "version": "3.7.7",
-      "image": "docker.io/grafana/loki:3.7.7@sha256:d70e4659623f3e109af669cae76fe2a5dd5be54e2298fe8aed380d982fbc2500",
-      "source": "https://github.com/grafana/loki/blob/v3.7.7/cmd/loki/loki-local-config.yaml"
+      "version": "3.7.9",
+      "image": "docker.io/grafana/loki:3.7.9@sha256:0db216b630ae1f348a1584c67f3cead8b4c1fc839169a39501db664744158e28",
+      "source": "https://github.com/grafana/loki/blob/v3.7.9/cmd/loki/loki-local-config.yaml"
     },
     {
       "component": "tempo",
-      "version": "3.0.3",
-      "image": "docker.io/grafana/tempo:3.0.3@sha256:0296560ac66f8a3600d7fb3014a52c189d4d9c3549ad6ff441bf2409855d68d5",
-      "source": "https://github.com/grafana/tempo/blob/v3.0.3/example/docker-compose/single-binary/tempo.yaml"
+      "version": "3.1.1",
+      "image": "docker.io/grafana/tempo:3.1.1@sha256:64e2fbd56d9c2b3412a4b430a58ea59e91a670b1e75f920a0c702213ad145044",
+      "source": "https://github.com/grafana/tempo/blob/v3.1.1/example/docker-compose/single-binary/tempo.yaml"
     },
     {
       "component": "alloy",
-      "version": "1.19.2",
-      "image": "docker.io/grafana/alloy:v1.19.2@sha256:b8ec653c44235fbe910879145dac3597d66b0aaecf60bcbbe82580767771a839",
-      "source": "https://github.com/grafana/alloy/releases/tag/v1.19.2"
+      "version": "1.21.3",
+      "image": "docker.io/grafana/alloy:v1.21.3@sha256:8ab871206bd2d8f89277f53abffee5f452a293980788d52f85fa183a87a505a4",
+      "source": "https://github.com/grafana/alloy/releases/tag/v1.21.3"
     },
     {
       "component": "node-exporter",
