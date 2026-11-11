@@ -40,6 +40,8 @@
 - name: Require the reviewed pacman-owned runtime package
   ansible.builtin.command: pacman -Q k3s-workstation-bin
   changed_when: false
+  # Read-only: run under --check too, so a dry run sees real values.
+  check_mode: false
 
 - name: Validate network arithmetic with the shared repository policy
   ansible.builtin.command:
@@ -54,11 +56,15 @@
   delegate_to: localhost
   become: false
   changed_when: false
+  # Read-only: run under --check too, so a dry run sees real values.
+  check_mode: false
 
 - name: Read installed runtime identity
   ansible.builtin.command: /usr/bin/k3s --version
   register: lab_k3s_installed
   changed_when: false
+  # Read-only: run under --check too, so a dry run sees real values.
+  check_mode: false
 
 - name: Refuse an incompatible runtime generation
   ansible.builtin.assert:
@@ -117,6 +123,8 @@
       - '{{ lab_reserved_system_cpus }}'
   register: lab_cpu_reservation
   changed_when: false
+  # Read-only: run under --check too, so a dry run sees real values.
+  check_mode: false
   when: lab_cpu_manager_static_enabled | bool
 
 - name: Require CPU and memory reservations to match the static CPU reservation
@@ -154,6 +162,8 @@
   ansible.builtin.command: systemctl is-active k3s
   register: lab_cpu_manager_k3s_active
   changed_when: false
+  # Read-only: run under --check too, so a dry run sees real values.
+  check_mode: false
   failed_when: false
   when: lab_cpu_manager_static_enabled | bool
 
