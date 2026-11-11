@@ -12,6 +12,7 @@ import copy
 import hashlib
 import hmac
 import json
+import math
 import os
 import re
 import secrets
@@ -73,6 +74,30 @@ async def metered(family, labels, call, success=lambda value: "ok", failure=stor
     return value
 
 
+# SDXL's native sizes: 512x512 plus the ~1 megapixel aspect buckets. None has more pixels than
+# 1024x1024, so memory stays within what was measured for shared cards (2026-11-11).
+SDXL_SIZES = ["512x512", "1024x1024", "1152x896", "896x1152", "1216x832", "832x1216", "1344x768", "768x1344"]
+
+
+def snap_size(requested, sizes):
+    """Map a requested WIDTHxHEIGHT to an allowed size, or None when it is malformed.
+
+    Open WebUI's generate_image tool lets the model choose any size ("e.g. 1536x1024").
+    Refusing those made the model retry in a loop, so keep its aspect ratio instead:
+    an exact allowed size is used as is; anything else gets the nearest ~1 MP bucket.
+    """
+    if requested in (None, "", "auto"):
+        return "1024x1024"
+    if requested in sizes:
+        return requested
+    match = re.fullmatch(r"([1-9][0-9]{1,4})x([1-9][0-9]{1,4})", str(requested))
+    if not match:
+        return None
+    ratio = math.log(int(match.group(1)) / int(match.group(2)))
+    buckets = [s for s in sizes if s != "512x512"]
+    return min(buckets, key=lambda s: abs(ratio - math.log(int(s.split("x")[0]) / int(s.split("x")[1]))))
+
+
 def load_image_profile(directory):
     """Load the operator-owned SDXL workflow; clients cannot upload workflows.
 
@@ -94,7 +119,7 @@ def load_image_profile(directory):
             or not re.fullmatch(r"[a-f0-9]{40}", str(profile["model_revision"]))
             or not re.fullmatch(r"[a-f0-9]{64}", str(profile["model_sha256"]))
             or profile["swarm_model"] != "OfficialStableDiffusion/sd_xl_base_1.0"
-            or profile["sizes"] != ["512x512", "1024x1024"]
+            or profile["sizes"] != SDXL_SIZES
             or type(profile["steps"]) is not int or profile["steps"] != 20
             or type(profile["cfg_scale"]) not in {int, float} or profile["cfg_scale"] != 7):
         raise ValueError("unsupported image profile")
@@ -533,24 +558,30 @@ class ServiceTools:
             if (data.get("model") != self.image_profile["id"] or type(data.get("n", 1)) is not int
                     or data.get("n", 1) != 1 or data.get("response_format", "b64_json") != "b64_json"):
                 raise Refusal(400, "unsupported_image_parameters")
-            if not isinstance(prompt, str) or not 1 <= len(prompt) <= 2000 or data.get("size", "1024x1024") not in self.image_profile["sizes"]:
+            size = snap_size(data.get("size"), self.image_profile["sizes"])
+            if not isinstance(prompt, str) or not 1 <= len(prompt) <= 2000 or size is None:
                 raise Refusal(400, "image_limits_exceeded")
             if "${" in prompt:
                 raise Refusal(400, "workflow_macros_not_supported")
-            if self.stale_markers() or len(self.active) >= self.image_slots:
-                raise Refusal(429, "image_busy_or_recovery_required")
+            if self.stale_markers():
+                # Not a rate limit: an operator must check the backend first (docs/ASSISTANT.md).
+                # A distinct status without Retry-After, so clients and the model stop retrying.
+                raise Refusal(503, "image_backend_needs_operator_check")
+            if len(self.active) >= self.image_slots:
+                raise Refusal(429, "image_busy")
             # No await between the check and the claim: slots cannot be double-booked.
             slot = min(set(range(self.image_slots)) - self.active)
             self.active.add(slot)
             try:
                 async with asyncio.timeout(165):
-                    result = await self.generate(request, prompt, data.get("size", "1024x1024"), slot)
+                    result = await self.generate(request, prompt, size, slot)
             finally:
                 self.active.discard(slot)
             return JSONResponse(result, headers={"Cache-Control": "no-store"})
         except Refusal as exc:
             return JSONResponse({"error": {"code": exc.code, "message": exc.code}}, status_code=exc.status,
-                                headers={"Retry-After": "5"} if exc.status in {429, 503} else {})
+                                headers={"Retry-After": "5"} if exc.status in {429, 503}
+                                and exc.code != "image_backend_needs_operator_check" else {})
         except (httpx.HTTPError, TimeoutError, ValueError, TypeError, KeyError, OSError):
             return JSONResponse({"error": {"code": "image_backend_unavailable"}}, status_code=503)
 

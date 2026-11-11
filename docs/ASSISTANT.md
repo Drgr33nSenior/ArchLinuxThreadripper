@@ -412,8 +412,28 @@ The adapter runs one picture at a time, or two in shared mode (`IMAGE_CONCURRENC
 on `service-tools`), one per SwarmUI backend. Each running picture owns its own
 marker under `/state`: `image-inflight.json` for the first and `image-inflight-1.json`
 for the second. A marker no running request owns blocks new pictures in every mode
-until an operator has checked the backend and removed it. `/health` reports
-`image_active`, `image_slots` and `image_recovery_required`.
+(HTTP 503 `image_backend_needs_operator_check`, no `Retry-After`; a full adapter
+returns 429 `image_busy` instead). `/health` reports `image_active`, `image_slots` and
+`image_recovery_required`. A cancelled picture also keeps its marker, because
+SwarmUI acknowledging an interrupt does not prove the GPU work stopped.
+
+To recover, confirm both backends are idle, then remove the stale marker:
+
+```sh
+kubectl -n ai-home-lab exec deploy/comfyui-gpu0 -c comfyui -- /SwarmUI/dlbackend/ComfyUI/venv/bin/python -c \
+  "import json,urllib.request; q=json.load(urllib.request.urlopen('http://127.0.0.1:7821/queue',timeout=5)); print(len(q['queue_running']), len(q['queue_pending']))"
+kubectl -n ai-home-lab exec deploy/service-tools -c tools -- ls /state      # which image-inflight*.json
+kubectl -n ai-home-lab exec deploy/service-tools -c tools -- rm /state/image-inflight-1.json
+```
+
+Check SwarmUI's own backend the same way (its server log shows no running generation).
+Restarting either image backend while pictures are in flight leaves a marker; the
+session tooling only starts them before images are admitted.
+
+Requested sizes snap to SDXL's native sizes: an exact `512x512`, or the nearest aspect
+of 1024x1024, 1152x896, 1216x832 or 1344x768 (and their portrait forms). Open WebUI's
+`generate_image` tool lets the model choose any `WIDTHxHEIGHT`; refusing those made it
+retry in a loop. None of the sizes has more pixels than the measured 1024x1024.
 
 ## Speech and later model experiments
 
