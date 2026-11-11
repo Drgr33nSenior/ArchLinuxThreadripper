@@ -23,13 +23,15 @@ spec:
         runAsGroup: 1000
         fsGroup: 1000
         fsGroupChangePolicy: OnRootMismatch
+        # render and video on gr33nstein, as the SGLang serving contract.
+        supplementalGroups: [987, 983]
         seccompProfile: {type: RuntimeDefault}
       initContainers:
         - name: seed-backend
           image: docker.io/library/busybox:1.37.0@sha256:9db7b59979c38555a39def84a31fb98b5296952f9e3afd4f6f11f05b07adfab0
           command: [sh, -ec]
           args:
-            - mkdir -p /state/Data /state/Models /state/Output; if [ ! -e /state/Data/Backends.fds ]; then cp /seed/Backends.fds /state/Data/Backends.fds; fi
+            - mkdir -p /state/Data/miopen/user-db /state/Data/miopen/cache /state/Models/Stable-Diffusion/OfficialStableDiffusion /state/Output; if [ ! -e /state/Data/Backends.fds ]; then cp /seed/Backends.fds /state/Data/Backends.fds; fi
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: {drop: [ALL]}
@@ -45,12 +47,19 @@ spec:
         - {name: gpu-1, resourceClaimName: gpu-1}
       containers:
         - name: swarmui
-          image: registry.invalid/ai-home-lab/swarmui-rocm:UNQUALIFIED
-          # Image contract: prebuilt SwarmUI + embedded ComfyUI/ROCm venv,
-          # standard SwarmUI entrypoint, no installation or downloads on boot.
+          # Signed creative image from the AI-stack pipeline (infrastructure/ai-stack,
+          # stages comfyui/swarmui/creative): prebuilt SwarmUI + embedded ComfyUI/ROCm
+          # venv, no installation or downloads on boot.
+          image: registry.lan.thespry.family/local/creative-gfx1201@sha256:47a22cd2d6a0e95686d7f4f899944bc2b2bd7258a704b4ae16259af87bd324c2
           ports: [{name: http, containerPort: 7801}]
           env:
             - {name: HF_HUB_OFFLINE, value: '1'}
+            # MIOpen convolutions: tiled SDXL 1024 warm 4.8-5.2 s vs 6.2-6.4 s without
+            # (gpu-1, 2026-11-11). Each new image size is tuned once; the find/kernel
+            # databases persist in Data so restarts do not repeat it.
+            - {name: COMFYUI_ENABLE_MIOPEN, value: '1'}
+            - {name: MIOPEN_USER_DB_PATH, value: /SwarmUI/Data/miopen/user-db}
+            - {name: MIOPEN_CUSTOM_CACHE_DIR, value: /SwarmUI/Data/miopen/cache}
           resources:
             requests: {cpu: '12', memory: 12Gi}
             limits: {cpu: '12', memory: 12Gi}
@@ -69,8 +78,16 @@ spec:
             - {name: state, mountPath: /SwarmUI/Data, subPath: Data}
             - {name: state, mountPath: /SwarmUI/Models, subPath: Models}
             - {name: state, mountPath: /SwarmUI/Output, subPath: Output}
+            # SDXL at the catalogue revision (infrastructure/ai-stack/models/sdxl-base-1.0.json),
+            # read-only, as Swarm model OfficialStableDiffusion/sd_xl_base_1.0.
+            - name: models
+              mountPath: /SwarmUI/Models/Stable-Diffusion/OfficialStableDiffusion
+              subPath: stabilityai/stable-diffusion-xl-base-1.0/462165984030d82259a11f4367a4eed129e94a7b
+              readOnly: true
       volumes:
         - name: state
           persistentVolumeClaim: {claimName: creative-models}
         - name: backend
           configMap: {name: swarmui-backend}
+        - name: models
+          persistentVolumeClaim: {claimName: ai-models, readOnly: true}

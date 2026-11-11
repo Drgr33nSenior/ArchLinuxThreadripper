@@ -167,6 +167,27 @@ class AssistantTests(unittest.TestCase):
         self.assertEqual(profile, json.loads(cm["data"]["image-profile.json"]))
         self.assertEqual(workflow, json.loads(cm["data"][profile["workflow"]]))
 
+    def test_swarmui_mounts_the_catalogue_sdxl_revision_read_only(self):
+        profile, _, _ = load_image_profile(ROOT / "apps/base/shared-api")
+        entry = json.loads((ROOT / "infrastructure/ai-stack/models/sdxl-base-1.0.json").read_text())["model"]
+        pod = named(self.split, "Deployment", "swarmui")["spec"]["template"]["spec"]
+        container = pod["containers"][0]
+        self.assertRegex(container["image"], r"^registry\.lan\.thespry\.family/local/creative-gfx1201@sha256:[a-f0-9]{64}$")
+        self.assertEqual([987, 983], pod["securityContext"]["supplementalGroups"])
+        folder, name = profile["swarm_model"].split("/")
+        mount = next(m for m in container["volumeMounts"] if m["name"] == "models")
+        self.assertEqual({"name": "models", "mountPath": f"/SwarmUI/Models/Stable-Diffusion/{folder}",
+                          "subPath": f"{entry['repository']}/{entry['revision']}", "readOnly": True}, mount)
+        self.assertIn(f"{name}.safetensors", [f["path"] for f in entry["files"]])
+        volume = next(v for v in pod["volumes"] if v["name"] == "models")
+        self.assertEqual({"claimName": "ai-models", "readOnly": True}, volume["persistentVolumeClaim"])
+        env = {e["name"]: e["value"] for e in container["env"]}
+        self.assertEqual("1", env["COMFYUI_ENABLE_MIOPEN"])
+        for key in ("MIOPEN_USER_DB_PATH", "MIOPEN_CUSTOM_CACHE_DIR"):
+            # Persistent (Data is on the state volume) and created by the seed container.
+            self.assertTrue(env[key].startswith("/SwarmUI/Data/"), key)
+            self.assertIn(env[key].replace("/SwarmUI/", "/state/", 1), pod["initContainers"][0]["args"][0])
+
     def test_changed_workflow_or_unsupported_profile_refuses_startup(self):
         base = ROOT / "apps/base/shared-api"
         for mutation in ("node", "route", "batch", "profile", "path"):

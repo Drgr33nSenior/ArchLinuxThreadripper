@@ -99,7 +99,7 @@ def load_image_profile(directory):
     workflow = json.loads(raw)
     # This is deliberately the existing SDXL route, not a general workflow engine.
     expected_nodes = {"1": "CheckpointLoaderSimple", "2": "CLIPTextEncode", "3": "CLIPTextEncode",
-                      "4": "EmptyLatentImage", "5": "KSampler", "6": "VAEDecode", "7": "SwarmSaveImageWS"}
+                      "4": "EmptyLatentImage", "5": "KSampler", "6": "VAEDecodeTiled", "7": "SwarmSaveImageWS"}
     if (not isinstance(workflow, dict) or set(workflow) != set(expected_nodes)
             or any(not isinstance(workflow[n], dict) or workflow[n].get("class_type") != kind
                    for n, kind in expected_nodes.items())
@@ -107,7 +107,10 @@ def load_image_profile(directory):
             or workflow["4"].get("inputs") != {"width": 1024, "height": 1024, "batch_size": 1}
             or workflow["2"].get("inputs") != {"text": "", "clip": ["1", 1]}
             or workflow["3"].get("inputs") != {"text": "", "clip": ["1", 1]}
-            or workflow["6"].get("inputs") != {"samples": ["5", 0], "vae": ["1", 2]}
+            # Tiled decode (512 px tiles) keeps SDXL's 1024 peak at ~9.4 GiB instead of
+            # ~15 GiB on gfx1201 (measured 2026-11-11), so it can share a card with SGLang.
+            or workflow["6"].get("inputs") != {"samples": ["5", 0], "vae": ["1", 2], "tile_size": 512,
+                                               "overlap": 64, "temporal_size": 64, "temporal_overlap": 8}
             or workflow["7"].get("inputs") != {"images": ["6", 0]}
             or workflow["5"].get("inputs") != {"model": ["1", 0], "positive": ["2", 0],
                 "negative": ["3", 0], "latent_image": ["4", 0], "seed": 0, "steps": profile["steps"],
