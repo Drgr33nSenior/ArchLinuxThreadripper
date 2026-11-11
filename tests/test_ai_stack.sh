@@ -489,6 +489,10 @@ for variant in ("bench", "bench-greedy"):
     c, q = spec["containers"][0], base["containers"][0]
     assert c["args"] == q["args"] and c["image"] == q["image"] and c["securityContext"] == q["securityContext"]
     assert "/qualify/bench.py" in c["command"][2] and job["metadata"]["labels"]["app.kubernetes.io/name"] == "sglang-bench"
+    # Guaranteed QoS that schedules beside the assistant services (44.1 GiB allocatable, 12.4 GiB
+    # requested by them on gr33nstein): 38Gi stayed Pending with "Insufficient memory".
+    for r in (c["resources"], q["resources"]):
+        assert r["requests"] == {"cpu": "16", "memory": "30Gi"} and r["limits"] == r["requests"], r
 assert bundles["bench"]["config"]["greedy"] is False and bundles["bench-greedy"]["config"]["greedy"] is True
 top_p = json.loads((work / "bench-top-p.json").read_text())["items"][0]
 top_p = tarfile.open(fileobj=io.BytesIO(base64.b64decode(top_p["binaryData"]["betterbench.tar.gz"])))

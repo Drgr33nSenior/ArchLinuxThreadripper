@@ -151,8 +151,11 @@ def job(profile, catalog, image, arm, bench=None):
         "command": ["bash", "-c", script, f"sglang-{kind}"],
         "args": argv,
         "env": environment(profile, arm) + [{"name": "SERVED_MODEL_NAME", "value": profile["served_model_name"]}],
-        "resources": {"requests": {"cpu": "16", "memory": "38Gi"},
-                      "limits": {"cpu": "16", "memory": "38Gi"},
+        # The serving Deployment's 24Gi plus room for the bench client. 38Gi stopped fitting on
+        # gr33nstein (44.1 GiB allocatable) once the assistant services requested 12.4 GiB, and
+        # the Job then stays Pending with "Insufficient memory".
+        "resources": {"requests": {"cpu": "16", "memory": "30Gi"},
+                      "limits": {"cpu": "16", "memory": "30Gi"},
                       "claims": [{"name": "gpus"}]},
         "securityContext": {"allowPrivilegeEscalation": False, "readOnlyRootFilesystem": True,
                             "capabilities": {"drop": ["ALL"]}},
