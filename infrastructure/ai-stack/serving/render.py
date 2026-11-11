@@ -125,20 +125,48 @@ def betterbench_bundle(serving, greedy, top_p=None):
     return buffer.getvalue()
 
 
-def job(profile, catalog, image, arm, bench=None):
+# Full-attention layers of Qwen3.8-27B (config.json layer_types; the other 48 are GDN).
+FULL_ATTENTION_LAYERS = list(range(3, 64, 4))
+CAPTURE_TOKENS = 16384
+
+
+def capture_prompt():
+    """Real text for the capture prefill: the repository's own docs, about 30k tokens."""
+    text, parts = 0, []
+    for path in sorted((REPOSITORY / "docs").glob("*.md")):
+        body = path.read_text(encoding="utf-8")
+        parts.append(f"## {path.name}\n\n{body}")
+        text += len(body)
+        if text > 120_000:
+            break
+    return "\n\n".join(parts)
+
+
+def job(profile, catalog, image, arm, bench=None, capture=None):
+    """Qualify Job, bench Job (bench = BetterBench bundle) or UQ3 capture Job (capture = prompt text)."""
     if not re.fullmatch(IMAGE_RE, image):
         raise SystemExit("STOP: IMAGE must be a lab registry image pinned by digest")
     arm, _ = arm_of(profile, arm)
     argv = server_argv(profile, catalog, arm)
-    kind = "qualify" if bench is None else "bench"
+    kind = "capture" if capture is not None else ("qualify" if bench is None else "bench")
     probe = (HERE / f"{kind}.py").read_text()
     data, binary = {f"{kind}.py": probe}, {}
-    if bench is None:
+    extra_env = []
+    if capture is not None:
+        # sitecustomize.py on PYTHONPATH is imported by the server and every TP rank process.
+        data.update({"sitecustomize.py": (HERE / "capture_hook.py").read_text(), "prompt.txt": capture})
+        extra_env = [{"name": "PYTHONPATH", "value": "/qualify"},
+                     {"name": "UQ3_CAPTURE_TOKENS", "value": str(CAPTURE_TOKENS)},
+                     {"name": "UQ3_CAPTURE_LAYERS", "value": ",".join(map(str, FULL_ATTENTION_LAYERS))},
+                     {"name": "UQ3_CAPTURE_DIR", "value": "/cache/uq3"}]
+        command = f'python3 /qualify/capture.py {PORT} "$SERVED_MODEL_NAME" "$server" 3600'
+    elif bench is None:
         command = f'python3 /qualify/qualify.py {PORT} "$SERVED_MODEL_NAME" "$server" 2400'
     else:
         binary["betterbench.tar.gz"] = base64.b64encode(bench).decode()
         command = f'python3 /qualify/bench.py {PORT} "$SERVED_MODEL_NAME" "$server" 2400 /qualify/betterbench.tar.gz'
-    key = hashlib.sha256(json.dumps([argv, image, probe] + ([binary] if binary else [])).encode()).hexdigest()[:10]
+    key = hashlib.sha256(json.dumps([argv, image, probe] + ([binary] if binary else [])
+                                    + ([data, extra_env] if capture is not None else [])).encode()).hexdigest()[:10]
     name = f"sglang-{kind}-{arm.lower()}-{key}"
     labels = {"app.kubernetes.io/name": f"sglang-{kind}", "ai-stack/profile": profile["profile"], "ai-stack/arm": arm}
     script = ('python3 -m sglang.launch_server "$@" & server=$!\n'
@@ -153,7 +181,7 @@ def job(profile, catalog, image, arm, bench=None):
         # The serving `sglang` Service targets the port named "api"; without it the Service
         # has no endpoint for this pod and telemetry cannot scrape the running server.
         "ports": [{"name": "api", "containerPort": PORT}],
-        "env": environment(profile, arm) + [{"name": "SERVED_MODEL_NAME", "value": profile["served_model_name"]}],
+        "env": environment(profile, arm) + [{"name": "SERVED_MODEL_NAME", "value": profile["served_model_name"]}] + extra_env,
         # The serving Deployment's 24Gi plus room for the bench client. 38Gi stopped fitting on
         # gr33nstein (44.1 GiB allocatable) once the assistant services requested 12.4 GiB, and
         # the Job then stays Pending with "Insufficient memory".
@@ -324,7 +352,7 @@ def standalone(profile, catalog, image, arm, bench, out):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("mode", choices=["argv", "job", "bench", "standalone"])
+    parser.add_argument("mode", choices=["argv", "job", "bench", "standalone", "capture"])
     parser.add_argument("profile")
     parser.add_argument("image", nargs="?")
     parser.add_argument("--arm")
@@ -348,6 +376,9 @@ def main():
         if not args.out:
             raise SystemExit("STOP: standalone needs --out DIR")
         standalone(profile, catalog, args.image, args.arm, bench, args.out)
+        return
+    if args.mode == "capture":
+        print(json.dumps(job(profile, catalog, args.image, args.arm, capture=capture_prompt()), indent=2))
         return
     print(json.dumps(job(profile, catalog, args.image, args.arm, bench), indent=2))
 

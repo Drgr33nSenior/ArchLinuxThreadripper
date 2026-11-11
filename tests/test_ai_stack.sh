@@ -250,6 +250,29 @@ assert fits(262112) == [True, True, True, True]
 assert fits(131040) == [True, True, True, False] and fits(None) == [True, True, True, False]
 assert fits(81888) == [True, True, False, False]
 PY
+# UQ3 capture Job: the bench Job's server and claim, plus the capture hook as sitecustomize.py
+# on PYTHONPATH, the 16 full-attention layers, real-text prompt and BF16 reference cache (Y).
+python3 -I -m py_compile "$dir/serving/capture.py" "$dir/serving/capture_hook.py" || fail 'capture scripts do not compile'
+python3 -I "$render" capture "$dir/serving/qwen3.8-27b-mxfp4-tp2.json" "$digest" --arm Y >"$work/capture.json" ||
+  fail 'capture render'
+python3 -I - "$work/capture.json" "$dir/serving" <<'PY' || fail 'capture Job contract'
+import json, pathlib, sys
+items = {i["kind"]: i for i in json.load(open(sys.argv[1]))["items"]}
+serving = pathlib.Path(sys.argv[2])
+assert set(items) == {"ConfigMap", "Job", "ResourceClaimTemplate"}, set(items)  # no Service
+cm, job = items["ConfigMap"], items["Job"]
+assert job["metadata"]["name"].startswith("sglang-capture-y-")
+assert cm["data"]["sitecustomize.py"] == (serving / "capture_hook.py").read_text()
+assert cm["data"]["capture.py"] == (serving / "capture.py").read_text()
+assert len(cm["data"]["prompt.txt"]) > 100_000 and len(json.dumps(cm)) < 900_000  # ConfigMap limit 1 MiB
+c = job["spec"]["template"]["spec"]["containers"][0]
+env = {e["name"]: e.get("value") for e in c["env"]}
+assert env["PYTHONPATH"] == "/qualify" and env["UQ3_CAPTURE_TOKENS"] == "16384"
+assert env["UQ3_CAPTURE_LAYERS"] == ",".join(str(i) for i in range(3, 64, 4))
+assert c["args"][c["args"].index("--kv-cache-dtype") + 1] == "bf16"
+assert "python3 /qualify/capture.py" in c["command"][2]
+assert c["securityContext"]["readOnlyRootFilesystem"] and not c["securityContext"]["allowPrivilegeEscalation"]
+PY
 # A minimal stand-in for the serving repository's vendored BetterBench.
 bb=$work/serving-repo/benchmarks/betterbench/native-v2
 mkdir -p "$bb/upstream/betterbench" "$bb/upstream/corpus/v1" "$bb/upstream/docs"
