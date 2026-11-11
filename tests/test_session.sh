@@ -65,7 +65,7 @@ ws_session_kubectl() {
       [[ "$current" == "$(jq -r .spec.replicas "$work/api/$name.json")" && "$version" == 7 ]] || return 1
       set_document "$work/api/$name.json" ".spec.replicas=$requested"
       ;;
-    rollout:status) [[ ! -e "$work/fail-rollout" ]] ;;
+    rollout:status) [[ ! -e "$work/fail-rollout" && ! -e "$work/fail-rollout-${3#deployment/}" ]] ;;
     *)
       printf 'unexpected mock API command: %s\n' "$*" >&2
       return 2
@@ -211,6 +211,7 @@ SESSION_IMAGE_DEPLOYMENT=swarmui
 SESSION_SERVICE_CONTROL_FILE=/fixture/gateway-control-key
 cp "$work/api/parent-steam-headless.json" "$work/api/swarmui.json"
 set_document "$work/api/swarmui.json" '.metadata.name="swarmui" | .metadata.uid="swarmui-uid" | .spec.replicas=0 | .spec.template.spec.containers[0].resources={requests:{cpu:"12",memory:"12Gi"},limits:{cpu:"12",memory:"12Gi"},claims:[{name:"gpu-1"}]} | .spec.template.spec.resourceClaims=[{name:"gpu-1",resourceClaimName:"gpu-1"}]'
+# shellcheck disable=SC2329 # called indirectly by ws_session_switch
 ws_session_service_model() { printf 'Qwen3.5-9B\n'; }
 ws_session_service() { printf '%s\n' "$*" >>"$work/service-phases"; }
 ws_session_switch split "$work/fixture.json" "$work/state" --execute
@@ -236,6 +237,7 @@ count=$(wc -l <"$work/scale.log")
 expect_failure ws_session_switch split "$work/fixture.json" "$work/state" --execute
 [[ $(wc -l <"$work/scale.log") == "$count" ]]
 # Split needs one distinct card each: both on gpu-0 is refused before any scale.
+# shellcheck disable=SC2329 # called indirectly by ws_session_switch
 ws_session_service_model() { printf 'Qwen3.5-9B\n'; }
 cp "$work/api/swarmui.json" "$work/swarmui.bak"
 set_document "$work/api/swarmui.json" '.spec.template.spec.resourceClaims=[{name:"gpu-0",resourceClaimName:"gpu-0"}] | .spec.template.spec.containers[0].resources.claims=[{name:"gpu-0"}]'
@@ -243,3 +245,57 @@ expect_failure ws_session_switch split "$work/fixture.json" "$work/state" --exec
 [[ $(wc -l <"$work/scale.log") == "$count" ]]
 mv "$work/swarmui.bak" "$work/api/swarmui.json"
 printf 'shared service split/drain/failure fixture tests passed\n'
+
+# Shared: the two-GPU model plus one image generator on each of its cards.
+# shellcheck disable=SC2329
+ws_session_service_model() { printf 'Qwen3.8-27B-MXFP4\n'; }
+set_document "$work/api/sglang.json" '.spec.template.spec.resourceClaims=[{name:"gpu-0",resourceClaimName:"gpu-0"},{name:"gpu-1",resourceClaimName:"gpu-1"}] | .spec.template.spec.containers[0].resources={requests:{cpu:"16",memory:"14Gi"},limits:{cpu:"16",memory:"14Gi"},claims:[{name:"gpu-0"},{name:"gpu-1"}]}'
+cp "$work/api/swarmui.json" "$work/api/comfyui-gpu0.json"
+set_document "$work/api/comfyui-gpu0.json" '.metadata.name="comfyui-gpu0" | .metadata.uid="comfyui-gpu0-uid" | .spec.template.spec.containers[0].resources={requests:{cpu:"8",memory:"10Gi"},limits:{cpu:"8",memory:"10Gi"},claims:[{name:"gpu-0"}]} | .spec.template.spec.resourceClaims=[{name:"gpu-0",resourceClaimName:"gpu-0"}]'
+count=$(wc -l <"$work/scale.log")
+# Without the second image Deployment configured, shared is refused up front.
+expect_failure ws_session_switch shared "$work/fixture.json" "$work/state" --execute
+grep -q 'SESSION_IMAGE2_DEPLOYMENT' "$work/failure.log"
+SESSION_IMAGE2_DEPLOYMENT=comfyui-gpu0
+SESSION_IMAGE2_DEPLOYMENT=swarmui expect_failure ws_session_config_validate
+# The one-GPU 9B profile cannot serve shared; nothing is scaled.
+# shellcheck disable=SC2329 # called indirectly by ws_session_switch
+ws_session_service_model() { printf 'Qwen3.5-9B\n'; }
+expect_failure ws_session_switch shared "$work/fixture.json" "$work/state" --execute
+grep -q 'two-GPU' "$work/failure.log"
+# shellcheck disable=SC2329 # called indirectly by ws_session_switch
+ws_session_service_model() { printf 'Qwen3.8-27B-MXFP4\n'; }
+# Both image generators on one card is refused, as is a CPU budget the node cannot hold.
+cp "$work/api/comfyui-gpu0.json" "$work/comfyui.bak"
+set_document "$work/api/comfyui-gpu0.json" '.spec.template.spec.resourceClaims=[{name:"gpu-1",resourceClaimName:"gpu-1"}] | .spec.template.spec.containers[0].resources.claims=[{name:"gpu-1"}]'
+expect_failure ws_session_switch shared "$work/fixture.json" "$work/state" --execute
+grep -q 'shared device allocation' "$work/failure.log"
+cp "$work/comfyui.bak" "$work/api/comfyui-gpu0.json"
+set_document "$work/api/comfyui-gpu0.json" '.spec.template.spec.containers[0].resources.requests.cpu="16" | .spec.template.spec.containers[0].resources.limits.cpu="16"'
+expect_failure ws_session_switch shared "$work/fixture.json" "$work/state" --execute
+grep -q 'cannot fit' "$work/failure.log"
+mv "$work/comfyui.bak" "$work/api/comfyui-gpu0.json"
+[[ $(wc -l <"$work/scale.log") == "$count" ]]
+# SGLang starts first, then each image generator; the gateway admits images last.
+: >"$work/service-phases"
+ws_session_switch shared "$work/fixture.json" "$work/state" --execute
+for name in sglang swarmui comfyui-gpu0; do [[ $(jq -r .spec.replicas "$work/api/$name.json") == 1 ]]; done
+[[ "$(tail -n 3 "$work/scale.log" | sed -E 's/^scale deployment\/([a-z0-9-]+).*/\1/' | paste -sd, -)" == sglang,swarmui,comfyui-gpu0 ]]
+[[ "$(tail -n 1 "$work/service-phases")" == 'ready Qwen3.8-27B-MXFP4 true' ]]
+jq -e '.phase=="ready" and .mode=="shared" and .image2=="comfyui-gpu0" and .image2_uid=="comfyui-gpu0-uid" and .previous.image2==0' "$work/state/state.json" >/dev/null
+# Maintenance stops all three.
+ws_session_switch maintenance "$work/fixture.json" "$work/state" --execute
+for name in sglang swarmui comfyui-gpu0; do [[ $(jq -r .spec.replicas "$work/api/$name.json") == 0 ]]; done
+# The second generator failing to start fails the session and closes the gateway
+# (as for split); images are never admitted. Recovery is an explicit switch.
+touch "$work/fail-rollout-comfyui-gpu0"
+: >"$work/service-phases"
+expect_failure ws_session_switch shared "$work/fixture.json" "$work/state" --execute
+jq -e '.phase=="failed"' "$work/state/state.json" >/dev/null
+[[ "$(tail -n 1 "$work/service-phases")" == unavailable ]] && ! grep -q '^ready' "$work/service-phases"
+rm "$work/fail-rollout-comfyui-gpu0"
+# Recorded ownership of the second generator cannot be silently dropped.
+SESSION_IMAGE2_DEPLOYMENT='' expect_failure ws_session_switch maintenance "$work/fixture.json" "$work/state" --execute
+grep -q 'second image ownership' "$work/failure.log"
+ws_session_switch maintenance "$work/fixture.json" "$work/state" --execute
+printf 'shared mode (two-GPU model plus two image generators) fixture tests passed\n'

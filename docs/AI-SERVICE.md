@@ -341,7 +341,8 @@ context, node and new output paths; placeholders are not site values.
    and complete the isolated restore drill before admitting family traffic.
 8. Install the gateway control file root:root 0600. Set
    `SESSION_SERVICE_ENABLED=true`, `SESSION_IMAGE_DEPLOYMENT=swarmui` and
-   `SESSION_SERVICE_CONTROL_FILE` in the reviewed host config. Keep the existing
+   `SESSION_SERVICE_CONTROL_FILE` in the reviewed host config. For shared mode
+   (docs/ASSISTANT.md), also set `SESSION_IMAGE2_DEPLOYMENT=comfyui-gpu0`. Keep the existing
    canonical session policy, Kubernetes identity and lock. Requalify the selected
    model before using the current CLI:
 
