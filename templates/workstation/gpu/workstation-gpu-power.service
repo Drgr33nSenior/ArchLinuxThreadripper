@@ -1,0 +1,25 @@
+[Unit]
+Description=Pin the Radeon GPUs to the measured power policy
+ConditionPathExists=/usr/lib/bridge/workstation-runtime/infrastructure/gpu-power/policy.json
+Before=k3s.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/python3 -B /usr/lib/bridge/workstation-runtime/lib/workstation/gpu_power.py apply /usr/lib/bridge/workstation-runtime/infrastructure/gpu-power/policy.json
+TimeoutStartSec=90
+MemoryMax=64M
+TasksMax=8
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateNetwork=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+LockPersonality=yes
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

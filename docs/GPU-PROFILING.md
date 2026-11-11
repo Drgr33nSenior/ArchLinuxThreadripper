@@ -130,3 +130,39 @@ The profiling handoff permits the existing protected admission/release
 observer's sudo use only. CPU builds, analysis and installation into private
 prefixes use no sudo. This exception creates no GPU execution approval and
 does not authorize system package or service changes.
+
+## Power settings
+
+`workstation-gpu-power.service` holds both R9700s to
+[`infrastructure/gpu-power/policy.json`](../infrastructure/gpu-power/policy.json) at every
+boot: the stock `auto` performance level, the `BOOTUP_DEFAULT` power profile and a 235 W
+cap, on each card by PCI address. Both cards must match, because SGLang splits the model
+across them and every step waits for the slower card.
+
+Measured on 2026-11-11 with greedy 27k-token prompts against the live server (Qwen3.8-27B
+MXFP4 with DFlash2, TP2), all at 235 W on both cards:
+
+| Performance level | ms per verify step | Core clock under load |
+| --- | --- | --- |
+| `auto` | 29.2 | about 2,590 MHz |
+| `manual` with `COMPUTE` | 33.3–34.0 | about 2,250–2,370 MHz |
+| `high` | 33.3 | about 2,240 MHz |
+| `profile_peak` | 33.2 | about 2,085 MHz |
+
+`high`, `COMPUTE` and `profile_peak` pin the core clock at or below the clock table's top
+entry (2,350 MHz) and lose the boost that `auto` uses. A `rocm-smi --setperflevel high`
+left on one card cost BetterBench about 5.8 ms per verify step on every arm.
+
+With `auto`, the cap trades speed for heat: 210 / 235 / 300 W gave 30.1 / 29.4 / 28.6 ms
+per verify step, and 300 W reached about 100 °C junction temperature.
+
+To see whether the cards still match the policy (exit status 1 if not):
+
+```sh
+python3 -B /usr/lib/bridge/workstation-runtime/lib/workstation/gpu_power.py check \
+  /usr/lib/bridge/workstation-runtime/infrastructure/gpu-power/policy.json
+```
+
+A GPU reset returns a card to the driver defaults (`auto`, 300 W); restart the service
+afterwards. Profiling or tuning sessions that change these settings should restart it when
+they finish.

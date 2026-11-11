@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "cards": ["0000:23:00.0", "0000:c3:00.0"],
+  "performance_level": "auto",
+  "power_profile": "BOOTUP_DEFAULT",
+  "power_cap_watts": 235,
+  "reason": "Measured 2026-11-11 on both R9700s (SGLang TP2, Qwen3.8-27B MXFP4 + DFlash2, greedy 27k-token prompts): auto 29.2 ms per verify step at ~2,590 MHz under load; manual+COMPUTE 33.3-34.0, high 33.3, profile_peak 33.2 (they pin sclk at or below the 2,350 MHz table top and lose boost). auto at 210 / 235 / 300 W: 30.1 / 29.4 / 28.6 ms; 235 W is the owner's chosen cap (300 W reached ~100 C junction)."
+}
