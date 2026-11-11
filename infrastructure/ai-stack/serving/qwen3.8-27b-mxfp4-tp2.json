@@ -12,13 +12,13 @@
     "host_resources": {
       "requests": {
         "cpu": "16",
-        "memory": "24Gi"
+        "memory": "14Gi"
       },
       "limits": {
         "cpu": "16",
-        "memory": "24Gi"
+        "memory": "14Gi"
       },
-      "evidence": "Measured on the workstation (NAS Prometheus, cAdvisor, container sglang): arm Y bench runs RSS 8.0 GiB, working set 9.65 GiB, CPU peak 7.0 cores (2-minute rate); the highest working set of any U-Y run was 19.7 GiB (first load of a new image, page cache); RSS peak over all 62 SGLang runs 9.2 GiB. The earlier 38 GiB / 24 CPU allowance was an unmeasured estimate. Requests equal limits (24 GiB, 16 CPU) because session switch admits only Guaranteed-QoS GPU workloads."
+      "evidence": "Measured on the workstation (NAS Prometheus, cAdvisor, container sglang): arm Y bench runs RSS 8.0 GiB, working set 9.65 GiB, CPU peak 7.0 cores (2-minute rate); the highest working set of any U-Y run was 19.7 GiB (first load of a new image, page cache); RSS peak over all 62 SGLang runs 9.2 GiB. The earlier 38 GiB / 24 CPU allowance was an unmeasured estimate. Requests equal limits (14 GiB, 16 CPU) because session switch admits only Guaranteed-QoS GPU workloads. Lowered from 24 GiB on 2026-11-11: a UQS bench with the whole pod (server plus bench client) limited to 16 GiB passed every phase with no OOM kill, anon peak 8.01 GiB, and the same speed and quality as at 30 GiB (29.8 / 31.0 ms per verify step at 32k / 64k, 11 / 0 / 1); the excess was model-file page cache, which fills any limit and is reclaimable. 14 GiB leaves ~4.8 GiB above the highest RSS of any run (9.2 GiB) and frees room for the shared-mode image generators."
     },
     "limits": "The quality menu leaves 14 cases NOT RUN and has known evaluator gaps (long-context bodies, rag-and-web-version prompt); qualification covers the measured profile only. Re-qualify after any image, patch-series or default-arm change."
   },
