@@ -13,7 +13,7 @@ spec:
     matchLabels: {app.kubernetes.io/name: sglang}
   template:
     metadata:
-      labels: {app.kubernetes.io/name: sglang}
+      labels: {app.kubernetes.io/name: sglang, ai-stack/sglang-server: 'true'}
     spec:
       automountServiceAccountToken: false
       priorityClassName: interactive-ai-priority
