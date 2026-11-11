@@ -54,7 +54,11 @@ class AssistantTests(unittest.TestCase):
             self.assertEqual("", env["AUDIO_TTS_ENGINE"])
             self.assertEqual("", env["AUDIO_TTS_OPENAI_API_BASE_URL"])
             self.assertEqual("", env["AUDIO_STT_OPENAI_API_BASE_URL"])
-            self.assertEqual("false", env["USER_PERMISSIONS_CHAT_STT"])
+            # Voice input is local: faster-whisper from the verified models volume, no
+            # external speech service and no download.
+            self.assertEqual("true", env["USER_PERMISSIONS_CHAT_STT"])
+            self.assertEqual("/rag-models/faster-whisper-base", env["WHISPER_MODEL"])
+            self.assertEqual("false", env["WHISPER_MODEL_AUTO_UPDATE"])
             self.assertEqual(4, len(json.loads(env["DEFAULT_PROMPT_SUGGESTIONS"])))
             pin = service.yaml.safe_load((ROOT / "apps/components/assistant/kustomization.yaml").read_text())["images"][0]
             image = pin["name"] + ":" + pin["newTag"] + "@" + pin["digest"]

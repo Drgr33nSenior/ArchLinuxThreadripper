@@ -19,6 +19,59 @@ ws_rag_verify_reranker() {
   bash "$inputs/verify-models.sh" "$1" "$inputs/RERANKER-SHA256SUMS" reranker
 }
 
+ws_rag_verify_whisper() {
+  local inputs
+  inputs="$(ws_repo_root)/apps/overlays/rag"
+  bash "$inputs/verify-models.sh" "$1" "$inputs/WHISPER-SHA256SUMS" whisper
+}
+
+# Local speech-to-text for Open WebUI 0.12.5: its faster-whisper loader takes a model
+# directory as WHISPER_MODEL and reads it offline (CPU, int8). Same offline staging
+# contract as the RAG models; the files go beside them on the models volume.
+ws_rag_stage_whisper() (
+  set -euo pipefail
+  umask 077
+  local output=$1 root repository revision hash relative extra url total=0 bytes remaining max_file
+  ws_require_user
+  root=$(ws_repo_root)
+  repository=$(ws_read_lock STT_WHISPER_REPOSITORY)
+  revision=$(ws_read_lock STT_WHISPER_REVISION)
+  [[ $repository == Systran/faster-whisper-base && $revision == ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66 ]] ||
+    ws_die 'speech-to-text lock is not the reviewed faster-whisper-base'
+  common::require_command curl
+  common::require_command jq
+  ws_rag_new_output "$output"
+  output=$(cd -- "$output" && pwd -P)
+  while read -r hash relative extra; do
+    [[ $hash =~ ^[a-f0-9]{64}$ && -z $extra && $relative =~ ^faster-whisper-base/[A-Za-z0-9_.-]+$ && $relative != *..* ]] ||
+      ws_die 'invalid speech-to-text checksum entry'
+    mkdir -p -- "$output/$(dirname -- "$relative")"
+    url="https://huggingface.co/$repository/resolve/$revision/${relative#*/}"
+    # The reviewed files total about 148 MB (model.bin 145,217,532 bytes).
+    remaining=$((160000000 - total))
+    ((remaining > 0)) || ws_die 'speech-to-text inputs exceed the reviewed 160 MB total budget'
+    max_file=150000000
+    ((max_file <= remaining)) || max_file=$remaining
+    curl --fail --location --proto '=https' --proto-redir '=https' --connect-timeout 15 \
+      --max-time 900 --max-filesize "$max_file" --output "$output/$relative" "$url" ||
+      ws_die 'speech-to-text download failed; partial output retained, use a new directory to retry'
+    common::verify_sha256 "$output/$relative" "$hash"
+    bytes=$(wc -c <"$output/$relative")
+    total=$((total + bytes))
+    ((total <= 160000000)) || ws_die 'speech-to-text inputs exceed the reviewed 160 MB total budget'
+    chmod 0644 "$output/$relative"
+  done <"$root/apps/overlays/rag/WHISPER-SHA256SUMS"
+  ws_rag_verify_whisper "$output"
+  cp "$root/apps/overlays/rag/WHISPER-SHA256SUMS" "$output/WHISPER-SHA256SUMS"
+  jq -n --arg model "$repository" --arg revision "$revision" \
+    --arg checksums "$(common::sha256_file "$output/WHISPER-SHA256SUMS")" \
+    '{schema:1,status:"staged-inputs-not-qualified",stt_model:$model,stt_revision:$revision,
+      license:"mit",runtime_path:"/rag-models/faster-whisper-base",
+      consumer:"Open WebUI 0.12.5 (source f7ac7ee10962ddec0017f5c29b6740d9b9c5faca) faster-whisper WhisperModel",
+      device:"cpu",checksums_sha256:$checksums}' >"$output/provenance.json"
+  ws_note "wrote $output; copy faster-whisper-base/ beside Qwen3-Embedding-0.6B/ on the models volume. No model execution or deployment was performed"
+)
+
 ws_rag_validate_model_manifest() {
   local manifest=$1 hash relative extra count=0 seen='|'
   while read -r hash relative extra; do

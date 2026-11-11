@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Shared by workstationctl and the non-root, network-free init container.
-# SET selects one reviewed allowlist: embedding (default, SHA256SUMS) or
-# reranker (RERANKER-SHA256SUMS). Each set is verified against its own manifest.
+# SET selects one reviewed allowlist: embedding (default, SHA256SUMS), reranker
+# (RERANKER-SHA256SUMS) or whisper (WHISPER-SHA256SUMS). Each set is verified against
+# its own manifest.
 set -euo pipefail
 
 (($# == 2 || $# == 3)) || {
-  printf 'Usage: verify-models.sh MODEL_DIRECTORY SHA256SUMS [embedding|reranker]\n' >&2
+  printf 'Usage: verify-models.sh MODEL_DIRECTORY SHA256SUMS [embedding|reranker|whisper]\n' >&2
   exit 2
 }
 directory=$1
@@ -24,8 +25,14 @@ case $set_name in
     pattern='^ms-marco-MiniLM-L6-v2/[A-Za-z0-9_.-]+$'
     expected=6
     ;;
+  whisper)
+    label='Speech-to-text'
+    model=faster-whisper-base
+    pattern='^faster-whisper-base/[A-Za-z0-9_.-]+$'
+    expected=4
+    ;;
   *)
-    printf 'Usage: verify-models.sh MODEL_DIRECTORY SHA256SUMS [embedding|reranker]\n' >&2
+    printf 'Usage: verify-models.sh MODEL_DIRECTORY SHA256SUMS [embedding|reranker|whisper]\n' >&2
     exit 2
     ;;
 esac
@@ -33,6 +40,7 @@ allowed() {
   case $set_name:$1 in
     embedding:Qwen3-Embedding-0.6B/1_Pooling/config.json | embedding:Qwen3-Embedding-0.6B/config.json | embedding:Qwen3-Embedding-0.6B/config_sentence_transformers.json | embedding:Qwen3-Embedding-0.6B/generation_config.json | embedding:Qwen3-Embedding-0.6B/merges.txt | embedding:Qwen3-Embedding-0.6B/model.safetensors | embedding:Qwen3-Embedding-0.6B/modules.json | embedding:Qwen3-Embedding-0.6B/tokenizer.json | embedding:Qwen3-Embedding-0.6B/tokenizer_config.json | embedding:Qwen3-Embedding-0.6B/vocab.json) return 0 ;;
     reranker:ms-marco-MiniLM-L6-v2/config.json | reranker:ms-marco-MiniLM-L6-v2/model.safetensors | reranker:ms-marco-MiniLM-L6-v2/special_tokens_map.json | reranker:ms-marco-MiniLM-L6-v2/tokenizer.json | reranker:ms-marco-MiniLM-L6-v2/tokenizer_config.json | reranker:ms-marco-MiniLM-L6-v2/vocab.txt) return 0 ;;
+    whisper:faster-whisper-base/config.json | whisper:faster-whisper-base/model.bin | whisper:faster-whisper-base/tokenizer.json | whisper:faster-whisper-base/vocabulary.txt) return 0 ;;
   esac
   return 1
 }

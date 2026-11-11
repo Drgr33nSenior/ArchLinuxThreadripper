@@ -34,6 +34,11 @@ spec:
                 bash /rag-config/verify-models.sh /rag-models /rag-config/RERANKER-SHA256SUMS reranker
                 python3 -I /rag-config/check-reranker.py
               fi
+              # Local speech-to-text (WHISPER_MODEL below): verified whenever it is staged.
+              # Not staged, Open WebUI still starts and voice input reports the missing model.
+              if [[ -e /rag-models/faster-whisper-base ]]; then
+                bash /rag-config/verify-models.sh /rag-models /rag-config/WHISPER-SHA256SUMS whisper
+              fi
               cp -R /app/backend/open_webui/static/. /runtime-static/
               cp -R /app/backend/data/cache/tiktoken/. /runtime-tiktoken/
           resources:
@@ -54,6 +59,8 @@ spec:
           env:
             - {name: XDG_CACHE_HOME, value: /app/backend/data/cache}
             - {name: HF_HOME, value: /app/backend/data/cache/huggingface}
+            # A directory path: faster-whisper loads it from disk, no Hub lookup (CPU, int8).
+            - {name: WHISPER_MODEL, value: /rag-models/faster-whisper-base}
             # Must match the init container so its profile validation exercises
             # the exact native Qwen query prefix used by the runtime.
             - name: RAG_EMBEDDING_QUERY_PREFIX

@@ -74,7 +74,7 @@ check(volumes['rag-models'].dig('persistentVolumeClaim', 'claimName') == 'webui-
 check(volumes.values.none? { |v| v['hostPath'] || v.dig('emptyDir', 'medium') == 'Memory' }, 'RAG must not gain host paths or RAM-backed scratch')
 check(volumes['webui-static']['emptyDir'] == {'sizeLimit' => '64Mi'} && volumes['webui-tiktoken']['emptyDir'] == {'sizeLimit' => '4Mi'}, 'Offline startup assets must be bounded')
 inputs = named(docs, 'ConfigMap', volumes['rag-inputs'].dig('configMap', 'name')).fetch('data')
-%w[verify-models.sh validate-profile.sh SHA256SUMS RERANKER-SHA256SUMS check-reranker.py].each do |file|
+%w[verify-models.sh validate-profile.sh SHA256SUMS RERANKER-SHA256SUMS WHISPER-SHA256SUMS check-reranker.py].each do |file|
   check(inputs[file] == File.read(File.join(root, 'apps/overlays/rag', file)), "Generated #{file} differs from canonical source")
 end
 {'webui-rag-qwen3-data' => '20Gi', 'webui-rag-qwen3-models' => '3Gi'}.each do |name, size|

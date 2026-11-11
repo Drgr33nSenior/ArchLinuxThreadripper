@@ -136,6 +136,17 @@ verify_reranker "$scratch/reranker.sums" reranker >/dev/null
 if verify_reranker "$scratch/reranker.sums" >"$scratch/reranker-set.log" 2>&1; then exit 1; fi
 head -n 5 "$scratch/reranker.sums" >"$scratch/reranker-short.sums"
 if verify_reranker "$scratch/reranker-short.sums" reranker >"$scratch/reranker-short.log" 2>&1; then exit 1; fi
+# Speech-to-text: its own four-file allowlist, refused under another set or when incomplete.
+mkdir -p "$scratch/whisper/faster-whisper-base"
+while read -r _ relative; do
+  cp "$scratch/fixture" "$scratch/whisper/$relative"
+  printf '%s  %s\n' "$fixture_hash" "$relative"
+done <"$root/apps/overlays/rag/WHISPER-SHA256SUMS" >"$scratch/whisper.sums"
+verify_whisper() { bash "$root/apps/overlays/rag/verify-models.sh" "$scratch/whisper" "$@"; }
+verify_whisper "$scratch/whisper.sums" whisper >/dev/null
+if verify_whisper "$scratch/whisper.sums" reranker >"$scratch/whisper-set.log" 2>&1; then exit 1; fi
+head -n 3 "$scratch/whisper.sums" >"$scratch/whisper-short.sums"
+if verify_whisper "$scratch/whisper-short.sums" whisper >"$scratch/whisper-short.log" 2>&1; then exit 1; fi
 printf '%s  %s\n' "$fixture_hash" 'ms-marco-MiniLM-L6-v2/pytorch_model.bin' >>"$scratch/reranker-short.sums"
 if verify_reranker "$scratch/reranker-short.sums" reranker >"$scratch/reranker-pickle.log" 2>&1; then exit 1; fi
 printf 'tampered\n' >>"$scratch/reranker/ms-marco-MiniLM-L6-v2/model.safetensors"

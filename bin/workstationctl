@@ -72,6 +72,8 @@ Commands:
   rag verify-models <staged-model-directory>
   rag stage-reranker <new-output-directory>
   rag verify-reranker <staged-reranker-directory>
+  rag stage-whisper <new-output-directory>
+  rag verify-whisper <staged-whisper-directory>
   rag corpus <new-output-directory> <docs/file.md...>
   graphrag prepare|verify|stage-tokenizers|index|query <options; see docs/GRAPHRAG.md>
   agent configure <new-output-directory>
@@ -311,6 +313,14 @@ main() {
     rag:verify-reranker)
       (($# == 3)) || return 2
       ws_rag_verify_reranker "$3"
+      ;;
+    rag:stage-whisper)
+      (($# == 3)) || return 2
+      ws_rag_stage_whisper "$3"
+      ;;
+    rag:verify-whisper)
+      (($# == 3)) || return 2
+      ws_rag_verify_whisper "$3"
       ;;
     rag:corpus)
       (($# >= 4)) || return 2
