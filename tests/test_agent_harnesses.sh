@@ -64,7 +64,8 @@ jq -e '.model.name == "Fixture-Model-1" and
   .modelProviders.openai[0].baseUrl == "http://localhost:18001/v1" and
   .modelProviders.openai[0].generationConfig.contextWindowSize == 8192 and
   .modelProviders.openai[0].generationConfig.samplingParams.max_tokens == 1024 and
-  .modelProviders.openai[0].envKey == "WORKSTATION_AGENT_API_KEY"' "$work/bundle/qwen/system-settings.json" >/dev/null
+  .modelProviders.openai[0].envKey == "WORKSTATION_AGENT_API_KEY" and
+  .permissions.deny == ["WebFetch"]' "$work/bundle/qwen/system-settings.json" >/dev/null
 ruby -e 'require "yaml"; y=YAML.load_file(ARGV.fetch(0)); abort unless y.dig("agent-default-model", "model") == "Fixture-Model-1" && y.dig("llm-pi-ai", "providers", "workstation", "baseURL") == "http://localhost:18001/v1"' "$work/bundle/dsh/settings.yaml"
 # shellcheck disable=SC2016 # The literal placeholder is required in the native config.
 ruby -e 'require "yaml"; y=YAML.load_file(ARGV.fetch(0)); abort unless y.dig("model", "provider") == "custom" && y.dig("model", "base_url") == "http://localhost:18001/v1" && y.dig("model", "api_key") == "${WORKSTATION_AGENT_API_KEY}" && y.dig("model", "context_length") == 8192 && y.dig("approvals", "mode") == "manual" && y.fetch("fallback_providers") == []' "$work/bundle/hermes/config.yaml"
