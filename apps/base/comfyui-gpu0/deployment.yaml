@@ -29,10 +29,12 @@ spec:
         supplementalGroups: [987, 983]
         seccompProfile: {type: RuntimeDefault}
       initContainers:
+        # ComfyUI refuses to start when a directory given by --user/--input/--output-directory
+        # is missing (2026-11-11), and /work is a fresh emptyDir: create them with the MIOpen dirs.
         - name: miopen-dirs
           image: docker.io/library/busybox:1.37.0@sha256:9db7b59979c38555a39def84a31fb98b5296952f9e3afd4f6f11f05b07adfab0
           command: [sh, -ec]
-          args: [mkdir -p /state/Data/miopen-gpu0/user-db /state/Data/miopen-gpu0/cache]
+          args: [mkdir -p /state/Data/miopen-gpu0/user-db /state/Data/miopen-gpu0/cache /work/user /work/input /work/output]
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: {drop: [ALL]}
@@ -41,6 +43,7 @@ spec:
             limits: {cpu: '1', memory: 64Mi}
           volumeMounts:
             - {name: state, mountPath: /state}
+            - {name: work, mountPath: /work}
       # The shared gpu-0 claim (infrastructure/gpu-operator/claims.yaml) that SGLang TP2
       # also references; DRA shows this pod only that card, as ordinal zero.
       resourceClaims:
