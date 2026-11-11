@@ -149,6 +149,28 @@ not reach the new alias: issue keys for `Qwen3.8-27B-MXFP4` with
 `service provision` (the alias is now in its allowlist) and revoke the old ones
 as before.
 
+### Reasoning choices in the model menu
+
+`service render` writes `webui-presets.json` from the contract. These are two Open WebUI
+presets on the contract model, shown in the model dropdown next to the base model, which
+keeps the contract's default (thinking at `low` effort):
+
+| Preset | Request |
+| --- | --- |
+| `<model> · Think` | thinking on, `reasoning_effort: xhigh` |
+| `<model> · Fast` | thinking off (`enable_thinking: false`) |
+
+Open WebUI keeps presets in its database. Apply them with an admin API key, created under
+Settings → Account and saved in a `chmod 600` file. Each `--group` gets read access, so
+presets are never public:
+
+```sh
+python3 lib/workstation/webui_presets.py apply RENDER/webui-presets.json \
+  --url https://chat.example --key-file /private/webui-admin-api-key --group Parents
+```
+
+Re-running updates the presets in place. Admins see every preset.
+
 ### Shared mode (chat and pictures together)
 
 `--mode shared` keeps the two-GPU contract model and adds image generation in the VRAM

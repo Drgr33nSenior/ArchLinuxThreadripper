@@ -1166,6 +1166,10 @@ def render(args):
     if contract:
         (output / "serving-contract.json").write_text(json.dumps(public_contract(contract), indent=2) + "\n")
         files.append("serving-contract.json")
+        # Reasoning choices for the Open WebUI model menu (applied with webui_presets.py apply).
+        import webui_presets
+        (output / "webui-presets.json").write_text(json.dumps(webui_presets.presets(contract), indent=2) + "\n")
+        files.append("webui-presets.json")
     (output / "evidence.json").write_text(json.dumps({"status": "source-rendered-not-deployed", "mode": args.mode,
         "experience": experience,
         "existing_claims": existing,
