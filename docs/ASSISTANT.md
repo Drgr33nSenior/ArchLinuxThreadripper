@@ -149,6 +149,29 @@ not reach the new alias: issue keys for `Qwen3.8-27B-MXFP4` with
 `service provision` (the alias is now in its allowlist) and revoke the old ones
 as before.
 
+### Shared mode (chat and pictures together)
+
+`--mode shared` keeps the two-GPU contract model and adds image generation in the VRAM
+it leaves free on both cards. Render it from the contract's shared arm:
+
+```sh
+./bin/workstationctl service render /private/service-site.json /private/assistant-shared \
+  --experience assistant --mode shared --existing-claims /private/service-pvcs.json \
+  --serving-profile infrastructure/ai-stack/serving/qwen3.8-27b-mxfp4-tp2.json --arm UQS
+```
+
+- Arm `UQS` caps the KV pool at 163,840 tokens (81,888 per conversation) and leaves about
+  9 GiB free per card after startup (measured 9.04 GiB).
+- SwarmUI and its self-started ComfyUI use `gpu-1`. A second ComfyUI
+  (`apps/base/comfyui-gpu0`) uses `gpu-0`, the matching gap SGLang leaves there, and
+  SwarmUI reaches it as a remote `comfyui_api` backend.
+- The rendered gateway policy lists the contract model in `image_models`, so the gateway
+  accepts `ready <model> --images` for it. Other modes keep images on the 9B split profile.
+- Image access stays per user: bind the Admin and Parents accounts with
+  `service browser-bind --images`.
+- Shared mode needs the `assistant` or `assistant-memory` experience and a serving
+  profile. The session tooling's `shared` mode is a separate change.
+
 Before activation, also extend `service_session.py` and `session.sh`, which
 still accept only the FP8 and 9B aliases when they set the gateway phase.
 

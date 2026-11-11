@@ -1,0 +1,22 @@
+# The model and custom-node layout SwarmUI's self-starting backend writes to
+# /SwarmUI/Data/comfy-auto-model.yaml, so SwarmUI's workflows and model names
+# (OfficialStableDiffusion/sd_xl_base_1.0.safetensors) work unchanged when SwarmUI
+# drives this ComfyUI as a remote comfyui_api backend.
+swarmui:
+    base_path: /SwarmUI/Models
+    is_default: true
+    checkpoints: Stable-Diffusion
+    vae: VAE
+    loras: |
+        Lora
+        LyCORIS
+    upscale_models: upscale_models
+    embeddings: Embeddings
+    controlnet: controlnet
+    clip: clip
+    clip_vision: clip_vision
+swarmui_nodes:
+    base_path: /SwarmUI/src/BuiltinExtensions/ComfyUIBackend
+    custom_nodes: |
+        DLNodes
+        ExtraNodes

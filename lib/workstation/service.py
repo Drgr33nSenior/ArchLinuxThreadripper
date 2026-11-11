@@ -314,9 +314,10 @@ def candidate_contract(pointer, expected_sha, package_root=None, selection=None)
 
 
 def client_profile(mode):
-    require(mode in {"large", "split"}, "unknown client mode")
+    require(mode in {"large", "split", "shared"}, "unknown client mode")
+    # shared renders always carry a serving contract, which replaces these values
     return ({"AGENT_MODEL": "Qwen3.8-27B-FP8", "AGENT_CONTEXT_TOKENS": 32768, "AGENT_MAX_OUTPUT_TOKENS": 4096}
-            if mode == "large" else
+            if mode in {"large", "shared"} else
             {"AGENT_MODEL": "Qwen3.5-9B", "AGENT_CONTEXT_TOKENS": 4096, "AGENT_MAX_OUTPUT_TOKENS": 1024})
 
 
@@ -874,10 +875,15 @@ def contract_deployment(contract, objects):
     return deployment
 
 
-def gateway_policy(contract, rendered):
-    """Gateway allowlist read by boundary.apply_policy; the 9B split route is kept."""
+def gateway_policy(contract, rendered, mode="large"):
+    """Gateway allowlist read by boundary.apply_policy; the 9B split route is kept.
+
+    Images stay with the one-GPU 9B split profile, plus the contract model in shared
+    mode (both GPUs for chat, with the image generators in the headroom it leaves)."""
+    image_models = ["Qwen3.5-9B"] + (list(rendered["gateway"]["chat_models"]) if mode == "shared" else [])
     return {"contract": contract["contract"], "status": contract["status"],
             "chat_models": {**rendered["gateway"]["chat_models"], "Qwen3.5-9B": [4096, 1024]},
+            "image_models": image_models,
             "reasoning_efforts": contract["reasoning"]["client_efforts"],
             "template_kwargs": contract["reasoning"]["client_template_kwargs"],
             "request_timeout": contract["deadlines"]["gateway_seconds"],
@@ -886,7 +892,7 @@ def gateway_policy(contract, rendered):
 
 def apply_contract(objects, contract, mode, experience):
     """Rewrite every consumer in a rendered composition from one contract."""
-    require(mode == "large", "the serving contract needs both GPUs; render it with --mode large")
+    require(mode in {"large", "shared"}, "the serving contract needs both GPUs; render it with --mode large or shared")
     require(experience.startswith("assistant"), "the serving contract applies to the assistant experiences")
     if contract["reasoning"]["request_defaults"] is None:
         # Without verified template parameters, clients carry no reasoning defaults.
@@ -910,7 +916,7 @@ def apply_contract(objects, contract, mode, experience):
             config["model_list"] = [rendered["route"]] + [route for route in config["model_list"]
                                                           if route["model_name"] not in {LEGACY_ALIAS, alias}]
             data["litellm.yaml"] = yaml.safe_dump(config, sort_keys=False)
-            data["gateway-policy.json"] = json.dumps(gateway_policy(contract, rendered), indent=2) + "\n"
+            data["gateway-policy.json"] = json.dumps(gateway_policy(contract, rendered, mode), indent=2) + "\n"
         elif kind == "ConfigMap" and data.get("MEMORY_LLM_MODEL") == LEGACY_ALIAS:
             data["MEMORY_LLM_MODEL"] = alias
         elif kind == "Deployment" and name in {"open-webui", "service-tools", "litellm"}:
@@ -1027,7 +1033,11 @@ def render(args):
     site = site_values(args.site)
     experience = getattr(args, "experience", "service")
     require(experience in {"service", "assistant", "assistant-memory"}, "unknown service experience")
-    overlay = experience if args.mode == "large" else experience + "-split"
+    # shared: the two-GPU contract model plus both image generators; it exists only as a
+    # serving contract and only for the assistant experiences.
+    require(args.mode != "shared" or (getattr(args, "serving_profile", None) and experience.startswith("assistant")),
+            "--mode shared needs --serving-profile and an assistant experience")
+    overlay = {"large": experience, "split": experience + "-split", "shared": experience + "-shared"}[args.mode]
     objects = kustomize(ROOT / "apps/overlays" / overlay)
     contract = None
     if getattr(args, "serving_profile", None):
@@ -1128,6 +1138,8 @@ def capacity(resources, workloads, telemetry, telemetry_stack, mode, build_mib=0
     names = {"sglang", "open-webui", "litellm", "gateway-postgres", "service-tools"}
     if mode == "split":
         names.add("swarmui")
+    elif mode == "shared":
+        names |= {"swarmui", "comfyui-gpu0"}
     selected = {o["metadata"]["name"]: o for o in workloads if o["kind"] == "Deployment"}
     # Opt-in memory workloads count against the same budget when rendered.
     names |= {"neo4j", "memory-embedding", "graphiti-memory"} & selected.keys()
@@ -1293,7 +1305,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="action", required=True)
     p = commands.add_parser("render")
-    p.add_argument("site"); p.add_argument("output"); p.add_argument("--mode", choices=["large", "split"], default="large")
+    p.add_argument("site"); p.add_argument("output"); p.add_argument("--mode", choices=["large", "split", "shared"], default="large")
     p.add_argument("--experience", choices=["service", "assistant", "assistant-memory"], default="service")
     p.add_argument("--existing-claims", help="operator-collected PVC JSON; preserve immutable storage classes")
     p.add_argument("--serving-profile", help="AI-stack serving profile; renders every consumer from its contract")

@@ -9,5 +9,5 @@
   "sizes": ["512x512", "1024x1024"],
   "steps": 20,
   "cfg_scale": 7.0,
-  "serving_model": "Qwen3.5-9B"
+  "serving_models": ["Qwen3.5-9B", "Qwen3.8-27B-MXFP4"]
 }

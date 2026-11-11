@@ -199,9 +199,49 @@ class AssistantTests(unittest.TestCase):
         self.assertNotIn("--cuda-device", args)  # DRA shows the pod only its claimed card, as ordinal zero
         self.assertEqual(seed, (ROOT / "infrastructure/ai-stack/creative/Backends.fds").read_text())
 
+    def test_shared_mode_adds_a_second_comfyui_on_gpu0_only_in_shared_renders(self):
+        shared = service.kustomize(ROOT / "apps/overlays/assistant-shared")
+        memory = service.kustomize(ROOT / "apps/overlays/assistant-memory-shared")
+        for objects in (self.large, self.split):
+            self.assertNotIn("comfyui-gpu0", {o["metadata"]["name"] for o in objects if o["kind"] == "Deployment"})
+        for objects in (shared, memory):
+            webui = named(objects, "Deployment", "open-webui")["spec"]["template"]["spec"]["containers"][0]
+            env = {e["name"]: e.get("value") for e in webui["env"]}
+            self.assertEqual("true", env["ENABLE_IMAGE_GENERATION"])
+        # large-model budgets, not the 9B split ones
+        self.assertEqual({e["name"]: e.get("value") for e in named(self.large, "Deployment", "open-webui")["spec"]["template"]["spec"]["containers"][0]["env"]}["WEB_SEARCH_RESULT_COUNT"],
+                         {e["name"]: e.get("value") for e in named(shared, "Deployment", "open-webui")["spec"]["template"]["spec"]["containers"][0]["env"]}["WEB_SEARCH_RESULT_COUNT"])
+        comfy = named(shared, "Deployment", "comfyui-gpu0")["spec"]["template"]["spec"]
+        swarm = named(shared, "Deployment", "swarmui")["spec"]["template"]["spec"]
+        self.assertEqual(0, named(shared, "Deployment", "comfyui-gpu0")["spec"]["replicas"])
+        self.assertEqual([{"name": "gpu-0", "resourceClaimName": "gpu-0"}], comfy["resourceClaims"])
+        self.assertEqual(swarm["securityContext"], comfy["securityContext"])
+        c, s = comfy["containers"][0], swarm["containers"][0]
+        self.assertEqual(s["image"], c["image"])
+        self.assertEqual(c["resources"]["requests"], {k: v for k, v in c["resources"]["limits"].items()})
+        self.assertEqual([{"name": "gpu-0"}], c["resources"]["claims"])
+        # the same SDXL mount and model path as SwarmUI's self-started ComfyUI
+        mount = lambda container: next(m for m in container["volumeMounts"] if m["name"] == "models")
+        self.assertEqual(mount(s), mount(c))
+        # the same measured flags as SwarmUI's own backend
+        seed = (ROOT / "apps/base/swarmui/Backends.fds").read_text()
+        swarm_args = seed.split("ExtraArgs:", 1)[1].splitlines()[0].split()
+        for flag in ("--fp8_e4m3fn-unet", "--fp8_e4m3fn-text-enc"):
+            self.assertIn(flag, swarm_args)
+            self.assertIn(flag, c["args"])
+        self.assertEqual(swarm_args[swarm_args.index("--reserve-vram") + 1], c["args"][c["args"].index("--reserve-vram") + 1])
+        port = c["args"][c["args"].index("--port") + 1]
+        service_port = named(shared, "Service", "comfyui-gpu0")["spec"]["ports"][0]["port"]
+        self.assertEqual(int(port), service_port)
+        # SwarmUI's second backend: remote ComfyUI by URL, idle (not errored) while it is off
+        backend = seed.split("\n1:\n", 1)[1]
+        self.assertIn("type: comfyui_api", backend)
+        self.assertIn(f"Address: http://comfyui-gpu0:{service_port}", backend)
+        self.assertIn("AllowIdle: true", backend)
+
     def test_changed_workflow_or_unsupported_profile_refuses_startup(self):
         base = ROOT / "apps/base/shared-api"
-        for mutation in ("node", "route", "batch", "profile", "path"):
+        for mutation in ("node", "route", "batch", "profile", "path", "serving-model", "no-serving-models"):
             with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temp:
                 directory = Path(temp)
                 profile = json.loads((base / "image-profile.json").read_text())
@@ -211,6 +251,8 @@ class AssistantTests(unittest.TestCase):
                 if mutation == "batch": workflow["4"]["inputs"]["batch_size"] = 2
                 if mutation == "profile": profile["id"] = "unqualified-model"
                 if mutation == "path": profile["workflow"] = "../untrusted.json"
+                if mutation == "serving-model": profile["serving_models"].append("unqualified-model")
+                if mutation == "no-serving-models": profile["serving_models"] = []
                 (directory / "image-profile.json").write_text(json.dumps(profile))
                 (directory / "sdxl-workflow.json").write_text(json.dumps(workflow))
                 with self.assertRaises(ValueError):

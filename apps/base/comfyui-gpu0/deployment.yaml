@@ -1,0 +1,115 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: comfyui-gpu0
+  annotations:
+    ai-home-lab.local/qualification: pending-shared-mode-second-image-generator
+spec:
+  # Shared mode only: the second image generator, in the headroom SGLang TP2 leaves
+  # on gpu-0 to match gpu-1 (SGLang sizes every rank's KV pool from the tightest card).
+  replicas: 0
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app.kubernetes.io/name: comfyui-gpu0}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: comfyui-gpu0}
+    spec:
+      automountServiceAccountToken: false
+      priorityClassName: creative-priority
+      terminationGracePeriodSeconds: 60
+      nodeSelector: {ai-home-lab.local/gfx: gfx1201}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        # render and video on gr33nstein, as the SGLang serving contract.
+        supplementalGroups: [987, 983]
+        seccompProfile: {type: RuntimeDefault}
+      initContainers:
+        - name: miopen-dirs
+          image: docker.io/library/busybox:1.37.0@sha256:9db7b59979c38555a39def84a31fb98b5296952f9e3afd4f6f11f05b07adfab0
+          command: [sh, -ec]
+          args: [mkdir -p /state/Data/miopen-gpu0/user-db /state/Data/miopen-gpu0/cache]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: '1', memory: 64Mi}
+            limits: {cpu: '1', memory: 64Mi}
+          volumeMounts:
+            - {name: state, mountPath: /state}
+      # The shared gpu-0 claim (infrastructure/gpu-operator/claims.yaml) that SGLang TP2
+      # also references; DRA shows this pod only that card, as ordinal zero.
+      resourceClaims:
+        - {name: gpu-0, resourceClaimName: gpu-0}
+      containers:
+        - name: comfyui
+          # The same signed creative image as SwarmUI: its embedded ComfyUI venv, run
+          # directly instead of self-started by SwarmUI.
+          image: registry.lan.thespry.family/local/creative-gfx1201@sha256:47a22cd2d6a0e95686d7f4f899944bc2b2bd7258a704b4ae16259af87bd324c2
+          command: [/SwarmUI/dlbackend/ComfyUI/venv/bin/python, /SwarmUI/dlbackend/ComfyUI/main.py]
+          # Measured SDXL settings (PR #90) and the shared-card reserve (PR #96), as SwarmUI's
+          # own backend in Backends.fds.
+          args:
+            - --listen
+            - 0.0.0.0
+            - --port
+            - '7821'
+            - --extra-model-paths-config
+            - /config/comfy-model-paths.yaml
+            - --output-directory
+            - /work/output
+            - --temp-directory
+            - /tmp/comfy-temp
+            - --input-directory
+            - /work/input
+            - --user-directory
+            - /work/user
+            - --fp8_e4m3fn-unet
+            - --fp8_e4m3fn-text-enc
+            - --reserve-vram
+            - '1.5'
+          ports: [{name: http, containerPort: 7821}]
+          env:
+            - {name: HF_HUB_OFFLINE, value: '1'}
+            - {name: HOME, value: /work}
+            - {name: COMFYUI_ENABLE_MIOPEN, value: '1'}
+            - {name: MIOPEN_USER_DB_PATH, value: /miopen/user-db}
+            - {name: MIOPEN_CUSTOM_CACHE_DIR, value: /miopen/cache}
+          resources:
+            # SDXL fp8 1024^2 measured 2026-11-11: anon peak 8.8 GiB, 12.4 GiB with page cache
+            # (sdxl-vram-tiled-miopen-fp8u-fp8te, host cgroup sampler). Guaranteed QoS.
+            requests: {cpu: '8', memory: 10Gi}
+            limits: {cpu: '8', memory: 10Gi}
+            claims: [{name: gpu-0}]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          startupProbe:
+            httpGet: {path: /system_stats, port: http}
+            periodSeconds: 10
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: {path: /system_stats, port: http}
+            timeoutSeconds: 3
+          volumeMounts:
+            - {name: config, mountPath: /config, readOnly: true}
+            - {name: work, mountPath: /work}
+            - {name: state, mountPath: /miopen, subPath: Data/miopen-gpu0}
+            # SDXL at the catalogue revision, read-only, at SwarmUI's model path.
+            - name: models
+              mountPath: /SwarmUI/Models/Stable-Diffusion/OfficialStableDiffusion
+              subPath: stabilityai/stable-diffusion-xl-base-1.0/462165984030d82259a11f4367a4eed129e94a7b
+              readOnly: true
+      volumes:
+        - name: config
+          configMap: {name: comfyui-gpu0-model-paths}
+        - name: work
+          emptyDir: {sizeLimit: 8Gi}
+        - name: state
+          persistentVolumeClaim: {claimName: creative-models}
+        - name: models
+          persistentVolumeClaim: {claimName: ai-models, readOnly: true}

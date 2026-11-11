@@ -654,7 +654,8 @@ class ResourceTests(unittest.TestCase):
             return direction_allowed(source, target, port, "egress") and direction_allowed(target, source, port, "ingress")
         for source, target, port in (("open-webui", "litellm", 4000), ("litellm", "sglang", 30000),
             ("litellm", "gateway-postgres", 5432), ("service-tools", "open-webui", 8080),
-            ("open-webui", "service-tools", 8000), ("service-tools", "swarmui", 7801)):
+            ("open-webui", "service-tools", 8000), ("service-tools", "swarmui", 7801),
+            ("swarmui", "comfyui-gpu0", 7821)):
             self.assertTrue(allowed(pod(source), pod(target), port), (source, target))
         for target, port in (("open-webui", 8080), ("litellm", 4000), ("service-tools", 8000)):
             self.assertTrue(allowed(pod("traefik", "kube-system"), pod(target), port))
@@ -663,6 +664,10 @@ class ResourceTests(unittest.TestCase):
                                  ("open-webui", 8080), ("service-tools", 8000), ("swarmui", 7801)):
                 self.assertFalse(allowed(source, pod(target), port), (source, target))
         self.assertFalse(allowed(pod("open-webui"), pod("sglang"), 30000))
+        for source in ("open-webui", "service-tools", "litellm", "sglang"):
+            self.assertFalse(allowed(pod(source), pod("comfyui-gpu0"), 7821), source)
+        self.assertFalse(allowed(pod("swarmui"), pod("sglang"), 30000))
+        self.assertFalse(allowed(pod("comfyui-gpu0"), pod("swarmui"), 7801))
         self.assertFalse(allowed(pod("service-tools"), pod("gateway-postgres"), 5432))
 
     def test_site_renderer_keeps_secrets_out_and_refuses_public_network(self):
@@ -950,6 +955,38 @@ class ServingContractTests(unittest.TestCase):
         for mode, experience in (("split", "assistant"), ("large", "service")):
             with self.assertRaises(ValueError):
                 service.apply_contract(service.kustomize(ROOT / "apps/overlays/assistant"), contract, mode, experience)
+        shared, rendered, _ = service.apply_contract(service.kustomize(ROOT / "apps/overlays/assistant-shared"), contract,
+                                                     "shared", "assistant")
+        policy = next(json.loads(o["data"]["gateway-policy.json"]) for o in shared
+                      if o["kind"] == "ConfigMap" and "gateway-policy.json" in o.get("data", {}))
+        self.assertEqual(["Qwen3.5-9B", alias], policy["image_models"])
+        deployments = {o["metadata"]["name"]: o for o in shared if o["kind"] == "Deployment"}
+        self.assertEqual({"swarmui", "comfyui-gpu0"} <= deployments.keys(), True)
+        claims = {name: [c["resourceClaimName"] for c in deployments[name]["spec"]["template"]["spec"]["resourceClaims"]]
+                  for name in ("sglang", "swarmui", "comfyui-gpu0")}
+        self.assertEqual({"sglang": ["gpu-0", "gpu-1"], "swarmui": ["gpu-1"], "comfyui-gpu0": ["gpu-0"]}, claims)
+
+    def test_shared_render_serves_uqs_with_both_image_generators(self):
+        site = self.root / "site.json"
+        site.write_text(json.dumps({"context": "fixture", "node": "fixture", "node_address": "192.168.77.9",
+            "management_cidr": "192.168.77.0/24", "client_cidrs": ["192.168.77.0/24"],
+            "webui_host": "chat.fixture.test", "api_host": "api.fixture.test", "tls_secret": "fixture-tls"}))
+        args = dict(site=site, mode="shared", experience="assistant-memory", serving_profile=self.PROFILE,
+                    arm="UQS", runtime_image=None, output_tokens=4096)
+        output = self.root / "shared"
+        service.render(SimpleNamespace(output=output, **args))
+        objects = service.load_objects((output / "workloads.yaml").read_text())
+        deployments = {o["metadata"]["name"]: o for o in objects if o["kind"] == "Deployment"}
+        self.assertTrue({"sglang", "swarmui", "comfyui-gpu0"} <= deployments.keys())
+        argv = deployments["sglang"]["spec"]["template"]["spec"]["containers"][0]["args"]
+        self.assertEqual("163840", argv[argv.index("--max-total-tokens") + 1])
+        memory = next(o for o in objects if o["kind"] == "ConfigMap" and "MEMORY_LLM_MODEL" in o.get("data", {}))
+        self.assertEqual("Qwen3.8-27B-MXFP4", memory["data"]["MEMORY_LLM_MODEL"])
+        self.assertEqual("shared", json.loads((output / "evidence.json").read_text())["mode"])
+        # shared exists only as a serving contract, and only for the assistant experiences
+        for change, name in (({"serving_profile": None}, "no-profile"), ({"experience": "service"}, "service")):
+            with self.subTest(name), self.assertRaises(ValueError):
+                service.render(SimpleNamespace(output=self.root / name, **{**args, **change}))
 
     def test_render_writes_contract_client_values_and_missing_inputs(self):
         site = self.root / "site.json"
@@ -978,12 +1015,14 @@ class ServingContractTests(unittest.TestCase):
 class GatewayPolicyTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         saved = (dict(boundary.CHAT_MODELS), dict(boundary.REASONING_EFFORTS), dict(boundary.TEMPLATE_KWARGS),
-                 boundary.ADMISSION_LIMIT)
+                 boundary.ADMISSION_LIMIT, set(boundary.IMAGE_MODELS))
         def restore():
             for target, value in zip((boundary.CHAT_MODELS, boundary.REASONING_EFFORTS, boundary.TEMPLATE_KWARGS), saved):
                 target.clear()
                 target.update(value)
             boundary.ADMISSION_LIMIT = saved[3]
+            boundary.IMAGE_MODELS.clear()
+            boundary.IMAGE_MODELS.update(saved[4])
         self.addCleanup(restore)
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
@@ -1007,6 +1046,33 @@ class GatewayPolicyTests(unittest.IsolatedAsyncioTestCase):
             self.path.write_text(json.dumps({**service.gateway_policy(contract, rendered), **change}))
             with self.subTest(change=change), self.assertRaises(ValueError):
                 boundary.apply_policy(self.path)
+
+    async def test_shared_mode_policy_admits_images_with_the_contract_model(self):
+        contract = service.serving_contract(ServingContractTests.PROFILE)
+        rendered = service.candidate_render(service.contract_view(contract), 4096, 180, 16)
+        alias = "Qwen3.8-27B-MXFP4"
+        self.assertEqual(["Qwen3.5-9B"], service.gateway_policy(contract, rendered)["image_models"])
+        self.assertEqual(["Qwen3.5-9B", alias], service.gateway_policy(contract, rendered, "shared")["image_models"])
+        control = Path(self.directory.name) / "control"
+        control.write_text("c" * 32)
+        headers = {b"authorization": b"Bearer " + b"c" * 32}
+        ready = {"phase": "ready", "model": alias, "images": True}
+        for mode, status in (("large", 400), ("shared", 200)):
+            self.path.write_text(json.dumps(service.gateway_policy(contract, rendered, mode)))
+            boundary.apply_policy(self.path)
+            gateway = boundary.GatewayBoundary(None, "/nonexistent", str(control))
+            result = await request(gateway, "/_service/control", ready, headers)
+            with self.subTest(mode=mode):
+                self.assertEqual(status, result[0]["status"])
+                if status == 400:
+                    self.assertEqual("images_not_admitted_for_model", json.loads(result[-1]["body"])["error"]["code"])
+                    self.assertNotEqual(alias, gateway.state.get("model"))
+                else:
+                    self.assertEqual(ready, gateway.state)
+        # an image model must also be an admitted chat model
+        self.path.write_text(json.dumps({**service.gateway_policy(contract, rendered, "shared"), "image_models": ["other"]}))
+        with self.assertRaises(ValueError):
+            boundary.apply_policy(self.path)
 
     def test_contract_metric_follows_the_rendered_environment(self):
         import assistant_metrics
