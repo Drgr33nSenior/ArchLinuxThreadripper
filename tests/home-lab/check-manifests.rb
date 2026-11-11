@@ -160,7 +160,8 @@ single_sglang = named(single, 'Deployment', 'sglang').dig('spec', 'template', 's
 require_check(single_sglang['containers'][0].dig('resources', 'limits') == {'cpu' => '20', 'memory' => '32Gi'} && gpu_claims(single_sglang) == %w[gpu-0], 'Single GPU SGLang resource envelope changed')
 guaranteed_pod(single_sglang)
 swarmui = named(single, 'Deployment', 'swarmui').dig('spec', 'template', 'spec')
-require_check(swarmui['containers'][0].dig('resources', 'limits') == {'cpu' => '12', 'memory' => '12Gi'} && gpu_claims(swarmui) == %w[gpu-1], 'SwarmUI resource envelope changed')
+# CPU right-sized from the live shared-mode measurement (2026-11-11, peak 2.3 cores).
+require_check(swarmui['containers'][0].dig('resources', 'limits') == {'cpu' => '4', 'memory' => '12Gi'} && gpu_claims(swarmui) == %w[gpu-1], 'SwarmUI resource envelope changed')
 require_check(swarmui['initContainers'][0].dig('resources', 'limits') == {'cpu' => '2', 'memory' => '64Mi'}, 'SwarmUI init resource envelope changed')
 guaranteed_pod(swarmui)
 compat = documents(directory, 'rdna4-compat')

@@ -89,8 +89,12 @@ spec:
           resources:
             # SDXL fp8 1024^2 measured 2026-11-11: anon peak 8.8 GiB, 12.4 GiB with page cache
             # (sdxl-vram-tiled-miopen-fp8u-fp8te, host cgroup sampler). Guaranteed QoS.
-            requests: {cpu: '8', memory: 10Gi}
-            limits: {cpu: '8', memory: 10Gi}
+            # Live shared mode 2026-11-11: peak 8.8 GiB (anon 7.7) of 10.
+            # CPU measured live 2026-11-11 in shared mode (chat + both image generators,
+            # cold and warm SDXL 1024^2, simultaneous pairs, 1 s cgroup samples): peak 2.3 cores,
+            # p95 1.6 per image pod. 4 whole cores keeps Guaranteed QoS with headroom.
+            requests: {cpu: '4', memory: 10Gi}
+            limits: {cpu: '4', memory: 10Gi}
             claims: [{name: gpu-0}]
           securityContext:
             allowPrivilegeEscalation: false
