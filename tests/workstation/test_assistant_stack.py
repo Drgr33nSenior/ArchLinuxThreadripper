@@ -239,6 +239,13 @@ class AssistantTests(unittest.TestCase):
             self.assertIn(flag, swarm_args)
             self.assertIn(flag, c["args"])
         self.assertEqual(swarm_args[swarm_args.index("--reserve-vram") + 1], c["args"][c["args"].index("--reserve-vram") + 1])
+        # every directory ComfyUI is pointed at on the emptyDir exists before it starts
+        init = named(shared, "Deployment", "comfyui-gpu0")["spec"]["template"]["spec"]["initContainers"][0]
+        self.assertIn({"name": "work", "mountPath": "/work"}, init["volumeMounts"])
+        created = init["args"][0].split()
+        for flag in ("--user-directory", "--input-directory", "--output-directory"):
+            path = c["args"][c["args"].index(flag) + 1]
+            self.assertTrue(path.startswith("/work/") and path in created, (flag, path))
         port = c["args"][c["args"].index("--port") + 1]
         service_port = named(shared, "Service", "comfyui-gpu0")["spec"]["ports"][0]["port"]
         self.assertEqual(int(port), service_port)
