@@ -580,7 +580,10 @@
     {"name": "TRANSFORMERS_OFFLINE", "value": "1", "confidence": "H", "reason": "As above.", "source": "op234 launch environment"},
     {"name": "OMP_NUM_THREADS", "value": "4", "confidence": "M", "reason": "Bounded CPU threads for tokenizer and CPU ops.", "source": "apps/base/sglang/deployment.yaml"},
     {"name": "MAX_JOBS", "value": "4", "confidence": "M", "reason": "Bounded JIT builds inside the pod's CPU request.", "source": "op234 launch environment"},
-    {"name": "HIPCC_JOBS", "value": "4", "confidence": "M", "reason": "As above.", "source": "op234 launch environment"}
+    {"name": "HIPCC_JOBS", "value": "4", "confidence": "M", "reason": "As above.", "source": "op234 launch environment"},
+    {"name": "ROCPROFILER_REGISTER_ENABLED", "value": "0", "confidence": "H",
+     "reason": "Measured 2026-11-11 (rocm_sdk 10.3.0.dev20261108): with the profiler SDK registered as an HSA tool, HIP's start-up uses up the process's ~4096 KFD events, every later interrupt signal gets none, and ROCr's async-event and signal-wait loops spin a core each (5 threads at 100% with SGLang idle). Off: idle CPU 0%, GPU wait latency unchanged. Set it to 1 for a torch.profiler or rocprofv3 session.",
+     "source": "rocr-runtime core/runtime/runtime.cpp AsyncEventsLoop, interrupt_signal.cpp; dev-pod probes 2026-11-11"}
   ],
   "toolchain_env": {
     "reason": "Triton and SGLang JIT need the TheRock SDK inside the image; op234 bound LLVM_PATH to the SDK's LLVM after its sandbox dropped it.",

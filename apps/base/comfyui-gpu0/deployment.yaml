@@ -79,6 +79,10 @@ spec:
             - {name: COMFYUI_ENABLE_MIOPEN, value: '1'}
             - {name: MIOPEN_USER_DB_PATH, value: /miopen/user-db}
             - {name: MIOPEN_CUSTOM_CACHE_DIR, value: /miopen/cache}
+            # ROCm: keep AMD's profiler SDK from registering as an HSA tool. Registered, it
+            # uses up the process's KFD events and ROCr then spins a core per waiting thread
+            # while idle (measured 2026-11-11; see the serving profile's env note).
+            - {name: ROCPROFILER_REGISTER_ENABLED, value: '0'}
           resources:
             # SDXL fp8 1024^2 measured 2026-11-11: anon peak 8.8 GiB, 12.4 GiB with page cache
             # (sdxl-vram-tiled-miopen-fp8u-fp8te, host cgroup sampler). Guaranteed QoS.
