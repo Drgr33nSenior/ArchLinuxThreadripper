@@ -207,8 +207,10 @@ infrastructure/ai-stack/models/render-fetch.py \
 **Namespace.** [`apps/base/namespace.yaml`](../../apps/base/namespace.yaml) is
 the only definition of the `ai-home-lab` Namespace, with Pod Security
 `enforce: restricted` (audit and warn `restricted`), the level the live
-namespace already enforces. `k8s/models.yaml` holds only the `ai-models` claim
-and references that Namespace. The rendered fetch, qualification and bench
+namespace already enforces. `k8s/models.yaml` holds the `ai-models` claim and
+`model-fetch-egress`, which gives fetch Job pods public HTTPS (TCP 443, private
+and reserved ranges excluded) through the namespace's default-deny; it
+references that Namespace. The rendered fetch, qualification and bench
 Jobs and the `apps/` workloads set the fields the restricted level requires;
 confirm admission with `kubectl apply --dry-run=server` before the first apply.
 

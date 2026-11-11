@@ -97,6 +97,25 @@ for key in ("model", "draft"):
                hashes == ["git_sha1"] and re.fullmatch(r"[a-f0-9]{40}", f["git_sha1"])
 PY
 done
+# Fetch Jobs need public HTTPS through the namespace's default-deny, and only that.
+python3 -I - "$dir/k8s/models.yaml" "$dir/models/render-fetch.py" "$dir/models/sdxl-base-1.0.json" "$lock" <<'PY' ||
+import json, subprocess, sys
+import ipaddress
+docs = []
+for chunk in open(sys.argv[1]).read().split("\n---\n"):
+    lines = [l for l in chunk.splitlines() if l.strip() and not l.lstrip().startswith("#")]
+    if lines:
+        docs.append("\n".join(lines))
+assert any("kind: NetworkPolicy" in d and "name: model-fetch-egress" in d for d in docs)
+policy = next(d for d in docs if "name: model-fetch-egress" in d)
+rendered = json.loads(subprocess.run([sys.executable, "-I", sys.argv[2], sys.argv[3], sys.argv[4]], capture_output=True, text=True, check=True).stdout)
+labels = next(i for i in rendered["items"] if i["kind"] == "Job")["spec"]["template"]["metadata"]["labels"]
+assert labels["app.kubernetes.io/name"] == "model-fetch" and "matchLabels: {app.kubernetes.io/name: model-fetch}" in policy
+assert "ports: [{protocol: TCP, port: 443}]" in policy and policy.count("ports:") == 1
+for private in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16", "100.64.0.0/10", "127.0.0.0/8"):
+    assert f"- {private}" in policy, private
+PY
+  fail 'model-fetch-egress must give the fetch Job pods public HTTPS only'
 # The image model's catalog entry and the browser image profile pin the same
 # revision and checkpoint hash.
 python3 -I - "$dir/models/sdxl-base-1.0.json" "$root/apps/base/shared-api/image-profile.json" <<'PY' ||
