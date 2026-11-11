@@ -448,6 +448,18 @@ them, so each overlay states its full list. Bench Jobs get their own two-GPU
 claim from a ResourceClaimTemplate; DRA never allocates a device to two claims,
 so a bench waits while the serving Deployment or SwarmUI hold the cards.
 
+Sharing a card with SGLang TP2 needs a plan for both cards. SGLang gives every rank
+the same KV pool, sized from the smallest free memory across ranks, so the room left
+on `gpu-1` for SDXL (about 6.6 GiB with the seed's fp8 flags) also stays empty on
+`gpu-0`. That matching headroom fits a second ComfyUI, so two images can render at
+once: run it as its own pod on the shared `gpu-0` claim, not with `--cuda-device`,
+because a pod only sees its claimed card, as ordinal zero. Nothing enforces the
+split, and SGLang keeps growing after startup outside its KV pool (activations and
+allocator cache: about 0.6–0.8 GiB per card, from 1.81 GiB free after graph capture
+to 1.0–1.2 GiB at the peak of two concurrent 83k- and 22k-token prompts). The
+ComfyUI seed therefore starts with `--reserve-vram 1.5`, so ComfyUI never counts
+that space as free.
+
 ## 5. Workload profiles and tenant data
 
 Render an overlay with `kubectl kustomize apps/overlays/NAME`. The site ConfigMap
@@ -590,7 +602,9 @@ host before treating both cards as fully allocatable.
 SwarmUI expects a reviewed image containing SwarmUI and its embedded ROCm ComfyUI
 venv at `/SwarmUI/dlbackend/ComfyUI`. No CUDA image or auto-installer is substituted.
 The initial backend seed selects `comfyui_selfstart`, disables automatic updates,
-and leaves existing PVC configuration untouched. No image/video checkpoint is
+starts ComfyUI with fp8 UNet and text encoders and `--reserve-vram 1.5` (see the
+sharing note in section 4), and leaves existing PVC configuration untouched: a
+`Backends.fds` already on the state volume keeps its own arguments. No image/video checkpoint is
 selected yet. Review the current candidates in [MODELS.md](MODELS.md) and stage
 the chosen model and dependencies; the network policy prevents runtime downloads.
 Its Service remains internal until application authentication and a private
