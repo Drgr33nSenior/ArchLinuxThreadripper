@@ -960,6 +960,16 @@ def apply_contract(objects, contract, mode, experience):
             env[:] = [entry for entry in env if entry["name"] not in values]
             env += [{"name": key, "value": value} for key, value in values.items()]
         result.append(obj)
+    # The rewritten gateway config keeps the name kustomize hashed from the source file,
+    # so a contract change (output cap, policy) would not roll its consumers: LiteLLM
+    # reads it only at startup (seen 2026-11-11). Stamp the final contents' hash on them.
+    for config in [o for o in result if o["kind"] == "ConfigMap" and "litellm.yaml" in o.get("data", {})]:
+        digest = hashlib.sha256(json.dumps(config["data"], sort_keys=True).encode()).hexdigest()
+        for obj in result:
+            if obj["kind"] == "Deployment" and any(volume.get("configMap", {}).get("name") == config["metadata"]["name"]
+                                                   for volume in obj["spec"]["template"]["spec"].get("volumes", [])):
+                obj["spec"]["template"]["metadata"].setdefault("annotations", {})[
+                    "ai-home-lab.local/gateway-config-sha256"] = digest
     # Configuration only: the gateway's Python source keeps its legacy defaults,
     # which the rendered gateway-policy.json replaces at startup.
     configuration = [dict(o, data={k: v for k, v in o["data"].items() if not k.endswith(".py")})

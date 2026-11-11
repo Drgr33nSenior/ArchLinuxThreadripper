@@ -952,6 +952,22 @@ class ServingContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not accepted by the checkpoint template"):
             service.serving_contract(self.write_profile(self.profile))
 
+    def test_a_gateway_config_change_rolls_litellm(self):
+        # The rewritten config keeps its kustomize name, so the hash of its final contents
+        # on LiteLLM's pod template is what makes a contract change restart the gateway.
+        def litellm(output_tokens):
+            contract = service.serving_contract(self.PROFILE, output_tokens=output_tokens)
+            objects, _, _ = service.apply_contract(service.kustomize(ROOT / "apps/overlays/assistant"),
+                                                  contract, "large", "assistant")
+            config = next(o for o in objects if o["kind"] == "ConfigMap" and "litellm.yaml" in o.get("data", {}))
+            pod = next(o for o in objects if o["kind"] == "Deployment" and o["metadata"]["name"] == "litellm")
+            return config["metadata"]["name"], pod["spec"]["template"]["metadata"]["annotations"].get(
+                "ai-home-lab.local/gateway-config-sha256")
+        (name_a, digest_a), (name_b, digest_b), (_, digest_a2) = litellm(4096), litellm(12288), litellm(4096)
+        self.assertEqual(name_a, name_b)  # why the name alone cannot roll the gateway
+        self.assertTrue(digest_a and digest_b and digest_a != digest_b)
+        self.assertEqual(digest_a, digest_a2)  # deterministic: an unchanged config does not roll it
+
     def test_every_consumer_is_rendered_from_the_contract_and_none_targets_fp8(self):
         contract = service.serving_contract(self.PROFILE)
         objects, rendered, checks = service.apply_contract(service.kustomize(ROOT / "apps/overlays/assistant"),
