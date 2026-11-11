@@ -122,7 +122,7 @@ class HandoffTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(("second writer", 2), (value["handoff"]["next_action"], value["revision"]))
         _, error, value = await self.save(1, task="new-task")  # a missing task is revision 0
         self.assertEqual(("handoff_conflict", 0, None), (value["error"], value["current_revision"], value["updated_at"]))
-        self.assertIn('outcome="conflict"', METRICS.render())
+        self.assertRegex(METRICS.render(), r'(?m)^workstation_assistant_handoff_operations_total\{[^}]*outcome="conflict"\} [1-9]')
 
     async def test_verification_is_observed_status_never_inferred(self):
         no_verification = {k: v for k, v in HANDOFF.items() if k != "verification"}
@@ -193,7 +193,7 @@ class HandoffTests(unittest.IsolatedAsyncioTestCase):
         # The API-key path reaches the same rows (owner derives from the user id).
         _, _, value = await self.call("load_task_handoff", {"project": "kb-shared", "task": "backup-fix"}, "sk-alice-key")
         self.assertEqual(1, value["revision"])
-        self.assertIn('workstation_assistant_handoff_operations_total{client="mcp",op="load",outcome="ok"}', METRICS.render())
+        self.assertRegex(METRICS.render(), r'(?m)^workstation_assistant_handoff_operations_total\{client="mcp",op="load",outcome="ok"\} [1-9]')
 
     async def test_project_listing_pages_and_identity_never_selects_scope(self):
         self.readable["alice"] = [{"id": "kb-%02d" % n, "name": "Project %d" % n} for n in range(45)]

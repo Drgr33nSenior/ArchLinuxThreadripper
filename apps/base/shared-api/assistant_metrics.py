@@ -64,6 +64,29 @@ class Metrics:
         self.counters = {}
         self.gauges = {}
         self.histograms = {}
+        self._seed()
+
+    def _seed(self):
+        """Publish every counter and histogram series at zero from start-up.
+
+        Every label value is enumerated, so the full set is small and fixed (~250
+        series). Without it a family has no series until its first event: dashboards
+        show "No data" for a tool nobody has used since the pod started, and rate()
+        loses the first event of a series that appears from nothing.
+        """
+        for name, (kind, _, allowed) in FAMILIES.items():
+            if kind == "gauge":
+                continue  # current-state gauges: set when the state is known
+            names = sorted(allowed)
+            combos = [()]
+            for label in names:
+                combos = [c + ((label, value),) for c in combos for value in allowed[label]]
+            for key in combos:
+                if kind == "counter":
+                    self.counters[(name, key)] = 0
+                else:
+                    buckets = DURATION_BUCKETS if name.endswith("_seconds") else COUNT_BUCKETS
+                    self.histograms[(name, key)] = {"buckets": [0] * len(buckets), "sum": 0.0, "count": 0}
 
     def _key(self, name, labels):
         kind, _, allowed = FAMILIES[name]
