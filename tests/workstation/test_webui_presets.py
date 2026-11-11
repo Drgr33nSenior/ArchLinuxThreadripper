@@ -32,6 +32,11 @@ class FakeWebUI(BaseHTTPRequestHandler):
 
     def do_GET(self):
         self.auth.append(self.headers.get("Authorization"))
+        if self.headers.get("Authorization", "").startswith("Bearer sk-restricted"):
+            self.send_response(403)  # ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS refuses sk- keys here
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         self._send(self.groups if self.path == "/api/v1/groups/" else None)
 
     def do_POST(self):
@@ -91,6 +96,9 @@ class PresetTests(unittest.TestCase):
         FakeWebUI.answer = False
         with self.assertRaisesRegex(ValueError, "refused"):
             webui_presets.apply(rows, self.url, "sk-admin", ["Parents"])
+        # An endpoint-restricted API key gets an explanation, not a traceback.
+        with self.assertRaisesRegex(ValueError, "session token"):
+            webui_presets.apply(rows, self.url, "sk-restricted", ["Parents"])
 
     def test_cli_refuses_plain_http_and_a_shared_key_file(self):
         with tempfile.TemporaryDirectory() as directory:
