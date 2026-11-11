@@ -229,6 +229,13 @@ def steps():
                  "sudo systemctl start workstation-tariff.service"],
              reference="docs/TELEMETRY.md#flexible-octopus-prices-and-electricity-estimates",
              note="Without it every Electricity costs panel stays empty; set tariff_code for API prices."),
+        Step("gpu-power", "Hold both GPUs to the measured power policy at every boot",
+             owner=lambda o: [
+                 "sudo systemctl enable --now workstation-gpu-power.service",
+                 "python3 -B /usr/lib/bridge/workstation-runtime/lib/workstation/gpu_power.py check "
+                 "/usr/lib/bridge/workstation-runtime/infrastructure/gpu-power/policy.json"],
+             reference="docs/GPU-PROFILING.md#power-settings",
+             note="auto level, stock profile, 235 W on both cards; pinned clocks (high, COMPUTE) measured 14% slower."),
         Step("service-plan", "Service capacity admission plan (a blocked budget stops here)", run_as="root",
              uses=("resources-plan", "service-render", "telemetry-render"), output="dir",
              build=lambda o, out: ws(o, "service", "plan", f"{o.output_of('resources-plan')}/resource-plan.json",

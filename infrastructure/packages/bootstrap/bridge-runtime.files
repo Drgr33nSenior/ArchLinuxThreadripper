@@ -195,6 +195,9 @@ lib/workstation/telemetry_tariff.py
 infrastructure/observability/host/tariff.json
 templates/workstation/telemetry/workstation-tariff.service
 templates/workstation/telemetry/workstation-tariff.timer
+lib/workstation/gpu_power.py
+infrastructure/gpu-power/policy.json
+templates/workstation/gpu/workstation-gpu-power.service
 templates/workstation/telemetry/workstation-alloy.service
 templates/workstation/telemetry/workstation-telemetry.service
 templates/workstation/telemetry/workstation-telemetry.sysusers

@@ -135,6 +135,8 @@ package_arch-workstation-bridge-runtime() {
   for path in workstation-telemetry.service workstation-telemetry.timer workstation-alloy.service workstation-tariff.service workstation-tariff.timer; do
     install -Dm644 "$srcdir/project/templates/workstation/telemetry/$path" "$pkgdir/usr/lib/systemd/system/$path"
   done
+  install -Dm644 "$srcdir/project/templates/workstation/gpu/workstation-gpu-power.service" \
+    "$pkgdir/usr/lib/systemd/system/workstation-gpu-power.service"
   install -Dm644 "$srcdir/project/templates/workstation/telemetry/workstation-telemetry.sysusers" \
     "$pkgdir/usr/lib/sysusers.d/workstation-telemetry.conf"
   # No active configuration, executable approvals, credentials or unit activation.
