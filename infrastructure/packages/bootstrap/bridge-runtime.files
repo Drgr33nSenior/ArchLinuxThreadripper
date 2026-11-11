@@ -19,6 +19,10 @@ apps/base/swarmui/deployment.yaml
 apps/base/swarmui/kustomization.yaml
 apps/base/swarmui/pvc.yaml
 apps/base/swarmui/service.yaml
+apps/base/comfyui-gpu0/comfy-model-paths.yaml
+apps/base/comfyui-gpu0/deployment.yaml
+apps/base/comfyui-gpu0/kustomization.yaml
+apps/base/comfyui-gpu0/service.yaml
 apps/overlays/default/kustomization.yaml
 apps/overlays/dual-gpu/kustomization.yaml
 apps/overlays/dual-gpu/sglang.yaml
@@ -275,12 +279,14 @@ apps/components/assistant/tools.yaml
 apps/components/assistant/network-policy.yaml
 apps/overlays/assistant/kustomization.yaml
 apps/overlays/assistant-split/kustomization.yaml
+apps/overlays/assistant-shared/kustomization.yaml
 apps/components/memory/kustomization.yaml
 apps/components/memory/workloads.yaml
 apps/components/memory/storage.yaml
 apps/components/memory/network-policy.yaml
 apps/overlays/assistant-memory/kustomization.yaml
 apps/overlays/assistant-memory-split/kustomization.yaml
+apps/overlays/assistant-memory-shared/kustomization.yaml
 infrastructure/graphiti/Containerfile
 infrastructure/graphiti/memory_service.py
 infrastructure/graphiti/requirements.in

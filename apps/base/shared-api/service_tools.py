@@ -82,11 +82,14 @@ def load_image_profile(directory):
     directory = Path(directory)
     profile = json.loads((directory / "image-profile.json").read_text())
     expected = {"schema", "id", "model_repository", "model_revision", "model_sha256",
-                "swarm_model", "workflow", "sizes", "steps", "cfg_scale", "serving_model"}
+                "swarm_model", "workflow", "sizes", "steps", "cfg_scale", "serving_models"}
     if not isinstance(profile, dict) or set(profile) != expected:
         raise ValueError("invalid image profile")
     if (type(profile["schema"]) is not int or profile["schema"] != 1 or profile["id"] != IMAGE_MODEL
-            or profile["workflow"] != "sdxl-workflow.json" or profile["serving_model"] != "Qwen3.5-9B"
+            or profile["workflow"] != "sdxl-workflow.json"
+            # the gateway's rendered policy decides which of these may serve images in a mode
+            or not isinstance(profile["serving_models"], list) or not profile["serving_models"]
+            or not set(profile["serving_models"]) <= {"Qwen3.5-9B", "Qwen3.8-27B-MXFP4"}
             or profile["model_repository"] != "stabilityai/stable-diffusion-xl-base-1.0"
             or not re.fullmatch(r"[a-f0-9]{40}", str(profile["model_revision"]))
             or not re.fullmatch(r"[a-f0-9]{64}", str(profile["model_sha256"]))
@@ -429,8 +432,9 @@ class ServiceTools:
         try:
             state = await self.upstream_json("GET", self.gateway + "/_service/status", timeout=3)
             profile = self.image_profile
-            if state.get("phase") != "ready" or not state.get("images") or state.get("model") != profile["serving_model"]:
-                raise Refusal(503, "images_require_ready_split_mode")
+            if (state.get("phase") != "ready" or not state.get("images")
+                    or state.get("model") not in profile["serving_models"]):
+                raise Refusal(503, "images_require_ready_image_mode")
             session = (await self.upstream_json("POST", self.swarm + "/API/GetNewSession", data={}))['session_id']
             # Marker survives a crash. A restarted adapter refuses new images
             # until an operator verifies/restarts the backend and clears it.

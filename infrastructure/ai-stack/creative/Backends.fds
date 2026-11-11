@@ -10,3 +10,12 @@
         FrontendVersion: None
         ExtraArgs: --output-directory /SwarmUI/Output/comfy --temp-directory /tmp/comfy-temp --input-directory /SwarmUI/Data/comfy-input --user-directory /SwarmUI/Data/comfy-user --fp8_e4m3fn-unet --fp8_e4m3fn-text-enc --reserve-vram 1.5
         OverQueue: 0
+1:
+    type: comfyui_api
+    enabled: true
+    title: ComfyUI on gpu-0 (shared mode)
+    settings:
+        Address: http://comfyui-gpu0:7821
+        AllowIdle: true
+        OverQueue: 0
+        EnableFrontendDev: false

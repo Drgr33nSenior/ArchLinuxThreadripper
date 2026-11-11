@@ -1,0 +1,22 @@
+# Shared mode: the two-GPU contract model (serving arm UQS, render with
+# `service render --mode shared --serving-profile ... --arm UQS`) plus image
+# generation in the VRAM it leaves free on both cards: SwarmUI with its self-started
+# ComfyUI on gpu-1 and a second ComfyUI on gpu-0 (apps/base/comfyui-gpu0). The large
+# assistant's budgets apply; only images are added.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: ai-home-lab
+resources: [../assistant, ../../base/comfyui-gpu0]
+patches:
+  - target: {kind: Deployment, name: open-webui}
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: {name: open-webui}
+      spec:
+        template:
+          spec:
+            containers:
+              - name: open-webui
+                env:
+                  - {name: ENABLE_IMAGE_GENERATION, value: 'true'}

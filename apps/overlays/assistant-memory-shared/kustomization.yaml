@@ -1,0 +1,13 @@
+# Shared assistant plus opt-in Graphiti memory. Extraction uses the contract model:
+# apply_contract rewrites the FP8 placeholder below to the contract alias.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: ai-home-lab
+resources: [../assistant-shared]
+components: [../../components/memory]
+configMapGenerator:
+  - name: memory-profile
+    literals:
+      - MEMORY_LLM_MODEL=Qwen3.8-27B-FP8
+      - MEMORY_LLM_MAX_TOKENS=4096
+      - MEMORY_EMBEDDING_MODEL=Qwen3-Embedding-0.6B

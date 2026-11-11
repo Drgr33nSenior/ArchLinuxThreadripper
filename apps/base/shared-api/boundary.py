@@ -11,6 +11,9 @@ from pathlib import Path
 
 
 CHAT_MODELS = {"Qwen3.8-27B-FP8": (32768, 4096), "Qwen3.5-9B": (4096, 1024)}
+# Models that may serve with image generation on. Source default: the one-GPU 9B split
+# profile. A rendered policy replaces it (shared mode adds the two-GPU contract model).
+IMAGE_MODELS = {"Qwen3.5-9B"}
 MAX_BODY = 1024 * 1024
 CHAT_FIELDS = {
     "model", "messages", "stream", "stream_options", "max_tokens",
@@ -47,6 +50,7 @@ def apply_policy(path):
     efforts = policy["reasoning_efforts"]
     kwargs = policy["template_kwargs"]
     timeout, admission = policy["request_timeout"], policy["admission_limit"]
+    image_models = policy.get("image_models", ["Qwen3.5-9B"] if "Qwen3.5-9B" in models else [])
     if (not isinstance(models, dict) or not models
             or any(type(c) is not int or type(o) is not int or not 1 <= o <= c // 2
                    for c, o in (tuple(limits) for limits in models.values()))
@@ -54,7 +58,8 @@ def apply_policy(path):
                                                        for k, v in efforts.items())
             or not isinstance(kwargs, list) or not set(kwargs) <= POLICY_TEMPLATE_KWARGS
             or type(timeout) is not int or not 30 <= timeout <= 3600
-            or type(admission) is not int or not 1 <= admission <= 16):
+            or type(admission) is not int or not 1 <= admission <= 16
+            or not isinstance(image_models, list) or not set(image_models) <= set(models)):
         raise ValueError("invalid gateway policy")
     CHAT_MODELS.clear()
     CHAT_MODELS.update({name: tuple(limits) for name, limits in models.items()})
@@ -62,6 +67,8 @@ def apply_policy(path):
     REASONING_EFFORTS.update(efforts)
     TEMPLATE_KWARGS.clear()
     TEMPLATE_KWARGS.update({name: bool for name in kwargs})
+    IMAGE_MODELS.clear()
+    IMAGE_MODELS.update(image_models)
     ADMISSION_LIMIT = admission
     return timeout
 
@@ -201,8 +208,8 @@ class GatewayBoundary:
         if phase in {"ready", "starting"} and model not in CHAT_MODELS:
             raise Refusal(400, "invalid_model")
         images = data.get("images", False)
-        if type(images) is not bool or (images and model != "Qwen3.5-9B"):
-            raise Refusal(400, "images_require_split_profile")
+        if type(images) is not bool or (images and model not in IMAGE_MODELS):
+            raise Refusal(400, "images_not_admitted_for_model")
         if data.get("cancel") is True:
             if phase not in {"draining", "unavailable"}:
                 raise Refusal(400, "invalid_cancel_phase")
