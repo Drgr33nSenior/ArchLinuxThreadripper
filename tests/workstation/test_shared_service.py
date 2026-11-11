@@ -1171,6 +1171,26 @@ class GatewayPolicyTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('workstation_assistant_serving_contract_info{contract="qwen3.8-27b-mxfp4-tp2.Y",'
                       'status="incomplete"} 1', metrics.render())
 
+    def test_network_policies_never_carry_empty_rule_lists(self):
+        # The API server drops an empty ingress/egress list, so a manifest that carries one
+        # differs from the live object forever and every apply re-saves it (generation churn).
+        # "Deny all" is the direction in policyTypes with no rules.
+        files = [f for f in ROOT.glob("apps/**/*.yaml")] + [f for f in ROOT.glob("infrastructure/**/*.yaml")]
+        checked = 0
+        for path in files:
+            try:
+                docs = [d for d in yaml.safe_load_all(path.read_text()) if isinstance(d, dict)]
+            except yaml.YAMLError:
+                continue  # templates rendered elsewhere
+            for doc in docs:
+                if doc.get("kind") != "NetworkPolicy":
+                    continue
+                checked += 1
+                spec = doc.get("spec", {})
+                for direction in ("ingress", "egress"):
+                    self.assertNotEqual([], spec.get(direction, None), f"{path.relative_to(ROOT)} {doc['metadata']['name']}")
+        self.assertGreater(checked, 20)
+
     def test_every_tool_series_exists_at_zero_before_the_first_call(self):
         # Dashboards show zero, not "No data", for a tool unused since the pod started,
         # and rate() sees the first event. Every label value is enumerated, so this is bounded.

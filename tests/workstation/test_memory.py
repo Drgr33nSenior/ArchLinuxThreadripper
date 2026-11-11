@@ -368,7 +368,8 @@ class DeploymentTests(unittest.TestCase):
         self.assertEqual(["litellm", "memory-embedding", "neo4j"], targets)
         for name in ("neo4j-flows", "memory-embedding-flows"):
             spec = self.find(self.memory, "NetworkPolicy", name)["spec"]
-            self.assertEqual([], spec["egress"])
+            self.assertIn("Egress", spec["policyTypes"])  # no egress rules: all egress denied
+            self.assertNotIn("egress", spec)
             self.assertEqual("graphiti-memory", spec["ingress"][0]["from"][0]["podSelector"]["matchLabels"]["app.kubernetes.io/name"])
 
     def test_lock_is_hashed_and_excludes_embedded_server(self):

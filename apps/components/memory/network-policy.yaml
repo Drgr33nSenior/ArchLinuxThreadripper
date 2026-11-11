@@ -26,7 +26,6 @@ spec:
   ingress:
     - from: [{podSelector: {matchLabels: {app.kubernetes.io/name: graphiti-memory}}}]
       ports: [{protocol: TCP, port: 7687}]
-  egress: []
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -37,7 +36,6 @@ spec:
   ingress:
     - from: [{podSelector: {matchLabels: {app.kubernetes.io/name: graphiti-memory}}}]
       ports: [{protocol: TCP, port: 8080}]
-  egress: []
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
