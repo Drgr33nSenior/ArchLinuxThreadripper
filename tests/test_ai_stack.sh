@@ -125,6 +125,14 @@ graph = m.workflow(json.loads(open(sys.argv[4]).read()), 512, 7)
 assert graph["7"]["class_type"] == "SaveImage" and graph["4"]["inputs"]["width"] == 512 and graph["5"]["inputs"]["seed"] == 7
 assert graph["1"]["inputs"]["ckpt_name"] == next(f["path"] for f in entry["files"] if f["path"].endswith(".safetensors"))
 assert all(n["class_type"] != "SwarmSaveImageWS" for n in graph.values())
+tiled = m.workflow(json.loads(open(sys.argv[4]).read()), 1024, 1, "tiled")["6"]
+assert tiled["class_type"] == "VAEDecodeTiled" and tiled["inputs"]["tile_size"] == 512 and tiled["inputs"]["samples"] == ["5", 0]
+for argv, decode, miopen, hold in (([], "full", False, "0"), (["--decode", "tiled", "--miopen", "--hold-seconds", "300"], "tiled", True, "300")):
+    j = json.loads(subprocess.run([sys.executable, "-I", sys.argv[1], image, *argv], capture_output=True, text=True, check=True).stdout)["items"][2]
+    env = {e["name"]: e["value"] for e in j["spec"]["template"]["spec"]["containers"][0]["env"]}
+    assert env["MEASURE_DECODE"] == decode and env["MEASURE_HOLD_SECONDS"] == hold and (env.get("COMFYUI_ENABLE_MIOPEN") == "1") == miopen, env
+    assert j["metadata"]["name"].startswith(f"sdxl-vram-{decode}{'-miopen' if miopen else ''}-")
+assert subprocess.run([sys.executable, "-I", sys.argv[1], image, "--hold-seconds", "901"], capture_output=True).returncode != 0
 PY
   fail 'the SDXL VRAM measurement Job is not what measure.py should render'
 

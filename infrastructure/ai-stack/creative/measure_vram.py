@@ -14,6 +14,13 @@ the idle baseline before ComfyUI starts, so the card must be otherwise unused.
 ComfyUI keeps models resident when VRAM is plentiful, so this peak is an upper
 bound; with less free VRAM it offloads and tiles VAE decode, using less memory
 but running slower. Prints one JSON line prefixed RESULT=.
+
+Variant (environment, set by measure.py):
+  MEASURE_DECODE=full|tiled  ComfyUI's VAEDecode, or VAEDecodeTiled (512 px tiles,
+                             64 px overlap) to cap the decode spike
+  COMFYUI_ENABLE_MIOPEN=1    keep MIOpen (cuDNN) on; ComfyUI turns it off on RDNA3+
+  MEASURE_HOLD_SECONDS=N     stay alive N seconds after RESULT so the images in
+                             /tmp/comfy-output can be copied out (seam review)
 """
 
 import json
@@ -53,8 +60,13 @@ def api(path, body=None):
         return json.loads(response.read())
 
 
-def workflow(template, size, seed):
+def workflow(template, size, seed, decode="full"):
     graph = json.loads(json.dumps(template))
+    if decode == "tiled":
+        graph["6"] = {"class_type": "VAEDecodeTiled", "inputs": {"samples": ["5", 0], "vae": ["1", 2], "tile_size": 512,
+                                                                 "overlap": 64, "temporal_size": 64, "temporal_overlap": 8}}
+    elif decode != "full":
+        raise SystemExit(f"unknown decode variant {decode!r}")
     graph["1"]["inputs"]["ckpt_name"] = "sd_xl_base_1.0.safetensors"
     graph["2"]["inputs"]["text"], graph["3"]["inputs"]["text"] = PROMPT, NEGATIVE
     graph["4"]["inputs"]["width"] = graph["4"]["inputs"]["height"] = size
@@ -79,6 +91,8 @@ def render(graph, sampler):
 
 
 def main(workflow_path, checkpoint_dir, pci):
+    decode = os.environ.get("MEASURE_DECODE", "full")
+    miopen = os.environ.get("COMFYUI_ENABLE_MIOPEN") == "1"
     counter = f"/sys/bus/pci/devices/{pci}/mem_info_vram_used"
     total = int(open(f"/sys/bus/pci/devices/{pci}/mem_info_vram_total").read())
     template = json.load(open(workflow_path))
@@ -111,16 +125,21 @@ def main(workflow_path, checkpoint_dir, pci):
         runs = []
         for label, size, seed in (("cold-1024", 1024, 1), ("warm-1024", 1024, 2), ("warm-1024", 1024, 3),
                                   ("warm-1024", 1024, 4), ("warm-512", 512, 5)):
-            seconds, peak = render(workflow(template, size, seed), sampler)
+            seconds, peak = render(workflow(template, size, seed, decode), sampler)
             runs.append({"run": label, "size": size, "seconds": round(seconds, 2), "card_peak_mib": peak >> 20})
             print(f"RUN {label} {size}px {seconds:.2f}s card_peak={peak >> 20} MiB", flush=True)
         sampler.running = False
         overall = max(r["card_peak_mib"] for r in runs)
-        result = {"schema": 1, "pci": pci, "card_total_mib": total >> 20, "baseline_mib": baseline >> 20,
+        result = {"schema": 1, "variant": {"decode": decode, "miopen": miopen},
+                  "pci": pci, "card_total_mib": total >> 20, "baseline_mib": baseline >> 20,
                   "peak_mib": overall, "sdxl_peak_above_baseline_mib": overall - (baseline >> 20),
                   "runs": runs, "steps": template["5"]["inputs"]["steps"],
                   "sampler": template["5"]["inputs"]["sampler_name"], "note": "upper bound: ComfyUI keeps models resident when VRAM is free"}
         print("RESULT=" + json.dumps(result), flush=True)
+        hold = int(os.environ.get("MEASURE_HOLD_SECONDS", "0"))
+        if hold > 0:
+            print(f"HOLD {hold}s: images in /tmp/comfy-output", flush=True)
+            time.sleep(hold)
     finally:
         comfy.terminate()
         try:
