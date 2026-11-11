@@ -1,4 +1,5 @@
 import contextlib
+import errno
 import io
 import json
 from pathlib import Path
@@ -6,6 +7,7 @@ import re
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "lib/workstation"))
@@ -22,7 +24,7 @@ def profile_table(selected):
 class FakeSysfs:
     """Two R9700s in a temporary tree, with amdgpu's write semantics for the files the helper uses."""
 
-    def __init__(self, root, level="high", profile="COMPUTE", cap_watts=300, vendor="0x1002"):
+    def __init__(self, root, level="high", profile="COMPUTE", cap_watts=300, vendor="0x1002", runtime="active"):
         self.root = Path(root)
         self.writes = []
         for address in ("0000:23:00.0", "0000:c3:00.0"):
@@ -35,10 +37,21 @@ class FakeSysfs:
             (hwmon / "power1_cap").write_text(f"{cap_watts * 1_000_000}\n")
             (hwmon / "power1_cap_min").write_text("210000000\n")
             (hwmon / "power1_cap_max").write_text("300000000\n")
+            (device / "power").mkdir()
+            (device / "power/control").write_text("auto\n")
+            (device / "power/runtime_status").write_text(runtime + "\n")
 
     def write(self, path, value):
         path = Path(path)
         self.writes.append((path.parent.name, path.name, str(value)))
+        if path.name == "control":
+            path.write_text(f"{value}\n")
+            if value == "on":
+                (path.parent / "runtime_status").write_text("active\n")
+            return
+        device = path.parents[2] if path.parent.name.startswith("hwmon") else path.parent
+        if (device / "power/runtime_status").read_text().strip() == "suspended":
+            raise OSError(errno.EBUSY, "Device or resource busy")  # amdgpu does not wake for sysfs
         if path.name == "pp_power_profile_mode":
             level = (path.parent / "power_dpm_force_performance_level").read_text().strip()
             if level != "manual":
@@ -71,10 +84,13 @@ class GpuPowerTests(unittest.TestCase):
             for state in states:
                 self.assertEqual((state["performance_level"], state["power_profile"], state["power_cap_watts"], state["ok"]),
                                  ("auto", "BOOTUP_DEFAULT", 235, True))
-            # per card: cap, manual (so the profile write is accepted), profile index, then the level
-            per_card = [w[1:] for w in fake.writes[:4]]
-            self.assertEqual(per_card, [("power1_cap", "235000000"), ("power_dpm_force_performance_level", "manual"),
-                                        ("pp_power_profile_mode", "0"), ("power_dpm_force_performance_level", "auto")])
+            # per card: hold it awake, cap, manual (so the profile write is accepted), profile index,
+            # the level, then restore runtime power management
+            per_card = [w[1:] for w in fake.writes[:6]]
+            self.assertEqual(per_card, [("control", "on"), ("power1_cap", "235000000"),
+                                        ("power_dpm_force_performance_level", "manual"),
+                                        ("pp_power_profile_mode", "0"), ("power_dpm_force_performance_level", "auto"),
+                                        ("control", "auto")])
 
     def test_check_reports_drift_without_writing(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -87,6 +103,38 @@ class GpuPowerTests(unittest.TestCase):
             code, states = run(["check", str(POLICY), "--sysfs-root", str(Path(tmp) / "good")], fake2)
             self.assertEqual((code, [s["ok"] for s in states]), (0, [True, True]))
 
+    def test_check_reports_a_sleeping_card_without_waking_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = FakeSysfs(tmp, level="auto", profile="BOOTUP_DEFAULT", cap_watts=235, runtime="suspended")
+            code, states = run(["check", str(POLICY), "--sysfs-root", tmp], fake)
+            self.assertEqual(code, 0)
+            self.assertEqual(fake.writes, [])
+            self.assertEqual(states, [{"card": "0000:23:00.0", "runtime_status": "suspended", "ok": None},
+                                      {"card": "0000:c3:00.0", "runtime_status": "suspended", "ok": None}])
+
+    def test_check_treats_ebusy_as_asleep(self):
+        # the card can suspend between the runtime_status read and the power-file read
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = FakeSysfs(tmp, level="auto", profile="BOOTUP_DEFAULT", cap_watts=235)
+            with mock.patch.object(gpu_power.Card, "read", side_effect=OSError(errno.EBUSY, "busy")):
+                code, states = run(["check", str(POLICY), "--sysfs-root", tmp], fake)
+            self.assertEqual((code, [s["ok"] for s in states]), (0, [None, None]))
+            with mock.patch.object(gpu_power.Card, "read", side_effect=OSError(errno.EIO, "io")):
+                with self.assertRaises(OSError):
+                    run(["check", str(POLICY), "--sysfs-root", tmp], fake)
+
+    def test_apply_wakes_a_sleeping_card_and_restores_its_runtime_setting(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = FakeSysfs(tmp, level="high", profile="COMPUTE", cap_watts=300, runtime="suspended")
+            code, states = run(["apply", str(POLICY), "--sysfs-root", tmp], fake)
+            self.assertEqual(code, 0)
+            self.assertEqual([s["ok"] for s in states], [True, True])
+            controls = [w[2] for w in fake.writes if w[1] == "control"]
+            self.assertEqual(controls, ["on", "auto", "on", "auto"])
+            for address in ("0000:23:00.0", "0000:c3:00.0"):
+                control = Path(tmp) / "sys/bus/pci/devices" / address / "power/control"
+                self.assertEqual("auto", control.read_text().strip())
+
     def test_apply_refuses_a_cap_outside_the_card_range_and_non_amd_devices(self):
         with tempfile.TemporaryDirectory() as tmp:
             policy = Path(tmp) / "policy.json"
@@ -95,7 +143,8 @@ class GpuPowerTests(unittest.TestCase):
             fake = FakeSysfs(Path(tmp) / "a")
             with self.assertRaisesRegex(RuntimeError, "outside power1_cap_max"):
                 run(["apply", str(policy), "--sysfs-root", str(Path(tmp) / "a")], fake)
-            self.assertEqual(fake.writes, [])
+            # woken to read its limits, then put back; no policy value written
+            self.assertEqual(fake.writes, [("power", "control", "on"), ("power", "control", "auto")])
             fake = FakeSysfs(Path(tmp) / "b", vendor="0x10de")
             with self.assertRaisesRegex(RuntimeError, "not an AMD GPU"):
                 run(["apply", str(POLICY), "--sysfs-root", str(Path(tmp) / "b")], fake)

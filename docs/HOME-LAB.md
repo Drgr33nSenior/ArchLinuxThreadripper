@@ -427,6 +427,26 @@ must reference ResourceClaims instead. AMD prohibits running its DRA driver and
 device plugin simultaneously. CDI is runtime support,
 not GPU partitioning or a scheduling resource by itself.
 
+After a reboot, a pod on the standalone claims can fail with `CDI device injection
+failed: unresolvable CDI devices k8s.gpu.amd.com/gpu=<claim-uid>-gpu-N-NNN`. The
+driver (v1.0.1) writes one CDI spec per prepared claim into `/var/run/cdi`, a tmpfs,
+but its prepared-claim checkpoint survives the reboot, so it reports the claims as
+prepared without rewriting the specs (seen 2026-11-11). Release and re-prepare them:
+scale the consumers to zero, check that both claims show no consumer, then scale
+back up:
+
+```sh
+kubectl -n ai-home-lab scale deploy/sglang --replicas=0
+kubectl -n ai-home-lab wait --for=delete pod -l app.kubernetes.io/name=sglang --timeout=180s
+kubectl -n ai-home-lab get resourceclaims gpu-0 gpu-1 \
+  -o 'custom-columns=NAME:.metadata.name,USERS:.status.reservedFor[*].name'
+kubectl -n ai-home-lab scale deploy/sglang --replicas=1
+```
+
+Device names (`gpu-0-129`) and `/dev/dri/cardN` numbers can also change across a
+reboot (the cards swapped on 2026-11-11); claims that select by `pciBusID` keep
+the right physical card.
+
 NFD discovers the AMD PCI vendor; it does not automatically supply a verified
 `gfx1201` label. The host profile adds `ai-home-lab.local/gfx` only after the
 ROCm hardware report matches. Verify the actual labels, and that the DRA driver
