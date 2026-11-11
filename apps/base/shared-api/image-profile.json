@@ -6,7 +6,7 @@
   "model_sha256": "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b",
   "swarm_model": "OfficialStableDiffusion/sd_xl_base_1.0",
   "workflow": "sdxl-workflow.json",
-  "sizes": ["512x512", "1024x1024"],
+  "sizes": ["512x512", "1024x1024", "1152x896", "896x1152", "1216x832", "832x1216", "1344x768", "768x1344"],
   "steps": 20,
   "cfg_scale": 7.0,
   "serving_models": ["Qwen3.5-9B", "Qwen3.8-27B-MXFP4"]

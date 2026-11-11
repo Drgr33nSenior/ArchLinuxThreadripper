@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "apps/base/shared-api"))
 from assistant_metrics import METRICS
 from retrieval import Retrieval
-from service_tools import ServiceTools
+from service_tools import SDXL_SIZES, ServiceTools, snap_size
 
 # A ws_rag_corpus-named source and the chunk Open WebUI's Markdown splitter stores
 # for it (indentation stripped, lines joined with two spaces and a newline).
@@ -234,7 +234,7 @@ class ToolsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(64, len(health["workflow_sha256"]))
 
     async def test_unsupported_images_never_reach_swarm(self):
-        for change in ({"model": "unqualified-flux"}, {"n": True}, {"n": 2}, {"size": "2048x2048"},
+        for change in ({"model": "unqualified-flux"}, {"n": True}, {"n": 2}, {"size": "huge"}, {"size": "1024x0"},
                        {"prompt": "${workflow}"}, {"workflow": {"class_type": "untrusted"}}):
             response = await self.client.post("/webui/images/generations", headers=self.headers,
                                               json={**self.image, **change})
@@ -248,7 +248,9 @@ class ToolsTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue((self.root / "state/image-inflight.json").is_file())
         self.tools.active.clear()  # The in-memory state of a restarted process.
         response = await self.client.post("/webui/images/generations", headers=self.headers, json=self.image)
-        self.assertEqual(429, response.status_code)
+        self.assertEqual(503, response.status_code)
+        self.assertEqual("image_backend_needs_operator_check", response.json()["error"]["code"])
+        self.assertNotIn("retry-after", response.headers)
         self.assertEqual(1, sum(r.url.path == "/API/GenerateText2Image" for r in self.calls))
 
     async def test_interrupt_acknowledgement_is_not_terminal_gpu_completion(self):
@@ -259,7 +261,7 @@ class ToolsTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue((self.root / "state/image-inflight.json").is_file())
         self.tools.active.clear()
         response = await self.client.post("/webui/images/generations", headers=self.headers, json=self.image)
-        self.assertEqual(429, response.status_code)
+        self.assertEqual(503, response.status_code)
         self.assertEqual(1, sum(r.url.path == "/API/GenerateText2Image" for r in self.calls))
 
     async def test_two_slots_run_two_images_at_once_and_refuse_a_third(self):
@@ -278,7 +280,8 @@ class ToolsTests(unittest.IsolatedAsyncioTestCase):
         health = (await client.get("/health")).json()
         self.assertEqual((True, 2, 2, False), (health["image_busy"], health["image_active"], health["image_slots"],
                                                health["image_recovery_required"]))
-        self.assertEqual(429, (await post()).status_code)
+        busy = await post()
+        self.assertEqual((429, "image_busy", "5"), (busy.status_code, busy.json()["error"]["code"], busy.headers.get("retry-after")))
         self.gate.set()
         self.assertEqual([200, 200], [(await first).status_code, (await second).status_code])
         self.assertEqual([], sorted(p.name for p in (self.root / "state2").glob("image-inflight*")))
@@ -290,7 +293,7 @@ class ToolsTests(unittest.IsolatedAsyncioTestCase):
         (self.root / "state/image-inflight-1.json").write_text("{}")
         # The one-slot adapter (any mode after shared) still sees slot 1's marker.
         response = await self.client.post("/webui/images/generations", headers=self.headers, json=self.image)
-        self.assertEqual(429, response.status_code)
+        self.assertEqual(503, response.status_code)
         self.assertTrue((await self.client.get("/health")).json()["image_recovery_required"])
         self.assertFalse(any(r.url.path == "/API/GenerateText2Image" for r in self.calls))
 
@@ -299,6 +302,27 @@ class ToolsTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(ValueError, msg=slots):
                 ServiceTools(self.upstream, "http://webui", "http://swarm", "http://gateway",
                              self.mapping, self.root / "state3", image_slots=slots)
+
+    def test_requested_sizes_snap_to_sdxl_native_sizes(self):
+        self.assertEqual(SDXL_SIZES, self.tools.image_profile["sizes"])
+        for requested, expected in ((None, "1024x1024"), ("", "1024x1024"), ("auto", "1024x1024"),
+                                    ("512x512", "512x512"), ("832x1216", "832x1216"),
+                                    ("1536x1024", "1216x832"), ("1024x1536", "832x1216"), ("1792x1024", "1344x768"),
+                                    ("2048x2048", "1024x1024"), ("640x480", "1152x896"), ("4000x1000", "1344x768")):
+            self.assertEqual(expected, snap_size(requested, SDXL_SIZES), requested)
+        for requested in ("huge", "1024x0", "1024*1024", "-5x5", "1024x1024x3", 1024):
+            self.assertIsNone(snap_size(requested, SDXL_SIZES), requested)
+        # none has more pixels than the measured 1024x1024
+        self.assertTrue(all(int(w) * int(h) <= 1024 * 1024 for w, h in (x.split("x") for x in SDXL_SIZES)))
+
+    async def test_a_landscape_request_is_generated_at_the_nearest_bucket(self):
+        self.tools.image_timeout = 5  # sizing, not timing, is under test (the fixture's 0.2 s is for cancellation)
+        response = await self.client.post("/webui/images/generations", headers=self.headers,
+                                          json={**self.image, "size": "1536x1024"})
+        self.assertEqual(200, response.status_code)
+        job = next(json.loads(r.content) for r in self.calls if r.url.path == "/API/GenerateText2Image")
+        latent = json.loads(job["comfyworkflowraw"])["4"]["inputs"]
+        self.assertEqual((1216, 832, 1216, 832), (job["width"], job["height"], latent["width"], latent["height"]))
 
 
 if __name__ == "__main__":
