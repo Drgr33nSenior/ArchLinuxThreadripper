@@ -132,7 +132,10 @@
      "source": "arg_groups/fields/serving.py"},
     {"flag": "--decode-log-interval", "value": ["40"], "confidence": "H", "measure": false,
      "reason": "Default cadence; op234's 1 was benchmark logging.",
-     "source": "arg_groups/fields"}
+     "source": "arg_groups/fields"},
+    {"flag": "--sleep-on-idle", "value": [], "confidence": "H", "measure": false,
+     "reason": "Without it each TP scheduler busy-polls its sockets. Measured 2026-11-11 with both GPUs idle: about 7 threads at 100% held one CCD at the 95 C Tctl limit. With it an idle scheduler blocks in zmq poll (1 s timeout) and wakes on the first message.",
+     "source": "managers/scheduler_components/idle_sleeper.py; arg_groups/fields/device.py"}
   ],
   "arms": {
     "B": {"default": false,
