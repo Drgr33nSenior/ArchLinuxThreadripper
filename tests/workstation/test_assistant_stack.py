@@ -188,6 +188,17 @@ class AssistantTests(unittest.TestCase):
             self.assertTrue(env[key].startswith("/SwarmUI/Data/"), key)
             self.assertIn(env[key].replace("/SwarmUI/", "/state/", 1), pod["initContainers"][0]["args"][0])
 
+    def test_comfyui_starts_with_the_measured_shared_card_flags(self):
+        # fp8 UNet + text encoders: 6.6 GiB peak at 1024² (14.7 GiB at defaults). --reserve-vram keeps
+        # ComfyUI out of the ~0.6-0.8 GiB SGLang grows into after startup on a shared card.
+        seed = (ROOT / "apps/base/swarmui/Backends.fds").read_text()
+        args = next(line for line in seed.splitlines() if "ExtraArgs:" in line).split("ExtraArgs:", 1)[1].split()
+        for flag in ("--fp8_e4m3fn-unet", "--fp8_e4m3fn-text-enc"):
+            self.assertIn(flag, args)
+        self.assertEqual("1.5", args[args.index("--reserve-vram") + 1])
+        self.assertNotIn("--cuda-device", args)  # DRA shows the pod only its claimed card, as ordinal zero
+        self.assertEqual(seed, (ROOT / "infrastructure/ai-stack/creative/Backends.fds").read_text())
+
     def test_changed_workflow_or_unsupported_profile_refuses_startup(self):
         base = ROOT / "apps/base/shared-api"
         for mutation in ("node", "route", "batch", "profile", "path"):
