@@ -102,6 +102,11 @@ ws_agent_configure() (
      (if $top_k == "" then {} else {top_k:($top_k|tonumber)} end)')
   # JSON is also valid YAML. No evaluation, interpolation of credential values,
   # writes to existing dotfiles, or secondary model services are involved.
+  # Web access goes only through the workstation (search_web/read_web_page on the gateway's
+  # Exa adapter). Qwen's built-in web_fetch fetched from the client machine instead and
+  # failed behind TLS-inspecting networks (DEPTH_ZERO_SELF_SIGNED_CERT, 2026-11-11); a
+  # whole-tool permissions.deny removes it from the registry. Its built-in web_search is
+  # registered only for Qwen-cloud auth, which this bundle never selects.
   # "$version" is Qwen Code's settings schema (SETTINGS_VERSION 4 since 0.27);
   # without it the client migrates the file on first run and the launcher's
   # SHA-256 check then rejects the bundle.
@@ -112,7 +117,7 @@ ws_agent_configure() (
     --argjson context "$AGENT_CONTEXT_TOKENS" --argjson output "$AGENT_MAX_OUTPUT_TOKENS" --argjson defaults "$defaults" \
     '{"$version":4,general:{enableAutoUpdate:false},privacy:{usageStatisticsEnabled:false},telemetry:{enabled:false},
       security:{auth:{selectedType:"openai"},folderTrust:{enabled:true}},
-      tools:{approvalMode:"default"},context:{fileName:["AGENTS.md","QWEN.md"]},
+      tools:{approvalMode:"default"},permissions:{deny:["WebFetch"]},context:{fileName:["AGENTS.md","QWEN.md"]},
       model:{name:$model},modelProviders:{openai:[{id:$model,name:"Workstation local Qwen",
         baseUrl:$url,envKey:"WORKSTATION_AGENT_API_KEY",generationConfig:{contextWindowSize:$context,
           timeout:180000,streamIdleTimeoutMs:180000,maxRetries:0,
