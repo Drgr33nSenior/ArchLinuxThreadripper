@@ -35,3 +35,22 @@ patches:
                   - {name: IMAGE_CONCURRENCY, value: '2'}
                   # Short videos (generate_video, video.py) on comfyui-gpu0, which holds the Wan stack.
                   - {name: VIDEO_ENABLED, value: 'true'}
+  # Session admission: `session switch shared` starts only Deployments marked qualified.
+  # Both generators have run in shared mode since 2026-11-11: SDXL 1024x1024 warm 6.6 s
+  # (gpu-1) and 7.2 s (gpu-0) beside the UQS arm, and Wan 2.2 video on comfyui-gpu0 since
+  # 2026-11-12 (docs/ASSISTANT.md, short videos). Marked here, not in apps/base, so the
+  # split and older overlays keep their own pending status.
+  - target: {kind: Deployment, name: swarmui}
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: swarmui
+        annotations: {workstation.ai/qualification: qualified}
+  - target: {kind: Deployment, name: comfyui-gpu0}
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: comfyui-gpu0
+        annotations: {workstation.ai/qualification: qualified}

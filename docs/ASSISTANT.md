@@ -117,7 +117,7 @@ and existing claim metadata; do not apply example DNS or invent a new identity.
 ```
 
 The live service is rendered with `--serving-profile` (see the [serving contract](#serving-contract)
-and the shared-mode command in [service modes](MODES.md#switch-between-shared-and-large)).
+and the shared-mode command in [service modes](MODES.md#switch-modes)).
 The two commands above, without a profile, are the older compositions: `large` with the
 Qwen3.8-27B-FP8 image and no pictures, and `split` with Qwen3.5-9B on one GPU and SDXL on
 the other. Neither silently swaps the chat model to make room for a picture.

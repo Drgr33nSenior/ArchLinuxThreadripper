@@ -1,0 +1,25 @@
+[Unit]
+Description=Collect this boot's hardware evidence for workstation session and mode switches
+Documentation=file:///usr/lib/bridge/workstation-runtime/docs/MODES.md
+ConditionPathExists=/etc/workstation/workstation.conf
+# One collection per boot: session switches require evidence from the running boot.
+ConditionPathExists=!/var/lib/workstation-evidence/boot-%b
+After=multi-user.target workstation-gpu-power.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/bridge/workstation-runtime/bin/workstationctl --config /etc/workstation/workstation.conf hardware collect /var/lib/workstation-evidence/boot-%b
+TimeoutStartSec=300
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateNetwork=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/workstation-evidence
+ProtectHome=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

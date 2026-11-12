@@ -137,6 +137,9 @@ budget; verify the selected user-owned cache path is on the intended NVMe mount.
 
 ### CPU Manager migration and rollback
 
+Session switches, and so `workstationctl mode` ([service modes](MODES.md#before-the-first-switch)),
+refuse to run until the static policy is in place.
+
 The existing default is still `lab_cpu_manager_policy: none`. For static mode,
 review the generated CPU list and reserves, then pass the generated variables
 through the existing Ansible extra-vars mechanism along with the existing site

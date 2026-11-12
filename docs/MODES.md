@@ -46,70 +46,79 @@ generator runs in that gap. Video clips run on card 0 and use at most 48 of its 
 units (`HSA_CU_MASK=0:0-47`), so chat keeps about 34 tokens a second while a clip renders,
 instead of 21–24 without the limit. See [short videos](ASSISTANT.md#short-videos-shared-mode).
 
-## How switching works today
+## Switch modes
 
-Two separate steps decide what runs:
+One command switches the whole workstation:
 
-1. **The render** fixes what the workloads are. `service render --mode shared` or
-   `--mode large` writes the SGLang Deployment with the matching arm (its cache size), the
-   gateway policy (whether pictures are allowed) and the coding clients' context limits.
-   Changing between shared and large therefore needs a fresh render and apply.
-2. **The session** decides which rendered workloads run. `session switch <mode>` stops every
-   managed GPU workload, checks the cards are released, then starts the ones that mode needs.
+```sh
+sudo workstationctl mode family        # shared: chat, pictures and video
+sudo workstationctl mode coder         # large: chat only, the full 262K context
+sudo workstationctl mode gaming        # Steam and Sunshine; AI stopped
+sudo workstationctl mode maintenance   # every GPU workload stopped
+```
 
-Render modes and session modes use different names:
+Run it without `--execute` first: it renders, runs every check and prints the plan
+without changing anything. Add `--execute` to switch. Chat is unavailable while it runs:
+draining takes up to 3 minutes, and SGLang then needs a few minutes to load.
+
+| Mode | Session mode | Render |
+| --- | --- | --- |
+| `family` | `shared` | `service render --mode shared` (the profile's shared arm, `UQS`) |
+| `coder` | `ai` | `service render --mode large` (the profile's default arm, `UQL`) |
+| `gaming` | `gaming` | none |
+| `maintenance` | `maintenance` | none |
+
+For `family` and `coder` the command:
+
+1. **Renders from this checkout** into `/var/lib/workstation-mode/<time>-<mode>/`, keeping
+   the live SGLang image (a mode switch changes the arm, never the image). It refuses
+   unless the serving contract is `active`: a qualified profile and a promoted catalogue.
+2. **Prepares the render** to apply: the session-managed GPU Deployments at zero (the
+   session starts them in order), every other Deployment at its live replica count, so Open
+   WebUI and the gateway keep running.
+3. **Hands it to `session switch --apply`.** Before anything stops, the session checks the
+   templates that will start (qualification, pinned images, security settings, combined CPU
+   and memory) and runs a server-side dry run of the whole render. Then it drains chat,
+   stops every GPU workload, confirms both cards are free, applies the render, waits for
+   the gateway and other services to roll out, and starts SGLang, then the picture
+   generators in family mode.
+4. **Prints the gateway status** and the new context limit. If you use Qwen Code, refresh
+   its settings from the render's `client.conf`.
+
+Each render keeps its `mode-plan.json` and `apply.json` beside it, as a record of what
+was applied.
+
+### Before the first switch
+
+These host settings are needed once. Session switches use them for every mode, including
+gaming.
+
+1. **The static CPU Manager.** Session control gives each GPU workload whole CPU cores
+   and refuses to run under the default `none` policy. Enable it with the Ansible role in a
+   maintenance window: every pod restarts once. See
+   [CPU Manager migration](AI-PERFORMANCE.md#cpu-manager-migration-and-rollback).
+2. **Hardware evidence for each boot.** Enable the unit that collects it at boot:
+   `sudo systemctl enable --now workstation-hardware-evidence.service`. It writes
+   `/var/lib/workstation-evidence/boot-<boot id>/`, which the command reads. If a
+   collection fails, remove that directory and start the unit again.
+3. **Host config.** In `/etc/workstation/workstation.conf`, set
+   `SESSION_IMAGE2_DEPLOYMENT=comfyui-gpu0` and `MODE_SERVICE_SITE` (the site file the
+   service renders use). The [example config](../config/workstation.conf.example) lists
+   the optional `MODE_*` overrides.
+4. **Gaming only:** the game Deployment must itself be qualified (built image, display,
+   input and security). Until then `mode gaming` is refused before anything stops.
+
+### Render modes and session modes
+
+`workstationctl mode` hides this, but the two lower-level steps still exist and can be
+run on their own:
 
 | You want | Render with | Session mode |
 | --- | --- | --- |
-| Shared | `--mode shared --arm UQS` | `shared` |
-| Large | `--mode large` (default arm `UQL`) | `ai` |
+| Shared | `--mode shared` (arm `UQS`) | `shared` |
+| Large | `--mode large` (arm `UQL`) | `ai` |
 | Split (legacy) | `--mode split` | `split` |
 | Gaming or maintenance | (any render) | `gaming`, `maintenance` |
-
-### Switch between shared and large
-
-Stop the GPU workloads first, so the new chat arm never starts while the picture generators
-still hold the cards (large mode leaves almost no free GPU memory). Chat is unavailable from
-step 2 until step 5 finishes, typically a few minutes.
-
-1. Render the target mode from the merged `main` checkout. For large mode use
-   `--mode large` and drop `--arm UQS`:
-
-   ```sh
-   ./bin/workstationctl service render /private/service-site.json /private/assistant-shared \
-     --experience assistant-memory --mode shared --existing-claims /private/service-pvcs.json \
-     --serving-profile infrastructure/ai-stack/serving/qwen3.8-27b-mxfp4-tp2.json --arm UQS \
-     --runtime-image registry.lan.thespry.family/local/sglang-gfx1201@sha256:DIGEST
-   ```
-
-2. Put the workstation in maintenance. This drains chat (up to 180 seconds, then in-flight
-   requests are cancelled) and stops every managed GPU workload:
-
-   ```sh
-   sudo ./bin/workstationctl --config /etc/workstation/workstation.conf session switch maintenance \
-     /var/lib/workstation-evidence/hardware-64gb/hardware.json /var/lib/workstation-session --execute
-   ```
-
-3. Review the change against the cluster, then apply it. The render leaves replicas at zero,
-   which is what maintenance expects:
-
-   ```sh
-   kubectl diff -f /private/assistant-shared/workloads.yaml
-   kubectl apply --dry-run=server -f /private/assistant-shared/workloads.yaml
-   kubectl apply -f /private/assistant-shared/workloads.yaml
-   ```
-
-4. Start the new mode: the same `session switch` command with `shared` or `ai` (large) in
-   place of `maintenance`.
-5. Check the gateway reports `phase: ready`, and in shared mode `images: true`:
-
-   ```sh
-   kubectl -n ai-home-lab exec deploy/litellm -c gateway -- python -c \
-     "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:4000/_service/status').read().decode())"
-   ```
-
-6. If you use Qwen Code, refresh its settings from the new render's `client.conf`: its
-   context limit must match the mode.
 
 ### What a session switch does
 
@@ -136,9 +145,6 @@ marked failed and the gateway closes for chat and pictures alike until a switch 
 
 ## Planned
 
-- **One-command switch.** A single command that renders, applies, switches the session and
-  checks the result is the next item on the backlog.
 - **Switching from a web page.** The [workstation bridge](https://github.com/Drgr33nSenior/Spry.ai-workstation-bridge)
-  management UI is intended to let an authorised user change mode in the browser.
-
-Neither exists yet; until then, use the steps above.
+  management UI is intended to let an authorised user change mode in the browser, by calling
+  `workstationctl mode` under the same session lock.

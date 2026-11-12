@@ -221,6 +221,18 @@ SESSION_AI_STARTUP_TIMEOUT_SECONDS=2100
 # The selected manifest must match; steam requires Sunshine disabled separately.
 SESSION_STREAMING_PATH=sunshine
 
+# --- One-command modes: `workstationctl mode <family|coder|gaming|maintenance>` ---
+# family and coder render the service from this checkout and apply it inside the
+# session switch (docs/MODES.md). Uncomment and set the site file for those two modes.
+# MODE_SERVICE_SITE=/home/OWNER/ai-stack/private/site.json
+# Composition the renders use (service, assistant or assistant-memory).
+MODE_SERVICE_EXPERIENCE=assistant-memory
+# Optional overrides; the defaults are shown.
+# MODE_SERVING_PROFILE=<checkout>/infrastructure/ai-stack/serving/qwen3.8-27b-mxfp4-tp2.json
+# MODE_RENDER_DIRECTORY=/var/lib/workstation-mode
+# MODE_STATE_DIRECTORY=/var/lib/workstation-session  (an installed session policy wins)
+# MODE_HARDWARE_ROOT=/var/lib/workstation-evidence   (boot-<id>/hardware.json, written at boot)
+
 # --- Sunshine / headless Wayland gaming candidate ---
 # `sunshine profile <new-directory>` writes sunshine.env for review and copying to
 # the existing Kustomize ConfigMap. It does not update or qualify a Deployment.

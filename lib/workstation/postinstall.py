@@ -241,6 +241,12 @@ def steps():
                  "/usr/lib/bridge/workstation-runtime/infrastructure/gpu-power/policy.json"],
              reference="docs/GPU-PROFILING.md#power-settings",
              note="auto level, stock profile, 235 W on both cards; pinned clocks (high, COMPUTE) measured 14% slower."),
+        Step("hardware-evidence", "Collect hardware evidence at every boot, which session and mode switches require",
+             owner=lambda o: [
+                 "sudo systemctl enable --now workstation-hardware-evidence.service",
+                 "sudo ls /var/lib/workstation-evidence/boot-$(tr -d - </proc/sys/kernel/random/boot_id)/hardware.json"],
+             reference="docs/MODES.md#before-the-first-switch",
+             note="One directory per boot under /var/lib/workstation-evidence; old ones can be removed."),
         Step("service-plan", "Service capacity admission plan (a blocked budget stops here)", run_as="root",
              uses=("resources-plan", "service-render", "telemetry-render"), output="dir",
              build=lambda o, out: ws(o, "service", "plan", f"{o.output_of('resources-plan')}/resource-plan.json",

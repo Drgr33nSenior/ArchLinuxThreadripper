@@ -299,3 +299,89 @@ SESSION_IMAGE2_DEPLOYMENT='' expect_failure ws_session_switch maintenance "$work
 grep -q 'second image ownership' "$work/failure.log"
 ws_session_switch maintenance "$work/fixture.json" "$work/state" --execute
 printf 'shared mode (two-GPU model plus two image generators) fixture tests passed\n'
+
+# --apply: a render applied after every GPU workload has stopped and before any starts.
+# The fixture API gains `kubectl apply`: a dry run can be made to fail, and a real apply
+# copies each Deployment's template and annotations onto the fixture object.
+eval "$(declare -f ws_session_kubectl | sed '1s/ws_session_kubectl/fixture_kubectl/')"
+ws_session_kubectl() {
+  if [[ ${1:-} == apply ]]; then
+    printf '%s\n' "$*" >>"$work/scale.log"
+    if [[ " $* " == *' --dry-run=server '* ]]; then
+      [[ ! -e "$work/fail-dry-run" ]]
+      return
+    fi
+    local file="${*: -1}" name
+    for name in $(jq -r '.items[] | select(.kind == "Deployment") | .metadata.name' "$file"); do
+      [[ -f "$work/api/$name.json" ]] || continue
+      set_document "$work/api/$name.json" ".spec.template = $(jq -c --arg n "$name" '.items[] | select(.metadata.name == $n) | .spec.template' "$file") |
+        .metadata.annotations = $(jq -c --arg n "$name" '.items[] | select(.metadata.name == $n) | .metadata.annotations' "$file")"
+    done
+    return
+  fi
+  fixture_kubectl "$@"
+}
+make_render() {
+  jq -n --slurpfile ai "$work/api/sglang.json" --slurpfile image "$work/api/swarmui.json" --slurpfile image2 "$work/api/comfyui-gpu0.json" '
+    def ns: .kind = "Deployment" | .metadata.namespace = "ai-home-lab";
+    {kind: "List", apiVersion: "v1", items: [
+      ($ai[0] | ns | .spec.replicas = 0 | .spec.template.spec.containers[0].env += [{name: "ARM", value: "UQL"}]),
+      ($image[0] | ns | .spec.replicas = 0), ($image2[0] | ns | .spec.replicas = 0),
+      {kind: "Deployment", metadata: {name: "litellm", namespace: "ai-home-lab"}, spec: {replicas: 1}},
+      {kind: "ConfigMap", metadata: {name: "gateway-policy", namespace: "ai-home-lab"}},
+      {kind: "PriorityClass", metadata: {name: "creative-priority"}}]}' >"$work/render.json"
+}
+make_render
+count=$(wc -l <"$work/scale.log")
+# A Deployment the render does not carry is read live; a duplicated one is refused.
+WS_SESSION_APPLY="$work/render.json"
+[[ "$(ws_session_candidate parent-steam-headless | jq -r .metadata.uid)" == parent-steam-headless-uid ]]
+[[ "$(ws_session_candidate sglang | jq -r '.spec.template.spec.containers[0].env | map(.name) | index("ARM") != null')" == true ]]
+jq '.items += [.items[0]]' "$work/render.json" >"$work/bad.json"
+WS_SESSION_APPLY="$work/bad.json" expect_failure ws_session_candidate sglang
+WS_SESSION_APPLY=''
+# Only the AI modes start from a render.
+expect_failure ws_session_switch gaming "$work/fixture.json" "$work/state" --execute "$work/render.json"
+grep -q 'only when switching to ai, split or shared' "$work/failure.log"
+# A managed GPU Deployment above zero, an object outside the namespace or a symlink is refused.
+jq '.items[0].spec.replicas = 1' "$work/render.json" >"$work/bad.json"
+expect_failure ws_session_switch shared "$work/fixture.json" "$work/state" --execute "$work/bad.json"
+jq '.items[3].metadata.namespace = "kube-system"' "$work/render.json" >"$work/bad.json"
+expect_failure ws_session_switch shared "$work/fixture.json" "$work/state" --execute "$work/bad.json"
+ln -sf "$work/render.json" "$work/linked.json"
+expect_failure ws_session_switch shared "$work/fixture.json" "$work/state" --execute "$work/linked.json"
+# Qualification judges the template that will start (the render's), not the live one.
+jq '.items[0].metadata.annotations["workstation.ai/qualification"] = "pending"' "$work/render.json" >"$work/bad.json"
+expect_failure ws_session_switch shared "$work/fixture.json" "$work/state" --execute "$work/bad.json"
+grep -q 'not qualified' "$work/failure.log"
+# A failed server-side dry run stops before anything changes.
+touch "$work/fail-dry-run"
+expect_failure ws_session_switch shared "$work/fixture.json" "$work/state" --execute "$work/render.json"
+grep -q 'server-side dry run' "$work/failure.log"
+rm "$work/fail-dry-run"
+if tail -n +"$((count + 1))" "$work/scale.log" | grep -q '^scale\|^apply -f'; then exit 1; fi
+# A Deployment from the render that does not roll out fails the session and closes the gateway.
+touch "$work/fail-rollout-litellm"
+: >"$work/service-phases"
+expect_failure ws_session_switch shared "$work/fixture.json" "$work/state" --execute "$work/render.json"
+grep -q 'did not roll out after the apply' "$work/failure.log"
+[[ "$(tail -n 1 "$work/service-phases")" == unavailable ]] && ! grep -q '^ready' "$work/service-phases"
+[[ $(jq -r .spec.replicas "$work/api/sglang.json") == 0 ]]
+rm "$work/fail-rollout-litellm"
+ws_session_switch maintenance "$work/fixture.json" "$work/state" --execute
+# Success: dry run, stops, apply, then SGLang and both generators start; images admitted last.
+make_render
+start=$(($(wc -l <"$work/scale.log") + 1))
+: >"$work/service-phases"
+ws_session_switch shared "$work/fixture.json" "$work/state" --execute "$work/render.json"
+tail -n +"$start" "$work/scale.log" >"$work/this-switch.log"
+dry=$(grep -n -- '--dry-run=server' "$work/this-switch.log" | cut -d: -f1)
+applied=$(grep -n '^apply -f' "$work/this-switch.log" | cut -d: -f1)
+started=$(grep -n '^scale deployment/sglang .*--replicas=1' "$work/this-switch.log" | cut -d: -f1)
+((dry < applied && applied < started))
+jq -e '.spec.template.spec.containers[0].env | any(.name == "ARM" and .value == "UQL")' "$work/api/sglang.json" >/dev/null
+for name in sglang swarmui comfyui-gpu0; do [[ $(jq -r .spec.replicas "$work/api/$name.json") == 1 ]]; done
+[[ "$(tail -n 1 "$work/service-phases")" == 'ready Qwen3.8-27B-MXFP4 true' ]]
+jq -e '.phase == "ready" and .mode == "shared"' "$work/state/state.json" >/dev/null
+ws_session_switch maintenance "$work/fixture.json" "$work/state" --execute
+printf 'render-apply (--apply) fixture tests passed\n'
