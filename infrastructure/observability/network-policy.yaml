@@ -81,6 +81,24 @@ spec:
             matchLabels: {app.kubernetes.io/name: service-tools}
       ports: [{protocol: TCP, port: 8000}]
 ---
+# TEI embedding metrics (separate port; the API port stays Graphiti-only).
+# service-tools /metrics (job assistant-tools). The ai-home-lab side admits the
+# collector in service-tools-service-flows.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: alloy-to-memory-embedding-9000, namespace: workstation-observability}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: alloy}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: ai-home-lab}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: memory-embedding}
+      ports: [{protocol: TCP, port: 9000}]
+---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata: {name: default-deny, namespace: workstation-observability}

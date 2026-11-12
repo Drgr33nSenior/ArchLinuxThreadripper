@@ -378,6 +378,15 @@ class DeploymentTests(unittest.TestCase):
             self.assertIn("Egress", spec["policyTypes"])  # no egress rules: all egress denied
             self.assertNotIn("egress", spec)
             self.assertEqual("graphiti-memory", spec["ingress"][0]["from"][0]["podSelector"]["matchLabels"]["app.kubernetes.io/name"])
+        # Alloy may scrape TEI's separate metrics port and nothing else; Graphiti keeps the API port.
+        embedding_policy = self.find(self.memory, "NetworkPolicy", "memory-embedding-flows")["spec"]
+        self.assertEqual([[8080], [9000]], [[port["port"] for port in rule["ports"]] for rule in embedding_policy["ingress"]])
+        alloy = embedding_policy["ingress"][1]["from"][0]
+        self.assertEqual("alloy", alloy["podSelector"]["matchLabels"]["app.kubernetes.io/name"])
+        self.assertEqual("workstation-observability", alloy["namespaceSelector"]["matchLabels"]["kubernetes.io/metadata.name"])
+        tei = self.find(self.memory, "Deployment", "memory-embedding")["spec"]["template"]["spec"]["containers"][0]
+        self.assertEqual("9000", tei["args"][tei["args"].index("--prometheus-port") + 1])
+        self.assertRegex(tei["image"], r"@sha256:[0-9a-f]{64}$")
 
     def test_lock_is_hashed_and_excludes_embedded_server(self):
         lines = [line for line in (ROOT / "infrastructure/graphiti/requirements-python314.lock").read_text().splitlines()

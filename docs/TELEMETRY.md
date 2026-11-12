@@ -204,6 +204,12 @@ presents it that way.
 It reports what the clients were rendered for, not what the server runs. A
 render without a serving profile leaves it unset.
 
+The memory experience's embedding service (TEI) exposes `/metrics` on a separate
+port, 9000, which only Alloy may reach (`job="embedding"`). The **Workloads**
+dashboard shows its queue, error ratio, CPU throttling (from cAdvisor), throughput
+and latency split into queue and inference time. Without the memory experience the
+target is simply absent; it is not part of `WorkstationExporterDown`.
+
 The **Workloads** dashboard has an **Assistant tools** row. The NAS copy of the
 dashboards and the workstation rules are authoritative after the NAS cutover;
 this repository keeps a byte-identical `workloads.json` for the local Grafana,

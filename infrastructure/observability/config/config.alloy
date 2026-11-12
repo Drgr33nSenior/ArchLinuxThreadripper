@@ -22,6 +22,9 @@ prometheus.scrape "workstation" {
     {"__address__" = "litellm.ai-home-lab.svc:4000", "__metrics_path__" = "/_service/metrics", "job" = "gateway"},
     // Bounded-label assistant tool outcomes and the rendered serving contract.
     {"__address__" = "service-tools.ai-home-lab.svc:8000", "__metrics_path__" = "/metrics", "job" = "assistant-tools"},
+    // TEI embedding service (Graphiti memory): queue, latency, throughput and errors.
+    // Present only with the memory experience; it is not in WorkstationExporterDown.
+    {"__address__" = "memory-embedding.ai-home-lab.svc:9000", "job" = "embedding"},
   ]
   scrape_interval = "30s"
   scrape_timeout = "10s"

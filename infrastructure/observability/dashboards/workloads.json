@@ -2573,6 +2573,270 @@
           "sort": "desc"
         }
       }
+    },
+    {
+      "id": 97,
+      "title": "Embedding queue",
+      "type": "stat",
+      "description": "Requests waiting in the TEI embedding queue (Graphiti memory). Sustained values above a few mean the 4-CPU service is saturated.",
+      "gridPos": {
+        "x": 0,
+        "y": 117,
+        "w": 8,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(te_queue_size{job=\"embedding\"})",
+          "range": false,
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "Unavailable",
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      }
+    },
+    {
+      "id": 98,
+      "title": "Embedding errors \u00b7 15 min ratio",
+      "type": "stat",
+      "description": "Share of embedding requests that did not succeed over 15 minutes (TEI request count minus successes). 429s from the 32-request cap count here.",
+      "gridPos": {
+        "x": 8,
+        "y": 117,
+        "w": 8,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(sum(rate(te_request_count{job=\"embedding\"}[15m])) - sum(rate(te_request_success{job=\"embedding\"}[15m]))) / sum(rate(te_request_count{job=\"embedding\"}[15m]))",
+          "range": false,
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "noValue": "Unavailable",
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      }
+    },
+    {
+      "id": 99,
+      "title": "Embedding CPU throttled \u00b7 15 min",
+      "type": "stat",
+      "description": "Share of CFS periods in which the embedding container hit its 4-CPU quota (cAdvisor). High values with a growing queue mean it needs more CPU, not more threads.",
+      "gridPos": {
+        "x": 16,
+        "y": 117,
+        "w": 8,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(container_cpu_cfs_throttled_periods_total{namespace=\"ai-home-lab\",pod=~\"memory-embedding-.*\",container=\"embedding\"}[15m])) / sum(rate(container_cpu_cfs_periods_total{namespace=\"ai-home-lab\",pod=~\"memory-embedding-.*\",container=\"embedding\"}[15m]))",
+          "range": false,
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "noValue": "Unavailable",
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      }
+    },
+    {
+      "id": 100,
+      "title": "Embedding throughput",
+      "type": "timeseries",
+      "description": "Embedding requests by kind (single text or batch) and the texts embedded per second.",
+      "gridPos": {
+        "x": 0,
+        "y": 121,
+        "w": 12,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (method) (rate(te_request_count{job=\"embedding\"}[$__rate_interval]))",
+          "legendFormat": "requests \u00b7 {{method}}",
+          "range": true,
+          "instant": false
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(te_embed_count{job=\"embedding\"}[$__rate_interval]))",
+          "legendFormat": "texts embedded",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "noValue": "Unavailable",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 101,
+      "title": "Embedding latency \u00b7 p50 / p95",
+      "type": "timeseries",
+      "description": "Request latency, and the queue and inference parts of it. Queue time growing while inference time is flat means demand above capacity.",
+      "gridPos": {
+        "x": 12,
+        "y": 121,
+        "w": 12,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(te_request_duration_bucket{job=\"embedding\"}[$__rate_interval])))",
+          "legendFormat": "total p50",
+          "range": true,
+          "instant": false
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(te_request_duration_bucket{job=\"embedding\"}[$__rate_interval])))",
+          "legendFormat": "total p95",
+          "range": true,
+          "instant": false
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(te_request_queue_duration_bucket{job=\"embedding\"}[$__rate_interval])))",
+          "legendFormat": "queue p95",
+          "range": true,
+          "instant": false
+        },
+        {
+          "refId": "D",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(te_request_inference_duration_bucket{job=\"embedding\"}[$__rate_interval])))",
+          "legendFormat": "inference p95",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "Unavailable",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
     }
   ]
 }

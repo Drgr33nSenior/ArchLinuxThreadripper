@@ -36,6 +36,11 @@ spec:
   ingress:
     - from: [{podSelector: {matchLabels: {app.kubernetes.io/name: graphiti-memory}}}]
       ports: [{protocol: TCP, port: 8080}]
+    # Metrics only: Alloy reaches the separate metrics port, never the embedding API.
+    - from:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: workstation-observability}}
+          podSelector: {matchLabels: {app.kubernetes.io/name: alloy}}
+      ports: [{protocol: TCP, port: 9000}]
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
