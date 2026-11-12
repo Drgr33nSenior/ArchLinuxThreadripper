@@ -97,11 +97,11 @@ installation. An ordinary isolated Docker build can report unavailable udev or
 kernel-module warnings. Do not enable privileged builds to eliminate them.
 The recipe removes the package's file capabilities before producing the image.
 
-`build-result.json` contains a local Docker **config ID**, not a registry manifest
-digest. After security and target acceptance, use the established registry/import
-process and replace `localhost/workstation/steam-headless:UNQUALIFIED` with the
-resulting immutable image reference. Publication and deployment are deliberately
-not automated here. Never mark the upstream base image as the finished recipe.
+`build-result.json` contains a local **config ID**, not a registry manifest
+digest. `image-build` itself never publishes; the pipeline's `gaming` stage scans,
+signs and pushes, and `apps/base/steam-headless/deployment.yaml` pins the pushed
+digest (first: `sha256:e9cbd13d…`, 2026-11-12). A pinned digest is not
+qualification. Never mark the upstream base image as the finished recipe.
 
 ## Deploy on the workstation
 
