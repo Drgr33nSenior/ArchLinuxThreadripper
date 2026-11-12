@@ -33,6 +33,10 @@ lab_eviction_memory: 2Gi
 lab_cpu_manager_policy: none
 lab_reserved_system_cpus: ''
 lab_cpu_manager_cache_alignment: false
+# The kubelet removes cached images that no container has used for this long (K3s
+# defaults to never, until the disk is 85% full). Images that exist only locally, such
+# as an imported build, are removed too once unused this long. 0s disables it.
+lab_image_maximum_gc_age: 336h
 lab_enable_dkms_signing: false
 lab_module_trust_verified: false
 lab_module_key_path: /etc/kernel/keys/module-signing.key
