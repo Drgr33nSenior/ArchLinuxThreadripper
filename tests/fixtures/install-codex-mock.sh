@@ -2,7 +2,7 @@
 set -euo pipefail
 fixture=$(cd -- "$(dirname -- "$0")/.." && pwd -P)
 if [[ ${1:-} == --version ]]; then
-  printf 'codex-cli 0.153.2\n'
+  printf 'codex-cli 0.167.1\n'
   exit 0
 fi
 [[ -n ${CODEX_HOME:-} && -f $CODEX_HOME/config.toml ]]

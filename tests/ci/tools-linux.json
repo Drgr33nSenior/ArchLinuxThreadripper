@@ -1,9 +1,9 @@
 [
   {
     "name": "alloy",
-    "version": "v1.13.2",
-    "url": "https://github.com/grafana/alloy/releases/download/v1.13.2/alloy-linux-amd64.zip",
-    "sha256": "6f256a84d80005d2e31a6ef93015d6e17404c79f5185f12d8692ad6611b670e0"
+    "version": "v1.21.3",
+    "url": "https://github.com/grafana/alloy/releases/download/v1.21.3/alloy-linux-amd64.zip",
+    "sha256": "50d23af2d0f98c00beac6ce9a365693e60f87fb76b6cad6fe1d161e80588af6d"
   },
   {
     "name": "shfmt",

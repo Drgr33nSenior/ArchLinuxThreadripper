@@ -242,8 +242,8 @@ Never copy a private key or a complete personal GnuPG home into build artifacts.
 
 ## 2. Review signed release inputs
 
-Use the reviewed inputs in `infrastructure/iso/versions.lock`: Archiso 90-1,
-the recorded v90 source commit and the 2026/09/04 Arch repository snapshot.
+Use the reviewed inputs in `infrastructure/iso/versions.lock`: Archiso 92-1,
+the recorded v92 source commit and the 2026/11/11 Arch repository snapshot.
 The Dockerfile upgrades only its container filesystem coherently against that
 snapshot. Preparation checks the installed Archiso version and package-file
 integrity and records the builder inventory. No host packages are installed.
@@ -447,8 +447,8 @@ path implicitly.
 
 Primary references:
 
-- [Archiso v90 sources](https://github.com/archlinux/archiso/tree/v90)
-- [Archiso profiles](https://github.com/archlinux/archiso/blob/v90/docs/README.profile.rst)
+- [Archiso v92 sources](https://github.com/archlinux/archiso/tree/v92)
+- [Archiso profiles](https://github.com/archlinux/archiso/blob/v92/docs/README.profile.rst)
 - [Arch Linux Archive](https://wiki.archlinux.org/title/Arch_Linux_Archive)
 - [Arch Secure Boot installation media](https://wiki.archlinux.org/title/Secure_Boot#Booting_an_installation_medium)
 - [OVMF package files](https://archlinux.org/packages/extra/any/edk2-ovmf/files/)
