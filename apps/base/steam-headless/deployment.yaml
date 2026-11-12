@@ -28,9 +28,9 @@ spec:
         - {name: gpu-1, resourceClaimName: gpu-1}
       containers:
         - name: steam-headless
-          # Build the locked recipe, qualify it, then supply its registry manifest
-          # digest. A local Docker config/image ID is not a registry digest.
-          image: localhost/workstation/steam-headless:UNQUALIFIED
+          # Published by the AI-stack `gaming` stage (scanned, signed, verified). A digest
+          # is not qualification: the annotation above stays pending until on-GPU checks.
+          image: registry.lan.thespry.family/local/steam-headless@sha256:e9cbd13d361988fc3d1db12ea1d062d1fcdf688c183646536ea1432798ec2ea0
           envFrom:
             - configMapRef: {name: sunshine-profile}
           env:
