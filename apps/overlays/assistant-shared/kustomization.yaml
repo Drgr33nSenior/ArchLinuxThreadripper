@@ -33,3 +33,5 @@ patches:
               - name: tools
                 env:
                   - {name: IMAGE_CONCURRENCY, value: '2'}
+                  # Short videos (generate_video, video.py) on comfyui-gpu0, which holds the Wan stack.
+                  - {name: VIDEO_ENABLED, value: 'true'}

@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "id": "workstation-wan22-t2v",
+  "catalog": "wan2.2-t2v-a14b",
+  "workflow": "wan-t2v-workflow.json",
+  "sizes": {"landscape": "832x480", "portrait": "480x832", "square": "624x624"},
+  "frames": 81,
+  "fps": 16,
+  "steps": 4,
+  "split_step": 2,
+  "cfg_scale": 1.0,
+  "shift": 5.0,
+  "timeout_seconds": 600,
+  "max_bytes": 25165824,
+  "serving_models": ["Qwen3.8-27B-MXFP4"]
+}

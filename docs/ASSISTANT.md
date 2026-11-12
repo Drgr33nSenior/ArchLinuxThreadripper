@@ -215,6 +215,85 @@ Switch to it with `session switch shared` once the host config sets
 
 `maintenance`, `split` and `ai` stop the second generator with everything else.
 
+#### Short videos (shared mode)
+
+In shared mode the assistant can make a 5-second silent clip in the chat. `service-tools` lists
+an MCP tool, `generate_video`, when `VIDEO_ENABLED=true` (the shared overlay sets it). The model
+calls the tool when someone asks for a video. The clip appears in the chat as an animated WEBP:
+Open WebUI stores an MCP `image` result under the requesting user and shows it inline.
+
+**Model and settings.** The model is Wan 2.2 T2V A14B (catalog entry
+`infrastructure/ai-stack/models/wan2.2-t2v-a14b.json`):
+
+- the two 14B experts in ComfyUI's fp8-scaled repack;
+- lightx2v's 4-step distill LoRAs (`1217`);
+- umt5-xxl fp8 as the text encoder;
+- the Wan 2.1 VAE.
+
+The operator-owned workflow is `apps/base/shared-api/wan-t2v-workflow.json`. `video.py` checks
+it against `video-profile.json` at startup. Its settings:
+
+- 4 steps, split 2 + 2 between the high-noise and low-noise experts;
+- euler/simple sampler, shift 5, CFG 1;
+- 81 frames at 16 fps.
+
+Callers choose only the prompt and an orientation: landscape 832x480, portrait 480x832 or
+square 624x624. No size has more pixels than the measured 832x480.
+
+**Access.** Video access follows picture access:
+
+- only users bound with `service browser-bind --images` (Admin and Parents) may call the tool;
+- the gateway must be `ready` with images on the contract model;
+- one clip runs at a time.
+
+Busy, not-ready and permission refusals come back as tool errors the model can explain. Like
+every service-tools MCP tool, an account with the Open WebUI `admin` role is refused; use the
+daily account.
+
+**Where it runs.** The clip runs on `comfyui-gpu0`, so pictures and videos on `gpu-0` share
+one queue. That ComfyUI reads the Wan files from the local-NVMe `creative-models` volume
+(`Video/`), not from the NAS. With `--fast-disk` it streams the experts from disk on every
+step instead of holding 28.6 GB in RAM.
+
+**Staging the models.** Stage them once on the workstation, as root, then hand them to the
+pod's user:
+
+```sh
+sudo python3 infrastructure/ai-stack/models/stage-video.py \
+  infrastructure/ai-stack/models/wan2.2-t2v-a14b.json \
+  /var/lib/rancher/k3s/storage/<creative-models pv>_ai-home-lab_creative-models/Video
+sudo chown -R 1000:1000 /var/lib/rancher/k3s/storage/<creative-models pv>_ai-home-lab_creative-models/Video
+```
+
+Add `--check` to verify the staged files without downloading. The stage is about 36.8 GB,
+fetched from pinned revisions and checked against each file's sha256.
+
+**Measured on 2026-11-12** (R9700, shared mode, a 5-second 832x480 clip, chat idle at
+86 tok/s):
+
+| `comfyui-gpu0` setting | Clip | Chat decode during the clip |
+| --- | --- | --- |
+| ComfyUI 0.45 defaults + `--fast-disk` | 92–102 s | 13–14 tok/s |
+| + `--use-ck-attention` | 71–76 s | 21–24 tok/s |
+| + `HSA_CU_MASK=0:0-47` (shipped) | 78–82 s | 34–35 tok/s |
+
+- **Why chat slows.** SGLang's two TP ranks run in lockstep, so a clip that saturates one card
+  slows every chat token. The compute-unit mask keeps 16 of the 64 CUs out of ComfyUI's reach.
+  A 32-CU mask was worse on both measures (104 s, 15 tok/s).
+- **ck attention.** It is not bit-identical to PyTorch attention: same-seed frames differ by
+  14–17 dB PSNR, and an SDXL picture by 25.8 dB. Side by side, the clips (including faces) and
+  the SDXL portraits were of the same quality, and SDXL time did not change (about 9.4 s).
+- **Other options tried.** FP8 matmul (`--fast fp8_matrix_mult`) gave no gain, and `--fast`
+  with every feature took 203 s. AOTriton flash attention is already in use: 0.28 s per
+  attention call, whatever the layout.
+- **LoRA choice.** The Comfy-Org v1.1 LoRAs run at the same speed as the `1217` LoRAs.
+- **Memory.** Anonymous memory peaked at 7.3 GiB with SDXL and Wan in one process. Each clip
+  reads 25–47 GB from the NVMe. The tool returns a WEBP of about 2–4.6 MB.
+
+To check `comfyui-gpu0`'s queue before blaming the tool, use the `/queue` command in the
+picture recovery steps below. A cancelled chat request drops its clip from the queue, or
+interrupts it if it is the job running now (ComfyUI's `/interrupt` with that `prompt_id` only).
+
 #### Reasoning parameters
 
 The catalogue's `chat_template.jinja` (git blob `c0c686f9…`, 8,952 bytes; the

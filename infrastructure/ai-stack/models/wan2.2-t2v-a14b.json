@@ -1,0 +1,57 @@
+{
+  "schema": 1,
+  "alias": "wan2.2-t2v-a14b",
+  "status": "selected",
+  "notes": "Selected 2026-11-12 (owner goal: short videos in chat): Wan 2.2 T2V A14B, the two 14B experts in ComfyUI's fp8-scaled repack, with lightx2v's 4-step distill LoRAs (1217, rank 64), the umt5-xxl fp8 text encoder and the Wan 2.1 VAE. Run by comfyui-gpu0 (shared mode) with the fixed workflow apps/base/shared-api/wan-t2v-workflow.json. Staged onto the local NVMe creative-models volume (Video/), not the NAS ai-models volume: ComfyUI --fast-disk streams the experts from disk every step. Stage with infrastructure/ai-stack/models/stage-video.py. Licences: Wan 2.2, umt5 and the lightx2v LoRAs are Apache 2.0. The Comfy-Org v1.1 Lightning LoRAs were A/B-tested (same speed) and are not part of the selection.",
+  "kind": "comfyui-file-set",
+  "files": [
+    {
+      "repository": "Comfy-Org/Wan_2.2_ComfyUI_Repackaged",
+      "revision": "ee6f4a40737a995bf5818954cfce6d59443b0f04",
+      "path": "split_files/diffusion_models/wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors",
+      "dir": "diffusion_models",
+      "size": 14293923632,
+      "sha256": "cad711ae211c8b23455ec68cd6a190a33a3d874234a77eb57266d73f8f0e6c9f"
+    },
+    {
+      "repository": "Comfy-Org/Wan_2.2_ComfyUI_Repackaged",
+      "revision": "ee6f4a40737a995bf5818954cfce6d59443b0f04",
+      "path": "split_files/diffusion_models/wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors",
+      "dir": "diffusion_models",
+      "size": 14293923632,
+      "sha256": "e71b96d7c82e638694c5e7fb98fac4bfb0e4ddc5fbbb4b1df40da8f0f1278a97"
+    },
+    {
+      "repository": "Comfy-Org/Wan_2.2_ComfyUI_Repackaged",
+      "revision": "ee6f4a40737a995bf5818954cfce6d59443b0f04",
+      "path": "split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+      "dir": "text_encoders",
+      "size": 6735906897,
+      "sha256": "c3355d30191f1f066b26d93fba017ae9809dce6c627dda5f6a66eaa651204f68"
+    },
+    {
+      "repository": "Comfy-Org/Wan_2.2_ComfyUI_Repackaged",
+      "revision": "ee6f4a40737a995bf5818954cfce6d59443b0f04",
+      "path": "split_files/vae/wan_2.1_vae.safetensors",
+      "dir": "vae",
+      "size": 253815318,
+      "sha256": "2fc39d31359a4b0a64f55876d8ff7fa8d780956ae2cb13463b0223e15148976b"
+    },
+    {
+      "repository": "lightx2v/Wan2.2-Distill-Loras",
+      "revision": "57adea585d1d21085e2dfc91ce3c7b646cdd9345",
+      "path": "wan2.2_t2v_A14b_high_noise_lora_rank64_lightx2v_4step_1217.safetensors",
+      "dir": "loras",
+      "size": 613518320,
+      "sha256": "89003385f8a9d53ba58fd6ede647fdc90292e8568a54683fcfe6db5556a31769"
+    },
+    {
+      "repository": "lightx2v/Wan2.2-Distill-Loras",
+      "revision": "57adea585d1d21085e2dfc91ce3c7b646cdd9345",
+      "path": "wan2.2_t2v_A14b_low_noise_lora_rank64_lightx2v_4step_1217.safetensors",
+      "dir": "loras",
+      "size": 613518320,
+      "sha256": "4df7c206f3189472da2f92c0a42dcf308f04433d9c14302d08d56e99a3f51322"
+    }
+  ]
+}

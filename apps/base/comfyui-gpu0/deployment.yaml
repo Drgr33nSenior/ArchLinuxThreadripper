@@ -75,6 +75,14 @@ spec:
             - --fp8_e4m3fn-text-enc
             - --reserve-vram
             - '1.5'
+            # Wan 2.2 video (service-tools generate_video): stream the 14B experts from the local
+            # NVMe each step instead of holding them in RAM (measured 2026-11-12: a 5 s 832x480
+            # clip reads ~35-45 GB at up to 22 GB/s; sampling stays compute-bound).
+            - --fast-disk
+            # Comfy Kitchen's attention: a 5 s Wan clip 92 -> 71-76 s on gfx1201 (2026-11-12). It is
+            # not bit-identical to SDPA (same-seed PSNR 14-17 dB video, 25.8 dB SDXL) but side by
+            # side the clips, faces and SDXL portraits were of the same quality; SDXL time unchanged.
+            - --use-ck-attention
           ports: [{name: http, containerPort: 7821}]
           env:
             - {name: HF_HUB_OFFLINE, value: '1'}
@@ -86,10 +94,17 @@ spec:
             # uses up the process's KFD events and ROCr then spins a core per waiting thread
             # while idle (measured 2026-11-11; see the serving profile's env note).
             - {name: ROCPROFILER_REGISTER_ENABLED, value: '0'}
+            # Leave chat CUs this process cannot occupy: SGLang's TP2 ranks run in lockstep, so a
+            # video saturating this card slowed every chat token. Measured 2026-11-12 (5 s clip, chat
+            # decode at idle 86 tok/s): no mask 21-24 tok/s, CUs 0-47 of 64 34-35 tok/s with the
+            # clip 76 -> 82 s; 0-31 was worse on both (15 tok/s, 104 s). SDXL time unchanged.
+            - {name: HSA_CU_MASK, value: '0:0-47'}
           resources:
             # SDXL fp8 1024^2 measured 2026-11-11: anon peak 8.8 GiB, 12.4 GiB with page cache
             # (sdxl-vram-tiled-miopen-fp8u-fp8te, host cgroup sampler). Guaranteed QoS.
             # Live shared mode 2026-11-11: peak 8.8 GiB (anon 7.7) of 10.
+            # Wan video with --fast-disk 2026-11-12 (test pod, SDXL then Wan in one process): anon
+            # peak 7.3 GiB; the streamed experts are page cache, which the limit reclaims.
             # CPU measured live 2026-11-11 in shared mode (chat + both image generators,
             # cold and warm SDXL 1024^2, simultaneous pairs, 1 s cgroup samples): peak 2.3 cores,
             # p95 1.6 per image pod. 4 whole cores keeps Guaranteed QoS with headroom.
@@ -111,6 +126,9 @@ spec:
             - {name: work, mountPath: /work}
             - {name: state, mountPath: /miopen, subPath: Data/miopen-gpu0}
             # SDXL at the catalogue revision, read-only, at SwarmUI's model path.
+            # The Wan 2.2 T2V A14B stack (catalog wan2.2-t2v-a14b), staged on the local-NVMe
+            # creative-models volume by infrastructure/ai-stack/models/stage-video.py.
+            - {name: state, mountPath: /video, subPath: Video, readOnly: true}
             - name: models
               mountPath: /SwarmUI/Models/Stable-Diffusion/OfficialStableDiffusion
               subPath: stabilityai/stable-diffusion-xl-base-1.0/462165984030d82259a11f4367a4eed129e94a7b
