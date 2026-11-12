@@ -327,6 +327,23 @@
           {
             "podSelector": {
               "matchLabels": {
+                "app.kubernetes.io/name": "comfyui-gpu0"
+              }
+            }
+          }
+        ],
+        "ports": [
+          {
+            "protocol": "TCP",
+            "port": 7821
+          }
+        ]
+      },
+      {
+        "to": [
+          {
+            "podSelector": {
+              "matchLabels": {
                 "app.kubernetes.io/name": "litellm"
               }
             }
@@ -521,6 +538,13 @@
             "podSelector": {
               "matchLabels": {
                 "app.kubernetes.io/name": "swarmui"
+              }
+            }
+          },
+          {
+            "podSelector": {
+              "matchLabels": {
+                "app.kubernetes.io/name": "service-tools"
               }
             }
           }

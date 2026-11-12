@@ -20,3 +20,11 @@ swarmui_nodes:
     custom_nodes: |
         DLNodes
         ExtraNodes
+# The Wan 2.2 video stack on the local-NVMe creative-models volume (Video/), used only by
+# service-tools' fixed workflow (apps/base/shared-api/wan-t2v-workflow.json).
+wan:
+    base_path: /video
+    diffusion_models: diffusion_models
+    loras: loras
+    text_encoders: text_encoders
+    vae: vae

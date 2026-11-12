@@ -1,8 +1,9 @@
-"""Retrieval/web research tools, task handoffs, memory and a single-owner Swarm image adapter.
+"""Retrieval/web research tools, task handoffs, memory, a single-owner Swarm image adapter and short videos.
 
 No Kubernetes, shell, workflow upload, or direct public URL fetching. The only
 local writes are the web request ledger, the task handoff SQLite file and the
-image recovery marker under /state. Run one worker/replica. WebUI stores
+image recovery marker under /state. Videos (video.py) run one operator-owned workflow on the
+shared-mode second ComfyUI and come back as an MCP image item. Run one worker/replica. WebUI stores
 returned images under the requesting user.
 """
 import asyncio
@@ -29,6 +30,7 @@ from boundary import Refusal, browser_key, read_body, secret_json
 import handoff
 from project_scope import handoff_owner, memory_group, require_project, accessible_projects
 from retrieval import TOOL_NAMES as RETRIEVAL_TOOLS, Retrieval
+from video import TOOL as VIDEO_TOOL, VideoTool
 from web_search import WebSearch
 
 
@@ -63,6 +65,11 @@ def web_refusal(exc, now):
     elif exc.code in {"web_search_day_limit", "web_search_month_limit"}:
         detail["note"] = "the web budget is used up for now; continue without web sources"
     return detail
+
+
+def video_outcome(exc):
+    return {403: "denied", 429: "busy", 499: "cancelled", 400: "invalid"}.get(
+        exc.status, "not_ready" if exc.code == "video_requires_ready_image_mode" else "failed")
 
 
 def store_outcome(exc):
@@ -166,7 +173,8 @@ MAX_IMAGE_SLOTS = 2
 
 class ServiceTools:
     def __init__(self, client, webui, swarm, gateway, browser_file, state_dir, image_timeout=120, public_webui="", web_search=None,
-                 memory=None, memory_key_file="/run/memory/service-key", memory_write=False, handoffs=None, image_slots=1):
+                 memory=None, memory_key_file="/run/memory/service-key", memory_write=False, handoffs=None, image_slots=1,
+                 video_comfy=None):
         self.client = client
         self.webui, self.swarm, self.gateway = webui, swarm, gateway
         self.browser_file = browser_file
@@ -183,6 +191,9 @@ class ServiceTools:
             raise ValueError("image_slots must be 1 or 2")
         self.image_slots = image_slots
         self.active = set()  # slots with a request in flight in this process
+        # Short videos (video.py) on the shared-mode second ComfyUI, or None when disabled.
+        self.video = (VideoTool(self.upstream_json, client, video_comfy, gateway, browser_file, Path(__file__).parent)
+                      if video_comfy else None)
         # Project retrieval tools (retrieval.py) share the webui-rag-profile settings.
         self.retrieval = Retrieval(self.upstream_json, webui, self.public_webui, os.environ)
         self.app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
@@ -358,6 +369,8 @@ class ServiceTools:
                 result = {"tools": self.retrieval.tools()}
                 if self.handoffs:
                     result["tools"] += handoff.TOOLS
+                if self.video:
+                    result["tools"] += self.video.tools()
                 if self.memory:
                     project = {"project": {"type": "string", "maxLength": 160, "description":
                         "Open WebUI knowledge collection id the user can read, for that project's memory. "
@@ -440,6 +453,20 @@ class ServiceTools:
                                       {"op": MEMORY_TOOLS[name], "client": client}, memory_tool(),
                                       success=lambda value: "not_found" if value.get("no_memory") else "ok")
                 result = {"content": [{"type": "text", "text": json.dumps(value)}], "isError": False}
+            elif method == "tools/call" and params.get("name") == VIDEO_TOOL:
+                if not self.video:
+                    raise Refusal(404, "video_disabled")
+                try:
+                    content = await metered("workstation_assistant_video_requests_total", {"client": client},
+                                            self.video.call(params.get("arguments"), user_id, request.is_disconnected),
+                                            failure=video_outcome)
+                    result = {"content": content, "isError": False}
+                except Refusal as exc:
+                    # Busy, not ready, no permission or a failed render: a tool result the model can
+                    # explain, as for handoffs and web tools. Malformed arguments stay HTTP 400.
+                    if exc.status == 400:
+                        raise
+                    result = {"content": [{"type": "text", "text": json.dumps({"error": exc.code})}], "isError": True}
             elif method == "tools/call" and params.get("name") in {"search_web", "read_web_page"}:
                 search = self.require_web_search()
                 args = params.get("arguments")
@@ -629,7 +656,9 @@ def create_app():
                            public_webui=os.environ["PUBLIC_WEBUI_BASE_URL"], web_search=search,
                            memory="http://graphiti-memory:8000" if os.environ.get("MEMORY_ENABLED", "false") == "true" else None,
                            memory_write=os.environ.get("MEMORY_WRITE_ENABLED", "false") == "true",
-                           handoffs=handoffs, image_slots=int(os.environ.get("IMAGE_CONCURRENCY", "1")))
+                           handoffs=handoffs, image_slots=int(os.environ.get("IMAGE_CONCURRENCY", "1")),
+                           # Shared mode only: the second ComfyUI (apps/base/comfyui-gpu0) holds the Wan stack.
+                           video_comfy="http://comfyui-gpu0:7821" if os.environ.get("VIDEO_ENABLED", "false") == "true" else None)
     # Starlette 1.x (FastAPI 0.136, the pinned gateway image) removed
     # add_event_handler/on_event; close the shared client from the lifespan.
     @contextlib.asynccontextmanager

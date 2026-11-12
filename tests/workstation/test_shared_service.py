@@ -684,7 +684,9 @@ class ResourceTests(unittest.TestCase):
         for source, target, port in (("open-webui", "litellm", 4000), ("litellm", "sglang", 30000),
             ("litellm", "gateway-postgres", 5432), ("service-tools", "open-webui", 8080),
             ("open-webui", "service-tools", 8000), ("service-tools", "swarmui", 7801),
-            ("swarmui", "comfyui-gpu0", 7821)):
+            ("swarmui", "comfyui-gpu0", 7821),
+            # generate_video (video.py) submits the fixed Wan workflow to the second ComfyUI
+            ("service-tools", "comfyui-gpu0", 7821)):
             self.assertTrue(allowed(pod(source), pod(target), port), (source, target))
         for target, port in (("open-webui", 8080), ("litellm", 4000), ("service-tools", 8000)):
             self.assertTrue(allowed(pod("traefik", "kube-system"), pod(target), port))
@@ -693,7 +695,7 @@ class ResourceTests(unittest.TestCase):
                                  ("open-webui", 8080), ("service-tools", 8000), ("swarmui", 7801)):
                 self.assertFalse(allowed(source, pod(target), port), (source, target))
         self.assertFalse(allowed(pod("open-webui"), pod("sglang"), 30000))
-        for source in ("open-webui", "service-tools", "litellm", "sglang"):
+        for source in ("open-webui", "litellm", "sglang"):
             self.assertFalse(allowed(pod(source), pod("comfyui-gpu0"), 7821), source)
         self.assertFalse(allowed(pod("swarmui"), pod("sglang"), 30000))
         self.assertFalse(allowed(pod("comfyui-gpu0"), pod("swarmui"), 7801))
