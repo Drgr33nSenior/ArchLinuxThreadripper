@@ -143,6 +143,15 @@ ws_session_deployment() {
   ws_session_kubectl -n "$SESSION_NAMESPACE" get deployment "$1" -o json
 }
 
+# The game Deployment may not be installed yet: gaming is qualified separately. Print it,
+# or nothing when it does not exist; an API failure is still an error, so a running game
+# is never mistaken for an absent one.
+ws_session_game_document() {
+  ws_session_kubectl -n "$SESSION_NAMESPACE" get deployment "$SESSION_GAME_DEPLOYMENT" --ignore-not-found -o json
+}
+
+ws_session_game_present() { [[ ${SESSION_GAME_PRESENT:-true} == true ]]; }
+
 # The Deployment a switch will run: from the render being applied (--apply) when it
 # carries one, otherwise the live object. Checks made before anything stops therefore
 # judge the templates that will actually start.
@@ -270,7 +279,8 @@ ws_session_managed_uids() {
   [[ ${SESSION_SERVICE_ENABLED:-false} != true ]] || images="$(ws_session_managed_pods "$SESSION_IMAGE_DEPLOYMENT")" || return 1
   [[ -z ${SESSION_IMAGE2_DEPLOYMENT:-} ]] || images2="$(ws_session_managed_pods "$SESSION_IMAGE2_DEPLOYMENT")" || return 1
   ai="$(ws_session_managed_pods "$SESSION_AI_DEPLOYMENT")" || return 1
-  game="$(ws_session_managed_pods "$SESSION_GAME_DEPLOYMENT")" || return 1
+  game='[]'
+  ! ws_session_game_present || game="$(ws_session_managed_pods "$SESSION_GAME_DEPLOYMENT")" || return 1
   jq -n --argjson ai "$ai" --argjson game "$game" --argjson images "$images" --argjson images2 "$images2" \
     '($ai+$game+$images+$images2)|map(.metadata.uid)'
 }
@@ -444,6 +454,12 @@ ws_session_switch() (
   fi
   flock -n 9 || ws_die 'another session transition is in progress'
   node="$(ws_session_target_check "$hardware")"
+  local game_document
+  game_document="$(ws_session_game_document)" || ws_die 'cannot inspect the game Deployment'
+  SESSION_GAME_PRESENT=false
+  [[ -z "$game_document" ]] || SESSION_GAME_PRESENT=true
+  [[ "$mode" != gaming ]] || ws_session_game_present ||
+    ws_die "gaming needs Deployment/$SESSION_GAME_DEPLOYMENT, which is not installed"
   if [[ -f "$dir/state.json" ]]; then
     state="$(<"$dir/state.json")"
     jq -e --arg context "$SESSION_CONTEXT" --arg node "$SESSION_NODE" --arg ns "$SESSION_NAMESPACE" \
@@ -455,14 +471,25 @@ ws_session_switch() (
   else
     [[ "$mode" != restore ]] || ws_die 'no saved session to restore'
     ai="$(ws_session_deployment "$SESSION_AI_DEPLOYMENT" | jq -er '.spec.replicas')"
-    game="$(ws_session_deployment "$SESSION_GAME_DEPLOYMENT" | jq -er '.spec.replicas')"
+    game=0
+    ! ws_session_game_present || game="$(jq -er '.spec.replicas' <<<"$game_document")"
     ((ai <= 1 && game <= 1 && ai + game <= 1)) || ws_die 'initial state must have at most one managed GPU deployment active; concurrent placement is not yet qualified'
     state="$(jq -n --arg context "$SESSION_CONTEXT" --arg node "$SESSION_NODE" --arg ns "$SESSION_NAMESPACE" \
       --arg ai "$SESSION_AI_DEPLOYMENT" --arg game "$SESSION_GAME_DEPLOYMENT" --argjson ac "$ai" --argjson gc "$game" \
       --arg ai_uid "$(ws_session_deployment "$SESSION_AI_DEPLOYMENT" | jq -er .metadata.uid)" \
-      --arg game_uid "$(ws_session_deployment "$SESSION_GAME_DEPLOYMENT" | jq -er .metadata.uid)" \
+      --arg game_uid "$(if ws_session_game_present; then jq -er .metadata.uid <<<"$game_document"; else printf absent; fi)" \
       '{schema_version:1,context:$context,node:$node,namespace:$ns,ai:$ai,game:$game,ai_uid:$ai_uid,game_uid:$game_uid,
         previous:{ai:$ac,game:$gc},mode:"baseline",phase:"ready"}')"
+  fi
+  # A game Deployment installed after the state was written is adopted only while stopped;
+  # one the state records cannot silently disappear.
+  if [[ "$(jq -r .game_uid <<<"$state")" == absent ]]; then
+    if ws_session_game_present; then
+      [[ "$(jq -r .spec.replicas <<<"$game_document")" == 0 ]] || ws_die 'adopt the game Deployment only while it is stopped'
+      state="$(jq --arg uid "$(jq -er .metadata.uid <<<"$game_document")" '.game_uid = $uid | .previous.game = 0' <<<"$state")"
+    fi
+  else
+    ws_session_game_present || ws_die "Deployment/$SESSION_GAME_DEPLOYMENT is recorded in the session state but no longer exists"
   fi
   SESSION_AI_UID="$(jq -r .ai_uid <<<"$state")"
   SESSION_GAME_UID="$(jq -r .game_uid <<<"$state")"
@@ -495,7 +522,7 @@ ws_session_switch() (
   SESSION_AI_UID="$(jq -r .ai_uid <<<"$state")"
   SESSION_GAME_UID="$(jq -r .game_uid <<<"$state")"
   ws_session_checked_deployment "$SESSION_AI_DEPLOYMENT" >/dev/null
-  ws_session_checked_deployment "$SESSION_GAME_DEPLOYMENT" >/dev/null
+  ! ws_session_game_present || ws_session_checked_deployment "$SESSION_GAME_DEPLOYMENT" >/dev/null
   ws_session_other_gpu_check
   desired=''
   case "$mode" in
@@ -567,11 +594,12 @@ ws_session_switch() (
   if [[ -z "$apply" && "$previous_phase" == ready && "$(jq -r .mode <<<"$state")" == "$mode" && ${SESSION_SERVICE_ENABLED:-false} == false ]]; then
     local actual_ai actual_game
     actual_ai="$(ws_session_deployment "$SESSION_AI_DEPLOYMENT" | jq -r .spec.replicas)"
-    actual_game="$(ws_session_deployment "$SESSION_GAME_DEPLOYMENT" | jq -r .spec.replicas)"
+    actual_game=0
+    ! ws_session_game_present || actual_game="$(ws_session_deployment "$SESSION_GAME_DEPLOYMENT" | jq -r .spec.replicas)"
     if [[ "$actual_ai" == "$([[ "$desired" == "$SESSION_AI_DEPLOYMENT" ]] && printf 1 || printf 0)" &&
     "$actual_game" == "$([[ "$desired" == "$SESSION_GAME_DEPLOYMENT" ]] && printf 1 || printf 0)" ]]; then
       [[ "$desired" == "$SESSION_AI_DEPLOYMENT" ]] || ws_session_stop "$SESSION_AI_DEPLOYMENT"
-      [[ "$desired" == "$SESSION_GAME_DEPLOYMENT" ]] || ws_session_stop "$SESSION_GAME_DEPLOYMENT"
+      [[ "$desired" == "$SESSION_GAME_DEPLOYMENT" ]] || ! ws_session_game_present || ws_session_stop "$SESSION_GAME_DEPLOYMENT"
       [[ -n "$desired" ]] || ws_session_gpu_free "$hardware"
       [[ -z "$desired" ]] || ws_session_kubectl -n "$SESSION_NAMESPACE" rollout status "deployment/$desired" --timeout="$(ws_session_rollout_timeout "$desired")" >/dev/null
       if [[ "$desired" == "$SESSION_GAME_DEPLOYMENT" ]]; then ws_session_build_gate inhibit; else ws_session_build_gate release; fi
@@ -589,7 +617,7 @@ ws_session_switch() (
   trap 'exit 143' TERM
   ws_session_service draining
   ws_session_stop "$SESSION_AI_DEPLOYMENT"
-  ws_session_stop "$SESSION_GAME_DEPLOYMENT"
+  ! ws_session_game_present || ws_session_stop "$SESSION_GAME_DEPLOYMENT"
   [[ ${SESSION_SERVICE_ENABLED:-false} != true ]] || ws_session_stop "$SESSION_IMAGE_DEPLOYMENT"
   [[ -z ${SESSION_IMAGE2_DEPLOYMENT:-} ]] || ws_session_stop "$SESSION_IMAGE2_DEPLOYMENT"
   ws_session_gpu_free "$hardware"

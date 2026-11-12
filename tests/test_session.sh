@@ -55,6 +55,10 @@ ws_session_kubectl() {
     get:namespace) printf '{"metadata":{"labels":{"pod-security.kubernetes.io/enforce":"baseline"}}}\n' ;;
     get:pods) command jq . "$work/api/pods.json" ;;
     get:replicasets) command jq . "$work/api/rs.json" ;;
+    get:deployment)
+      # --ignore-not-found: an absent Deployment prints nothing and succeeds.
+      if [[ -f "$work/api/$3.json" ]]; then command jq . "$work/api/$3.json"; fi
+      ;;
     scale:*)
       printf '%s\n' "$*" >>"$work/scale.log"
       [[ ! -f "$work/fail-scale" ]] || return 1
@@ -385,3 +389,28 @@ for name in sglang swarmui comfyui-gpu0; do [[ $(jq -r .spec.replicas "$work/api
 jq -e '.phase == "ready" and .mode == "shared"' "$work/state/state.json" >/dev/null
 ws_session_switch maintenance "$work/fixture.json" "$work/state" --execute
 printf 'render-apply (--apply) fixture tests passed\n'
+
+# The game Deployment may not be installed yet: gaming is qualified separately. A fresh
+# session records it as absent, refuses gaming, adopts it later only while stopped, and
+# refuses once a recorded game Deployment disappears.
+mv "$work/state" "$work/state-with-game" && mkdir -m 700 "$work/state"
+mv "$work/api/parent-steam-headless.json" "$work/game.json"
+make_render
+ws_session_switch shared "$work/fixture.json" "$work/state" --execute "$work/render.json"
+jq -e '.game_uid == "absent" and .previous.game == 0 and .phase == "ready" and .mode == "shared"' "$work/state/state.json" >/dev/null
+expect_failure ws_session_switch gaming "$work/fixture.json" "$work/state" --execute
+grep -q 'gaming needs Deployment/parent-steam-headless' "$work/failure.log"
+ws_session_switch maintenance "$work/fixture.json" "$work/state" --execute
+set_document "$work/game.json" '.spec.replicas=1'
+cp "$work/game.json" "$work/api/parent-steam-headless.json"
+expect_failure ws_session_switch maintenance "$work/fixture.json" "$work/state" --execute
+grep -q 'adopt the game Deployment only while it is stopped' "$work/failure.log"
+set_document "$work/api/parent-steam-headless.json" '.spec.replicas=0'
+ws_session_switch maintenance "$work/fixture.json" "$work/state" --execute
+jq -e '.game_uid == "parent-steam-headless-uid"' "$work/state/state.json" >/dev/null
+rm "$work/api/parent-steam-headless.json"
+expect_failure ws_session_switch maintenance "$work/fixture.json" "$work/state" --execute
+grep -q 'recorded in the session state but no longer exists' "$work/failure.log"
+cp "$work/game.json" "$work/api/parent-steam-headless.json"
+set_document "$work/api/parent-steam-headless.json" '.spec.replicas=0'
+printf 'absent game Deployment fixture tests passed\n'
