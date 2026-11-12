@@ -17,8 +17,10 @@ repeatable routine rather than a hand-assembled runtime.
 flowchart LR
   lock["stack.lock<br/>pinned commits"] --> rocm["rocm"] --> torch["torch"] --> sgl["sglang<br/>+ patch series"] --> img["image<br/>sglang-gfx1201"]
   torch --> comfy["comfyui"] --> swarm["swarmui"] --> creative["creative<br/>creative-gfx1201"]
+  lock --> graphiti["graphiti<br/>graphiti-memory"]
   img --> sign["scan, sign,<br/>push"]
   creative --> sign
+  graphiti --> sign
   cat["models/*.json"] --> fetch["render-fetch Job"] --> nas[("NAS<br/>ai-models")]
   profile["serving profile<br/>(arms)"] --> render["service render<br/>--mode"]
   sign --> render
@@ -46,6 +48,7 @@ a refresh that only moves SGLang rebuilds only the SGLang stage and the image.
 | `comfyui` | A complete wheelhouse for ComfyUI as SwarmUI self-starts it, on the same ROCm and PyTorch builds, plus the pinned ComfyUI source |
 | `swarmui` | SwarmUI built self-contained with the pinned .NET SDK image, with the offline-pip guard patch |
 | `creative` | `registry.lan.thespry.family/local/creative-gfx1201:<key>`: SwarmUI plus ComfyUI, installed offline |
+| `graphiti` | `registry.lan.thespry.family/local/graphiti-memory:<key>`: the [memory service](../../docs/MEMORY.md) from `infrastructure/graphiti` and its hashed lock; CPU only, independent of the ROCm stages, with an offline import smoke test (`graphiti/smoke.py`) |
 
 Each stage also records its progress for monitoring: `stage-metrics.py` writes
 `/var/lib/workstation-ai-stack/ai-stack.prom`, which node-exporter reads. The
@@ -124,8 +127,9 @@ publisher account.
 
 ### Scanning and signing
 
-With `AI_STACK_PUSH=1` the `image` and `creative` stages, after their GPU smoke
-tests, run the same `publish` path (each with its own scan allowlist):
+With `AI_STACK_PUSH=1` the `image`, `creative` and `graphiti` stages, after their smoke
+tests (GPU for the first two, offline imports for `graphiti`), run the same `publish`
+path (each with its own scan allowlist):
 
 1. Scans the image with Trivy (`TRIVY_IMAGE` in `stack.lock`) and writes, under
    the image stage's `builds/image-<key>/out/scan/`, the full report (`vulns.json`), a CycloneDX

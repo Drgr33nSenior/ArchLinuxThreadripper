@@ -24,6 +24,21 @@ done
 grep -Eq '^SGLANG_PATCHSET_SHA256=[a-f0-9]{64}$' "$lock" || fail 'patch series hash'
 grep -Eq '^IMAGE_REPOSITORY=registry\.lan\.thespry\.family/local/[a-z0-9-]+$' "$lock" || fail 'image repository'
 grep -Eq '^CREATIVE_IMAGE_REPOSITORY=registry\.lan\.thespry\.family/local/[a-z0-9-]+$' "$lock" || fail 'creative image repository'
+grep -Eq '^GRAPHITI_IMAGE_REPOSITORY=registry\.lan\.thespry\.family/local/[a-z0-9-]+$' "$lock" || fail 'graphiti image repository'
+# The memory image is a pipeline stage: keyed on its files and smoke test, smoke-tested
+# offline before the shared scan/sign/push path, and part of build-all.
+# shellcheck disable=SC2016 # literal text in build-stage.sh
+grep -Fq 'tag=$(read_lock GRAPHITI_IMAGE_REPOSITORY):$graphiti_key' "$dir/build-stage.sh" || fail 'graphiti tag is not the graphiti key'
+# shellcheck disable=SC2016 # literal text in build-stage.sh
+grep -Fq '"$graphiti_src"/{Containerfile,memory_service.py,requirements-python314.lock} "$here/graphiti/smoke.py"' "$dir/build-stage.sh" ||
+  fail 'graphiti key does not cover the image files and smoke test'
+# shellcheck disable=SC2016 # literal text in build-stage.sh
+grep -Fq -- '--network none --read-only --tmpfs /tmp -e HOME=/tmp' "$dir/build-stage.sh" || fail 'graphiti smoke is not offline and read-only'
+# shellcheck disable=SC2016 # literal text in build-stage.sh
+grep -Fq 'publish "$tag" "$graphiti_run" "$here/graphiti/scan-allowlist.json"' "$dir/build-stage.sh" || fail 'graphiti does not use the publish path'
+grep -Eq '^for stage in .* graphiti; do$' "$dir/build-all.sh" || fail 'build-all does not build graphiti'
+python3 -I -c 'import ast, sys; ast.parse(open(sys.argv[1]).read())' "$dir/graphiti/smoke.py" || fail 'graphiti smoke does not parse'
+python3 -I -c 'import json, sys; assert json.load(open(sys.argv[1])) == []' "$dir/graphiti/scan-allowlist.json" || fail 'graphiti allowlist is not empty'
 
 # The patch-series hash is order-independent of the filesystem and content-sensitive.
 work=$(mktemp -d)

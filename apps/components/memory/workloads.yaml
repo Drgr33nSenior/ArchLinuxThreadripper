@@ -162,7 +162,7 @@ spec:
       containers:
         - name: memory
           image: localhost/workstation/graphiti-memory
-          imagePullPolicy: Never
+          imagePullPolicy: IfNotPresent
           envFrom: [{configMapRef: {name: memory-profile}}]
           ports: [{name: http, containerPort: 8000}]
           resources:

@@ -199,14 +199,14 @@ implemented.
 
 To enable it on the installed workstation:
 
-1. Build the image, import it into K3s containerd (the Deployment uses
-   `imagePullPolicy: Never`), and record its tag in
-   `apps/components/memory/kustomization.yaml`:
+1. The image comes from the lab registry, pinned by digest in
+   `apps/components/memory/kustomization.yaml`. To rebuild it after changing
+   `infrastructure/graphiti`, run the AI-stack `graphiti` stage, which builds it,
+   runs an offline import smoke test, scans, signs and pushes it
+   ([AI serving stack](../infrastructure/ai-stack/README.md#stages)), then record the
+   pushed digest it prints:
    ```sh
-   podman build -f infrastructure/graphiti/Containerfile -t localhost/workstation/graphiti-memory:build infrastructure/graphiti
-   T=localhost/workstation/graphiti-memory:img-$(podman image inspect localhost/workstation/graphiti-memory:build --format '{{.Id}}' | cut -c1-12)
-   podman tag localhost/workstation/graphiti-memory:build "$T"
-   podman save --format docker-archive "$T" | sudo k3s ctr -n k8s.io images import -
+   AI_STACK_PUSH=1 bash infrastructure/ai-stack/build-stage.sh graphiti
    ```
 2. Render with `service render <site.json> <new-dir> --experience assistant-memory`.
    Run `service plan` with fresh resources. Memory adds about 9 GiB of declared
