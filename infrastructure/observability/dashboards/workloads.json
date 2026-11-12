@@ -926,7 +926,7 @@
       "id": 95,
       "title": "Prefix-cache reuse \u00b7 by server",
       "type": "timeseries",
-      "description": "Share of prompt tokens served from the radix (prefix) cache over the trailing hour, per server role: family is the chat service; bench, qualify and capture are AI-stack Jobs, whose prompts are deliberately fresh. 0 means no reuse; a gap means the server was not running. Series from before 2026-11-12 carry no server label.",
+      "description": "Share of prompt tokens served from the radix (prefix) cache over the trailing hour, per server role: family is the chat service; bench, qualify and capture are AI-stack Jobs, whose prompts are deliberately fresh. 0 means prompts arrived but none reused the cache; a gap means no prompts in that hour. Series from before 2026-11-12 carry no server label.",
       "gridPos": {
         "x": 0,
         "y": 36,
@@ -940,7 +940,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "(sum by (server) (increase(sglang:cached_tokens_total{job=\"sglang\"}[1h])) or sum by (server) (increase(sglang:prompt_tokens_total{job=\"sglang\"}[1h])) * 0) / sum by (server) (increase(sglang:prompt_tokens_total{job=\"sglang\"}[1h]))",
+          "expr": "(sum by (server) (increase(sglang:cached_tokens_total{job=\"sglang\"}[1h])) or sum by (server) (increase(sglang:prompt_tokens_total{job=\"sglang\"}[1h])) * 0) / (sum by (server) (increase(sglang:prompt_tokens_total{job=\"sglang\"}[1h])) > 0)",
           "legendFormat": "{{server}}",
           "range": true,
           "instant": false
