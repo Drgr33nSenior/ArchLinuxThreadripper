@@ -309,6 +309,9 @@ apps/base/shared-api/handoff.py
 apps/base/shared-api/project_scope.py
 apps/base/shared-api/retrieval.py
 apps/base/shared-api/storage.yaml
+apps/base/shared-api/video-profile.json
+apps/base/shared-api/video.py
+apps/base/shared-api/wan-t2v-workflow.json
 apps/base/shared-api/workloads.yaml
 apps/overlays/service-split/kustomization.yaml
 apps/overlays/service-split/sglang.yaml
@@ -537,6 +540,7 @@ lib/workstation/hyperloom_owner_result.py
 lib/workstation/hyperloom_sdk_adapter.py
 lib/workstation/hyperloom_workload.py
 lib/workstation/rocprof_trace.py
+lib/workstation/webui_presets.py
 tests/workstation/test_component_profiling.py
 tests/workstation/test_hyperloom_chatgpt.py
 tests/workstation/test_hyperloom_evidence.py
@@ -559,3 +563,12 @@ tests/rag/wait-ready.sh
 tests/test_rag.sh
 tests/fixtures/rag/questions.json
 tests/home-lab/check-rag.rb
+infrastructure/ai-stack/serving/RESEARCH-20261108.md
+infrastructure/ai-stack/serving/RESULTS.md
+infrastructure/ai-stack/serving/bench.py
+infrastructure/ai-stack/serving/capture.py
+infrastructure/ai-stack/serving/capture_hook.py
+infrastructure/ai-stack/serving/kernel_check.py
+infrastructure/ai-stack/serving/qualify.py
+infrastructure/ai-stack/serving/qwen3.8-27b-mxfp4-tp2.json
+infrastructure/ai-stack/serving/render.py
