@@ -137,6 +137,12 @@
     fail_msg: The resource plan must reserve every CPU in lab_reserved_system_cpus through system-reserved plus kube-reserved before static CPUManager is enabled.
   when: lab_cpu_manager_static_enabled | bool
 
+- name: Require a kubelet image age in whole seconds, minutes or hours
+  ansible.builtin.assert:
+    that:
+      - lab_image_maximum_gc_age is match('^[0-9]+(s|m|h)$')
+    fail_msg: lab_image_maximum_gc_age must be a duration such as 336h (or 0s to keep images until disk pressure).
+
 - name: Render the desired static CPUManager drop-in without writing it
   ansible.builtin.set_fact:
     lab_cpu_manager_desired_config: "{{ lookup('ansible.builtin.template', role_path ~ '/templates/90-workstation-cpu.conf.j2') }}"
@@ -193,14 +199,22 @@
     - /etc/rancher/k3s
     - '{{ lab_k3s_data_dir }}/agent/etc/containerd/config-v3.toml.d'
 
-- name: Create the K3s kubelet drop-in directory for static CPUManager
+- name: Create the K3s kubelet drop-in directory
   ansible.builtin.file:
     path: '{{ lab_k3s_data_dir }}/agent/etc/kubelet.conf.d'
     state: directory
     owner: root
     group: root
     mode: '0700'
-  when: lab_cpu_manager_static_enabled | bool
+
+- name: Configure kubelet image garbage collection by age
+  ansible.builtin.template:
+    src: 80-workstation-images.conf.j2
+    dest: '{{ lab_k3s_data_dir }}/agent/etc/kubelet.conf.d/80-workstation-images.conf'
+    owner: root
+    group: root
+    mode: '0600'
+  notify: Restart approved K3s server
 
 - name: Configure the opt-in static CPUManager kubelet drop-in
   ansible.builtin.template:

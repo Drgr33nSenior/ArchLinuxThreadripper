@@ -322,6 +322,14 @@ The pinned K3s uses containerd 2.x. Its v3 filename is preferred over the legacy
 `config.toml.tmpl`. Device files for non-root pods use K3s's scoped
 `nonroot-devices` setting. Protect `/etc/cdi` and `/var/run/cdi` from tenant writes.
 
+K3s keeps a local copy of every image it pulls and, by default, removes none until the
+disk is 85% full. The role's `80-workstation-images.conf` kubelet drop-in removes images
+no container has used for `lab_image_maximum_gc_age` (default 336h, 14 days; `0s`
+disables it). Builds stay in the registry, so an older one is pulled again when needed.
+An image that exists only locally, such as an imported `localhost/` build, is removed
+too once unused that long; push it to the registry, or rebuild it, before scaling its
+Deployment to zero for longer.
+
 Flannel VXLAN uses the selected LAN interface. K3s's NetworkPolicy controller
 stays enabled. ServiceLB is disabled to avoid automatically binding host ports.
 The shared AI service exposes Traefik through the reviewed

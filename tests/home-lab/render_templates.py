@@ -2,6 +2,7 @@
 import base64
 import copy
 import json
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -24,6 +25,7 @@ variables.update(
 environment = jinja2.Environment(undefined=jinja2.StrictUndefined)
 environment.filters['to_json'] = json.dumps
 environment.filters['bool'] = lambda value: bool(value)
+environment.tests['match'] = lambda value, pattern: re.match(pattern, str(value)) is not None
 role = root / 'infrastructure/ansible/roles/k3s_baremetal'
 config = yaml.safe_load(environment.from_string((role / 'templates/config.yaml.j2').read_text()).render(**variables))
 assert config['write-kubeconfig-mode'] == '0600'
@@ -134,6 +136,20 @@ for role_path, register in ((role, 'lab_previous_rke2'), (vm_role, 'k3s_previous
     condition = environment.compile_expression(expression)
     assert condition(**{register: {'stat': {'exists': False}}})
     assert not condition(**{register: {'stat': {'exists': True}}})
+
+# Image garbage collection by age is a separate kubelet drop-in, read after K3s's
+# 00-k3s-defaults.conf (imageMaximumGCAge: 0s) and independent of the CPUManager guards.
+assert variables['lab_image_maximum_gc_age'] == '336h'
+image_gc = yaml.safe_load(environment.from_string((role / 'templates/80-workstation-images.conf.j2').read_text()).render(**variables))
+assert image_gc == {'apiVersion': 'kubelet.config.k8s.io/v1beta1', 'kind': 'KubeletConfiguration', 'imageMaximumGCAge': '336h'}
+assert '00-k3s-defaults.conf' < '80-workstation-images.conf' < '90-workstation-cpu.conf'
+image_tasks = yaml.safe_load((role / 'tasks/main.yml').read_text())
+image_gc_task = next(task for task in image_tasks if task['name'] == 'Configure kubelet image garbage collection by age')
+assert 'when' not in image_gc_task and image_gc_task['notify'] == 'Restart approved K3s server'
+image_age = next(task for task in image_tasks if task['name'].startswith('Require a kubelet image age'))
+age_ok = environment.compile_expression(image_age['ansible.builtin.assert']['that'][0])
+assert age_ok(lab_image_maximum_gc_age='336h') and age_ok(lab_image_maximum_gc_age='0s')
+assert not age_ok(lab_image_maximum_gc_age='14d') and not age_ok(lab_image_maximum_gc_age='336')
 
 cpu_tasks = yaml.safe_load((role / 'tasks/main.yml').read_text())
 cpu_dropin_tasks = [task for task in cpu_tasks if 'CPUManager' in task['name'] and 'kubelet drop-in' in task['name']]
