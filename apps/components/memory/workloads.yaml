@@ -99,10 +99,22 @@ spec:
           # 8192 batch tokens OOM-killed warm-up at the 4 GiB limit; 2048 starts at
           # about 3.4 GiB and settles near 2.5 GiB. Longer inputs are truncated to
           # 2048 tokens, which covers Graphiti's episode and entity texts.
+          # Graphiti, the only client, runs at most 20 operations at once (graphiti_core
+          # SEMAPHORE_LIMIT) and its OpenAI client retries a 429 twice; 32 admits all of them
+          # and refuses a runaway client fast instead of queueing 512.
           image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9.2@sha256:16230cd8f679ae5f8a51d585033628b1c0d45cd70c2bc9b0d208170d71218fdb
           args: [--model-id, /rag-models/Qwen3-Embedding-0.6B, --served-model-name, Qwen3-Embedding-0.6B,
-                 --port, '8080', --max-client-batch-size, '16', --max-batch-tokens, '2048', --auto-truncate]
+                 --port, '8080', --max-client-batch-size, '16', --max-batch-tokens, '2048', --auto-truncate,
+                 --max-concurrent-requests, '32']
           env:
+            # The CPU image runs Qwen3 on Candle with MKL threaded by LLVM OpenMP (libomp),
+            # which otherwise starts one thread per visible CPU (26 in the shared pool) under
+            # this 4-CPU quota: every period throttled and half the CPU time in the kernel.
+            # Measured 2026-11-12, OMP 4 vs default: short input 0.14 s vs 1.10 s, 192-token
+            # chunk 0.77 s vs 5.2 s, 4 clients 6.5 vs 0.9 req/s, ready 21 s vs 71 s.
+            # RAYON_NUM_THREADS (the image sets 8) is not the compute pool; 4 was slower.
+            # Keep this equal to the CPU limit; 8 CPUs with 8 threads gained only 10-30%.
+            - {name: OMP_NUM_THREADS, value: '4'}
             - {name: HF_HUB_OFFLINE, value: '1'}
             - {name: HOME, value: /tmp}
             - {name: HUGGINGFACE_HUB_CACHE, value: /tmp/hf}
