@@ -12,6 +12,7 @@ apps/base/sglang/pvc.yaml
 apps/base/sglang/service.yaml
 apps/base/steam-headless/deployment.yaml
 apps/base/steam-headless/kustomization.yaml
+apps/base/steam-headless/network-policy.yaml
 apps/base/steam-headless/pvc.yaml
 apps/base/steam-headless/service.yaml
 apps/base/swarmui/Backends.fds
