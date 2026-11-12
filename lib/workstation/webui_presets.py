@@ -26,6 +26,10 @@ import urllib.request
 from pathlib import Path
 
 PRESET_ID = re.compile(r"[a-z0-9][a-z0-9.-]{0,63}\Z")
+# Open WebUI does not pass a base model's default tools on to its presets, so each preset names
+# the "Workstation tools" MCP server itself (id "workstation" in TOOL_SERVER_CONNECTIONS,
+# apps/components/assistant/webui.yaml). service-tools still authorises every call per user.
+WORKSTATION_TOOLS = "server:mcp:workstation"
 
 
 def presets(contract):
@@ -50,7 +54,8 @@ def presets(contract):
         if not PRESET_ID.fullmatch(preset_id):
             raise ValueError(f"preset id {preset_id!r} is not a bounded identifier")
         out.append({"id": preset_id, "base_model_id": alias, "name": f"{alias} · {label}",
-                    "meta": {"description": description, "tags": [{"name": "reasoning"}]},
+                    "meta": {"description": description, "tags": [{"name": "reasoning"}],
+                             "toolIds": [WORKSTATION_TOOLS]},
                     "params": params, "is_active": True})
     return out
 

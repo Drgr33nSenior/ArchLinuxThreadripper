@@ -1,5 +1,6 @@
 """Open WebUI reasoning presets: rendered from the contract, applied to named groups only."""
 import json
+import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import sys
@@ -76,8 +77,17 @@ class PresetTests(unittest.TestCase):
         self.assertIn(think["params"]["reasoning_effort"], contract["reasoning"]["client_efforts"])
         self.assertEqual(["enable_thinking"], contract["reasoning"]["client_template_kwargs"])
         self.assertFalse(any("access_grants" in r for r in rows))  # granted at apply time only
+        # Presets do not inherit the base model's tools: each names the Workstation tools server.
+        self.assertEqual([["server:mcp:workstation"]] * 2, [r["meta"]["toolIds"] for r in rows])
         unverified = dict(contract, reasoning=dict(contract["reasoning"], request_defaults=None))
         self.assertEqual([], webui_presets.presets(unverified))
+
+    def test_preset_tool_server_matches_the_open_webui_connection(self):
+        webui = (ROOT / "apps/components/assistant/webui.yaml").read_text()
+        servers = re.search(r"name: TOOL_SERVER_CONNECTIONS\n\s+value: >-\n((?:\s{16}.*\n)+)", webui)
+        connections = json.loads(" ".join(line.strip() for line in servers.group(1).splitlines()))
+        self.assertEqual([f"server:mcp:{c['info']['id']}" for c in connections if c["type"] == "mcp"],
+                         [webui_presets.WORKSTATION_TOOLS])
 
     def test_apply_upserts_with_read_access_for_named_groups_only(self):
         rows = webui_presets.presets(service.serving_contract(PROFILE))

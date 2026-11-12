@@ -54,6 +54,15 @@ class ProfileTests(unittest.TestCase):
                 video.load_video_profile(target)
 
 
+    def test_clip_bound_fits_open_webuis_stored_file_cap(self):
+        # Open WebUI stores the returned clip as a chat file under RAG_FILE_MAX_SIZE (MiB); a larger
+        # clip must fail in the tool, not as an upload error after the render.
+        env = dict(line.split("=", 1) for line in (ROOT / "apps/overlays/rag/rag.env").read_text().splitlines()
+                   if line and not line.startswith("#"))
+        profile, _, _ = video.load_video_profile(API)
+        self.assertEqual(int(env["RAG_FILE_MAX_SIZE"]) << 20, profile["max_bytes"])
+
+
 class VideoToolTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.directory = tempfile.TemporaryDirectory()
