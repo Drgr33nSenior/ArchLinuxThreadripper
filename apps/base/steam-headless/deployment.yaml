@@ -54,6 +54,10 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               drop: [ALL]
+            # RuntimeDefault plus unprivileged user/mount namespace creation, which
+            # Steam's bubblewrap sandbox requires (infrastructure/gaming/seccomp;
+            # installed on the node by the k3s_baremetal role). Still no capabilities.
+            seccompProfile: {type: Localhost, localhostProfile: profiles/workstation-gaming-userns.json}
           resources:
             requests: {cpu: '12', memory: 12Gi}
             limits: {cpu: '12', memory: 12Gi}
