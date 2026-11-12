@@ -1077,6 +1077,33 @@ class ServingContractTests(unittest.TestCase):
         self.assertTrue(digest_a and digest_b and digest_a != digest_b)
         self.assertEqual(digest_a, digest_a2)  # deterministic: an unchanged config does not roll it
 
+    def test_model_cache_claim_keeps_delete_reclaim_through_the_site_render(self):
+        """New claims default to Retain; the model cache must not, or a deleted claim leaves 23 GB."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            site = root / "site.json"
+            site.write_text(json.dumps({"context": "fixture", "node": "fixture", "node_address": "192.168.77.9",
+                                        "management_cidr": "192.168.77.0/24", "client_cidrs": ["192.168.77.0/24"],
+                                        "webui_host": "chat.fixture.test", "api_host": "api.fixture.test",
+                                        "tls_secret": "fixture-tls"}))
+            args = dict(site=site, mode="large", experience="assistant", serving_profile=self.PROFILE,
+                        runtime_image=self.IMAGE)
+            service.render(SimpleNamespace(output=root / "new", **args))
+            claims = {o["metadata"]["name"]: o["spec"]["storageClassName"]
+                      for o in service.load_objects((root / "new/workloads.yaml").read_text())
+                      if o["kind"] == "PersistentVolumeClaim"}
+            self.assertEqual("local-path", claims.pop("sglang-model-cache"))
+            self.assertTrue(claims and all(c == "workstation-retain" for c in claims.values()))
+            # An existing claim keeps its live class: storageClassName is immutable.
+            existing = root / "existing.json"
+            existing.write_text(json.dumps({"kind": "List", "items": [{"kind": "PersistentVolumeClaim",
+                "metadata": {"name": "sglang-model-cache", "namespace": "ai-home-lab", "uid": "existing-cache"},
+                "spec": {"storageClassName": "workstation-retain"}}]}))
+            service.render(SimpleNamespace(output=root / "kept", existing_claims=existing, **args))
+            kept = next(o for o in service.load_objects((root / "kept/workloads.yaml").read_text())
+                        if o["kind"] == "PersistentVolumeClaim" and o["metadata"]["name"] == "sglang-model-cache")
+            self.assertEqual("workstation-retain", kept["spec"]["storageClassName"])
+
     def test_each_mode_has_its_own_deadline_and_no_gateway_timeout_undercuts_it(self):
         # Large mode serves 262K contexts (a cold 235K-token prompt takes ~240 s to its first
         # token); shared mode keeps 180 s. LiteLLM's global fallbacks must not cap the route.
