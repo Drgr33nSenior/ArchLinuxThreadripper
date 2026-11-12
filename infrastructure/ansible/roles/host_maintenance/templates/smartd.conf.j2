@@ -1,0 +1,9 @@
+# Managed by the host_maintenance Ansible role (infrastructure/ansible).
+# Monitor only, by stable /dev/disk/by-id identity: overall health and critical
+# warnings (-H), new error-log and self-test-log entries, and temperature
+# (info at {{ lab_smart_temperature_info }} C, critical at {{ lab_smart_temperature_critical }} C; the Samsung 9100 PRO
+# controllers report warning/critical thresholds of 84/88 C). No self-tests are scheduled (no -s) and no mail
+# is sent: warnings go to the journal, which host Alloy forwards.
+{% for device in lab_maintenance_nvme_devices %}
+{{ device }} -d nvme -H -l error -l selftest -W 0,{{ lab_smart_temperature_info }},{{ lab_smart_temperature_critical }}
+{% endfor %}

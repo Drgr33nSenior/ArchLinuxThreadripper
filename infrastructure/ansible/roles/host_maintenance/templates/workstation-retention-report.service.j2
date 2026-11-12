@@ -1,0 +1,39 @@
+# Installed by the host_maintenance Ansible role. Report only: it reads the
+# rootless Podman store metadata, the AI-stack build tree and live Kubernetes
+# image references, and writes a candidate list. It never deletes anything.
+[Unit]
+Description=Build and image retention report for {{ lab_maintenance_build_user }} (report only)
+After=network-online.target
+
+[Service]
+Type=oneshot
+User={{ lab_maintenance_build_user }}
+Group={{ lab_maintenance_build_user }}
+StateDirectory=workstation-retention
+StateDirectoryMode=0755
+Environment=KUBECONFIG={{ lab_maintenance_build_home }}/.kube/config
+Environment=KUBECACHEDIR=/tmp/kube-cache
+ExecStart=/usr/bin/python3 -I /usr/local/lib/workstation-maintenance/workstation_maintenance.py retention --state /var/lib/workstation-retention --ai-stack-root {{ lab_maintenance_build_home }}/ai-stack --pipeline {{ lab_maintenance_build_home }}/ai-stack/pipeline/current --storage {{ lab_maintenance_build_home }}/.local/share/containers/storage
+ExecStopPost=+/usr/bin/python3 -I /usr/local/lib/workstation-maintenance/workstation_maintenance.py job-result workstation-retention-report --unit %n --publish retention=/var/lib/workstation-retention/retention.prom
+TimeoutStartSec=30min
+Nice=19
+CPUSchedulingPolicy=idle
+IOSchedulingClass=idle
+MemoryAccounting=yes
+IOAccounting=yes
+MemoryMax=1G
+UMask=0022
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+SystemCallArchitectures=native

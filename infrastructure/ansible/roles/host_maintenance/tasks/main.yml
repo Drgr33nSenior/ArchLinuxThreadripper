@@ -1,0 +1,197 @@
+---
+# Host maintenance: monitoring and report-only jobs. Nothing here upgrades
+# packages, changes mirrors, runs SMART self-tests, offlines memory, deletes
+# build outputs or restarts K3s. See docs/HOST-MAINTENANCE.md.
+- name: Require the maintenance tools from the configured repositories
+  ansible.builtin.command:
+    argv: [pacman, -Q, smartmontools, pacman-contrib, arch-audit, fakeroot, python]
+  changed_when: false
+  # Read-only: run under --check too, so a dry run sees real values.
+  check_mode: false
+
+- name: Require the reviewed recording-only rasdaemon package
+  ansible.builtin.command:
+    argv: [pacman, -Q, rasdaemon-workstation]
+  changed_when: false
+  check_mode: false
+  when: lab_ras_enabled | bool
+
+- name: Discover NVMe namespaces by stable model/serial identity
+  # udev names each namespace /dev/disk/by-id/nvme-<model>_<serial>, with
+  # spaces in the model replaced by underscores. Kernel names (nvmeN) can change.
+  ansible.builtin.shell: |
+    set -euo pipefail
+    for controller in /sys/class/nvme/nvme*; do
+      [ -e "$controller" ] || continue
+      model=$(tr -s ' ' <"$controller/model" | sed 's/ *$//; s/ /_/g')
+      serial=$(sed 's/ *$//' <"$controller/serial")
+      link="/dev/disk/by-id/nvme-${model}_${serial}"
+      [ -L "$link" ] || { echo "missing $link" >&2; exit 1; }
+      case "$(readlink -f "$link")" in
+        /dev/"${controller##*/}"n*) printf '%s\n' "$link" ;;
+        *) echo "$link does not resolve to ${controller##*/}" >&2; exit 1 ;;
+      esac
+    done | sort
+  args:
+    executable: /bin/bash
+  register: lab_maintenance_nvme
+  changed_when: false
+  check_mode: false
+
+- name: Require every expected NVMe device and a complete service-user setting
+  ansible.builtin.assert:
+    that:
+      - lab_maintenance_nvme.stdout_lines | length == lab_maintenance_expected_nvme_count | int
+      - lab_maintenance_nvme.stdout_lines | select('match', '^/dev/disk/by-id/nvme-[A-Za-z0-9_.-]+$') | list | length == lab_maintenance_nvme.stdout_lines | length
+      - lab_smart_temperature_info | int < lab_smart_temperature_critical | int < 84
+      - lab_paccache_keep | int >= 3
+      - lab_maintenance_build_user == '' or lab_maintenance_build_user is match('^[a-z_][a-z0-9_-]{0,31}$')
+    fail_msg: Expected {{ lab_maintenance_expected_nvme_count }} NVMe namespaces with by-id links, temperatures below the 84 C controller warning threshold and at least 3 cached versions.
+
+- name: Select the discovered devices
+  ansible.builtin.set_fact:
+    lab_maintenance_nvme_devices: '{{ lab_maintenance_nvme.stdout_lines }}'
+    lab_maintenance_watched_units: >-
+      {{ ['smartd.service', 'workstation-advisories.timer', 'paccache.timer', 'fstrim.timer']
+         + (['rasdaemon.service'] if lab_ras_enabled | bool else [])
+         + (['workstation-retention-report.timer'] if lab_maintenance_build_user else []) }}
+
+- name: Read the build user's home directory
+  ansible.builtin.getent:
+    database: passwd
+    key: '{{ lab_maintenance_build_user }}'
+  when: lab_maintenance_build_user | length > 0
+
+- name: Record the build user's home directory
+  ansible.builtin.set_fact:
+    lab_maintenance_build_home: '{{ ansible_facts.getent_passwd[lab_maintenance_build_user][4] }}'
+  when: lab_maintenance_build_user | length > 0
+
+- name: Create the maintenance program and state directories
+  ansible.builtin.file:
+    path: '{{ item }}'
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  loop:
+    - /usr/local/lib/workstation-maintenance
+    - /var/lib/workstation-maintenance
+
+- name: Install the maintenance report program
+  ansible.builtin.copy:
+    src: workstation_maintenance.py
+    dest: /usr/local/lib/workstation-maintenance/workstation_maintenance.py
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Install the advisory and health units
+  ansible.builtin.copy:
+    src: '{{ item }}'
+    dest: /etc/systemd/system/{{ item }}
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - workstation-advisories.service
+    - workstation-advisories.timer
+    - workstation-hardware-health.timer
+  notify: Reload systemd units
+
+- name: Install the hardware-health service for the discovered devices
+  ansible.builtin.template:
+    src: workstation-hardware-health.service.j2
+    dest: /etc/systemd/system/workstation-hardware-health.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Reload systemd units
+
+- name: Install the report-only retention units
+  when: lab_maintenance_build_user | length > 0
+  block:
+    - name: Install the retention report service
+      ansible.builtin.template:
+        src: workstation-retention-report.service.j2
+        dest: /etc/systemd/system/workstation-retention-report.service
+        owner: root
+        group: root
+        mode: '0644'
+      notify: Reload systemd units
+
+    - name: Install the retention report timer
+      ansible.builtin.copy:
+        src: workstation-retention-report.timer
+        dest: /etc/systemd/system/workstation-retention-report.timer
+        owner: root
+        group: root
+        mode: '0644'
+      notify: Reload systemd units
+
+- name: Create drop-in directories for packaged maintenance units
+  ansible.builtin.file:
+    path: /etc/systemd/system/{{ item }}.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  loop: '{{ ["paccache.service", "fstrim.service", "systemd-tmpfiles-clean.service"] + (["rasdaemon.service"] if lab_ras_enabled | bool else []) }}'
+
+- name: Keep three package versions and protected boot/storage/GPU packages
+  ansible.builtin.template:
+    src: paccache.conf.j2
+    dest: /etc/systemd/system/paccache.service.d/10-workstation.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Reload systemd units
+
+- name: Record fstrim and tmpfiles-clean results without changing them
+  ansible.builtin.copy:
+    src: job-result.conf
+    dest: /etc/systemd/system/{{ item }}.d/10-workstation-result.conf
+    owner: root
+    group: root
+    mode: '0644'
+  loop: [fstrim.service, systemd-tmpfiles-clean.service]
+  notify: Reload systemd units
+
+- name: Restart rasdaemon on failure with a modest sandbox
+  ansible.builtin.copy:
+    src: rasdaemon.conf
+    dest: /etc/systemd/system/rasdaemon.service.d/10-workstation.conf
+    owner: root
+    group: root
+    mode: '0644'
+  when: lab_ras_enabled | bool
+  notify:
+    - Reload systemd units
+    - Restart rasdaemon
+
+- name: Monitor the NVMe namespaces by stable identity
+  ansible.builtin.template:
+    src: smartd.conf.j2
+    dest: /etc/smartd.conf
+    owner: root
+    group: root
+    mode: '0644'
+    backup: true
+  notify: Restart smartd
+
+- name: Load changed unit definitions before enabling them
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable the monitoring daemons
+  ansible.builtin.systemd_service:
+    name: '{{ item }}'
+    enabled: true
+    state: started
+  loop: '{{ ["smartd.service"] + (["rasdaemon.service"] if lab_ras_enabled | bool else []) }}'
+
+- name: Enable the maintenance timers
+  ansible.builtin.systemd_service:
+    name: '{{ item }}'
+    enabled: true
+    state: started
+  loop: '{{ ["workstation-advisories.timer", "workstation-hardware-health.timer", "paccache.timer"] + (["workstation-retention-report.timer"] if lab_maintenance_build_user else []) }}'

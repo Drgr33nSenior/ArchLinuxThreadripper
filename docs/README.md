@@ -25,6 +25,8 @@ For a one-page overview of what is running, start with the [README](../README.md
 | --- | --- |
 | [Operations](OPERATIONS.md) | Day-to-day host and AI-service tasks: status, updates, power cap, restarts |
 | [Service recovery](SERVICE-RECOVERY.md) | Backups of the AI service's data and how to restore them |
+| [Host maintenance](HOST-MAINTENANCE.md) | SMART and hardware-error monitoring, advisory reports, package cache and the report-only build retention inventory |
+| [Host upgrade plan](HOST-UPGRADE-PLAN.md) | Moving off the installation package snapshot: policy options, risks, procedure and rollback |
 | [Monitoring](TELEMETRY.md) | Grafana dashboards: GPUs, host, Kubernetes, serving, power and cost |
 | [Monitoring reference](TELEMETRY-REFERENCE.md) | Collector and dashboard contracts |
 | [Home lab](HOME-LAB.md) | Bare-metal K3s, GPU sharing with DRA, storage, Secure Boot and TPM |

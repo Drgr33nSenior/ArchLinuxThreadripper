@@ -3,7 +3,10 @@
 ## Host updates
 
 For the first transition off installation media, complete the
-[snapshot-to-rolling procedure](#move-from-the-installation-snapshot-to-rolling-arch).
+[snapshot-to-rolling procedure](#move-from-the-installation-snapshot-to-rolling-arch). The host-specific
+[upgrade plan](HOST-UPGRADE-PLAN.md) lists this host's pending changes and checks.
+[Host maintenance](HOST-MAINTENANCE.md) covers the daily advisory report, SMART and
+hardware-error monitoring and package-cache retention.
 For subsequent full updates:
 
 1. Run a Restic backup and record the installed package/kernel/GPU

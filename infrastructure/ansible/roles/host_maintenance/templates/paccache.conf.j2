@@ -1,0 +1,10 @@
+# Managed by the host_maintenance Ansible role. Keeps the packaged unit's idle
+# CPU/I/O priority and sandbox; only the arguments and result reporting change.
+# Keeps {{ lab_paccache_keep }} versions of every package (installed or not) and every
+# version of the boot, storage and GPU packages below. Only the pacman cache is
+# touched: custom kernel and package rollback artifacts live elsewhere.
+[Service]
+ExecStart=
+ExecStart=/usr/bin/paccache -r -c /var/cache/pacman/pkg -k {{ lab_paccache_keep }} -i {{ lab_paccache_protected | join(',') }}
+IOAccounting=yes
+ExecStopPost=+/usr/bin/python3 -I /usr/local/lib/workstation-maintenance/workstation_maintenance.py job-result paccache --unit %n

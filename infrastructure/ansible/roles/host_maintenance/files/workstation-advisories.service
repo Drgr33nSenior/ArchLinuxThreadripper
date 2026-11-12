@@ -1,0 +1,40 @@
+# Installed by the host_maintenance Ansible role. Read-only towards the system:
+# downloads the Arch security tracker and compares installed packages; refreshes
+# only a private current-Arch database copy under its state directory.
+[Unit]
+Description=Full Arch security advisory report for monitoring (read-only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+DynamicUser=yes
+StateDirectory=workstation-advisories
+StateDirectoryMode=0755
+ExecStart=/usr/bin/python3 -I /usr/local/lib/workstation-maintenance/workstation_maintenance.py advisories --state /var/lib/workstation-advisories
+ExecStopPost=+/usr/bin/python3 -I /usr/local/lib/workstation-maintenance/workstation_maintenance.py job-result workstation-advisories --unit %n --publish advisories=/var/lib/workstation-advisories/advisories.prom
+TimeoutStartSec=15min
+Nice=19
+CPUSchedulingPolicy=idle
+IOSchedulingClass=idle
+MemoryAccounting=yes
+IOAccounting=yes
+MemoryMax=512M
+UMask=0022
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+SystemCallArchitectures=native

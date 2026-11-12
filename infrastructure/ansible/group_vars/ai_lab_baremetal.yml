@@ -45,3 +45,24 @@ lab_module_certificate_path: /etc/kernel/keys/module-signing.der
 # Empty leaves containerd pulling directly from each upstream.
 lab_registry_mirror: ''
 lab_registry_upstreams: [docker.io, ghcr.io, registry.k8s.io, quay.io]
+# Host maintenance (roles/host_maintenance, docs/HOST-MAINTENANCE.md): SMART
+# and RAS monitoring, full advisory reporting, conservative package-cache
+# pruning and a report-only build/image retention inventory. Nothing deletes
+# build outputs or images, upgrades packages or runs SMART self-tests.
+lab_host_maintenance_enabled: true
+lab_maintenance_expected_nvme_count: 2
+# The user that owns ~/ai-stack and the rootless Podman store. Empty skips the
+# retention report (set it in the private site file, e.g. the build user).
+lab_maintenance_build_user: ''
+lab_ras_enabled: true
+# smartd logs at the info limit and alerts at the critical limit; both stay
+# below the drives' own 84 C warning threshold.
+lab_smart_temperature_info: 70
+lab_smart_temperature_critical: 80
+lab_paccache_keep: 3
+# Every cached version of these is kept: kernels/firmware/microcode, initramfs
+# and UKI tooling, the storage stack in the initramfs and the GPU userspace.
+lab_paccache_protected: [linux, linux-headers, linux-lts, linux-lts-headers, linux-firmware,
+                         linux-firmware-amdgpu, linux-firmware-whence, amd-ucode, mkinitcpio,
+                         mkinitcpio-busybox, systemd, systemd-libs, systemd-ukify, sbctl,
+                         cryptsetup, mdadm, xfsprogs, mesa, vulkan-radeon]

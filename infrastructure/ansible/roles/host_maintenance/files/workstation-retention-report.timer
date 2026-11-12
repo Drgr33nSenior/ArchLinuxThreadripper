@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily build and image retention report (report only)
+
+[Timer]
+OnCalendar=*-*-* 05:30:00
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
