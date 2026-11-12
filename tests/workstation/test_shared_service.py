@@ -1112,8 +1112,32 @@ class ServingContractTests(unittest.TestCase):
         self.assertEqual([{"name": n} for n in names], container["resources"]["claims"])
         self.assertNotIn("amd.com/gpu", container["resources"]["limits"])
         self.assertNotIn("envFrom", container)
-        models = next(v for v in sglang["spec"]["template"]["spec"]["volumes"] if v["name"] == "models")
-        self.assertEqual({"claimName": "ai-models", "readOnly": True}, models["persistentVolumeClaim"])
+        # /models is the local cache (same paths as the NAS), read-only for SGLang; only the
+        # model-cache init container sees the NAS, read-only, and writes the cache.
+        pod_spec = sglang["spec"]["template"]["spec"]
+        volumes = {v["name"]: v for v in pod_spec["volumes"]}
+        self.assertEqual({"claimName": "sglang-model-cache"}, volumes["models"]["persistentVolumeClaim"])
+        self.assertEqual({"claimName": "ai-models", "readOnly": True}, volumes["model-source"]["persistentVolumeClaim"])
+        self.assertEqual([True], [m["readOnly"] for m in container["volumeMounts"] if m["name"] == "models"])
+        init = pod_spec["initContainers"][0]
+        self.assertEqual("model-cache", init["name"])
+        self.assertEqual(container["image"], init["image"])
+        self.assertEqual(init["resources"]["requests"], init["resources"]["limits"])
+        self.assertEqual(0, int(init["resources"]["requests"]["cpu"]) % 2)
+        init_mounts = {m["name"]: m for m in init["volumeMounts"]}
+        self.assertTrue(init_mounts["model-source"]["readOnly"])
+        self.assertNotIn("readOnly", init_mounts["models"])
+        claim = named("PersistentVolumeClaim", "sglang-model-cache")
+        self.assertEqual("local-path", claim["spec"]["storageClassName"])  # Delete reclaim: no relics
+        stager = named("ConfigMap", volumes["model-cache-stage"]["configMap"]["name"])
+        entry = json.loads(stager["data"]["entry.json"])
+        args = container["args"]
+        self.assertEqual(args[args.index("--model-path") + 1],
+                         f"/models/{entry['model']['repository']}/{entry['model']['revision']}")
+        self.assertEqual(args[args.index("--speculative-draft-model-path") + 1],
+                         f"/models/{entry['draft']['repository']}/{entry['draft']['revision']}")
+        self.assertTrue(all("sha256" in f or "git_sha1" in f for s in entry.values() for f in s["files"]))
+        self.assertEqual({"cache.py", "fetch.py", "entry.json"}, set(stager["data"]))
         self.assertTrue(container["securityContext"]["readOnlyRootFilesystem"])
         gateway = next(o for o in objects if o["kind"] == "ConfigMap" and "litellm.yaml" in o["data"])
         routes = {r["model_name"]: r for r in yaml.safe_load(gateway["data"]["litellm.yaml"])["model_list"]}
