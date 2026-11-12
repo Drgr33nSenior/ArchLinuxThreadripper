@@ -82,7 +82,7 @@ Run these from a reviewed checkout unless a guide names an installed launcher.
 | Entry point | Purpose |
 | --- | --- |
 | `bin/bootstrap-arch` | Live-ISO preflight, installation and installed-system checks |
-| `bin/workstationctl` | Service render and provisioning, workload sessions, telemetry, builds |
+| `bin/workstationctl` | Service render and provisioning, workload sessions, telemetry, builds. On an installed host it is also on `PATH` as `workstationctl` (the packaged copy) |
 | `bin/k3s-lab` | The optional AlmaLinux VM lab (separate from the AI cluster) |
 | `bash infrastructure/iso/release.sh` | Package preparation and installer ISO assembly |
 | `make check-strict` | All source checks; reports failures and unexpected skips |

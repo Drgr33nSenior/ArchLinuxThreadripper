@@ -25,6 +25,34 @@ def guaranteed_pod(pod)
 end
 
 directory = ARGV.fetch(0)
+
+# Static CPU Manager with full-pcpus-only gives Guaranteed containers whole cores (both
+# SMT threads) and refuses one that asks for an odd number of whole CPUs. Check every
+# rendered overlay, init containers included.
+def whole_cpus(value)
+  text = value.to_s
+  return nil if text.empty? || text.end_with?('m')
+  Integer(text, exception: false)
+end
+
+Dir.glob(File.join(directory, '*.yaml')).sort.each do |file|
+  YAML.load_stream(File.read(file)).compact.each do |doc|
+    next unless %w[Deployment Job DaemonSet StatefulSet].include?(doc['kind'])
+    pod = doc.dig('spec', 'template', 'spec')
+    containers = pod.fetch('initContainers', []) + pod.fetch('containers')
+    guaranteed = containers.all? do |c|
+      requests = c.dig('resources', 'requests')
+      requests && requests == c.dig('resources', 'limits')
+    end
+    next unless guaranteed
+    containers.each do |c|
+      cpus = whole_cpus(c.dig('resources', 'requests', 'cpu'))
+      require_check(cpus.nil? || cpus.even?,
+                    "#{File.basename(file)}: #{doc['kind']}/#{doc.dig('metadata', 'name')} #{c['name']} asks for #{cpus} whole CPUs; " \
+                    'static CPU Manager (full-pcpus-only) refuses an odd count')
+    end
+  end
+end
 family = documents(directory, 'family')
 deployments = family.select { |d| d['kind'] == 'Deployment' }
 require_check(deployments.length == 5, 'Family overlay lost a workload')
