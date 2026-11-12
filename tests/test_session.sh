@@ -432,3 +432,27 @@ jq -e '.phase == "ready" and .mode == "shared"' "$work/state/state.json" >/dev/n
 ws_session_switch maintenance "$work/fixture.json" "$work/state" --execute
 cp "$work/rs.small.json" "$work/api/rs.json" && cp "$work/pods.small.json" "$work/api/pods.json"
 printf 'large cluster document fixture tests passed\n'
+
+# Other Pods' memory is counted in any canonical Kubernetes unit, decimal included (the GPU
+# operator's metrics exporter asks for 512M). The three GPU workloads take 36 GiB of the
+# node's 46 GiB, leaving exactly 10 GiB: 10G (10^10 bytes) fits, 11G does not, and a
+# non-canonical quantity still fails closed.
+other_pod() {
+  jq -n --arg memory "$1" '{items: [{metadata: {uid: "exporter", name: "metrics-exporter", namespace: "kube-amd-gpu"},
+    spec: {nodeName: "fixture-node", containers: [{name: "exporter", resources: {requests: {cpu: "10m", memory: $memory}, limits: {memory: $memory}}}]},
+    status: {phase: "Running"}}]}' >"$work/api/pods.json"
+}
+make_render
+other_pod 10G
+ws_session_switch shared "$work/fixture.json" "$work/state" --execute "$work/render.json"
+jq -e '.phase == "ready" and .mode == "shared"' "$work/state/state.json" >/dev/null
+ws_session_switch maintenance "$work/fixture.json" "$work/state" --execute
+for memory in 11G 1.5Gi; do
+  other_pod "$memory"
+  make_render
+  expect_failure ws_session_switch shared "$work/fixture.json" "$work/state" --execute "$work/render.json"
+  grep -q 'cannot fit node CPU/RAM/GPU requests' "$work/failure.log"
+  jq -e '.phase == "ready" and .mode == "maintenance"' "$work/state/state.json" >/dev/null
+done
+printf '{"items":[]}\n' >"$work/api/pods.json"
+printf 'decimal memory quantity fixture tests passed\n'

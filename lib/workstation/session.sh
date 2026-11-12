@@ -244,9 +244,12 @@ ws_session_capacity_check() {
     --slurpfile pods <(printf '%s' "$pods") --argjson managed "$managed" --argjson smt "$smt" \
     '$d[0] as $d | $node[0] as $node | $pods[0] as $pods | '"$WS_SESSION_GPU_JQ"'
     def cpu: tostring | if test("^[0-9]+m$") then rtrimstr("m")|tonumber/1000 else tonumber end;
-    def mem: tostring | if test("^[0-9]+(Ki|Mi|Gi|Ti)?$") then . else error("unhandled memory quantity") end |
-      capture("^(?<n>[0-9]+)(?<u>Ki|Mi|Gi|Ti)?$") as $q |
-      ($q.n|tonumber) * ({Ki:1024,Mi:1048576,Gi:1073741824,Ti:1099511627776}[($q.u // "")] // 1);
+    # Counting other Pods and the node: canonical Kubernetes quantities, binary or
+    # decimal (the GPU operator'"'"'s metrics exporter asks for 512M). Anything else fails.
+    def mem: tostring | if test("^[0-9]+(Ki|Mi|Gi|Ti|k|M|G|T)?$") then . else error("unhandled memory quantity") end |
+      capture("^(?<n>[0-9]+)(?<u>Ki|Mi|Gi|Ti|k|M|G|T)?$") as $q |
+      ($q.n|tonumber) * ({Ki:1024,Mi:1048576,Gi:1073741824,Ti:1099511627776,
+        k:1000,M:1000000,G:1000000000,T:1000000000000}[($q.u // "")] // 1);
     def request($key): .resources.requests[$key] // "0";
     def footprint($key;f):
       ([.containers[] | request($key)|f]|add // 0) as $app |
