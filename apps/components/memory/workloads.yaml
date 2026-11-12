@@ -94,18 +94,24 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: embedding
-          # Text Embeddings Inference CPU 1.9.2 (Apache-2.0). It serves the same
-          # hash-verified Qwen3-Embedding-0.6B files as RAG, read-only, offline.
+          # Text Embeddings Inference (Apache-2.0), CPU image built from upstream main at
+          # da9a9ce (reports 1.9.4). It serves the same hash-verified Qwen3-Embedding-0.6B
+          # files as RAG, read-only, offline. Released images up to 1.9.4 return wrong vectors
+          # for any multi-input batch, including concurrent single requests TEI batches
+          # together (upstream #882; measured 2026-11-12: cosine 0.25 against the model card's
+          # reference for 192-token texts, exact one at a time). The fix (#883) is in no release
+          # yet; this build matches the reference exactly for single, batched and concurrent
+          # requests, at the same speed. Return to a release tag once 1.10.0 ships with #883.
           # 8192 batch tokens OOM-killed warm-up at the 4 GiB limit; 2048 starts at
           # about 3.4 GiB and settles near 2.5 GiB. Longer inputs are truncated to
           # 2048 tokens, which covers Graphiti's episode and entity texts.
           # Graphiti, the only client, runs at most 20 operations at once (graphiti_core
           # SEMAPHORE_LIMIT) and its OpenAI client retries a 429 twice; 32 admits all of them
           # and refuses a runaway client fast instead of queueing 512.
-          image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9.2@sha256:16230cd8f679ae5f8a51d585033628b1c0d45cd70c2bc9b0d208170d71218fdb
+          image: ghcr.io/huggingface/text-embeddings-inference:cpu-sha-da9a9ce@sha256:50c39e698cda14212ea5bb0c17400ad3c72ee3432e03326a17dc8a096aeb9f33
           args: [--model-id, /rag-models/Qwen3-Embedding-0.6B, --served-model-name, Qwen3-Embedding-0.6B,
                  --port, '8080', --max-client-batch-size, '16', --max-batch-tokens, '2048', --auto-truncate,
-                 --max-concurrent-requests, '32']
+                 --max-concurrent-requests, '32', --prometheus-port, '9000']
           env:
             # The CPU image runs Qwen3 on Candle with MKL threaded by LLVM OpenMP (libomp),
             # which otherwise starts one thread per visible CPU (26 in the shared pool) under
@@ -118,7 +124,8 @@ spec:
             - {name: HF_HUB_OFFLINE, value: '1'}
             - {name: HOME, value: /tmp}
             - {name: HUGGINGFACE_HUB_CACHE, value: /tmp/hf}
-          ports: [{name: http, containerPort: 8080}]
+          # /metrics on its own port, off the API port, so only Alloy can reach it.
+          ports: [{name: http, containerPort: 8080}, {name: metrics, containerPort: 9000}]
           # Measured 2026-11-12: 2.4 GiB unreclaimable, memory.peak 3.4 GiB (84% of the old
           # 4Gi limit). Request the steady state; leave about 2x for bursts.
           resources:
@@ -145,7 +152,7 @@ kind: Service
 metadata: {name: memory-embedding}
 spec:
   selector: {app.kubernetes.io/name: memory-embedding}
-  ports: [{name: http, port: 8080, targetPort: http}]
+  ports: [{name: http, port: 8080, targetPort: http}, {name: metrics, port: 9000, targetPort: metrics}]
 ---
 apiVersion: apps/v1
 kind: Deployment
