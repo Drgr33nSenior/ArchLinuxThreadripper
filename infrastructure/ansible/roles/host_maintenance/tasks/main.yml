@@ -187,6 +187,7 @@
     name: '{{ item }}'
     enabled: true
     state: started
+  ignore_errors: '{{ ansible_check_mode }}'
   loop: '{{ ["smartd.service"] + (["rasdaemon.service"] if lab_ras_enabled | bool else []) }}'
 
 - name: Enable the maintenance timers
@@ -194,4 +195,6 @@
     name: '{{ item }}'
     enabled: true
     state: started
+  # A dry run cannot find units that only the real run installs.
+  ignore_errors: '{{ ansible_check_mode }}'
   loop: '{{ ["workstation-advisories.timer", "workstation-hardware-health.timer", "paccache.timer"] + (["workstation-retention-report.timer"] if lab_maintenance_build_user else []) }}'
