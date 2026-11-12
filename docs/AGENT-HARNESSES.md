@@ -101,6 +101,18 @@ AGENT_ENABLE_THINKING=true                           # sent as chat_template_kwa
 AGENT_REASONING_EFFORT=low                           # low, medium, high (sent as xhigh) or xhigh
 ```
 
+With thinking on and an effort set, Qwen Code is given the model's reasoning
+controls rather than a fixed effort: `capabilities.reasoning` with the
+`openai-effort` profile, levels `low`, `medium` and `xhigh`, and the contract's
+effort as the default (`high` defaults to `xhigh`, which the gateway sends it as).
+IDEs that speak ACP (JetBrains, Zed) then show a **Reasoning effort** selector
+with *Thinking off*, *Low*, *Medium* and *Extra high*, and `/effort` works in the
+terminal. *Thinking off* sends `reasoning_effort: "none"`, which the gateway turns
+into `chat_template_kwargs.enable_thinking: false`, the same request as Open
+WebUI's Fast preset. With thinking off in the contract, or no effort, the values
+are sent as fixed request parameters instead, because the selector cannot default
+to off.
+
 `AGENT_TEMPERATURE`, `AGENT_TOP_P` and `AGENT_TOP_K` are written only when a
 contract fixes sampling; the current contract leaves sampling to the checkpoint
 defaults. An empty or absent value sends nothing, so the server default applies.

@@ -100,6 +100,17 @@ ws_agent_configure() (
      (if $temperature == "" then {} else {temperature:($temperature|tonumber)} end) +
      (if $top_p == "" then {} else {top_p:($top_p|tonumber)} end) +
      (if $top_k == "" then {} else {top_k:($top_k|tonumber)} end)')
+  # With thinking on and an effort, Qwen Code gets the model's reasoning controls instead
+  # of a fixed effort, and offers them to ACP clients (JetBrains, Zed) and /effort as
+  # "Thinking off / Low / Medium / Extra high" (0.27.1 model-configuration.ts). The
+  # openai-effort profile sends reasoning_effort, or "none" for Thinking off, which the
+  # gateway turns into enable_thinking false. Levels are the template's own; the gateway
+  # sends "high" as xhigh, so the contract's "high" defaults to xhigh. A fixed effort in
+  # samplingParams would lock the selector, so neither reasoning field is set there.
+  reasoning=$(jq -cn --arg thinking "$AGENT_ENABLE_THINKING" --arg effort "$AGENT_REASONING_EFFORT" \
+    'if $thinking == "true" and $effort != "" then
+       {profile:"openai-effort",efforts:["low","medium","xhigh"],defaultEffort:(if $effort == "high" then "xhigh" else $effort end)}
+     else null end')
   # JSON is also valid YAML. No evaluation, interpolation of credential values,
   # writes to existing dotfiles, or secondary model services are involved.
   # Web access goes only through the workstation (search_web/read_web_page on the gateway's
@@ -121,14 +132,18 @@ ws_agent_configure() (
     --argjson retrieval_enabled "$AGENT_RETRIEVAL_ENABLED" --argjson search_enabled "$AGENT_WEB_SEARCH_ENABLED" \
     --argjson memory_enabled "$AGENT_MEMORY_ENABLED" --argjson handoff_enabled "$AGENT_HANDOFF_ENABLED" \
     --argjson context "$AGENT_CONTEXT_TOKENS" --argjson output "$AGENT_MAX_OUTPUT_TOKENS" --argjson defaults "$defaults" \
+    --argjson reasoning "$reasoning" \
     '{"$version":4,general:{enableAutoUpdate:false},privacy:{usageStatisticsEnabled:false},telemetry:{enabled:false},
       security:{auth:{selectedType:"openai"},folderTrust:{enabled:true}},
       tools:{approvalMode:"default",eager:["read_file","edit","write_file","list_directory","grep_search","glob",
         "run_shell_command","todo_write","ask_user_question"]},permissions:{deny:["WebFetch"]},context:{fileName:["AGENTS.md","QWEN.md"]},
       model:{name:$model},modelProviders:{openai:[{id:$model,name:"Workstation local Qwen",
-        baseUrl:$url,envKey:"WORKSTATION_AGENT_API_KEY",generationConfig:{contextWindowSize:$context,
+        baseUrl:$url,envKey:"WORKSTATION_AGENT_API_KEY"} +
+        (if $reasoning == null then {} else {capabilities:{reasoning:$reasoning}} end) +
+        {generationConfig:{contextWindowSize:$context,
           timeout:1200000,streamIdleTimeoutMs:1200000,maxRetries:0,
-          samplingParams:({max_tokens:$output} + $defaults)}}]} } +
+          samplingParams:({max_tokens:$output} +
+            ($defaults | if $reasoning == null then . else del(.reasoning_effort, .chat_template_kwargs) end))}}]} } +
       (if $retrieval=="" then {} else {mcpServers:{workstationKnowledge:{httpUrl:$retrieval,
         headers:{Authorization:"Bearer ${WORKSTATION_RETRIEVAL_API_KEY}"},trust:false,timeout:35000,
         includeTools:((if $retrieval_enabled then ["retrieve_project_passage","read_project_source"] else [] end) +
@@ -218,7 +233,13 @@ ws_agent_launch() {
       .modelProviders.openai[0] as $p | .model.name == $b.model and $p.id == $b.model and
       $p.baseUrl == $b.base_url and $p.generationConfig.contextWindowSize == $b.context_tokens and
       $p.generationConfig.samplingParams.max_tokens == $b.max_output_tokens and
-      ($p.generationConfig.samplingParams | del(.max_tokens)) == ($b.request_defaults // {})
+      ($b.request_defaults // {}) as $d | ($p.capabilities.reasoning // null) as $r |
+      if $r == null then ($p.generationConfig.samplingParams | del(.max_tokens)) == $d
+      else ($p.generationConfig.samplingParams | del(.max_tokens)) == ($d | del(.reasoning_effort, .chat_template_kwargs)) and
+        $d.chat_template_kwargs.enable_thinking == true and
+        $r == {profile:"openai-effort",efforts:["low","medium","xhigh"],
+               defaultEffort:(if $d.reasoning_effort == "high" then "xhigh" else $d.reasoning_effort end)}
+      end
     elif $client == "dsh" then
       .["llm-pi-ai"].providers.workstation as $p |
       .["agent-default-model"].provider == "workstation" and .["agent-default-model"].model == $b.model and
