@@ -5,11 +5,12 @@ apiVersion: kustomize.config.k8s.io/v1alpha1
 kind: Component
 resources: [workloads.yaml, storage.yaml, network-policy.yaml]
 images:
-  # Graphiti 0.31.2 service image built from infrastructure/graphiti/Containerfile
-  # and imported into K3s containerd (imagePullPolicy Never; see docs/MEMORY.md).
-  # The tag is the build's image ID; rebuild and replace it when the lock changes.
+  # Graphiti 0.31.2 service image built, scanned, signed and pushed by the ai-stack
+  # graphiti stage (infrastructure/ai-stack/README.md). Pinned by registry digest;
+  # rebuild with the stage and replace the digest when infrastructure/graphiti changes.
   - name: localhost/workstation/graphiti-memory
-    newTag: img-7efceaa880da
+    newName: registry.lan.thespry.family/local/graphiti-memory
+    digest: sha256:a39cfa9e5d35e4d8e8463da557fc67449b33a414ad82657b35fd862d50c4858c
 # Each overlay generates memory-profile with the chat model it serves.
 patches:
   - target: {kind: Deployment, name: service-tools}

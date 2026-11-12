@@ -1,6 +1,6 @@
-# Graphiti memory service. Build on the workstation with:
-#   podman build -f infrastructure/graphiti/Containerfile -t localhost/workstation/graphiti-memory infrastructure/graphiti
-# then set the resulting local digest in apps/components/memory/kustomization.yaml.
+# Graphiti memory service. Built, scanned, signed and pushed by the AI-stack graphiti
+# stage (AI_STACK_PUSH=1 infrastructure/ai-stack/build-stage.sh graphiti); set the pushed
+# digest in apps/components/memory/kustomization.yaml.
 # Dependencies install only from the hashed lock; no source build or network
 # access is needed at runtime.
 FROM docker.io/library/python:3.14.10-slim@sha256:af8a5aa14780025dbfbcfbc81bd8a91ebd87711dd5b0f48ed71090949dd7cb1d

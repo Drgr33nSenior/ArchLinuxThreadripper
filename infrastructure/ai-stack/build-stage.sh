@@ -3,7 +3,7 @@
 # from stack.lock. Each run directory is keyed by the pins that affect it, so a
 # refresh rebuilds only stages whose inputs changed; ccache and source clones
 # persist under $AI_STACK_ROOT across runs.
-# Usage: build-stage.sh rocm|torch|sglang|image|comfyui|swarmui|creative
+# Usage: build-stage.sh rocm|torch|sglang|image|comfyui|swarmui|creative|graphiti
 set -euo pipefail
 stop() {
   printf 'STOP: %s\n' "$*" >&2
@@ -11,8 +11,8 @@ stop() {
 }
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 stage=${1:-}
-[[ $stage =~ ^(rocm|torch|sglang|image|comfyui|swarmui|creative)$ ]] ||
-  stop 'usage: build-stage.sh rocm|torch|sglang|image|comfyui|swarmui|creative'
+[[ $stage =~ ^(rocm|torch|sglang|image|comfyui|swarmui|creative|graphiti)$ ]] ||
+  stop 'usage: build-stage.sh rocm|torch|sglang|image|comfyui|swarmui|creative|graphiti'
 lock=$here/stack.lock
 read_lock() {
   awk -F= -v key="$1" '$1 == key {print substr($0, index($0, "=") + 1); n++} END {exit n != 1}' "$lock" ||
@@ -87,6 +87,12 @@ swarmui_run=$root/builds/swarmui-$swarmui_key
 creative_files=("$here"/creative/{Containerfile,smoke.py,launch.sh,check_swarm_deps.py,Backends.fds})
 creative_key=$(key_of "$comfyui_key" "$swarmui_key" "$(content "$lock" "${creative_files[@]}")")
 creative_run=$root/builds/creative-$creative_key
+# The Graphiti memory service: CPU-only, built from infrastructure/graphiti and its hashed
+# lock, independent of the ROCm stages. The key covers the image's files and its smoke test.
+graphiti_src=$(cd -- "$here/../graphiti" && pwd -P)
+graphiti_files=("$graphiti_src"/{Containerfile,memory_service.py,requirements-python314.lock} "$here/graphiti/smoke.py")
+graphiti_key=$(key_of "$(read_lock GRAPHITI_IMAGE_REPOSITORY)" "$(content "${graphiti_files[@]}")")
+graphiti_run=$root/builds/graphiti-$graphiti_key
 patches=$root/patches/$SGLANG_PATCHSET_SHA256
 need() { [[ -s $1/out/RECEIPT.json ]] || stop "build the $2 stage first ($1)"; }
 
@@ -154,6 +160,22 @@ publish() {
   mv -- "$scan/pushed.digest" "$run/out/image.digest"
   printf 'PUSHED=%s\nSIGNED=%s\n' "$ref" "$ref"
 }
+if [[ $stage == graphiti ]]; then
+  tag=$(read_lock GRAPHITI_IMAGE_REPOSITORY):$graphiti_key
+  if podman image exists "$tag" && [[ ${AI_STACK_PUSH:-0} != 1 || -s $graphiti_run/out/image.digest ]]; then
+    printf 'BUILT=graphiti %s\n' "$tag"
+    exit 0
+  fi
+  track /dev/null
+  mkdir -p "$graphiti_run/out"
+  podman build --pull=missing -f "$graphiti_src/Containerfile" -t "$tag" "$graphiti_src"
+  # Offline import smoke as the image's own user, with a read-only root, as in the pod.
+  podman run --rm --pull=never --network none --read-only --tmpfs /tmp -e HOME=/tmp \
+    -v "$here/graphiti/smoke.py:/smoke.py:ro" --entrypoint python "$tag" -I /smoke.py
+  printf 'IMAGE=%s\n' "$tag"
+  [[ ${AI_STACK_PUSH:-0} != 1 ]] || publish "$tag" "$graphiti_run" "$here/graphiti/scan-allowlist.json"
+  exit 0
+fi
 if [[ $stage == creative ]]; then
   need "$comfyui_run" comfyui
   need "$swarmui_run" swarmui
