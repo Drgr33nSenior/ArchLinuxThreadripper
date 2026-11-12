@@ -9,6 +9,11 @@ After=multi-user.target workstation-gpu-power.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+# System services get no HOME (the runtime's shell libraries read it under set -u), and
+# the collector reads GPU identity with rocminfo/rocm-smi from /opt/rocm/bin. Without
+# them the evidence is written as "failed" and session and mode switches refuse it.
+Environment=HOME=/root
+Environment=PATH=/opt/rocm/bin:/usr/local/sbin:/usr/local/bin:/usr/bin
 ExecStart=/usr/lib/bridge/workstation-runtime/bin/workstationctl --config /etc/workstation/workstation.conf hardware collect /var/lib/workstation-evidence/boot-%b
 TimeoutStartSec=300
 UMask=0077
