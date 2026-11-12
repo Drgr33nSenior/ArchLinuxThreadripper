@@ -18,9 +18,11 @@ flowchart LR
   lock["stack.lock<br/>pinned commits"] --> rocm["rocm"] --> torch["torch"] --> sgl["sglang<br/>+ patch series"] --> img["image<br/>sglang-gfx1201"]
   torch --> comfy["comfyui"] --> swarm["swarmui"] --> creative["creative<br/>creative-gfx1201"]
   lock --> graphiti["graphiti<br/>graphiti-memory"]
+  vlock["versions.lock<br/>Sunshine, Arch"] --> gaming["gaming<br/>steam-headless"]
   img --> sign["scan, sign,<br/>push"]
   creative --> sign
   graphiti --> sign
+  gaming --> sign
   cat["models/*.json"] --> fetch["render-fetch Job"] --> nas[("NAS<br/>ai-models")]
   profile["serving profile<br/>(arms)"] --> render["service render<br/>--mode"]
   sign --> render
@@ -49,6 +51,7 @@ a refresh that only moves SGLang rebuilds only the SGLang stage and the image.
 | `swarmui` | SwarmUI built self-contained with the pinned .NET SDK image, with the offline-pip guard patch |
 | `creative` | `registry.lan.thespry.family/local/creative-gfx1201:<key>`: SwarmUI plus ComfyUI, installed offline |
 | `graphiti` | `registry.lan.thespry.family/local/graphiti-memory:<key>`: the [memory service](../../docs/MEMORY.md) from `infrastructure/graphiti` and its hashed lock; CPU only, independent of the ROCm stages, with an offline import smoke test (`graphiti/smoke.py`) |
+| `gaming` | `registry.lan.thespry.family/local/steam-headless:<key>`: the [game-streaming image](../../docs/SUNSHINE.md) (`workstationctl sunshine image-build`, `arch-wayland`) built with Podman from a full checkout; the key covers every file the image copies; gated by the offline non-root smoke test `tests/test_sunshine_image.sh` |
 
 Each stage also records its progress for monitoring: `stage-metrics.py` writes
 `/var/lib/workstation-ai-stack/ai-stack.prom`, which node-exporter reads. The
@@ -127,8 +130,8 @@ publisher account.
 
 ### Scanning and signing
 
-With `AI_STACK_PUSH=1` the `image`, `creative` and `graphiti` stages, after their smoke
-tests (GPU for the first two, offline imports for `graphiti`), run the same `publish`
+With `AI_STACK_PUSH=1` the `image`, `creative`, `graphiti` and `gaming` stages, after their smoke
+tests (GPU for the first two, offline for `graphiti` and `gaming`), run the same `publish`
 path (each with its own scan allowlist):
 
 1. Scans the image with Trivy (`TRIVY_IMAGE` in `stack.lock`) and writes, under

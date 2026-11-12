@@ -3,7 +3,7 @@
 # from stack.lock. Each run directory is keyed by the pins that affect it, so a
 # refresh rebuilds only stages whose inputs changed; ccache and source clones
 # persist under $AI_STACK_ROOT across runs.
-# Usage: build-stage.sh rocm|torch|sglang|image|comfyui|swarmui|creative|graphiti
+# Usage: build-stage.sh rocm|torch|sglang|image|comfyui|swarmui|creative|graphiti|gaming
 set -euo pipefail
 stop() {
   printf 'STOP: %s\n' "$*" >&2
@@ -11,8 +11,8 @@ stop() {
 }
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 stage=${1:-}
-[[ $stage =~ ^(rocm|torch|sglang|image|comfyui|swarmui|creative|graphiti)$ ]] ||
-  stop 'usage: build-stage.sh rocm|torch|sglang|image|comfyui|swarmui|creative|graphiti'
+[[ $stage =~ ^(rocm|torch|sglang|image|comfyui|swarmui|creative|graphiti|gaming)$ ]] ||
+  stop 'usage: build-stage.sh rocm|torch|sglang|image|comfyui|swarmui|creative|graphiti|gaming'
 lock=$here/stack.lock
 read_lock() {
   awk -F= -v key="$1" '$1 == key {print substr($0, index($0, "=") + 1); n++} END {exit n != 1}' "$lock" ||
@@ -174,6 +174,35 @@ if [[ $stage == graphiti ]]; then
     -v "$here/graphiti/smoke.py:/smoke.py:ro" --entrypoint python "$tag" -I /smoke.py
   printf 'IMAGE=%s\n' "$tag"
   [[ ${AI_STACK_PUSH:-0} != 1 ]] || publish "$tag" "$graphiti_run" "$here/graphiti/scan-allowlist.json"
+  exit 0
+fi
+# The game-streaming image: the repository's own Sunshine recipe (`workstationctl sunshine
+# image-build`, arch-wayland target) built with Podman. The key covers every file the image
+# copies or is gated by; Sunshine, the Arch base and the snapshot are pins in versions.lock.
+if [[ $stage == gaming ]]; then
+  repo=$(cd -- "$here/../.." && pwd -P)
+  [[ -x $repo/bin/workstationctl ]] || stop 'run the gaming stage from a full repository checkout'
+  gaming_key=$(key_of "$(read_lock GAMING_IMAGE_REPOSITORY)" "$(cd -- "$repo" &&
+    find bin/workstationctl lib templates/sunshine infrastructure/gaming versions.lock tests/test_sunshine_image.sh \
+      -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | cut -c1-64)")
+  gaming_run=$root/builds/gaming-$gaming_key
+  tag=$(read_lock GAMING_IMAGE_REPOSITORY):$gaming_key
+  if podman image exists "$tag" && [[ ${AI_STACK_PUSH:-0} != 1 || -s $gaming_run/out/image.digest ]]; then
+    printf 'BUILT=gaming %s\n' "$tag"
+    exit 0
+  fi
+  track /dev/null
+  # image-build refuses a non-empty output; its staging is per-key and rebuilt from scratch.
+  rm -rf -- "$gaming_run/build"
+  mkdir -p "$gaming_run/out"
+  SUNSHINE_BUILD_ENGINE=podman "$repo/bin/workstationctl" sunshine image-build "$gaming_run/build" arch-wayland
+  cp -- "$gaming_run/build/build-result.json" "$gaming_run/out/"
+  image_id=$(jq -r .local_image_id "$gaming_run/out/build-result.json")
+  podman tag "$image_id" "$tag"
+  # Offline, non-root, read-only smoke: pinned packages, session contract, absent-GPU refusal.
+  CONTAINER_ENGINE=podman HOME_LAB_GAME_IMAGE=$image_id bash "$repo/tests/test_sunshine_image.sh"
+  printf 'IMAGE=%s\n' "$tag"
+  [[ ${AI_STACK_PUSH:-0} != 1 ]] || publish "$tag" "$gaming_run" "$here/gaming/scan-allowlist.json"
   exit 0
 fi
 if [[ $stage == creative ]]; then

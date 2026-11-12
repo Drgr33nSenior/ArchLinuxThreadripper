@@ -34,7 +34,7 @@ COPY versions.lock /opt/workstation/versions.lock
 RUN chmod -R a+rX /opt/workstation
 COPY --chmod=755 infrastructure/gaming/sunshine-wrapper.sh /usr/bin/sunshine
 COPY --chmod=755 infrastructure/gaming/wayland-session.sh /usr/lib/workstation/wayland-session
-COPY infrastructure/gaming/wayland-apps.json /usr/share/workstation/wayland-apps.json
+COPY --chmod=644 infrastructure/gaming/wayland-apps.json /usr/share/workstation/wayland-apps.json
 ENV HOME=/home/default USER=default USER_HOME=/home/default \
     XDG_CONFIG_HOME=/home/default/.config XDG_CACHE_HOME=/home/default/.cache \
     XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=KDE \

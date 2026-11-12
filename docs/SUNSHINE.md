@@ -52,8 +52,13 @@ SUNSHINE_ENCODER=vaapi SUNSHINE_CAPTURE=x11 \
 ```
 
 The builder stages repository sources and the hash-verified Sunshine release,
-uses the existing Docker builder for `linux/amd64`, and does not publish, deploy
-or contact K3s. The Wayland build is the default. The `x11` target is an explicit
+builds for `linux/amd64` with Docker or, where Docker is absent (the workstation),
+rootless Podman (`SUNSHINE_BUILD_ENGINE` selects one), and does not publish, deploy
+or contact K3s. The published image comes from the AI-stack pipeline's `gaming`
+stage ([pipeline README](../infrastructure/ai-stack/README.md)): it runs this
+`arch-wayland` build, the smoke test below, then scans, signs and pushes.
+`refresh.sh` moves `SUNSHINE_*` to the newest stable Sunshine release, the
+current `archlinux:latest` digest and the newest Arch archive snapshot. The Wayland build is the default. The `x11` target is an explicit
 rollback image, not a fallback selected at runtime; it retains the inherited
 rootful session and needs its own security, input and display review before use.
 
@@ -73,8 +78,11 @@ non-root session, profile, device checks and persistent-home contract. The
 Debian targets and default selection remain available. Its receipt records the
 repository snapshot and package hash; Debian-specific version fields are null.
 
-The tested Arch stack used Sunshine `2026.906.222525-1`, KWin `6.8.2-1`, Mesa
-`1:26.2.6-1` and XWayland `24.1.14-1`. Its initial startup exposed a missing
+The 1 November tests used Sunshine `2026.906.222525-1`, KWin `6.8.2-1`, Mesa
+`1:26.2.6-1` and XWayland `24.1.14-1`. The 12 November pipeline build has
+Sunshine `2026.914.233613-1` (high-severity Linux fix GHSA-fp6g-27w5-489j),
+KWin `6.8.2-2`, Mesa `1:26.2.6-1` and XWayland `24.1.15-1`; it passed the smoke
+test, not yet the on-GPU checks. Its initial startup exposed a missing
 `env` object in the default apps template, now corrected. The session checks
 JSON syntax and `env`/`apps` types before launch and preserves invalid existing
 files for owner repair; this is not a complete app-schema validator.
@@ -332,6 +340,7 @@ nonroot smoke test before target testing:
 ./bin/workstationctl sunshine image-build artifacts/sunshine-wayland-candidate
 gaming_image_id=$(jq -r .local_image_id artifacts/sunshine-wayland-candidate/build-result.json)
 HOME_LAB_GAME_IMAGE="$gaming_image_id" bash tests/test_sunshine_image.sh
+# Podman hosts: CONTAINER_ENGINE=podman HOME_LAB_GAME_IMAGE=... bash tests/test_sunshine_image.sh
 ```
 
 A bounded non-root image smoke test can check packaging and startup prerequisites,

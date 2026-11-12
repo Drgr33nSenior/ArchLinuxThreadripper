@@ -36,7 +36,21 @@ grep -Fq '"$graphiti_src"/{Containerfile,memory_service.py,requirements-python31
 grep -Fq -- '--network none --read-only --tmpfs /tmp -e HOME=/tmp' "$dir/build-stage.sh" || fail 'graphiti smoke is not offline and read-only'
 # shellcheck disable=SC2016 # literal text in build-stage.sh
 grep -Fq 'publish "$tag" "$graphiti_run" "$here/graphiti/scan-allowlist.json"' "$dir/build-stage.sh" || fail 'graphiti does not use the publish path'
-grep -Eq '^for stage in .* graphiti; do$' "$dir/build-all.sh" || fail 'build-all does not build graphiti'
+grep -Eq '^for stage in .* graphiti( [a-z ]+)?; do$' "$dir/build-all.sh" || fail 'build-all does not build graphiti'
+# Game streaming: the repository's own recipe, keyed on every file the image copies,
+# gated by the offline smoke test, published through the same path.
+grep -Eq '^GAMING_IMAGE_REPOSITORY=registry\.lan\.thespry\.family/local/[a-z0-9-]+$' "$lock" || fail 'gaming image repository'
+# shellcheck disable=SC2016 # literal text in build-stage.sh
+grep -Fq 'tag=$(read_lock GAMING_IMAGE_REPOSITORY):$gaming_key' "$dir/build-stage.sh" || fail 'gaming tag is not the gaming key'
+grep -Fq 'find bin/workstationctl lib templates/sunshine infrastructure/gaming versions.lock tests/test_sunshine_image.sh' "$dir/build-stage.sh" ||
+  fail 'gaming key does not cover the image inputs and smoke test'
+# shellcheck disable=SC2016 # literal text in build-stage.sh
+grep -Fq 'CONTAINER_ENGINE=podman HOME_LAB_GAME_IMAGE=$image_id bash "$repo/tests/test_sunshine_image.sh"' "$dir/build-stage.sh" ||
+  fail 'gaming image is not smoke tested'
+# shellcheck disable=SC2016 # literal text in build-stage.sh
+grep -Fq 'publish "$tag" "$gaming_run" "$here/gaming/scan-allowlist.json"' "$dir/build-stage.sh" || fail 'gaming does not use the publish path'
+grep -Eq '^for stage in .* gaming; do$' "$dir/build-all.sh" || fail 'build-all does not build gaming'
+python3 -I -c 'import json, sys; assert json.load(open(sys.argv[1])) == []' "$dir/gaming/scan-allowlist.json" || fail 'gaming allowlist is not empty'
 python3 -I -c 'import ast, sys; ast.parse(open(sys.argv[1]).read())' "$dir/graphiti/smoke.py" || fail 'graphiti smoke does not parse'
 python3 -I -c 'import json, sys; assert json.load(open(sys.argv[1])) == []' "$dir/graphiti/scan-allowlist.json" || fail 'graphiti allowlist is not empty'
 
