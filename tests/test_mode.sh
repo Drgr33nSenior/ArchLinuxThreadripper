@@ -134,4 +134,8 @@ expect_failure ws_mode family --execute
 grep -q 'no hardware evidence for this boot' "$work/failure.log"
 mv "$work/hardware.moved" "$work/hardware.json"
 [[ $(wc -l <"$work/switch.log") == "$switches" ]]
+# The boot-time evidence unit runs as a system service: it must provide HOME and ROCm's tools.
+unit="$root/templates/workstation/session/workstation-hardware-evidence.service"
+grep -qx 'Environment=HOME=/root' "$unit"
+grep -qx 'Environment=PATH=/opt/rocm/bin:/usr/local/sbin:/usr/local/bin:/usr/bin' "$unit"
 printf 'mode command fixture tests passed (no cluster contact)\n'
