@@ -1,5 +1,9 @@
 # Performance comparison and measured profiles
 
+> **Historical.** Serving changes are now compared with the AI stack's bench Job, arm by
+> arm; see [serving](../infrastructure/ai-stack/README.md#serving) and the
+> [serving results log](../infrastructure/ai-stack/serving/RESULTS.md).
+
 This workflow compares retained workstation evidence. It does not start a Pod,
 change a Deployment, select an engine setting at runtime, or establish a
 hardware result. Use it only in an owner-approved maintenance window after the

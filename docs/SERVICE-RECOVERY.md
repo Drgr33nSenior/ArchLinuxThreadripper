@@ -161,7 +161,8 @@ explicit ID from its own snapshot listing and verify the recovered manifest.
 ## Retain existing state before rollout
 
 For each valuable bound claim (`webui-rag-qwen3-data`, `creative-models`,
-`service-tools-state`, `gateway-postgres` and all present gaming-home claims), inspect only PVC/PV metadata using the
+`service-tools-state`, `gateway-postgres`, `graphiti-neo4j` when memory is enabled, and all
+present gaming-home claims), inspect only PVC/PV metadata using the
 explicit operator context. Confirm namespace, claim UID, node and backing path:
 
 ```sh
@@ -202,7 +203,10 @@ a successful recovery drill and an independently retained recovery snapshot.
    sudo ./bin/workstationctl service-backup inventory-model Qwen3.5-9B "$MATERIALIZED_SMALL_MODEL" /var/lib/workstation-evidence/small-model-inventory.json
    ```
 
-   Run only the command for models actually staged. Use the model's materialized
+   `inventory-model` accepts only these two legacy models (`MODEL_LOCKS` in
+   `service_backup.py`). The live `Qwen3.8-27B-MXFP4` model is not supported yet; its
+   identity is recorded instead by its [catalogue entry](MODELS.md) and the `VERIFIED.json`
+   the fetch Job writes on the NAS. Run only the commands for legacy models actually staged. Use the model's materialized
    revision directory, not a symlinked Hugging Face cache. Inventory collection
    reads all weight bytes and can take time; repeat after changing staged files.
    The capture verifies pinned identities and preserves these hashes. It does not

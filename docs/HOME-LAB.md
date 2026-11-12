@@ -26,31 +26,29 @@ infrastructure/
 │   └── roles/{arch_host,k3s_baremetal}/
 └── gpu-operator/{chart.lock,values.yaml,deviceconfig.yaml,render.sh}
 apps/
-├── base/{sglang,swarmui,steam-headless,open-webui}/
-└── overlays/{single-gpu,dual-gpu,rdna4-compat,parent,kids,family,rag,rag-dense}/
+├── base/{sglang,swarmui,comfyui-gpu0,open-webui,shared-api,steam-headless}/
+├── components/{assistant,memory,rag-reranker}/
+└── overlays/{assistant*,service*,single-gpu,dual-gpu,rdna4-compat,parent,kids,family,rag,rag-dense}/
 ```
 
-The next shared-service composition is [AI-SERVICE.md](AI-SERVICE.md): retained
-Open WebUI, LiteLLM/PostgreSQL, private Traefik HTTPS, MCP retrieval and a bounded
-Swarm image adapter. It remains gated at zero until the stated acceptance checks.
+The family AI service is the `assistant-memory` composition, rendered from the serving
+contract and running in shared mode: Open WebUI, the gateway (LiteLLM and PostgreSQL),
+private Traefik HTTPS, service-tools (MCP), memory, and SwarmUI plus `comfyui-gpu0` for
+pictures and video. See [AI service setup](AI-SERVICE.md) and [service modes](MODES.md).
 
 ## Deployment status and boundaries
 
-Host configuration, TPM enrollment planning, K3s packaging/configuration,
-operator rendering, and workload scaffolding are implemented. They are not a
-qualified installation. Application replicas default to zero. Replace every
-remaining `UNQUALIFIED` image with an audited digest before enabling it. The
-`apps/` SGLang Deployment selects a digest-pinned AMD ROCm 10 candidate; it
-still requires target and model validation. Gaming has a pinned-input build
-recipe but still requires promotion of the built image and
-display/input/security qualification.
+Host configuration, K3s, the GPU operator with DRA, and the AI service are installed and
+running. The AI service is deployed from a render of the qualified serving profile (see
+[service modes](MODES.md)); rendered manifests leave replicas at zero and the session
+tooling starts the workloads. Gaming has a pinned-input build recipe but still needs its
+built image promoted and display, input and security qualification.
 
-Status, 9 November 2026: the `apps/` SGLang Deployment, its FP8 default and its
-`llm-models` volume are legacy and have not been applied since the 2026-11
-reinstall. The current serving path is the
-[AI serving stack pipeline](../infrastructure/ai-stack/README.md): a built
-image, a model staged on the NAS and a qualification Job for one serving
-profile. See [NAS-backed volumes](#nas-backed-volumes-nfs-csi) for its storage.
+The source-default `apps/` SGLang Deployment (FP8 model, `llm-models` volume) is legacy
+and has not been applied since the November 2026 reinstall. A serving-contract render
+replaces it with the image and profile from the
+[AI serving stack pipeline](../infrastructure/ai-stack/README.md). See
+[NAS-backed volumes](#nas-backed-volumes-nfs-csi) for its model storage.
 
 K3s documents general Linux prerequisites. This Arch/ROCm/GPU Operator
 combination still requires target-hardware qualification.
@@ -624,9 +622,9 @@ venv at `/SwarmUI/dlbackend/ComfyUI`. No CUDA image or auto-installer is substit
 The initial backend seed selects `comfyui_selfstart`, disables automatic updates,
 starts ComfyUI with fp8 UNet and text encoders and `--reserve-vram 1.5` (see the
 sharing note in section 4), and leaves existing PVC configuration untouched: a
-`Backends.fds` already on the state volume keeps its own arguments. No image/video checkpoint is
-selected yet. Review the current candidates in [MODELS.md](MODELS.md) and stage
-the chosen model and dependencies; the network policy prevents runtime downloads.
+`Backends.fds` already on the state volume keeps its own arguments. The selected checkpoints
+are SDXL base 1.0 for pictures and Wan 2.2 T2V A14B for video ([MODELS.md](MODELS.md)); stage
+them before starting, because the network policy prevents runtime downloads.
 Its Service remains internal until application authentication and a private
 ingress rule are reviewed. Limit children's accounts and extension installation
 through application permissions; PVC separation is not parental content policy.

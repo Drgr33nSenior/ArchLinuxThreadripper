@@ -1,8 +1,68 @@
 # Architecture
 
-For the bare-metal AI/gaming stack and the separate optional VM lab, see the
-[visual stack overview](STACK.md). It distinguishes repository configuration
-from workloads and hardware that still need qualification.
+The workstation is one Arch Linux host that owns the hardware and runs a single-node K3s
+cluster. The family AI service, monitoring and an optional game-streaming workload are
+Kubernetes workloads; the host itself stays headless. This page covers the AI service's
+components and storage, then the host's boot, storage and GPU design. The
+[stack overview](STACK.md) shows the same system as layers, and [service modes](MODES.md)
+shows what each GPU holds.
+
+## The AI service
+
+Everything runs in the `ai-home-lab` namespace (Pod Security `restricted`, default-deny
+network policy). Monitoring runs in `workstation-observability`, and AMD's GPU operator in
+`kube-amd-gpu`.
+
+```mermaid
+flowchart TB
+  traefik["Traefik<br/>HTTPS, LAN only"]
+  subgraph ns["Namespace ai-home-lab"]
+    webui["Open WebUI"]
+    gw["Gateway<br/>LiteLLM + boundary"]
+    sglang["SGLang<br/>both GPUs"]
+    tools["service-tools<br/>MCP and picture adapter"]
+    mem["Memory<br/>Graphiti, Neo4j, embeddings"]
+    swarm["SwarmUI + ComfyUI<br/>GPU 1"]
+    comfy0["ComfyUI<br/>GPU 0"]
+  end
+  nas[("NAS<br/>ai-models")]
+  nvme[("Local NVMe<br/>creative-models")]
+  traefik --> webui & gw
+  webui --> gw --> sglang
+  webui --> tools
+  tools --> mem & swarm & comfy0
+  swarm --> comfy0
+  nas -.-> sglang & swarm & comfy0
+  nvme -.-> comfy0
+```
+
+| Component | What it does | Source |
+| --- | --- | --- |
+| Open WebUI 0.12.5 | The family's chat window, accounts, knowledge collections and voice input | [`apps/base/open-webui`](../apps/base/open-webui) |
+| Gateway | LiteLLM behind our boundary: maps each user to a key, enforces limits, admits pictures only when the mode allows | [`boundary.py`](../apps/base/shared-api/boundary.py) |
+| SGLang | Serves Qwen3.8-27B MXFP4 across both GPUs | [`apps/base/sglang`](../apps/base/sglang), [serving profile](../infrastructure/ai-stack/serving/qwen3.8-27b-mxfp4-tp2.json) |
+| service-tools | MCP tools (documents, memory, web search, handoffs, video) and the picture adapter; checks every call against the user | [`service_tools.py`](../apps/base/shared-api/service_tools.py) |
+| Memory | Graphiti with Neo4j and a local embedding model | [session memory](MEMORY.md) |
+| SwarmUI, ComfyUI | SDXL pictures on GPU 1; a second ComfyUI on GPU 0 also makes video | [`apps/base/swarmui`](../apps/base/swarmui), [`apps/base/comfyui-gpu0`](../apps/base/comfyui-gpu0) |
+
+### Where data lives
+
+| Volume | Stored on | Holds | Backed up |
+| --- | --- | --- | --- |
+| `ai-models` | NAS over NFS (10 GbE) | Chat model, draft and SDXL weights | No; restaged from the pinned catalogue |
+| `creative-models` | Local NVMe | Wan video weights (`Video/`), SwarmUI `Data/`, `Models/` and `Output/` | `Data/` and `Output/`; the weight trees `Models/` and `Video/` are restaged |
+| `webui-rag-qwen3-data` | Local NVMe | Open WebUI database, uploads, knowledge index | Yes |
+| `webui-rag-qwen3-models` | Local NVMe | Embedding, reranker and speech models | No; restaged |
+| `gateway-postgres` | Local NVMe | Gateway keys, budgets and usage | Yes (database dump) |
+| `service-tools-state` | Local NVMe | Picture markers and task handoffs | Yes |
+| `graphiti-neo4j` | Local NVMe | Family memory graph | Yes, when present |
+
+"Local NVMe" is the host's encrypted RAID 0 root. The live claims use the `workstation-retain`
+storage class (a render keeps whatever class an existing claim has), so these volumes
+survive pod restarts and re-renders but share the disk's lack of redundancy.
+[Service recovery](SERVICE-RECOVERY.md) covers backup and restore. Video weights live
+locally rather than on the NAS because ComfyUI streams them from disk on every step: the
+NVMe reads at 22 GB/s, the NAS at about 1.1 GB/s.
 
 ## Headless host
 
@@ -52,38 +112,20 @@ preferred merely because a package was updated.
 
 ## GPU layers
 
-The current dual-R9700 profile keeps both GPUs on the Arch host using upstream
-`amdgpu`, official firmware and RADV. Native builds and ccache are user-scoped;
+Both R9700s stay on the Arch host using upstream `amdgpu`, official firmware and RADV.
+Kubernetes reaches them through AMD's DRA driver: each card is a standalone claim (`gpu-0`,
+`gpu-1`) selected by PCI address, and several pods can hold the same claim, which is how
+chat and a picture generator share a card. There is no VRAM isolation between them; the
+serving profile sizes SGLang's cache to leave room. See [home lab](HOME-LAB.md#4-gpu-operator-and-allocation). Native builds and ccache are user-scoped;
 hardware detection supplies the single ROCm code-generation target. See
 [ROCM.md](ROCM.md) for implemented validation and the remaining reproducible
 TheRock build/packaging milestone. Official and experimental generations have
 separate environments and signed package snapshots.
 
-### Retained Intel design
+## Optional VM lab
 
-The following design applies only to the legacy B70 package profile and commands.
+Separate from the AI cluster above: an AlmaLinux K3s VM for experiments.
 
-The Intel Arc Pro B70 remains bound to the in-kernel `xe` driver and serves
-GNOME, Steam, and the local LLM container. The host uses official Arch firmware,
-Mesa, Vulkan, Intel compute runtime, and Level Zero packages.
-
-Intel's published B70 validation targets its Ubuntu/OMIX combinations, not an
-Arch host on AMD Threadripper. The Arch stack is current and technically
-appropriate, but it remains an explicitly unvalidated workstation combination;
-smoke, soak, version capture, and rollback are part of every promotion.
-
-Experimental layers are separated:
-
-- A git kernel has its own signed UKI.
-- Mesa main starts in a private prefix and must move as a matched 64/32-bit set.
-- Compute-runtime development components stay in a pinned rootless container.
-- The LLM server is on demand and binds only to `127.0.0.1:8000`.
-
-A future passthrough GPU is not pre-bound. Its complete IOMMU group is validated
-after installation before exact PCI functions are assigned to VFIO. ACS
-override is prohibited.
-
-## K3s lab
 
 ```text
 Trusted host ── libvirt NAT management NIC ── K3s API and SSH

@@ -1,15 +1,13 @@
 # Shared web search and document retrieval
 
-The opt-in `assistant` experience adds Exa Auto search and public-page
-extraction to the existing Open WebUI, SGLang and local RAG composition. WebUI
-and Qwen Code use the same adapter and request ledger. Tavily remains an explicit
-alternative. Rendering leaves replicas
-at zero. Software checks do not establish browser, model or workstation readiness.
+The `assistant` experiences add Exa Auto search and public-page reading to Open WebUI
+and Qwen Code, through one shared adapter and request ledger in service-tools. It is
+enabled in the live shared-mode service (`WEB_SEARCH_ENABLED=true`). Tavily remains an
+explicit alternative. Search terms and the pages read are the only assistant traffic that
+leaves the workstation.
 
-The [verification record](VERIFICATION.md) separates the passing provider-adapter
-fixtures from the live Exa search/extraction check. That check still needs a
-protected API-key file reference; no paid provider call was made during the
-Qwen-independent component campaign.
+The 3 November [verification record](VERIFICATION.md) covers the provider-adapter
+fixtures; it predates the live deployment.
 
 ## Request paths
 

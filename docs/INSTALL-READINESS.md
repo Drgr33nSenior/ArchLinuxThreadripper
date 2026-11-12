@@ -2,17 +2,16 @@
 
 Use the reviewed source, package manifests and image digests. Record each gate's
 command, exit status, candidate identity and result path. Keep credentials and
-raw application data outside reports. The SGLang tuning campaign is separate;
-do not interrupt its GPU owner.
+raw application data outside reports. Don't run a qualification or bench Job while the
+serving Deployment holds the GPUs.
 
 ## Current scope
 
-Use the current 64 GB hardware budget. The assistant delivery target is the
-selected native 128K model with private WebUI, Exa search and local RAG.
-Follow [current delivery scope](ASSISTANT.md#current-delivery-scope) and
-[native candidate integration](ASSISTANT.md#native-candidate-integration)
-for the remaining packaging, identity, context and quality checks. The older
-container profiles do not establish acceptance of the native candidate.
+Use the current 64 GB hardware budget. After a fresh install, the AI service is restored as
+it runs today: Qwen3.8-27B MXFP4 from the qualified serving profile in shared mode, with
+Open WebUI, Exa search, local retrieval, memory, pictures and video. See
+[service modes](MODES.md) and [the assistant guide](ASSISTANT.md) for what to check. The
+older container profiles do not establish acceptance of the current service.
 
 QLoRA and other model fine-tuning are optional post-install work. They are
 outside current installation and service acceptance; training packages,

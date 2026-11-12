@@ -1,37 +1,83 @@
-# Family AI starting point
+# Family assistant
 
-The `assistant` experience connects the existing Open WebUI, private model
-gateway, RAG profile and SwarmUI/ComfyUI image adapter. It is an opt-in source
-configuration. Rendering does not deploy it or qualify a new model.
+The family assistant is a private, ChatGPT-style service running on the workstation. In one
+Open WebUI chat window, family members can talk to Qwen3.8-27B, make pictures and short
+videos, speak instead of typing, search the web and have the assistant remember things.
+Nothing leaves the house except web searches and the public pages they read. This page explains what it does, who may do
+what, how requests flow, and how it is configured.
 
-## Current delivery scope
+It runs in **shared mode** today. [Service modes](MODES.md) explains the alternatives.
 
-Complete the workstation installation on the current 64 GB RAM configuration,
-then establish the selected native 128K serving candidate and verify the
-private Open WebUI, Exa and local RAG paths together. Preserve the existing
-boot, recovery, account, document-permission and resource-admission gates.
+<a id="current-delivery-scope"></a>
 
-The next service work is packaging a persistent authenticated native endpoint,
-reconciling model identity and limits across the gateway and clients, and
-running the prepared quality menu through the model and browser. The older
-container defaults below remain a separate source configuration.
+## What the family can do
 
-For cross-session coding and home-assistant continuity, prioritise the
-[primary Graphiti memory component](MEMORY.md), paired with a compact project handoff.
-Keep Exa for public research and local retrieval for private code/documents.
-GraphRAG remains optional on-demand document analysis. Shared memory integration,
-local-model reliability and resource use still need qualification; this decision
-adds no installed service or installation gate.
+| Feature | How to use it | Who |
+| --- | --- | --- |
+| Chat | Pick a model in the menu: `Qwen3.8-27B-MXFP4` (thinks briefly), `· Think` (thinks as long as it needs) or `· Fast` (no thinking) | Everyone with an account |
+| Pictures | Ask for a picture, or use the image button; SDXL makes it in about 7 s | Accounts with picture permission (Admin and Parents) |
+| Short videos | Ask for a short video; a 5-second clip appears in the chat after about 80 s | Accounts with picture permission and the normal `user` role (the Parents' daily accounts); shared mode only |
+| Voice input | The microphone button; speech is transcribed on the workstation | Everyone |
+| Web search | Automatic when a question needs current public information (Exa) | Everyone |
+| Memory | Ask it to remember something; it recalls it in later chats | Every daily (non-admin) account, private to each person |
+| Documents | Upload Markdown or text (up to 8 MiB) to a knowledge collection and ask about it | Everyone, per collection permissions |
+| Coding agents | Qwen Code and other IDE agents use the same model through an API key | Accounts given a key; see [coding clients](AGENT-HARNESSES.md) |
 
-The [verification record](VERIFICATION.md) covers passing Qwen-independent
-gateway, retrieval, Graphiti storage and telemetry fixtures. Those checks do not
-establish a persistent native model endpoint or end-to-end assistant acceptance.
+**Accounts and groups.** Each person has their own Open WebUI account; sign-up is closed.
+Parents are in the `Parents` group and the children in `Family`; both groups see the Think
+and Fast presets. Picture permission is granted per account, to the Admin and Parents
+accounts. The tools server (video, memory, search, documents through MCP) refuses every call
+from an account with Open WebUI's `admin` role, so the owner uses a daily account for those;
+the admin account is for administration and pictures.
 
-QLoRA and other model fine-tuning are optional post-install projects. They are
-outside the current delivery requirements and add no installation dependency
-or acceptance gate. Revisit them after stable operation provides useful
-corrections and separate evaluation tasks. Training would use its own reviewed
-environment and resource budget.
+## How a request flows
+
+A chat message, including a tool call the model decides to make:
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor U as Family member
+  participant W as Open WebUI
+  participant G as Gateway
+  participant S as SGLang (both GPUs)
+  participant T as service-tools
+  U->>W: Message
+  W->>G: Chat request with the user's key
+  Note over G: Checks key, limits and model,<br/>replaces earlier video clips with a note
+  G->>S: Request
+  S-->>W: Streamed answer or a tool call (via the gateway)
+  opt The model calls a tool (search, memory, video)
+    W->>T: MCP call with the user's own session
+    Note over T: Checks the user's permissions
+    T-->>W: Result
+    W->>G: Same chat, with the tool result
+    G->>S: Request
+    S-->>W: Final answer (via the gateway)
+  end
+  W-->>U: Answer
+```
+
+A short video:
+
+```mermaid
+sequenceDiagram
+  actor U as Family member
+  participant W as Open WebUI
+  participant T as service-tools
+  participant C as ComfyUI (GPU 0)
+  U->>W: "Make a short video of a seal swimming"
+  W->>T: generate_video(prompt, orientation)
+  Note over T: Picture permission? Not admin role?<br/>Shared mode ready? No other clip running?
+  T->>C: Fixed Wan 2.2 workflow
+  Note over C: About 80 s warm, 99 s cold
+  C-->>T: Animated WEBP, 2.3–5.2 MiB
+  T-->>W: Clip as an MCP image
+  W-->>U: Clip plays in the chat
+```
+
+If any check fails, the model gets a short error it can explain, such as `video_busy` or
+`video_permission_denied`.
 
 ## Request paths
 
@@ -40,10 +86,12 @@ environment and resource budget.
 | Conversation | Open WebUI → per-user gateway key → SGLang | Preserve the selected model identity and existing context limits |
 | Documents | Open WebUI → CPU Qwen embedding model → embedded Chroma | Preserve document permissions; answer/citation quality remains unqualified |
 | Web research | Open WebUI/Qwen Code → shared Exa adapter | Auto search and public-page extraction; one durable request ceiling; Tavily optional |
-| Session continuity (opt-in) | Browser/coding clients → service-tools memory tools → Graphiti, plus project handoff | `assistant-memory` profile packaged on Neo4j Community with per-user memory groups; Neo4j storage/restart, extraction and recall quality not yet tested; no automatic writer |
-| Image creation | Open WebUI → bounded image adapter → SwarmUI → embedded ComfyUI | SDXL only, one image job, explicit split-mode admission |
+| Memory | Browser and coding clients → service-tools memory tools → Graphiti on Neo4j | Live in the `assistant-memory` experience; per-user memory groups; facts are stored only when someone asks |
+| Image creation | Open WebUI → service-tools image adapter → SwarmUI → ComfyUI on either GPU | SDXL only; two pictures at once in shared mode (one per GPU), one in split mode |
+| Short videos | Open WebUI → service-tools `generate_video` (MCP) → `comfyui-gpu0` | Wan 2.2 T2V A14B; shared mode only; one clip at a time; picture permission |
+| Voice input | Browser microphone → Open WebUI → local faster-whisper | CPU transcription on the workstation; audio never leaves it |
 | Creative controls | Operator → SwarmUI; ComfyUI remains its embedded backend | No new public ComfyUI port or unauthenticated creative Ingress |
-| Spoken answers | Open WebUI browser speech synthesis | Quality and voice availability depend on the browser/operating system |
+| Spoken answers | Open WebUI browser speech synthesis | Quality and voice availability depend on the browser and operating system |
 
 The family profile adds a common name, four prompt suggestions and an explicit
 default model. Signup remains closed. Each person needs a WebUI account and a
@@ -68,13 +116,11 @@ and existing claim metadata; do not apply example DNS or invent a new identity.
   --experience assistant --mode split --existing-claims /private/service-pvcs.json
 ```
 
-Without `--serving-profile`, `large` keeps the existing two-GPU Qwen3.8-27B-FP8
-source composition and disables image generation in WebUI. With it, every
-consumer is rendered from the [serving contract](#serving-contract) instead. `split` explicitly selects the existing one-GPU
-Qwen3.5-9B contract and enables SDXL on the other GPU. It never silently exchanges
-the chat model to make room for an image. The native serving candidate (below)
-must still complete its own packaging and model-specific qualification; this
-profile does not substitute it for the existing published image.
+The live service is rendered with `--serving-profile` (see the [serving contract](#serving-contract)
+and the shared-mode command in [service modes](MODES.md#switch-between-shared-and-large)).
+The two commands above, without a profile, are the older compositions: `large` with the
+Qwen3.8-27B-FP8 image and no pictures, and `split` with Qwen3.5-9B on one GPU and SDXL on
+the other. Neither silently swaps the chat model to make room for a picture.
 
 Both renders keep application replicas at zero. Use `service plan` with fresh
 resource evidence and the selected telemetry composition before activation.
@@ -83,19 +129,16 @@ is about 62 GiB.
 Existing split limits exceed the reviewed CPU budget; this change does not lower
 them to obtain admission. Shared UI configuration is not physical GPU ownership.
 
-## Native candidate integration
+<a id="native-candidate-integration"></a>
 
-Status, 9 November 2026: the 2026-11 reinstall wiped the op234 runtime
-(SGLang 0.5.21, Torch 2.14, TheRock SDK 10.2.0.dev20261020, owner sandbox,
-private package, `/home/developer` trees, base image `1d3ebef7…`). Its
-successor is the [AI serving stack](../infrastructure/ai-stack/README.md):
-the image built from [`stack.lock`](../infrastructure/ai-stack/stack.lock)
-(SGLang main `fcb32746…` with the serving patch series, PyTorch 2.16.0a0,
-TheRock ROCm 10.3.0.dev20261108), the
-[serving profile](../infrastructure/ai-stack/serving/qwen3.8-27b-mxfp4-tp2.json)
-(unqualified) and its qualification Job. The op234 material below, including
-the `SELECTED-PACKAGE-V2` planner commands and the composition-image blocker,
-is historical.
+## The served model
+
+The chat model comes from the [AI serving stack](../infrastructure/ai-stack/README.md): an
+image built from [`stack.lock`](../infrastructure/ai-stack/stack.lock) (SGLang main with the
+gfx1201 patch series, PyTorch 2.16 nightly for ROCm 10.3.0-dev) and the
+[serving profile](../infrastructure/ai-stack/serving/qwen3.8-27b-mxfp4-tp2.json), which is
+`qualified`: arm `UQS` for shared mode and `UQL` for large mode, both on 11 November 2026.
+The earlier op234 candidate is described under [History](#history-the-op234-candidate).
 
 ### Serving contract
 
@@ -171,10 +214,12 @@ access, so presets are never public. Delete the token file afterwards:
 
 ```sh
 python3 lib/workstation/webui_presets.py apply RENDER/webui-presets.json \
-  --url https://chat.example --key-file /private/webui-admin-token --group Parents
+  --url https://chat.example --key-file /private/webui-admin-token --group Parents --group Family
 ```
 
-Re-running updates the presets in place. Admins see every preset.
+Re-running updates the presets in place, and grants read access to exactly the groups you
+name. **Always name both groups**: leaving out `--group Family` removes the presets from the
+children's accounts. Admins see every preset.
 
 Each preset also switches on the **Workstation tools** server (`server:mcp:workstation`): Open
 WebUI does not pass the base model's default tools on to a preset, and without them a Think or
@@ -196,19 +241,22 @@ image, so each mode's contract is `active`:
   --serving-profile infrastructure/ai-stack/serving/qwen3.8-27b-mxfp4-tp2.json --arm UQS
 ```
 
-- Arm `UQS` caps the KV pool at 163,840 tokens (81,888 per conversation) and leaves about
-  9 GiB free per card after startup (measured 9.04 GiB).
+- Arm `UQS` caps the KV pool at 163,840 tokens (81,888 per conversation). That left
+  9.04 GB free per card in qualification and leaves about 8.35 GB live.
 - SwarmUI and its self-started ComfyUI use `gpu-1`. A second ComfyUI
   (`apps/base/comfyui-gpu0`) uses `gpu-0`, the matching gap SGLang leaves there, and
   SwarmUI reaches it as a remote `comfyui_api` backend.
 - The rendered gateway policy lists the contract model in `image_models`, so the gateway
   accepts `ready <model> --images` for it. Other modes keep images on the 9B split profile.
 - Image access stays per user: bind the Admin and Parents accounts with
-  `service browser-bind --images`.
+  `service browser-bind --images`. Video uses the same permission, but as an MCP tool it
+  also refuses the `admin` role, so videos need a daily account.
 - Shared mode needs the `assistant` or `assistant-memory` experience and a serving
   profile.
 
-Switch to it with `session switch shared` once the host config sets
+Moving between shared and large mode needs a fresh render and apply first; see
+[service modes](MODES.md). Within a shared render, start it with `session switch shared` once
+the host config sets
 `SESSION_IMAGE2_DEPLOYMENT=comfyui-gpu0` beside `SESSION_IMAGE_DEPLOYMENT=swarmui`
 (docs/AI-SERVICE.md step 8). The switch:
 - refuses unless the running contract model is `Qwen3.8-27B-MXFP4` on `gpu-0` and
@@ -248,7 +296,8 @@ square 624x624. No size has more pixels than the measured 832x480.
 
 **Access.** Video access follows picture access:
 
-- only users bound with `service browser-bind --images` (Admin and Parents) may call the tool;
+- only users bound with `service browser-bind --images` may call the tool, and like every MCP
+  tool it refuses the `admin` role, so in practice the Parents' daily accounts;
 - the gateway must be `ready` with images on the contract model;
 - one clip runs at a time.
 
@@ -297,13 +346,14 @@ fetched from pinned revisions and checked against each file's sha256.
   A 32-CU mask was worse on both measures (104 s, 15 tok/s).
 - **ck attention.** It is not bit-identical to PyTorch attention: same-seed frames differ by
   14–17 dB PSNR, and an SDXL picture by 25.8 dB. Side by side, the clips (including faces) and
-  the SDXL portraits were of the same quality, and SDXL time did not change (about 9.4 s).
+  the SDXL portraits were of the same quality, and SDXL time did not change (about 9.4 s in
+  the test pod).
 - **Other options tried.** FP8 matmul (`--fast fp8_matrix_mult`) gave no gain, and `--fast`
   with every feature took 203 s. AOTriton flash attention is already in use: 0.28 s per
   attention call, whatever the layout.
 - **LoRA choice.** The Comfy-Org v1.1 LoRAs run at the same speed as the `1217` LoRAs.
 - **Memory.** Anonymous memory peaked at 7.3 GiB with SDXL and Wan in one process. Each clip
-  reads 25–47 GB from the NVMe. The tool returns a WEBP of about 2–4.6 MB.
+  reads 25–47 GB from the NVMe. Clips measure 2.3–5.2 MiB.
 
 To check `comfyui-gpu0`'s queue before blaming the tool, use the `/queue` command in the
 picture recovery steps below. A cancelled chat request drops its clip from the queue, or
@@ -328,108 +378,12 @@ effort to the template as `reasoning_effort` (`serving_chat.py`
 values, and the gateway's `high` → `xhigh` mapping is still required. The
 contract derives that mapping from the template's accepted list.
 
-The pinned `serving_chat.py` merges `--default-chat-template-kwargs` with
-`setdefault` after it has moved a request's `chat_template_kwargs.reasoning_effort`
-into the top-level field, and at render time those kwargs override the
-top-level effort. Because the profile's server default includes
-`reasoning_effort: low`, a per-request effort appears not to reach the
-template. This is a source reading, not an observation: the serving owner
-should confirm it with one rendered prompt (the research note's open item 8)
-and, if confirmed, drop `reasoning_effort` from the server default or patch the
-merge. Until then the contract's client defaults equal the server default
-(`enable_thinking: true`, `reasoning_effort: low`), and sampling is left to the
-checkpoint's generation defaults.
-
-### op234 selection (historical)
-
-The serving project records the owner's interim selection until Qwen4 work
-resumes. The workstation imports it through
-[serving-project.json](../infrastructure/sglang/serving-project.json), which
-pins the public records by SHA-256:
-
-| Item | Value |
-| --- | --- |
-| Serving revision | `3f5ba24` (import `splitk-selection-20261107`, current) |
-| Selected arm | Operation 234 `mtp` (physical `kv4`, start 2): three-member cap16 plus S4 split-K down/out |
-| Rollback | Operation 232 `mtp` (physical `bf16`, start 1), the previous selection |
-| Private pointer | `2fda6127…`; superseded pointers `4e19fc56…` and `fe92916c…` are refused as stale |
-| Frozen verdict | `INCONCLUSIVE_PARK`; selection is an owner decision |
-| Weights / KV | Qwen3.8-27B Quark MXFP4; explicit BF16 target and draft KV; DFlash width 8; TP2 |
-| Limits | Context 131,040; aggregate token pool 262,144; two running requests |
-| Native alias | `fp8-serving-screen` (historical name; not the weight precision) |
-| Client alias | `Qwen3.8-27B-MXFP4` (proposed; not yet routed) |
-| Retained deviations | cap3 recurrent path, `LLVM_PATH`, mandatory startup numerical probes |
-
-The 1 November import of the earlier C4 candidate remains in the tracking file
-as a historical import. Its bytes describe that candidate only.
-
-This is a private experimental selection. It is not an installed service.
-Natural-answer grades exist for the rollback arm (operation 232) and the
-cleanup packet (operation 207). The selected arm has only BetterBench results,
-which have no answer-quality oracle. Neither qualifies the browser or
-coding-agent workflow; the acceptance suite below does that.
-
-### op234 runtime identity (historical)
-
-The measured runtime was SGLang 0.5.21 at `e00930c5`, Torch 2.14, TheRock
-SDK 10.2.0.dev20261020 and Python 3.14.4. Its launch overlaid separately
-built site-packages, devel and composition trees on the base image
-`1d3ebef7…`, so a version tag cannot identify it. The contract records the
-package manifest, model and tokenizer digests, the composition argv digest and
-the runtime environment instead.
-
-The checkpoint revision op234 used has no separate `chat_template.jinja`. Its
-template is in `tokenizer_config.json` (`b11349aa…`). The template:
-
-- opens the thinking block in the generation prompt, so raw output has no
-  opening `<think>` tag;
-- accepts `reasoning_effort` values `low`, `medium` and `xhigh` only, and
-  raises an error for others, including `high`. The gateway therefore sends
-  `high` as `xhigh`, so clients that offer `high` do not get an error;
-- renders tool calls as `<tool_call><function=…><parameter=…>` XML and tool
-  results as `<tool_response>` blocks.
-
-The AI-stack revision `5233554c…` ships `chat_template.jinja`, listed in the
-[model catalog](../infrastructure/ai-stack/models/qwen3.8-27b-mxfp4.json).
-The serving research found that it renders identically to Qwen's template and
-reads `enable_thinking`, `reasoning_effort` and `preserve_thinking`. Its
-`chat_template.jinja` has the same git blob as the template read for this
-section, so the accepted values and the `high` to `xhigh` mapping hold for
-`5233554c…` (see [Reasoning parameters](#reasoning-parameters)).
-
-### Prepare the integration plan (historical)
-
-The planner is offline. It authenticates the pointer against the imported
-selection, then the package files through the pointer's manifest digest:
-
-```sh
-./bin/workstationctl service candidate-plan /private/CANDIDATE-POINTER.json \
-  /private/assistant-candidate-plan --pointer-sha256 EXACT_64_HEX_DIGEST \
-  --package-root /private/SELECTED-PACKAGE-V2 --output-tokens 4096
-```
-
-It writes these files:
-
-- `candidate-contract.json`: allowlisted identities, limits, request defaults,
-  parser status, deviations and rollback.
-- `candidate-render.json`: inactive gateway, LiteLLM, Open WebUI and client
-  values, all derived from that contract, with cross-layer checks.
-- `candidate-sglang.yaml`: an inactive persistent Deployment (zero replicas).
-- `candidate-runtime.json`: deviations, blockers, readiness and rollback.
-- `integration-plan.json`: the comparison with the active profile and the
-  evidence levels.
-
-It refuses a stale or superseded pointer, mixed arms, CLI and resolved-limit
-drift, a changed package member and any launch flag outside the reviewed set.
-It never prints credentials, machine paths or arbitrary CLI values. The status
-shows the remaining gate: `blocked-missing-evidence` without `--package-root`,
-otherwise `blocked-integration`. `deployment_ready` stays false.
-`runtime_observed` stays false until the acceptance suite runs on the native
-endpoint.
-
-The active profile (`Qwen3.8-27B-FP8`, 32,768 context, 4,096 output) is not
-changed. Rollback before activation is to leave the render unapplied and
-re-render the active profile with `service render`.
+The pinned `serving_chat.py` lets `--default-chat-template-kwargs` override a request's
+effort at render time. On 11 November 2026 a server-default `reasoning_effort: low` was
+confirmed to replace every per-request choice (identical output at `low` and `xhigh`). The
+profile's server default is therefore only `{"enable_thinking": true}`, and the gateway
+applies the default effort (`low`) to requests that name none, so Think's `xhigh` now
+reaches the template. Sampling is left to the checkpoint's generation defaults.
 
 ### Request profile and transport
 
@@ -442,8 +396,8 @@ The selected arm was throughput-measured with a sampled profile (temperature
 | Open WebUI 0.12.5 | Copies `DEFAULT_MODEL_PARAMS` to the top level of each request; sends `max_tokens`; drops prior reasoning on the next turn |
 | Gateway boundary | Accepts `reasoning_effort` `low`, `medium`, `high` and `xhigh`; sends `high` as `xhigh`, the nearest level the template accepts. Accepts `chat_template_kwargs` with only a boolean `enable_thinking`; refuses other fields |
 | LiteLLM 1.106.2 | `drop_params: false`; forwards `reasoning_effort` and `max_completion_tokens` unchanged; passes `top_k` and `chat_template_kwargs` through `extra_body` |
-| SGLang 0.5.21 | Passes `reasoning_effort` and `chat_template_kwargs` to the template |
-| SGLang `fcb32746…` (AI stack) | Same, plus server defaults from `--default-chat-template-kwargs`; see [Reasoning parameters](#reasoning-parameters) for the per-request effort caveat |
+| SGLang 0.5.21 (op234, historical) | Passes `reasoning_effort` and `chat_template_kwargs` to the template |
+| SGLang `fcb32746…` (AI stack, live) | Same, plus server defaults from `--default-chat-template-kwargs`; see [Reasoning parameters](#reasoning-parameters) |
 
 Without parser flags, SGLang returns reasoning and tool-call markup in
 `content`, and `finish_reason` stays `stop`. The persistent descriptor adds
@@ -455,24 +409,6 @@ frozen serving benchmark contract is unchanged.
 Admission and execution are separate limits. The gateway admits four
 concurrent requests, and the native runtime runs two. With four active
 requests, two wait in the native queue and count against the client deadline.
-
-### Persistent endpoint blockers
-
-These rows describe the op234 package (historical). For the successor, the
-AI-stack image replaces the composition image, `render-fetch.py` stages and
-verifies the model, and the serving profile records what still needs a GPU
-measurement.
-
-| Missing artifact or capability | Affected step |
-| --- | --- |
-| A runtime image reproducing the measured composition (base `1d3ebef7…`, site-packages, devel and composition trees, package overlays), passed as a local digest | Startup, every native qualification |
-| The MXFP4 checkpoint and DFlash draft staged at the rendered `/models` paths and checked against the inventory | Startup |
-| A persistent entry that runs the package's startup numerical probes without the campaign client and shutdown (an owner-reviewed serving change) | Readiness |
-| Fresh `service plan` capacity with collected memory evidence (64 GB installed; about 62 GiB was last visible to Linux) | Activation |
-| Native assistant API and quality-menu results through the gateway and the browser | Activation |
-
-The serving launcher stops its runtime when its bound client finishes. Its
-owner, deadline and release checks stay unchanged.
 
 ### Acceptance suite
 
@@ -605,3 +541,119 @@ Sources refreshed 1 November 2026:
 [image connector source](https://github.com/open-webui/open-webui/blob/f7ac7ee10962ddec0017f5c29b6740d9b9c5faca/backend/open_webui/routers/images.py),
 [ASR dependencies](https://github.com/QwenLM/Qwen3-ASR/blob/7c6daf77a2421100f5fb066495372c00129d39ff/pyproject.toml),
 [TTS dependencies](https://github.com/QwenLM/Qwen3-TTS/blob/022e286b98fbec7e1e916cb940cdf532cd9f488e/pyproject.toml).
+
+## History: the op234 candidate
+
+Before the November 2026 reinstall, the planned chat model was the op234 candidate: the
+serving project's selection of 7 November 2026, on SGLang 0.5.21 and Torch 2.14. The
+reinstall wiped that runtime, and the AI serving stack replaced it. These notes are kept for
+reference; nothing here describes the live service.
+
+### Selection
+
+The serving project records the owner's interim selection until Qwen4 work
+resumes. The workstation imports it through
+[serving-project.json](../infrastructure/sglang/serving-project.json), which
+pins the public records by SHA-256:
+
+| Item | Value |
+| --- | --- |
+| Serving revision | `3f5ba24` (import `splitk-selection-20261107`, current) |
+| Selected arm | Operation 234 `mtp` (physical `kv4`, start 2): three-member cap16 plus S4 split-K down/out |
+| Rollback | Operation 232 `mtp` (physical `bf16`, start 1), the previous selection |
+| Private pointer | `2fda6127…`; superseded pointers `4e19fc56…` and `fe92916c…` are refused as stale |
+| Frozen verdict | `INCONCLUSIVE_PARK`; selection is an owner decision |
+| Weights / KV | Qwen3.8-27B Quark MXFP4; explicit BF16 target and draft KV; DFlash width 8; TP2 |
+| Limits | Context 131,040; aggregate token pool 262,144; two running requests |
+| Native alias | `fp8-serving-screen` (historical name; not the weight precision) |
+| Client alias | `Qwen3.8-27B-MXFP4` (proposed; not yet routed) |
+| Retained deviations | cap3 recurrent path, `LLVM_PATH`, mandatory startup numerical probes |
+
+The 1 November import of the earlier C4 candidate remains in the tracking file
+as a historical import. Its bytes describe that candidate only.
+
+This is a private experimental selection. It is not an installed service.
+Natural-answer grades exist for the rollback arm (operation 232) and the
+cleanup packet (operation 207). The selected arm has only BetterBench results,
+which have no answer-quality oracle. Neither qualifies the browser or
+coding-agent workflow; the acceptance suite below does that.
+
+### Runtime identity
+
+The measured runtime was SGLang 0.5.21 at `e00930c5`, Torch 2.14, TheRock
+SDK 10.2.0.dev20261020 and Python 3.14.4. Its launch overlaid separately
+built site-packages, devel and composition trees on the base image
+`1d3ebef7…`, so a version tag cannot identify it. The contract records the
+package manifest, model and tokenizer digests, the composition argv digest and
+the runtime environment instead.
+
+The checkpoint revision op234 used has no separate `chat_template.jinja`. Its
+template is in `tokenizer_config.json` (`b11349aa…`). The template:
+
+- opens the thinking block in the generation prompt, so raw output has no
+  opening `<think>` tag;
+- accepts `reasoning_effort` values `low`, `medium` and `xhigh` only, and
+  raises an error for others, including `high`. The gateway therefore sends
+  `high` as `xhigh`, so clients that offer `high` do not get an error;
+- renders tool calls as `<tool_call><function=…><parameter=…>` XML and tool
+  results as `<tool_response>` blocks.
+
+The AI-stack revision `5233554c…` ships `chat_template.jinja`, listed in the
+[model catalog](../infrastructure/ai-stack/models/qwen3.8-27b-mxfp4.json).
+The serving research found that it renders identically to Qwen's template and
+reads `enable_thinking`, `reasoning_effort` and `preserve_thinking`. Its
+`chat_template.jinja` has the same git blob as the template read for this
+section, so the accepted values and the `high` to `xhigh` mapping hold for
+`5233554c…` (see [Reasoning parameters](#reasoning-parameters)).
+
+### Integration planner
+
+The planner is offline. It authenticates the pointer against the imported
+selection, then the package files through the pointer's manifest digest:
+
+```sh
+./bin/workstationctl service candidate-plan /private/CANDIDATE-POINTER.json \
+  /private/assistant-candidate-plan --pointer-sha256 EXACT_64_HEX_DIGEST \
+  --package-root /private/SELECTED-PACKAGE-V2 --output-tokens 4096
+```
+
+It writes these files:
+
+- `candidate-contract.json`: allowlisted identities, limits, request defaults,
+  parser status, deviations and rollback.
+- `candidate-render.json`: inactive gateway, LiteLLM, Open WebUI and client
+  values, all derived from that contract, with cross-layer checks.
+- `candidate-sglang.yaml`: an inactive persistent Deployment (zero replicas).
+- `candidate-runtime.json`: deviations, blockers, readiness and rollback.
+- `integration-plan.json`: the comparison with the active profile and the
+  evidence levels.
+
+It refuses a stale or superseded pointer, mixed arms, CLI and resolved-limit
+drift, a changed package member and any launch flag outside the reviewed set.
+It never prints credentials, machine paths or arbitrary CLI values. The status
+shows the remaining gate: `blocked-missing-evidence` without `--package-root`,
+otherwise `blocked-integration`. `deployment_ready` stays false.
+`runtime_observed` stays false until the acceptance suite runs on the native
+endpoint.
+
+The active profile (`Qwen3.8-27B-FP8`, 32,768 context, 4,096 output) is not
+changed. Rollback before activation is to leave the render unapplied and
+re-render the active profile with `service render`.
+
+### Endpoint blockers
+
+These rows describe the op234 package (historical). For the successor, the
+AI-stack image replaces the composition image, `render-fetch.py` stages and
+verifies the model, and the serving profile records what still needs a GPU
+measurement.
+
+| Missing artifact or capability | Affected step |
+| --- | --- |
+| A runtime image reproducing the measured composition (base `1d3ebef7…`, site-packages, devel and composition trees, package overlays), passed as a local digest | Startup, every native qualification |
+| The MXFP4 checkpoint and DFlash draft staged at the rendered `/models` paths and checked against the inventory | Startup |
+| A persistent entry that runs the package's startup numerical probes without the campaign client and shutdown (an owner-reviewed serving change) | Readiness |
+| Fresh `service plan` capacity with collected memory evidence (64 GB installed; about 62 GiB was last visible to Linux) | Activation |
+| Native assistant API and quality-menu results through the gateway and the browser | Activation |
+
+The serving launcher stops its runtime when its bound client finishes. Its
+owner, deadline and release checks stay unchanged.

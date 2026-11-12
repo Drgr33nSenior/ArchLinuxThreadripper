@@ -1,52 +1,64 @@
 # Workstation stack overview
 
-This deployment view describes the repository configuration. It helps the
-workstation owner locate the AI, gaming, host, storage and optional VM layers.
-It does not describe a discovered running installation.
+The workstation from the hardware up. Each layer depends only on the ones below it, which is
+why the stable and LTS boot paths come before any container or VM work: nothing above the
+host can repair a bad kernel, firmware or PCIe setup.
 
-The Bridge repository contains the management-plane view. Keep the source
-revision and qualification boundaries of each repository distinct.
+```mermaid
+flowchart TB
+  subgraph apps["Applications"]
+    direction LR
+    a1["Open WebUI"] ~~~ a2["Gateway"] ~~~ a3["SGLang"] ~~~ a4["service-tools"] ~~~ a5["SwarmUI, ComfyUI"] ~~~ a6["Memory"]
+  end
+  subgraph platform["Cluster services"]
+    direction LR
+    p1["Traefik"] ~~~ p2["cert-manager"] ~~~ p3["AMD GPU operator<br/>+ DRA driver"] ~~~ p4["NFS CSI"] ~~~ p5["Monitoring"]
+  end
+  subgraph k3s["Kubernetes"]
+    k1["K3s, single node<br/>SQLite datastore"]
+  end
+  subgraph host["Host"]
+    direction LR
+    h1["Arch Linux, headless<br/>amdgpu, firmware"] ~~~ h2["Secure Boot UKIs<br/>stable, LTS, git"] ~~~ h3["LUKS2 + XFS"]
+  end
+  subgraph hw["Hardware"]
+    direction LR
+    w1["Threadripper 9960X<br/>64 GB RAM"] ~~~ w2["2 × Radeon AI PRO R9700<br/>32 GB each"] ~~~ w3["2 × NVMe in RAID 0"]
+  end
+  nas[("NAS<br/>model store")]
+  apps --> platform --> k3s --> host --> hw
+  nas -.->|"NFS"| platform
+```
 
-The diagram below records the earlier infrastructure baseline. The authoritative
-shared-service endpoint and state map is now [AI-SERVICE.md](AI-SERVICE.md); no
-arrow in either view establishes deployment.
-
-For the current assistant direction, use [assistant scope](ASSISTANT.md),
-[primary Graphiti memory qualification](MEMORY.md) and the
-[dated component results](VERIFICATION.md). The native 128K serving candidate
-has a separate integration path; GraphRAG remains optional document analysis.
-The older infrastructure diagram does not qualify those newer components.
-
-![Workstation stack overview](diagrams/workstation-stack.svg)
-
-[Open the PNG preview](diagrams/workstation-stack.png) or edit the authoritative
-[draw.io source](diagrams/workstation-stack.drawio). SVG and PNG are generated
-outputs. Edit the source and regenerate both previews; do not edit them separately.
+The applications run in the `ai-home-lab` namespace. The optional AlmaLinux K3s VM lab sits beside this stack, with its own datastore and network
+boundaries; it does not run the AI service. The September 2026 draw.io diagram of the earlier
+baseline is kept under [Earlier diagram](#earlier-diagram).
 
 ## Important boundaries
 
 - The primary AI deployment is bare-metal K3s on Arch. The optional AlmaLinux
   K3s VM is a separate lab with its own datastore and network boundaries.
-- Application replicas default to zero. AI images and the non-root Wayland gaming
-  candidate remain unqualified. Use [SUNSHINE.md](SUNSHINE.md) for
-  current capture/admission and input acceptance. No diagram arrow qualifies it.
+- Rendered manifests leave replicas at zero; the session tooling starts the workloads a
+  mode needs. The serving image and profile are qualified ([serving profile](../infrastructure/ai-stack/serving/qwen3.8-27b-mxfp4-tp2.json));
+  the non-root Wayland gaming candidate is not. See [SUNSHINE.md](SUNSHINE.md) for its
+  capture, admission and input status.
 - The service overlay routes Open WebUI and HTTPS clients through LiteLLM to
   internal SGLang. Traefik serves standard HTTPS (TCP 443) on the node's
-  management-VLAN address only (a Service externalIP). SwarmUI retains
-  ownership of its packaged ComfyUI; a narrow adapter serves browser images.
-  Site DNS/TLS, backend packaging and target qualification remain prerequisites.
+  management-VLAN address only (a Service externalIP). SwarmUI drives its own
+  ComfyUI on GPU 1 and a second ComfyUI (`comfyui-gpu0`) on GPU 0; the service-tools
+  adapter serves pictures to the browser, and video goes straight to `comfyui-gpu0`.
 - Arch owns `amdgpu`. The AMD operator manages the DRA driver (`gpu.amd.com`)
   and labels, not host driver installation. Workloads reference the standalone
   claims `gpu-0`/`gpu-1`, which select each R9700 by PCI address; pods sharing a
   claim share the card without VRAM isolation. The two cards have separate VRAM
   pools. Neither labels nor this view prove peer DMA.
 - The explicit session command stops managed GPU workloads and verifies release
-  before starting the selected workload. It does not implement simultaneous
-  one-GPU AI and one-GPU gaming. New managed builds are inhibited during gaming;
+  before starting the selected workload ([service modes](MODES.md)). It does not
+  implement simultaneous one-GPU AI and one-GPU gaming. New managed builds are inhibited during gaming;
   already-running or unrelated builds are not stopped automatically.
-- The workstation has 64 GB installed RAM.
-  Recollect DIMM population, trained speed and Linux-visible capacity before
-  regenerating budgets.
+- The workstation has 64 GB installed RAM (about 62 GiB visible to Linux, about
+  50 GiB that the node reports allocatable to pods). Recollect DIMM population, trained speed and
+  Linux-visible capacity before regenerating budgets.
 - Node-local PVCs, native caches and files use the encrypted NVMe-backed root.
   PVC size requests are not filesystem quotas. RAID0 has no data redundancy;
   the second ESP provides another boot copy, not another copy of root data.
@@ -77,7 +89,18 @@ blocked or unqualified label; colour alone does not convey status.
 | Native tools and qualification | [ROCm guide](ROCM.md), [host packages](../templates/workstation/packages.pacman), [version lock](../versions.lock) |
 | Storage, backups and optional VM | [Architecture](ARCHITECTURE.md), [home-lab guide](HOME-LAB.md), [operations](OPERATIONS.md) |
 
-## Regenerate the previews
+## Earlier diagram
+
+The draw.io diagram below records the infrastructure baseline of September 2026. It predates
+the gateway, service-tools, GPU sharing with DRA and the second ComfyUI, so use the Mermaid
+diagram above for the current stack.
+
+![Workstation stack overview, September 2026](diagrams/workstation-stack.svg)
+
+[Open the PNG preview](diagrams/workstation-stack.png) or the
+[draw.io source](diagrams/workstation-stack.drawio).
+
+### Regenerate the previews
 
 Use an existing draw.io desktop CLI. These commands render local diagram files;
 they do not run the installer or contact a cluster. From the repository root:

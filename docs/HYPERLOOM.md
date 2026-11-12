@@ -1,5 +1,9 @@
 # Hyperloom and TraceLens tools
 
+> **Historical.** These tools analysed the op234-era SGLang owner runs, which the November
+> 2026 reinstall wiped. The live service is measured with the AI stack's bench Job and the
+> Grafana serving dashboards instead.
+
 Use these optional tools to analyze retained evidence and report runs made by
 this project's existing SGLang owner workflow. They are separate from monitoring
 and the serving image. Installation does not start agents, tune hardware or

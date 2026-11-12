@@ -1,5 +1,10 @@
 # DRA pilot: GPUs through ResourceClaims
 
+> **Historical.** The pilot succeeded and DRA is how the GPUs are shared today: SGLang
+> holds both claims, and SwarmUI and `comfyui-gpu0` each share one. The current setup is in
+> [home lab](../../../docs/HOME-LAB.md#4-gpu-operator-and-allocation) and
+> [service modes](../../../docs/MODES.md); the notes below record the pilot.
+
 Goal: prove that AMD's DRA driver allocates this host's two Radeon AI PRO R9700
 (gfx1201) cards, so that a later change can let SGLang (TP2, both cards) and
 SwarmUI share the second card through one ResourceClaim. Upstream documents the

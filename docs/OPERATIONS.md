@@ -84,13 +84,11 @@ Run it before and after one change, then compare `time.txt`,
 mask a service merely because it appears in `blame`; confirm its dependency and
 first-use cost.
 
-## Local LLM
+## Local LLM (legacy Intel profile)
 
-For the current two-R9700 profile, use the `rocm validate` and `rocm inference`
-procedures in [ROCM.md](ROCM.md). The following commands retain the legacy Intel
-service and do not serve AMD GPUs.
-
-Validate the B70 and discover its exact PCI address before startup:
+The local AI service now runs on Kubernetes: see [AI service](#ai-service) below. The
+`llm` commands served the retired Intel Arc Pro B70 profile only and do nothing for the
+R9700s:
 
 ```sh
 ./bin/workstationctl gpu validate 0000:BB:DD.F
@@ -98,11 +96,6 @@ Validate the B70 and discover its exact PCI address before startup:
 ./bin/workstationctl llm status
 ./bin/workstationctl llm down
 ```
-
-The service remains on demand and loopback-only. Promote a new image, model,
-precision, or kernel only after deterministic smoke tests, three benchmark
-runs, and an eight-hour soak with no GPU reset, device loss, numerical failure,
-memory leak, or desktop regression.
 
 ## K3s lab
 
@@ -218,9 +211,55 @@ complete IOMMU group and pass every same-card function together. If the group
 contains host storage, a host GPU, a host NIC, or another required controller,
 move the card or abandon passthrough. Never use ACS override.
 
-## Shared AI service state
+## AI service
 
-See [AI-SERVICE.md](AI-SERVICE.md) for endpoint ownership and staged rollout, and
-[SERVICE-RECOVERY.md](SERVICE-RECOVERY.md) for quiesced bare-metal SQLite/PVC
-capture, existing-PV Retain migration and isolated restore. The optional
-AlmaLinux/embedded-etcd VM recovery procedure does not cover this cluster.
+Day-to-day tasks for the family assistant on the bare-metal K3s cluster (namespace
+`ai-home-lab`). First-time setup (DNS, TLS, accounts and keys) is in
+[AI service setup](AI-SERVICE.md); what the service does is in [the assistant guide](ASSISTANT.md).
+
+### Check it is healthy
+
+```sh
+kubectl -n ai-home-lab get pods
+sudo ./bin/workstationctl session status /var/lib/workstation-session
+```
+
+In shared mode every one of these should be `Running` and ready: `sglang`, `litellm` (the
+gateway), `gateway-postgres`, `open-webui`, `service-tools`, `swarmui`, `comfyui-gpu0`,
+and for memory `graphiti-memory`, `memory-embedding` and `neo4j`. The Grafana Workloads
+dashboard shows serving speed, GPU memory and power ([monitoring](TELEMETRY.md)). The
+gateway's own state (`phase`, `model`, `images`, `active` requests) is at `/_service/status`;
+the command is in [service modes](MODES.md#switch-between-shared-and-large), step 5.
+
+### Common situations
+
+| Situation | What to do |
+| --- | --- |
+| Switch between shared and large mode | Re-render and apply, then switch the session: [service modes](MODES.md) |
+| After a reboot, a GPU pod fails with `unresolvable CDI devices` | The DRA driver lost its per-claim device files. Scale the GPU consumers to zero and back: [post-reboot CDI fix](HOME-LAB.md#4-gpu-operator-and-allocation) |
+| Pictures refused with `image_backend_needs_operator_check` | A cancelled or failed picture left a marker. Check both generators are idle, then remove it: [picture recovery](ASSISTANT.md#pinned-inputs-and-gates) |
+| A video never arrives or chat says `video_busy` | Check `comfyui-gpu0`'s queue: [short videos](ASSISTANT.md#short-videos-shared-mode) |
+| After a fresh render, the Think/Fast presets lack tools or vanish for the children | Re-apply the presets with **both** `--group Parents --group Family`: [presets](ASSISTANT.md#reasoning-choices-in-the-model-menu) |
+| Someone new needs an account, pictures or a coding key | [AI service setup](AI-SERVICE.md) (`service provision`, `service browser-bind --images`) |
+
+### GPU power cap
+
+`workstation-gpu-power.service` holds both R9700s at 235 W with the `auto` performance level
+at every boot, from [`infrastructure/gpu-power/policy.json`](../infrastructure/gpu-power/policy.json).
+The policy records why: `auto` was fastest (manual and high levels pin the clock below its
+boost), and 235 W costs about 3% per verify step against 300 W (29.4 against 28.6 ms) and
+avoids the roughly 100 °C junction temperature measured at 300 W. Compare benchmarks only at the same cap.
+
+```sh
+systemctl status workstation-gpu-power.service
+```
+
+### Backups and restore
+
+[Service recovery](SERVICE-RECOVERY.md) covers the quiesced capture of the cluster's
+SQLite datastore and the service volumes, existing-PV Retain migration and isolated restore.
+Model weights are restaged from their pinned catalogue entries, not backed up. The chat
+model, draft and SDXL live on the NAS and are never captured. In the `creative-models`
+volume the capture skips the weight trees `Models/` and `Video/` (Wan) and keeps SwarmUI's
+`Data/` and `Output/`. The optional VM lab's recovery procedure
+does not cover this cluster.

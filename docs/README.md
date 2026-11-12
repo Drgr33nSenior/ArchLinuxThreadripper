@@ -1,92 +1,137 @@
 # Documentation guide
 
-Updated 3 November 2026 against repository configuration and retained target
-evidence. This is a guide to the project, not a live inventory or a deployment
-approval. Versions belong to the linked locks and runtime manifests.
+Every document in this repository, grouped by what you want to do. Current guides come
+first; dated records and superseded designs are listed under [History](#history) so they
+don't get mistaken for how things work today. Terms are explained in the
+[glossary](#glossary).
 
-## Start with your task
+For a one-page overview of what is running, start with the [README](../README.md).
 
-| You want to… | Read first | Detail when needed |
+## Use the assistant
+
+| Document | What it covers |
+| --- | --- |
+| [Family assistant](ASSISTANT.md) | What the family can do (chat, Think/Fast, pictures, video, voice, search, memory), who may do what, and how a request flows |
+| [Service modes](MODES.md) | Shared vs large mode, what each GPU holds, and how to switch |
+| [Coding clients](AGENT-HARNESSES.md) | Qwen Code and other IDE agents against the gateway |
+| [Session memory](MEMORY.md) | Graphiti memory: per-user facts across chat and coding sessions |
+| [Web search](WEB-SEARCH.md) | The Exa adapter, its budget and the public-page reader |
+| [Document retrieval](RAG.md) | Open WebUI knowledge collections, embeddings, reranking and upload limits |
+| [GraphRAG pilot](GRAPHRAG.md) | Optional on-demand analysis of a document set |
+
+## Operate the workstation
+
+| Document | What it covers |
+| --- | --- |
+| [Operations](OPERATIONS.md) | Day-to-day host and AI-service tasks: status, updates, power cap, restarts |
+| [Service recovery](SERVICE-RECOVERY.md) | Backups of the AI service's data and how to restore them |
+| [Monitoring](TELEMETRY.md) | Grafana dashboards: GPUs, host, Kubernetes, serving, power and cost |
+| [Monitoring reference](TELEMETRY-REFERENCE.md) | Collector and dashboard contracts |
+| [Home lab](HOME-LAB.md) | Bare-metal K3s, GPU sharing with DRA, storage, Secure Boot and TPM |
+| [Resource and session policy](AI-PERFORMANCE.md) | CPU and memory budgets, and how `session switch` hands GPUs between workloads |
+| [AI service setup](AI-SERVICE.md) | First rollout: DNS, TLS, accounts, gateway keys and image permissions |
+| [GPU profiling](GPU-PROFILING.md) | Component profiling and the GPU power policy |
+| [Game streaming](SUNSHINE.md) | Sunshine and Moonlight |
+
+## Build and install
+
+| Document | What it covers |
+| --- | --- |
+| [AI serving stack](../infrastructure/ai-stack/README.md) | Building the SGLang and picture images, staging models, the serving profile and its arms |
+| [Models](MODELS.md) | Which models are installed, for what, and from which pinned revision |
+| [Installation](INSTALLATION.md) | Installing or recovering the host |
+| [Installation acceptance](INSTALL-READINESS.md) | The checklist a fresh install must pass |
+| [Installer ISO](ISO.md) and [ISO reference](ISO-REFERENCE.md) | Building and assembling the installation media |
+| [Workstation setup](WORKSTATION.md) | Native builds and the git kernel |
+| [ROCm on the host](ROCM.md) | The host SDK and how it stays separate from container images |
+| [Kubernetes add-ons](../kubernetes/README.md) and [cert-manager](../kubernetes/cert-manager/README.md) | Cluster add-ons and DNS-01 certificates |
+| [VM lab](../ansible/K3S-OPERATIONS.md) | The optional AlmaLinux K3s VM; separate from the AI cluster |
+
+## Reference
+
+| Document | What it covers |
+| --- | --- |
+| [Architecture](ARCHITECTURE.md) | Components, request paths, boot and storage design |
+| [Stack diagram](STACK.md) | Layers from hardware to applications |
+| [Security](SECURITY.md) | Trust boundaries and what is exposed where |
+| [Bridge contract](BRIDGE-CONTRACT.md) | The management bridge's session API |
+| [Performance validation](PERFORMANCE-VALIDATION.md) | How serving measurements are taken and compared |
+| [Source register](SOURCES.md) | Primary references and when to refresh them |
+
+## History
+
+These describe the system on the date they name. They are kept as records and are not
+edited; where they disagree with a current guide, the current guide wins.
+
+| Record | Date or era | Superseded by |
 | --- | --- | --- |
-| Build or write installation media | [ISO](ISO.md) | [ISO reference](ISO-REFERENCE.md) |
-| Install, unlock or recover a host | [Installation](INSTALLATION.md) | [Acceptance checklist](INSTALL-READINESS.md) |
-| Maintain packages, backups and services | [Operations](OPERATIONS.md) | [Application recovery](SERVICE-RECOVERY.md) |
-| Inspect the workstation in Grafana | [Monitoring](TELEMETRY.md) | [Collector and deployment reference](TELEMETRY-REFERENCE.md) |
-| Configure bare-metal K3s and GPU ownership | [Home lab](HOME-LAB.md) | [Resource and session policy](AI-PERFORMANCE.md) |
-| Track the latest serving project and its integration gaps | [Serving integration](SERVING-INTEGRATION.md) | [Models](MODELS.md), [Hyperloom](HYPERLOOM.md) |
-| Select or stage a model | [Models](MODELS.md) | [Retrieval](RAG.md), [IDE agents](AGENT-HARNESSES.md) |
-| Build or refresh the AI serving image | [AI serving stack](../infrastructure/ai-stack/README.md#routine-update) | [stack.lock](../infrastructure/ai-stack/stack.lock), [stages](../infrastructure/ai-stack/README.md#stages) |
-| Stage a model on the NAS | [AI-stack models](../infrastructure/ai-stack/README.md#models) | [NAS-backed volumes](HOME-LAB.md#nas-backed-volumes-nfs-csi) |
-| Qualify a serving profile | [AI-stack serving](../infrastructure/ai-stack/README.md#serving) | [Profile research](../infrastructure/ai-stack/serving/RESEARCH-20261108.md) |
-| Connect local chat, web research and document retrieval | [Assistant](ASSISTANT.md) | [Web search](WEB-SEARCH.md), [RAG](RAG.md) |
-| Preserve context between browser and coding sessions | [Session memory](MEMORY.md) | Primary Graphiti pilot, native-memory baseline and resource/quality gates |
-| Check what passed and what remains open | [Verification record](VERIFICATION.md) | Dated component results, source identity and test limits |
-| Provide private browser/API access | [AI service](AI-SERVICE.md) | [Integration evidence](AI-SERVICE-RECONCILIATION.md) |
-| Use Sunshine with Moonlight | [Sunshine](SUNSHINE.md) | [Acceptance checklist](INSTALL-READINESS.md#sunshine-and-moonlight) |
-| Compare serving configurations | [Performance validation](PERFORMANCE-VALIDATION.md) | [Profiles](PERFORMANCE-PROFILES.md), [kernel packages](MODEL-KERNELS.md) |
-| Analyze retained traces or bind an existing owner run | [Hyperloom](HYPERLOOM.md) | [Owner binding reference](HYPERLOOM-REFERENCE.md) |
-| Build native applications or experimental kernels | [Workstation setup](WORKSTATION.md) | [ROCm](ROCM.md), [kernel requirements](KERNEL-REQUIREMENTS.md) |
-| Understand component and trust boundaries | [Architecture](ARCHITECTURE.md) | [Stack diagram](STACK.md), [security](SECURITY.md), [Bridge contract](BRIDGE-CONTRACT.md) |
+| [Verification record](VERIFICATION.md) | 3 November 2026 component results | The serving profile's qualification records and [MODES](MODES.md) |
+| [AI service reconciliation](AI-SERVICE-RECONCILIATION.md) | Early-November evidence matrix | [AI service setup](AI-SERVICE.md) |
+| [Serving integration](SERVING-INTEGRATION.md) | The op234 candidate, before the November reinstall | [AI serving stack](../infrastructure/ai-stack/README.md) |
+| [Profile research](../infrastructure/ai-stack/serving/RESEARCH-20261108.md) | 8 November 2026 | The [serving profile](../infrastructure/ai-stack/serving/qwen3.8-27b-mxfp4-tp2.json) |
+| [Serving results log](../infrastructure/ai-stack/serving/RESULTS.md) | 9–11 November 2026 arm measurements | The serving profile's `qualification` records |
+| [Qwen4 readiness](QWEN4-READINESS.md) | Parked Qwen4 preparation | — |
+| [Kernel requirements](KERNEL-REQUIREMENTS.md) | October 2026 kernel audit | [Workstation setup](WORKSTATION.md) |
+| [Model kernels](MODEL-KERNELS.md), [performance profiles](PERFORMANCE-PROFILES.md) | Qwen3-Coder-era tuning | [Performance validation](PERFORMANCE-VALIDATION.md) |
+| [Hyperloom](HYPERLOOM.md), [Hyperloom reference](HYPERLOOM-REFERENCE.md) | op234-era trace tooling | — |
+| [DRA pilot](../infrastructure/gpu-operator/dra-pilot/README.md) | The GPU-sharing pilot, now in use | [Home lab](HOME-LAB.md) |
 
-The optional VM lab uses [its own operations guide](../ansible/K3S-OPERATIONS.md).
-It is not the bare-metal AI cluster and its backup does not cover application PVCs.
+## Glossary
 
-## What has actually been exercised
-
-| Area | Retained result | Still open |
-| --- | --- | --- |
-| Monitoring | Target-deployed dashboards and collectors; drilldowns cover GPUs, host, Kubernetes, serving and power. Serving metric-name normalization is integrated | Check current scrape health; missing GPU channels remain unavailable. Automatic Octopus prices need an exact supported tariff/payment configuration |
-| Serving candidate | Published MXFP4 128K/stock-endurance/C4 results are [tracked by commit](SERVING-INTEGRATION.md) | C4 endurance, the earlier GPU fault and complete runtime packaging remain open; application defaults are unchanged |
-| Creative / ComfyUI | One R9700 generated and served a 1024² SDXL PNG; first request 10.74 s, backend readiness 6.62 s | Final recipe rebuild, vulnerable/licensed ImageSharp dependency resolution, WebUI delivery, cancellation, persistence and broader quality |
-| Sunshine / Moonlight | Arch candidate captured 1920×1080/60 and started Vulkan encoders; owner confirmed mouse/click/typing in X11 and native Wayland windows on 1 November | Audio, controllers, games, repeat startup, persistent pairing/home recovery, delivered cadence and latency |
-| Hyperloom / TraceLens | Offline tools and the project adapter to an existing SGLang owner workflow were exercised | Upstream R9700 runner remains vLLM-only in the inspected release; no autonomous SGLang optimization or model qualification follows |
-| Shared chat/API service | Native gateway/database fixtures passed authentication, quotas, streaming/tools, cancellation and restart persistence | Full target rollout with the selected native model, actual clients and independent recovery |
-| WebUI document retrieval | Isolated workstation Open WebUI 0.12.5 test: 112 API calls, access revocation and application restart passed | Two expected-source misses remain; requested dense/hybrid flags did not establish independent backend coverage. Browser and generated-answer quality remain open |
-| Public web retrieval | Exa/Tavily adapter fixtures passed; bounded live Exa probe prepared | Live provider check needs a protected API-key file reference; no paid provider call was made |
-| GraphRAG pilot, optional | Private Python 3.14 environment; real library indexing/global/direct fixture workflows passed on Linux and macOS | On-demand document analysis; live Qwen quality/resource evaluation and book conversion remain follow-ups |
-| Session continuity | Graphiti is primary; native FalkorDB 6.0.3 passed storage, restart, deletion and isolated restore fixtures | Earlier bundled 4.x engines remain unqualified. Authenticated shared integration, real-model memory quality and production resource use remain open |
-
-These are scoped observations, not a blanket pass. Historical numerical,
-model-quality and shutdown failures remain open unless their specific cause was
-resolved. Private `test-results/` handoffs retain exact run identities and failed
-evidence; they are not bundled into this public documentation.
-The [verification record](VERIFICATION.md) identifies the new results, tested
-source snapshot and fixture/platform limits without publishing protected data.
+| Term | Meaning |
+| --- | --- |
+| **Arm** | One named set of serving settings in the serving profile (for example `UQS`). Each arm is measured and qualified separately |
+| **UQS / UQL** | The two arms in use: `UQS` for shared mode (smaller cache, room for pictures), `UQL` for large mode (the model's full context). Both keep the chat cache in FP8 |
+| **Y** | The previous default arm (BF16 cache), qualified on 10 November 2026 |
+| **Mode** | What the GPUs are doing: shared, large, split, gaming or maintenance. See [MODES](MODES.md) |
+| **Render** | `service render`: writes every Kubernetes manifest and client setting for a mode from the serving profile. Rendering changes nothing live |
+| **Session** | `session switch`: stops and starts the rendered GPU workloads for a mode |
+| **TP2** | Tensor parallel 2: one model split across both GPUs, which work in lockstep |
+| **KV cache / pool** | Memory holding each conversation's context. Its size sets how long a conversation can be |
+| **FP8 KV** | The cache stored in 8-bit floats, half the size of BF16, read back as BF16 for the maths |
+| **MXFP4** | The 4-bit weight format of the chat model. The R9700 has no FP4 hardware, so it is unpacked in software |
+| **DFlash2 / speculative draft** | A small model that guesses several tokens ahead; the big model checks them in one pass, which speeds up replies |
+| **C1 / C2** | Benchmark throughput with one or two concurrent conversations |
+| **op234** | The serving candidate selected on 7 November 2026 on the old runtime; wiped by the November reinstall |
+| **DRA / claim** | Kubernetes Dynamic Resource Allocation. Each GPU is a named claim (`gpu-0`, `gpu-1`) that several pods can hold at once |
+| **CU mask** | `HSA_CU_MASK`: limits a process to some of a GPU's 64 compute units |
+| **MCP** | Model Context Protocol: how Open WebUI and coding agents call `service-tools` |
+| **Gateway** | LiteLLM wrapped by our boundary (`apps/base/shared-api/boundary.py`), which maps user keys, checks limits and admits pictures |
+| **Think / Fast** | Open WebUI model presets: thinking at the highest effort, or no thinking |
 
 ## Keep the runtime layers distinct
 
-| Layer | Configuration source | Meaning |
-| --- | --- | --- |
-| Host graphics/compute | Arch packages; [ROCm provider settings](ROCM.md#host-sdk-selection-remains-separate) | Host `amdgpu` and native tools; do not inject these libraries into containers |
-| Checked-in single-GPU serving overlay | `SGLANG_SINGLE_ROCM_IMAGE` in [versions.lock](../versions.lock) | Locally built SGLang 0.5.18 / ROCm 10.1 candidate, Qwen3.5-9B |
-| Checked-in dual-GPU serving overlay | `SGLANG_ROCM_IMAGE` in [versions.lock](../versions.lock) | Retained AMD SGLang 0.5.15.post1 / ROCm 10.0 candidate, Qwen3.8-27B-FP8 |
-| AI serving stack (current) | [stack.lock](../infrastructure/ai-stack/stack.lock); the qualification Job pins the built image by digest | SGLang main `fcb32746…` (≈ v0.5.23 + 957) with the serving patch series, Python 3.14, PyTorch 2.16.0a0, TheRock ROCm 10.3.0.dev20261108 (HIP 7.18), Triton 3.9.0; no AITER. See the [pipeline](../infrastructure/ai-stack/README.md) |
-| Owner-selected native serving campaign (historical, op234) | [sglang-rocm102.json](../infrastructure/hyperloom/sglang-rocm102.json) plus owner package | SGLang 0.5.21, source-built ROCm 10.2 dev, Torch 2.14, HIP 7.17.26416. Wiped by the 2026-11 reinstall; superseded by the AI serving stack |
-| Creative candidate | [runtime.json](../infrastructure/creative/runtime.json) | Standalone ROCm 10.2 / Torch 2.14 environment inside a ROCm 10.1-labelled parent image |
+Several ROCm and PyTorch stacks exist side by side. Each is pinned in its own place; changing
+one never updates or qualifies another.
 
-The production-stack choice does not automatically update these overlays or
-qualify them. Verify the selected image digest, actual source bytes, loaded
-libraries, model revision and caches together before promotion. Do not replace
-pins merely to make the version labels agree.
+| Layer | Pinned in | What it is |
+| --- | --- | --- |
+| Host graphics and compute | Arch packages; [ROCm provider settings](ROCM.md#host-sdk-selection-remains-separate) | Host `amdgpu` and native tools. Never injected into containers |
+| **AI serving stack (live)** | [stack.lock](../infrastructure/ai-stack/stack.lock); deployments pin the image by digest | SGLang main (0.5.23 + 957) with the gfx1201 patch series, Python 3.14, PyTorch 2.16.0a0, TheRock ROCm 10.3.0-dev (HIP 7.18), Triton 3.9.0; no AITER |
+| **Picture and video image (live)** | The same [stack.lock](../infrastructure/ai-stack/stack.lock) (`creative` stage) | SwarmUI and ComfyUI 0.45 on the AI stack's ROCm and PyTorch builds |
+| Legacy single-GPU overlay | `SGLANG_SINGLE_ROCM_IMAGE` in [versions.lock](../versions.lock) | SGLang 0.5.18 / ROCm 10.1, Qwen3.5-9B; not applied since the reinstall |
+| Legacy dual-GPU overlay | `SGLANG_ROCM_IMAGE` in [versions.lock](../versions.lock) | AMD SGLang 0.5.15.post1 / ROCm 10.0, Qwen3.8-27B-FP8; not applied since the reinstall |
+| op234 campaign (historical) | [sglang-rocm102.json](../infrastructure/hyperloom/sglang-rocm102.json) | SGLang 0.5.21, ROCm 10.2 dev, Torch 2.14; wiped by the November 2026 reinstall |
+| Earlier creative package (historical) | [runtime.json](../infrastructure/creative/runtime.json) | Standalone ROCm 10.2 / Torch 2.14 environment; replaced by the AI stack's `creative` stage |
+
+Before promoting a change, verify the image digest, source, loaded libraries, model revision
+and caches together. Do not change pins just to make version labels agree.
 
 ## Read results and commands correctly
 
-`implemented` means source exists; `source-validated` means the relevant offline
-checks passed. A target result applies only to its recorded boot, image, model
-and workload. `deployed` does not mean fully qualified. `NOT RUN` is untested.
+- `implemented` means the source exists. `source-validated` means offline checks passed.
+  A target result applies only to the boot, image, model and workload it records. `NOT RUN`
+  means untested.
+- A command in a guide is not evidence that it ran. Rendering and planning are local;
+  applying manifests, changing packages and switching sessions are owner actions.
+- Rendered manifests leave replicas at zero. The session tooling starts workloads.
 
-Rendering and planning commands operate locally. Applying manifests, activating
-host units, changing packages and starting a workload are owner operations on
-an explicitly selected target. A command in a guide is not evidence it ran.
-Keep application replicas disabled until their acceptance gates pass; preserve
-GPU allocation, session handover and recovery controls.
+## Keep this documentation useful
 
-## Maintain this documentation
-
-Put everyday procedures in the task guide and detailed contracts in its reference.
-Keep exact versions in locks rather than copying them into unrelated guides.
-Record experiments in fresh evidence packages; summarize only conclusions and
-remaining limits here. When behavior changes, update the canonical guide and
-its package inventory, check local links and anchors, and run affected checks.
-Use the [source register](SOURCES.md) to find primary references; refresh rolling
-sources before relying on them for an upgrade.
+- Put everyday procedures in the task guide and contracts in its reference.
+- Keep exact versions in the locks and the serving profile, not copied into guides. The
+  README's "Running now" table is the one dated exception.
+- Record experiments as new dated documents and link them from History; never edit a
+  dated record.
+- When behaviour changes, update the guide in the same change, check links and anchors,
+  and render any Mermaid diagram you touched.

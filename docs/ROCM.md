@@ -1,5 +1,11 @@
 # Native ROCm builds and validation
 
+This guide covers ROCm **on the host**: SDK selection, native builds and TheRock packaging.
+The live AI service does not use it. Its SGLang and ComfyUI images carry their own ROCm
+(TheRock 10.3.0-dev with PyTorch 2.16) from the [AI serving stack](../infrastructure/ai-stack/README.md),
+and host ROCm libraries are never injected into those containers. The legacy container
+images described later in this guide predate that pipeline.
+
 Use this guide for host SDK selection, native application builds and the generic
 TheRock build/package path. The target has a Threadripper 9960X, TRX50 AI TOP and
 two R9700s owned by Arch. The workstation currently has 64 GB RAM; the earlier 64-GiB/two-DIMM
