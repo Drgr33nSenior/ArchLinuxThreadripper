@@ -294,14 +294,35 @@ reject "$root/bin/workstationctl" --config "$work/unsupported-handoff.conf" agen
   printf '%s\n' AGENT_SERVING_CONTRACT=qwen3.8-27b-mxfp4-tp2.Y AGENT_ENABLE_THINKING=true AGENT_REASONING_EFFORT=low
 } >"$work/contract.conf"
 "$root/bin/workstationctl" --config "$work/contract.conf" agent configure "$work/contract" >/dev/null
-jq -e '.modelProviders.openai[0].generationConfig.samplingParams ==
-  {"max_tokens":1024,"reasoning_effort":"low","chat_template_kwargs":{"enable_thinking":true}}' \
+# Thinking on with an effort becomes Qwen Code's reasoning selector (IDE thought level and
+# /effort), defaulting to the contract's effort; no fixed effort locks it in samplingParams.
+jq -e '.modelProviders.openai[0] | .generationConfig.samplingParams == {"max_tokens":1024} and
+  .capabilities.reasoning == {"profile":"openai-effort","efforts":["low","medium","xhigh"],"defaultEffort":"low"}' \
   "$work/contract/qwen/system-settings.json" >/dev/null
 jq -e '.serving_contract == "qwen3.8-27b-mxfp4-tp2.Y" and
   .request_defaults == {"reasoning_effort":"low","chat_template_kwargs":{"enable_thinking":true}}' \
   "$work/contract/bundle.json" >/dev/null
-jq -e '.modelProviders.openai[0].generationConfig.samplingParams == {"max_tokens":1024}' \
+jq -e '.modelProviders.openai[0] | .generationConfig.samplingParams == {"max_tokens":1024} and has("capabilities") == false' \
   "$work/https-bundle/qwen/system-settings.json" >/dev/null
+# A contract "high" defaults to xhigh (the gateway sends high as xhigh); thinking off keeps the
+# fixed request form, since the selector cannot default to off.
+sed 's|^AGENT_REASONING_EFFORT=.*|AGENT_REASONING_EFFORT=high|' "$work/contract.conf" >"$work/contract-high.conf"
+"$root/bin/workstationctl" --config "$work/contract-high.conf" agent configure "$work/contract-high" >/dev/null
+jq -e '.modelProviders.openai[0].capabilities.reasoning.defaultEffort == "xhigh"' \
+  "$work/contract-high/qwen/system-settings.json" >/dev/null
+sed 's|^AGENT_ENABLE_THINKING=.*|AGENT_ENABLE_THINKING=false|' "$work/contract.conf" >"$work/contract-off.conf"
+"$root/bin/workstationctl" --config "$work/contract-off.conf" agent configure "$work/contract-off" >/dev/null
+jq -e '.modelProviders.openai[0] | has("capabilities") == false and .generationConfig.samplingParams ==
+  {"max_tokens":1024,"reasoning_effort":"low","chat_template_kwargs":{"enable_thinking":false}}' \
+  "$work/contract-off/qwen/system-settings.json" >/dev/null
+# Each launch in its own process: a launch exports the Qwen settings path for its client.
+for launched in contract-high contract-off; do
+  (
+    WORKSTATION_AGENT_API_KEY=fixture-secret
+    export WORKSTATION_AGENT_API_KEY
+    ws_agent_launch "$work/$launched" qwen cli
+  ) >/dev/null
+done
 jq -e '.serving_contract == null and .request_defaults == {}' "$work/https-bundle/bundle.json" >/dev/null
 (
   WORKSTATION_AGENT_API_KEY=fixture-secret

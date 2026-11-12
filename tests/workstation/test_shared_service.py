@@ -235,6 +235,27 @@ class BoundaryTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(boundary, "DEFAULT_REASONING_EFFORT", None):
             await request(self.gateway, "/v1/chat/completions", dict(self.chat))
             self.assertNotIn("reasoning_effort", self.seen[-1][1])
+        # "none" (an IDE's "Thinking off") becomes the Fast request: thinking off, no effort
+        # sent unless the contract has a default, and the normal output cap.
+        bare_none = {k: v for k, v in self.chat.items() if k not in ("max_tokens", "max_completion_tokens")}
+        with patch.object(boundary, "DEFAULT_REASONING_EFFORT", None):
+            result = await request(self.gateway, "/v1/chat/completions", {**bare_none, "reasoning_effort": "none"})
+            self.assertEqual(200, result[0]["status"])
+            sent = self.seen[-1][1]
+            self.assertEqual({"enable_thinking": False}, sent["chat_template_kwargs"])
+            self.assertNotIn("reasoning_effort", sent)
+            self.assertEqual(boundary.CHAT_MODELS[self.chat["model"]][1], sent["max_tokens"])
+        await request(self.gateway, "/v1/chat/completions",
+                      {**self.chat, "reasoning_effort": "none", "chat_template_kwargs": {"enable_thinking": False}})
+        self.assertEqual({"enable_thinking": False}, self.seen[-1][1]["chat_template_kwargs"])
+        count = len(self.seen)
+        for change in ({"chat_template_kwargs": {"enable_thinking": True}}, {"chat_template_kwargs": []}):
+            result = await request(self.gateway, "/v1/chat/completions", {**self.chat, "reasoning_effort": "none", **change})
+            self.assertEqual("invalid_reasoning_effort", json.loads(result[-1]["body"])["error"]["code"])
+        with patch.dict(boundary.TEMPLATE_KWARGS, clear=True):
+            result = await request(self.gateway, "/v1/chat/completions", {**self.chat, "reasoning_effort": "none"})
+            self.assertEqual("invalid_reasoning_effort", json.loads(result[-1]["body"])["error"]["code"])
+        self.assertEqual(count, len(self.seen))
         # Think (effort xhigh) without a cap runs to the context limit: no max_tokens is filled
         # in, so a long conversation cannot fail input + max_tokens > context. Anything else, or
         # Think with its own cap, keeps the gateway cap.

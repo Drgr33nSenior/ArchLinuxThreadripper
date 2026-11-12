@@ -290,6 +290,16 @@ class GatewayBoundary:
             raise Refusal(429, "service_concurrency_limit")
         if data.get("n", 1) != 1:
             raise Refusal(400, "one_completion_per_request")
+        # OpenAI's "none" effort (Qwen Code's "Thinking off" with the openai-effort profile)
+        # is the template's thinking switch, not an effort level: send what Open WebUI's
+        # Fast preset sends. Refused when it contradicts the request or the contract.
+        if data.get("reasoning_effort") == "none":
+            kwargs = data.get("chat_template_kwargs", {})
+            if ("enable_thinking" not in TEMPLATE_KWARGS or not isinstance(kwargs, dict)
+                    or kwargs.get("enable_thinking", False) is not False):
+                raise Refusal(400, "invalid_reasoning_effort")
+            del data["reasoning_effort"]
+            data["chat_template_kwargs"] = {**kwargs, "enable_thinking": False}
         if "reasoning_effort" in data and (type(data["reasoning_effort"]) is not str
                                            or data["reasoning_effort"] not in REASONING_EFFORTS):
             raise Refusal(400, "invalid_reasoning_effort")
