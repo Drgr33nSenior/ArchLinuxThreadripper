@@ -259,6 +259,7 @@ systemctl status workstation-gpu-power.service
 [Service recovery](SERVICE-RECOVERY.md) covers the quiesced capture of the cluster's
 SQLite datastore and the service volumes, existing-PV Retain migration and isolated restore.
 Model weights are restaged from their pinned catalogue entries, not backed up. The chat
-model, draft and SDXL live on the NAS and are never captured. The Wan video weights sit
-in `creative-models/Video/`; PR #135 excludes them from the capture alongside `Models/`. The optional VM lab's recovery procedure
+model, draft and SDXL live on the NAS and are never captured. In the `creative-models`
+volume the capture skips the weight trees `Models/` and `Video/` (Wan) and keeps SwarmUI's
+`Data/` and `Output/`. The optional VM lab's recovery procedure
 does not cover this cluster.

@@ -50,7 +50,7 @@ flowchart TB
 | Volume | Stored on | Holds | Backed up |
 | --- | --- | --- | --- |
 | `ai-models` | NAS over NFS (10 GbE) | Chat model, draft and SDXL weights | No; restaged from the pinned catalogue |
-| `creative-models` | Local NVMe | Wan video weights (`Video/`), SwarmUI `Data/`, `Models/` and `Output/` | `Data/` and `Output/`; the weight trees `Models/` and `Video/` are restaged (the `Video/` exclusion is PR #135) |
+| `creative-models` | Local NVMe | Wan video weights (`Video/`), SwarmUI `Data/`, `Models/` and `Output/` | `Data/` and `Output/`; the weight trees `Models/` and `Video/` are restaged |
 | `webui-rag-qwen3-data` | Local NVMe | Open WebUI database, uploads, knowledge index | Yes |
 | `webui-rag-qwen3-models` | Local NVMe | Embedding, reranker and speech models | No; restaged |
 | `gateway-postgres` | Local NVMe | Gateway keys, budgets and usage | Yes (database dump) |
