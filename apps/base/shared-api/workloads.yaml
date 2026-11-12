@@ -103,6 +103,17 @@ spec:
           readinessProbe:
             exec: {command: [python, /runtime/health.py]}
             timeoutSeconds: 3
+          # Liveness answers one question: is the server's event loop alive? The boundary
+          # serves /_service/status from memory before LiteLLM, with no key, database or
+          # model call, and returns 200 in every phase (maintenance, starting, draining),
+          # so overload, maintenance or a down dependency never restart it; readiness
+          # (LiteLLM /health/readiness) keeps covering those. Measured 2026-11-12: about
+          # 1 ms, worst 6 ms. Restart only after 2 minutes without any answer.
+          livenessProbe:
+            httpGet: {path: /_service/status, port: http}
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
           volumeMounts:
             - {name: runtime, mountPath: /runtime, readOnly: true}
             - {name: config, mountPath: /config, readOnly: true}
