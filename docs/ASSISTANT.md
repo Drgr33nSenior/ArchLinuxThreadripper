@@ -252,14 +252,14 @@ square 624x624. No size has more pixels than the measured 832x480.
 - the gateway must be `ready` with images on the contract model;
 - one clip runs at a time.
 
-Open WebUI stores each clip as a chat file, so its `RAG_FILE_MAX_SIZE` cap (4 MiB) bounds the clip; a
-5-second clip is about 2.3 MiB at WEBP quality 80. The profile's `max_bytes` matches that cap, so a
+Open WebUI stores each clip as a chat file, so its `RAG_FILE_MAX_SIZE` cap (8 MiB) bounds the clip; a
+5-second clip is 2.3-5.2 MiB at WEBP quality 80, larger for busy scenes. The profile's `max_bytes` matches that cap, so a
 larger clip fails as `video_artifact_too_large` instead of an upload error in the chat.
 
 On every later turn Open WebUI resends each clip in the chat to the model as base64. The gateway
-accepts chat bodies up to 32 MiB (other routes keep 1 MiB) and replaces each animated WEBP with a
+accepts chat bodies up to 64 MiB (other routes keep 1 MiB) and replaces each animated WEBP with a
 one-line note before the model sees it; still images, such as an uploaded photo, pass unchanged.
-A chat with many clips can still reach 32 MiB and fail with `request_too_large`: start a new chat.
+A chat with many clips can still reach 64 MiB and fail with `request_too_large`: start a new chat.
 
 Busy, not-ready and permission refusals come back as tool errors the model can explain. Like
 every service-tools MCP tool, an account with the Open WebUI `admin` role is refused; use the

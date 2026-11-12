@@ -17,9 +17,10 @@ CHAT_MODELS = {"Qwen3.8-27B-FP8": (32768, 4096), "Qwen3.5-9B": (4096, 1024)}
 IMAGE_MODELS = {"Qwen3.5-9B"}
 MAX_BODY = 1024 * 1024
 # Chat bodies may be larger: Open WebUI resends every image a tool returned earlier in the chat
-# as base64 on each later turn, and a generate_video clip is an animated WEBP of up to 4 MiB
-# (5.4 MiB as base64). 32 MiB holds a chat with a few clips; the clips are replaced below.
-MAX_CHAT_BODY = 32 * 1024 * 1024
+# as base64 on each later turn, and a generate_video clip is an animated WEBP of up to 8 MiB
+# (10.7 MiB as base64; 2.3-5.2 MiB measured). 64 MiB holds a chat with several clips; the clips
+# are replaced below, so the model never receives them.
+MAX_CHAT_BODY = 64 * 1024 * 1024
 VIDEO_NOTE = "[A short video clip made earlier in this chat was shown to the user here.]"
 CHAT_FIELDS = {
     "model", "messages", "stream", "stream_options", "max_tokens",

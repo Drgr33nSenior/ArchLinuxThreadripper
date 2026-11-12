@@ -35,8 +35,8 @@ EXPANSIONS = ("none", "neighbours", "section")
 # Profile name -> runtime path, as enforced by apps/overlays/rag/validate-profile.sh.
 REVIEWED_RERANKERS = {"ms-marco-minilm-l6-v2": "/rag-models/ms-marco-MiniLM-L6-v2"}
 MAX_ACTIVE, TIMEOUT_SECONDS = 2, 30
-# Uploaded files are at most 4 MiB (RAG_FILE_MAX_SIZE); the JSON record adds escaping.
-FILE_RECORD_LIMIT = 12 * 1024 * 1024
+# Uploaded files are at most 8 MiB (RAG_FILE_MAX_SIZE); the JSON record adds escaping.
+FILE_RECORD_LIMIT = 24 * 1024 * 1024
 MIN_PASSAGE_CHARS = 200
 # ws_rag_corpus names: docs__<path>.md[--rev-<git commit>]--<sha256>.md
 CORPUS_NAME = re.compile(r"(?P<path>docs__[A-Za-z0-9_.-]+?\.md)"

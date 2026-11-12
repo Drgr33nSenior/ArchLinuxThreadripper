@@ -54,7 +54,7 @@ esac
 for key in OMP_NUM_THREADS MKL_NUM_THREADS OPENBLAS_NUM_THREADS; do
   [[ ${!key} == 1 || ${!key} == 2 ]] || fail "$key exceeds the two-CPU pilot budget"
 done
-[[ ${RAG_FILE_MAX_COUNT:-} == 1 && ${RAG_FILE_MAX_SIZE:-} == 4 && ${RAG_ALLOWED_FILE_EXTENSIONS:-} == md,txt ]] || fail 'one 4 MiB Markdown/text upload per request required'
+[[ ${RAG_FILE_MAX_COUNT:-} == 1 && ${RAG_FILE_MAX_SIZE:-} == 8 && ${RAG_ALLOWED_FILE_EXTENSIONS:-} == md,txt ]] || fail 'one 8 MiB Markdown/text upload per request required'
 # Returned-text allowance for the service-tools MCP tools (characters).
 for key in RAG_PASSAGE_CHAR_LIMIT RAG_CONTEXT_CHAR_BUDGET RAG_EXPANSION_CHAR_LIMIT RAG_SOURCE_READ_CHAR_LIMIT; do
   [[ ${!key:-} =~ ^(0|[1-9][0-9]{0,4})$ ]] || fail "$key must be a non-negative integer"

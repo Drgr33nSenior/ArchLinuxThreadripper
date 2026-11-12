@@ -166,7 +166,7 @@ clearance for 0.11.4.
 | Workers and threads | One Uvicorn worker; two BLAS/OpenMP threads; embedding batch 1 (qualify 2 separately) |
 | Chunking | Local Qwen tokenizer, 192 tokens with 32 overlap; retain this initial comparison shape |
 | Retrieval | Baseline: three hits per retriever and three final hits per merged query. Assistant: ten per retriever, up to 20 reranked, five final. No full-document context bypass |
-| Uploads | One file per request, up to 4 MiB, `md` or `txt`; start with one small knowledge collection. Open WebUI applies the same size cap to files a tool returns, such as a chat video clip |
+| Uploads | One file per request, up to 8 MiB, `md` or `txt`; start with one small knowledge collection. Open WebUI applies the same size cap to files a tool returns, such as a chat video clip |
 | Persistent data | `webui-rag-qwen3-data`: 20 GiB requested for the new chat DB, source uploads, Chroma and caches |
 | Model assets | `webui-rag-qwen3-models`: 3 GiB requested, read-only to init/application containers |
 | Startup assets | Disk-backed, bounded 64 MiB static assets and 4 MiB tiktoken cache, copied from the pinned image as UID 1000 |

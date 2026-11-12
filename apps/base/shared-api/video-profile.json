@@ -11,6 +11,6 @@
   "cfg_scale": 1.0,
   "shift": 5.0,
   "timeout_seconds": 600,
-  "max_bytes": 4194304,
+  "max_bytes": 8388608,
   "serving_models": ["Qwen3.8-27B-MXFP4"]
 }
