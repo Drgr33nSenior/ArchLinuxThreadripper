@@ -107,6 +107,9 @@ if command -v bsdtar >/dev/null; then
       done
     done
     [[ -x $pkgdir/usr/lib/bridge/workstation-runtime/bin/workstationctl && ! -e $pkgdir/etc && ! -e $pkgdir/var ]]
+    [[ -x $pkgdir/usr/bin/workstationctl ]]
+    cmp "$pkgdir/usr/bin/workstationctl" "$srcdir/project/infrastructure/packages/bootstrap/launch-workstationctl"
+    grep -Fqx 'exec /usr/lib/bridge/workstation-runtime/bin/workstationctl "$@"' "$pkgdir/usr/bin/workstationctl"
     [[ -f $pkgdir/usr/lib/bridge/workstation-runtime/lib/workstation/session.sh && -f $pkgdir/usr/lib/bridge/workstation-reference/apps/overlays/rag/SHA256SUMS ]]
     payload="$pkgdir/usr/lib/bridge/workstation-runtime"
     cmp "$root/templates/sunshine/kwinrc.input-example" "$payload/templates/sunshine/kwinrc.input-example"

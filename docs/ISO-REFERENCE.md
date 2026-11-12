@@ -468,6 +468,8 @@ match throughout the selected run.
 
 - `/usr/lib/bridge/workstation-runtime`: the existing workstation CLI, libraries,
   templates, locks, deployment inputs and explicitly listed diagnostic sources.
+- `/usr/bin/workstationctl`: a two-line launcher that runs that packaged CLI, so the
+  command is on every user's `PATH`.
 - `/usr/lib/bridge/workstation-reference`: catalog locks, example configuration,
   deployment profiles and RAG integrity inputs from that same source archive.
 
