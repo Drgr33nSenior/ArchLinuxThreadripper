@@ -417,12 +417,12 @@ printf 'absent game Deployment fixture tests passed\n'
 
 # Live clusters are big: ~1 MB of ReplicaSet history and ~0.5 MB of Pods on the node. Cluster
 # documents must reach jq through file descriptors, not argv (Linux caps one argument at
-# 128 KiB; macOS caps the whole list at 1 MiB, which this padding exceeds).
+# 128 KiB; macOS caps the whole list at 1 MiB, which this padding exceeds). The padding is
+# built inside jq so the fixture itself never passes a large argument.
 cp "$work/api/rs.json" "$work/rs.small.json" && cp "$work/api/pods.json" "$work/pods.small.json"
-pad="$(head -c 400000 /dev/zero | tr '\0' x)"
-jq --arg pad "$pad" '.items += [range(3) | {kind: "ReplicaSet", metadata: {uid: "padding-rs-\(.)", name: "old-\(.)", annotations: {padding: $pad}}}]' \
+jq '("x" * 400000) as $pad | .items += [range(3) | {kind: "ReplicaSet", metadata: {uid: "padding-rs-\(.)", name: "old-\(.)", annotations: {padding: $pad}}}]' \
   "$work/rs.small.json" >"$work/api/rs.json"
-jq --arg pad "$pad" '.items += [range(3) | {metadata: {uid: "padding-pod-\(.)", name: "done-\(.)", namespace: "other", annotations: {padding: $pad}},
+jq '("x" * 400000) as $pad | .items += [range(3) | {metadata: {uid: "padding-pod-\(.)", name: "done-\(.)", namespace: "other", annotations: {padding: $pad}},
   spec: {nodeName: "fixture-node", containers: [{name: "c"}]}, status: {phase: "Succeeded"}}]' \
   "$work/pods.small.json" >"$work/api/pods.json"
 (($(wc -c <"$work/api/rs.json") > 1048576))
