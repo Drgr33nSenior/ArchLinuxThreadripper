@@ -38,9 +38,11 @@ spec:
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: {drop: [ALL]}
+          # Two CPUs, not one: under the static CPU Manager with full-pcpus-only, a Guaranteed
+          # container asking for an odd number of whole CPUs is refused at admission.
           resources:
-            requests: {cpu: '1', memory: 64Mi}
-            limits: {cpu: '1', memory: 64Mi}
+            requests: {cpu: '2', memory: 64Mi}
+            limits: {cpu: '2', memory: 64Mi}
           volumeMounts:
             - {name: state, mountPath: /state}
             - {name: work, mountPath: /work}
