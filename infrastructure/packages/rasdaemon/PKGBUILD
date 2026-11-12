@@ -1,0 +1,58 @@
+# Build here in the reviewed repository as an unprivileged user.
+# Recording only: page offlining (PFA), CPU isolation, ABRT and vendor-specific
+# decoders stay out of the binary, so no automatic mitigation can be enabled
+# through /etc/conf.d/rasdaemon. See docs/HOST-MAINTENANCE.md.
+# shellcheck shell=bash disable=SC2034,SC2154
+pkgname=rasdaemon-workstation
+_upstream=rasdaemon
+# 0.8.5 is the last release of the autotools/Perl line (2026-06-26). 1.0.0
+# (2026-09-29) rewrote the build, database layer and ras-mc-ctl; review it
+# separately before moving.
+pkgver=0.8.5
+_commit=769593be915b4f00a9a7d56569df99bc0cff249a
+pkgrel=1
+pkgdesc='RAS event recorder (MCE, EDAC, PCIe AER) for the workstation, recording only'
+arch=('x86_64')
+url='https://github.com/mchehab/rasdaemon'
+license=('GPL-2.0-only')
+depends=('glibc' 'libtraceevent' 'pciutils' 'sqlite' 'perl' 'perl-dbd-sqlite' 'dmidecode')
+makedepends=('autoconf' 'automake' 'libtool' 'pkgconf')
+provides=('rasdaemon')
+conflicts=('rasdaemon')
+backup=('etc/conf.d/rasdaemon')
+options=('!debug')
+source=("${_upstream}-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz")
+# GitHub tag archive of ${_commit}; `git get-tar-commit-id` on the decompressed
+# archive prints that commit.
+sha256sums=('4c624c210c648e751493c86cbacc551c13fa9a91d0a3fdefeeeed494c5786bb3')
+
+build() {
+  cd "${_upstream}-${pkgver}" || return 1
+  autoreconf -fi
+  ./configure --prefix=/usr --sbindir=/usr/bin --sysconfdir=/etc --localstatedir=/var \
+    --with-sysconfdefdir=/etc/conf.d \
+    --enable-sqlite3 --enable-mce --enable-aer --enable-non-standard \
+    --enable-memory-failure \
+    --disable-memory-ce-pfa --disable-memory-row-ce-pfa --disable-cpu-fault-isolation \
+    --disable-extlog --disable-abrt-report --disable-diskerror --disable-devlink --disable-cxl
+  make
+}
+
+check() {
+  cd "${_upstream}-${pkgver}" || return 1
+  ./rasdaemon --version
+}
+
+package() {
+  cd "${_upstream}-${pkgver}" || return 1
+  make DESTDIR="$pkgdir" install
+  # Upstream installs the environment file 0655; it holds no secrets.
+  chmod 0644 "$pkgdir/etc/conf.d/rasdaemon"
+  install -Dm644 misc/rasdaemon.service "$pkgdir/usr/lib/systemd/system/rasdaemon.service"
+  install -Dm644 misc/ras-mc-ctl.service "$pkgdir/usr/lib/systemd/system/ras-mc-ctl.service"
+  install -dm755 "$pkgdir/var/lib/rasdaemon"
+  # Upstream's include_HEADERS ships internal headers, including a generic
+  # config.h; nothing links against rasdaemon, so they are not packaged.
+  rm -r -- "$pkgdir/usr/include"
+  # No service is enabled here; the host_maintenance Ansible role enables it.
+}

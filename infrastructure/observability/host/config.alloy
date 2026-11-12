@@ -82,6 +82,131 @@ loki.process "kernel" {
   forward_to = [loki.write.local.receiver]
 }
 
+// Host maintenance (roles/host_maintenance). Three narrow journal sources share
+// one bounded stream label set: job="workstation-maintenance" with source and
+// class labels from fixed vocabularies. Message bodies are replaced by fixed
+// templates; raw lines stay in the local journal.
+loki.source.journal "maintenance_jobs" {
+  matches = "SYSLOG_IDENTIFIER=workstation-maintenance"
+  max_age = "1h"
+  labels = {"job" = "workstation-maintenance"}
+  forward_to = [loki.process.maintenance_jobs.receiver]
+}
+
+loki.process "maintenance_jobs" {
+  stage.static_labels {
+    values = {"job" = "workstation-maintenance", "source" = "job"}
+  }
+  stage.drop {
+    longer_than = "512B"
+    drop_counter_reason = "oversize_maintenance_event"
+  }
+  // Exact schema written by workstation_maintenance.py job-result.
+  stage.regex {
+    expression = `^\{"schema":1,"job":"(?P<maintenance_job>[a-z][a-z0-9-]{0,48})","result":"(?P<class>success|failure)","service_result":"[a-z-]{1,32}"\}$`
+  }
+  stage.labels {
+    values = {"class" = ""}
+  }
+  stage.match {
+    selector = "{job=\"workstation-maintenance\",class=\"\"}"
+    action = "drop"
+    drop_counter_reason = "unreviewed_maintenance_schema"
+  }
+  stage.template {
+    source = "safe_message"
+    template = "maintenance job {{ .maintenance_job }} {{ .class }}"
+  }
+  stage.output {
+    source = "safe_message"
+  }
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.source.journal "smartd" {
+  matches = "SYSLOG_IDENTIFIER=smartd"
+  max_age = "1h"
+  labels = {"job" = "workstation-maintenance"}
+  forward_to = [loki.process.smartd.receiver]
+}
+
+loki.process "smartd" {
+  stage.static_labels {
+    values = {"job" = "workstation-maintenance", "source" = "smartd"}
+  }
+  stage.drop {
+    longer_than = "1KB"
+    drop_counter_reason = "oversize_smartd_event"
+  }
+  // Classify smartd's warning wording into a fixed vocabulary; anything else
+  // (routine start-up and capability lines) is dropped. The drive serial is
+  // device identity, not a secret, and stays in the message only.
+  stage.regex {
+    expression = `(?P<self_test>Self-Test Log error)|(?P<health>FAILED|Critical Warning|SMART Failure)|(?P<error_log>Error Log entries increased|error count increased)|(?P<temp_critical>reached critical limit)|(?P<temp_limit>reached limit)|(?P<access>open\(\) failed|Unable to monitor|failed to read)`
+  }
+  stage.regex {
+    expression = `nvme-[A-Za-z0-9_.-]*_(?P<serial>[A-Z0-9]{6,20})\b`
+  }
+  stage.template {
+    source = "class"
+    template = `{{ if .health }}health{{ else if .self_test }}self_test_log{{ else if .error_log }}error_log{{ else if .temp_critical }}temperature_critical{{ else if .temp_limit }}temperature_limit{{ else if .access }}device_access{{ end }}`
+  }
+  stage.labels {
+    values = {"class" = ""}
+  }
+  stage.match {
+    selector = "{job=\"workstation-maintenance\",source=\"smartd\",class=\"\"}"
+    action = "drop"
+    drop_counter_reason = "routine_smartd_line"
+  }
+  stage.template {
+    source = "safe_message"
+    template = "smartd {{ .class }} on drive {{ or .serial \"unknown\" }}; inspect the local journal"
+  }
+  stage.output {
+    source = "safe_message"
+  }
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.source.journal "rasdaemon" {
+  matches = "SYSLOG_IDENTIFIER=rasdaemon"
+  max_age = "1h"
+  labels = {"job" = "workstation-maintenance"}
+  forward_to = [loki.process.rasdaemon.receiver]
+}
+
+loki.process "rasdaemon" {
+  stage.static_labels {
+    values = {"job" = "workstation-maintenance", "source" = "rasdaemon"}
+  }
+  stage.drop {
+    longer_than = "4KB"
+    drop_counter_reason = "oversize_ras_event"
+  }
+  // Recorded events print as "<timestamp>: <tracepoint>: ..."; start-up lines
+  // ("ras:mc_event event enabled") have no ": " before the name and are dropped.
+  stage.regex {
+    expression = `: (?P<class>mc_event|mce_record|aer_event|memory_failure_event|non_standard_event|extlog_mem_event|arm_event):`
+  }
+  stage.labels {
+    values = {"class" = ""}
+  }
+  stage.match {
+    selector = "{job=\"workstation-maintenance\",source=\"rasdaemon\",class=\"\"}"
+    action = "drop"
+    drop_counter_reason = "routine_rasdaemon_line"
+  }
+  stage.template {
+    source = "safe_message"
+    template = "rasdaemon recorded a {{ .class }} hardware event; run ras-mc-ctl --summary locally"
+  }
+  stage.output {
+    source = "safe_message"
+  }
+  forward_to = [loki.write.local.receiver]
+}
+
 loki.write "local" {
   max_streams = 128
   endpoint {

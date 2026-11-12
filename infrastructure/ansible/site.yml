@@ -15,3 +15,5 @@
   roles:
     - role: arch_host
     - role: k3s_baremetal
+    - role: host_maintenance
+      when: lab_host_maintenance_enabled | bool

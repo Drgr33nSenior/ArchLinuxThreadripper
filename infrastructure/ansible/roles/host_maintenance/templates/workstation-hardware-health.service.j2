@@ -1,0 +1,41 @@
+# Installed by the host_maintenance Ansible role. Passive: reads SMART health
+# logs and rasdaemon's database; never starts a self-test or changes a device.
+[Unit]
+Description=NVMe SMART health, recorded RAS events and monitoring-daemon state
+After=smartd.service rasdaemon.service
+
+[Service]
+Type=oneshot
+StateDirectory=workstation-hardware-health
+StateDirectoryMode=0755
+ExecStart=/usr/bin/python3 -I /usr/local/lib/workstation-maintenance/workstation_maintenance.py health --state /var/lib/workstation-hardware-health{% for device in lab_maintenance_nvme_devices %} --device {{ device }}{% endfor %}{% for unit in lab_maintenance_watched_units %} --unit {{ unit }}{% endfor %}
+
+ExecStopPost=+/usr/bin/python3 -I /usr/local/lib/workstation-maintenance/workstation_maintenance.py job-result workstation-hardware-health --unit %n --publish health=/var/lib/workstation-hardware-health/health.prom
+TimeoutStartSec=2min
+Nice=10
+IOSchedulingClass=idle
+MemoryAccounting=yes
+IOAccounting=yes
+MemoryMax=128M
+UMask=0022
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateNetwork=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+# smartctl's NVMe admin passthrough needs CAP_SYS_ADMIN on the namespace device.
+CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SYS_RAWIO
+DevicePolicy=closed
+DeviceAllow=block-blkext r
+DeviceAllow=char-nvme r
+SystemCallArchitectures=native

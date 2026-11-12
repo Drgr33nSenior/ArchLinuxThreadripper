@@ -111,7 +111,8 @@ class DashboardTests(unittest.TestCase):
             self.assertTrue(any(p["title"] == "Logs and traces are disabled" for p in monitoring["panels"]))
         logs = [p for p in self.dashboards["workstation-monitoring"]["panels"] if p["type"] == "logs"]
         self.assertEqual(len(logs), 1)
-        self.assertEqual(logs[0]["targets"][0]["expr"], '{job=~"workstation-install|workstation-kernel"}')
+        self.assertEqual(logs[0]["targets"][0]["expr"],
+                         '{job=~"workstation-install|workstation-kernel|workstation-maintenance"}')
 
     def test_packaged_dashboards_match_kustomize_assets(self):
         import yaml
@@ -206,6 +207,26 @@ class DashboardTests(unittest.TestCase):
                 for target in panel.get("targets", []):
                     if 'job="kubelet-cadvisor"' in target.get("expr", ""):
                         self.assertIn('container!=""', target["expr"], panel.get("title"))
+
+    def test_maintenance_view_reports_absence_and_never_implies_health(self):
+        host = self.dashboards["workstation-host"]
+        panels = {p["title"]: p for p in host["panels"]}
+        self.assertEqual(panels["Maintenance & hardware health"]["type"], "row")
+        backup = panels["Backup freshness"]
+        expr = backup["targets"][0]["expr"]
+        self.assertIn("workstation_service_backup_offsite_last_success_seconds", expr)
+        self.assertIn("workstation_maintenance_backup_configured", expr)
+        texts = {o["text"] for m in backup["fieldConfig"]["defaults"]["mappings"] for o in m["options"].values()}
+        self.assertEqual(texts, {"Not configured", "Configured, never succeeded"})
+        self.assertEqual(panels["Advisory scan age"]["fieldConfig"]["defaults"]["noValue"], "Never scanned")
+        self.assertIn("> 0", panels["Advisory scan age"]["targets"][0]["expr"])
+        self.assertIn("Deletion is disabled", panels["Retention report · reclaimable space (report only)"]["description"])
+        for panel in host["panels"]:
+            for target in panel.get("targets", []):
+                expr = target.get("expr", "")
+                if "workstation_nvme_" in expr or "workstation_advisory_" in expr or "workstation_ras_" in expr:
+                    self.assertIn('job="node"', expr, panel["title"])
+                    self.assertNotIn("or vector(0)", expr, panel["title"])
 
     def test_costs_use_live_tariff_and_do_not_bill_standing_per_workstation(self):
         power = self.dashboards["workstation-power"]

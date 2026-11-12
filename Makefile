@@ -87,7 +87,9 @@ systemd:
 			templates/workstation/telemetry/workstation-tariff.timer \
 			templates/workstation/telemetry/workstation-alloy.service \
 			templates/workstation/gpu/workstation-gpu-power.service \
-			ansible/roles/k3s/files/k3s-lab-firewall.service; \
+			ansible/roles/k3s/files/k3s-lab-firewall.service \
+			infrastructure/ansible/roles/host_maintenance/files/workstation-advisories.service \
+			infrastructure/ansible/roles/host_maintenance/files/workstation-advisories.timer; \
 	else \
 		echo 'SKIP: systemd-analyze verification requires Linux'; \
 	fi
