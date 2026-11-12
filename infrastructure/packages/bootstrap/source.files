@@ -121,6 +121,9 @@ bin/workstationctl
 infrastructure/gaming/60-configure_gpu_driver.sh
 infrastructure/gaming/Dockerfile
 infrastructure/gaming/Dockerfile.arch
+infrastructure/gaming/seccomp/make-profile.py
+infrastructure/gaming/seccomp/moby-default-v0.3.0.json
+infrastructure/gaming/seccomp/workstation-gaming-userns.json
 infrastructure/gaming/sunshine-wrapper.sh
 infrastructure/gaming/trixie-backports.sources
 infrastructure/gaming/wayland-apps.json

@@ -305,6 +305,25 @@
     validate: nft -c -f %s
   notify: Load approved K3s host guard
 
+- name: Create the kubelet seccomp profile directory
+  ansible.builtin.file:
+    path: /var/lib/kubelet/seccomp/profiles
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+# The gaming container's Localhost profile (apps/base/steam-headless): RuntimeDefault plus
+# unprivileged user-namespace creation for Steam's sandbox. Generated and pinned in
+# infrastructure/gaming/seccomp; read by the kubelet at container start, no restart needed.
+- name: Install the gaming seccomp profile
+  ansible.builtin.copy:
+    src: "{{ role_path }}/../../../gaming/seccomp/workstation-gaming-userns.json"
+    dest: /var/lib/kubelet/seccomp/profiles/workstation-gaming-userns.json
+    owner: root
+    group: root
+    mode: '0644'
+
 - name: Install the K3s host guard unit
   ansible.builtin.copy:
     src: k3s-host-guard.service
