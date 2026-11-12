@@ -229,7 +229,7 @@ require_check(env.any? { |e| e == {'name' => 'HSA_OVERRIDE_GFX_VERSION', 'value'
   require_check(game.dig('securityContext', 'allowPrivilegeEscalation') == false &&
                 game.dig('securityContext', 'capabilities', 'drop') == ['ALL'] &&
                 game.dig('securityContext', 'capabilities', 'add').nil?, 'Wayland gaming session must not require elevated Linux capabilities')
-  require_check(game['image'] == 'localhost/workstation/steam-headless:UNQUALIFIED', 'Gaming must require promotion of the locally built recipe')
+  require_check(game['image'].match?(%r{\Aregistry\.lan\.thespry\.family/local/steam-headless@sha256:[a-f0-9]{64}\z}), 'Gaming must use the signed pipeline image by digest')
   require_check(deployment.dig('metadata', 'annotations', 'workstation.ai/qualification') != 'qualified', 'Streaming settings cannot qualify gaming')
   require_check(game['volumeMounts'].include?({'name' => 'user', 'mountPath' => '/home/default'}), 'Persistent home must match the maintained image')
   require_check(game['env'].include?({'name' => 'XDG_CACHE_HOME', 'value' => '/home/default/.cache'}) &&
