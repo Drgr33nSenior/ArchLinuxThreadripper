@@ -11,5 +11,5 @@ CODEX_PACKAGE_SHA256=a01a7705edb14181f00b70562f367c229e53cd7a552cecb54a45652e0a1
 CODEX_SOURCE_COMMIT=657a993cbee87acf52d14b758ce49dbd46d1b8eb
 # Bridge build-only compiler; verified https://go.dev/dl/?mode=json on 2026-09-09.
 # Snapshot Go satisfies makepkg's dependency; this exact compiler executes builds.
-BRIDGE_GO_VERSION=1.27.1
-BRIDGE_GO_LINUX_AMD64_SHA256=63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445
+BRIDGE_GO_VERSION=1.27.4
+BRIDGE_GO_LINUX_AMD64_SHA256=7226736c2339719cda28fbf3a54d71aa63bcefe376e98cef00034268dab24840
