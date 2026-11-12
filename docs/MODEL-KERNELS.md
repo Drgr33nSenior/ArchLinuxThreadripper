@@ -1,5 +1,10 @@
 # Opt-in model-kernel compilation and tuning
 
+> **Historical.** This workflow tuned kernels for the earlier Qwen3-Coder and FP8
+> containers. Serving kernels are now built into the AI stack's SGLang image from the
+> [gfx1201 patch series](https://github.com/Drgr33nSenior/Spry.ai-rdna4-serving/tree/main/serving/patches/sglang-main);
+> see the [AI serving stack](../infrastructure/ai-stack/README.md).
+
 This workflow extends `workstationctl rocm`; it adds no service and does not
 change the SGLang baseline. All hardware candidates remain **unqualified**.
 Run requests, profiling and restarts only in an owner-approved workstation test

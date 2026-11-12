@@ -11,8 +11,8 @@ qualify the deployed assistant or generated answers.
 The assistant overlays add a pinned CPU cross-encoder reranker and an exact
 source-read tool to this retrieval path; see
 [Assistant reranker profile](#assistant-reranker-profile). The `rag`, `rag-dense`
-and `service` overlays keep the baseline profile described below. The reranker
-profile has source checks only; it has not run on the workstation.
+and `service` overlays keep the baseline profile described below. The assistant
+overlays, including the live `assistant-memory` shared render, run the reranker.
 
 The optional [disposable Linux retrieval test](../tests/rag/README.md) exercises
 real CPU embeddings, retrieval, access revocation and same-volume

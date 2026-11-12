@@ -1,5 +1,7 @@
 # Hyperloom owner binding reference
 
+> **Historical.** Reference for the op234-era owner packets; see [Hyperloom](HYPERLOOM.md).
+
 Use [Hyperloom tools](HYPERLOOM.md) for installation, offline reports and scope.
 This reference records the existing owner-packet ABI and evidence import rules.
 Historical packets are consumed; prepare a fresh reviewed packet for execution.

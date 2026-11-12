@@ -1,26 +1,16 @@
-# Shared workstation AI service
+# AI service setup
 
-The opt-in [Family AI starting point](ASSISTANT.md) adds a common interface over
-these services. Select it with `service render --experience assistant`; existing
-service defaults and deployment gates remain selectable.
+How the family AI service is set up: its components and endpoints, credentials, accounts
+and keys, the first rollout, and the checks a new deployment must pass. It is running today
+in shared mode (see the [README](../README.md#running-now)); day-to-day tasks are in
+[operations](OPERATIONS.md#ai-service) and what it does for the family is in
+[the assistant guide](ASSISTANT.md).
 
-Its optional [shared web-search adapter](WEB-SEARCH.md) adds Exa Auto search
-and public-page extraction for WebUI and Qwen Code, with durable request limits.
-Tavily remains an explicit alternative.
-The legacy service composition does not enable provider access.
-
-The current delivery target is the [selected native 128K candidate](ASSISTANT.md#native-candidate-integration).
-The container routes and limits documented below still describe the older
-FP8/9B composition. Native packaging, model-identity and limit reconciliation,
-and model/browser acceptance remain pending. QLoRA is deferred under the
-[current delivery scope](ASSISTANT.md#current-delivery-scope).
-
-This is an opt-in source implementation. It is not a deployed or hardware-qualified
-service. All new application replicas remain zero. See the
-[reconciliation and evidence matrix](AI-SERVICE-RECONCILIATION.md).
-The [dated component checks](VERIFICATION.md) cover native gateway/database
-fixtures and isolated WebUI/telemetry tests. They do not qualify the selected
-native model, deployed client path or independent recovery.
+The live composition is the `assistant-memory` experience rendered from the
+[serving contract](ASSISTANT.md#serving-contract), which replaces the source defaults this
+page mentions for the older FP8/9B containers. The optional
+[web-search adapter](WEB-SEARCH.md) adds Exa search and public-page reading for Open WebUI
+and Qwen Code.
 
 ## Components, endpoints and state
 
@@ -30,9 +20,9 @@ native model, deployed client path or independent recovery.
 | Open WebUI 0.11.4 (`service`); 0.12.5 (`assistant`) | Browser HTTPS → WebUI → internal `/webui/v1` gateway route | WebUI login; server-held application credential and user-ID mapping | Accounts, conversations, uploads, embedded Chroma on `webui-rag-qwen3-data` |
 | LiteLLM OSS 1.106.2 | API HTTPS `/v1/models`, `/v1/chat/completions` → internal SGLang | Per-client virtual keys; separate master, salt and host-control credentials | Scoped `litellm` PostgreSQL role/database; dump plus matching K3s Secrets |
 | SGLang | ClusterIP only; unchanged qualified model/runtime inputs | No ordinary user access to backend | Weights and caches rebuildable; model revisions retained |
-| Read-only MCP | HTTPS `/mcp` → supported WebUI retrieval/file APIs | Caller's own restricted WebUI API key | Reuses WebUI document ACLs and retrieval state; no second vector store |
+| service-tools (MCP) | HTTPS `/mcp` → retrieval, memory, web search, handoffs and video | Caller's own WebUI session or restricted API key; the `admin` role is refused | Reuses WebUI document ACLs; handoffs and picture markers on `service-tools-state`; memory in Neo4j |
 | Image adapter | WebUI native OpenAI image connector → internal adapter → SwarmUI API | Trusted browser application identity plus per-user image permission | Unresolved job marker on `service-tools-state`; WebUI stores returned image under caller |
-| SwarmUI / ComfyUI | One self-started ComfyUI owned by Swarm; internal 7801 only | Operator owns workflows; no public Swarm administration | `creative-models/Data` and `Output` retained; `Models` downloadable |
+| SwarmUI / ComfyUI | SwarmUI's self-started ComfyUI on GPU 1, plus `comfyui-gpu0` (internal 7821) on GPU 0 in shared mode; Swarm on internal 7801 only | Operator owns workflows; no public Swarm or ComfyUI administration | `creative-models` `Data/` and `Output/` captured; SDXL is read from the NAS; `Models/` and the Wan `Video/` weights are restaged from the catalogue (see [service recovery](SERVICE-RECOVERY.md)) |
 | Session / Bridge | Root host CLI, canonical flock, existing identity/qualification gates | Dedicated Kubernetes identity and root-owned control-key file | Durable transition journal; no inference key grants administrative access |
 | Alertmanager | Prometheus → internal Alertmanager → chosen webhook | URL in Secret file; exact IP/port egress | Retained notification state; reconstruct configuration from source/Secrets |
 | Independent observer | Another device checks HTTPS status | Separate receiver credential and CA trust | Detects whole-workstation failure; bounded owner maintenance window |
@@ -52,10 +42,15 @@ uses one process and one replica: it does not claim distributed quotas, enterpri
 SSO, enterprise audit features or Responses API parity. No fallback model or cloud
 provider is configured. Retries are zero in the gateway and generated Qwen bundle.
 
-The ASGI boundary caps bodies at 1 MiB, global active model requests at four and
-request duration at 180 seconds. Native per-key limits are lower by default.
-The two model IDs remain `Qwen3.8-27B-FP8` (32,768 context, 4,096 output cap) and
-`Qwen3.5-9B` (4,096 context, 1,024 output cap). Context metadata is not a tokenizer:
+The ASGI boundary caps request bodies at 1 MiB, except chat completions, which may be up to
+64 MiB because Open WebUI resends earlier video clips (the boundary replaces each clip with a
+short note before the model). It admits four active model requests. Its source defaults
+(180-second requests; models `Qwen3.8-27B-FP8` at 32,768 tokens and `Qwen3.5-9B` at 4,096)
+apply only to renders without a serving profile. A serving-contract render replaces the
+FP8 route with `Qwen3.8-27B-MXFP4` at the mode's context (12,288-token output cap) and sets
+deadlines of 600 seconds in shared mode and 1,200 seconds in large mode; the 9B split route
+stays. Native per-key limits are lower by default. Context
+metadata is not a tokenizer:
 SGLang's actual context gate and the existing client/model qualification remain
 required. A different active model returns 503; it never silently replaces one.
 
@@ -373,10 +368,15 @@ context, node and new output paths; placeholders are not site values.
 ## Image package and lifecycle
 
 The narrow adapter uses WebUI's native OpenAI image connector because SwarmUI owns
-the existing ComfyUI lifecycle and outputs. Swarm's API is not a ComfyUI endpoint.
-There is no second backend/frontend starting another GPU process. Public consumers
-cannot upload workflows or reach Swarm's administration API.
+the ComfyUI lifecycle and outputs. Swarm's API is not a ComfyUI endpoint. In shared mode
+Swarm drives two ComfyUI backends, its own on GPU 1 and `comfyui-gpu0` on GPU 0, so two
+pictures can run at once. Public consumers cannot upload workflows or reach Swarm's or
+ComfyUI's administration APIs.
 
+The deployed picture image is the AI stack's `creative-gfx1201` build (ComfyUI 0.45 and
+SwarmUI on the same ROCm and PyTorch as SGLang; see
+[image generation stages](../infrastructure/ai-stack/README.md#image-generation-stages)).
+The rest of this section describes the earlier standalone creative package:
 `infrastructure/creative/runtime.json` pins Swarm, Comfy, ROCm/.NET build images,
 SDXL model identity/checksum and bundled custom-node source. The checked-in
 `sdxl-workflow.json` fixes node types and parameters; only prompt, bounded size and
@@ -440,8 +440,10 @@ key. That attempt is preserved; no licence or audit check was disabled. The smok
 used only a fixed prompt and generated PNG. Resolve this dependency before
 deployment. Do not promote the smoke digest or lower security to boot it.
 
-The adapter permits one image, 512² or 1024², a 2,000-character prompt, no workflow
-macros, and an 8 MiB PNG result. Generation is bounded to 120 seconds. Cancellation
+The adapter permits one image per request at an SDXL size (512×512 or the nearest of
+1024×1024, 1152×896, 1216×832 and 1344×768, and their portrait forms), a 2,000-character
+prompt, no workflow macros, and an 8 MiB PNG result. It runs one picture at a time, or two
+in shared mode. Generation is bounded to 120 seconds. Cancellation
 interrupts only the adapter's Swarm session. Any submitted generation without a
 successful terminal result retains a durable unresolved marker: interruption
 acknowledgement and zero Swarm counters do not prove GPU completion. Restart
@@ -504,7 +506,7 @@ curl --config "$CLIENT_CURL_CONFIG" --fail --silent --show-error --max-time 15 "
 curl --silent --show-error --max-time 15 --output /private/unauthorized.json --write-out '%{http_code}\n' "$API_URL/v1/models"
 curl --config "$CLIENT_CURL_CONFIG" --fail --silent --show-error --no-buffer --max-time 190 \
   --header 'Content-Type: application/json' \
-  --data '{"model":"Qwen3.8-27B-FP8","messages":[{"role":"user","content":"Reply with the word ready."}],"max_tokens":16,"stream":true}' \
+  --data '{"model":"Qwen3.8-27B-MXFP4","messages":[{"role":"user","content":"Reply with the word ready."}],"max_tokens":16,"stream":true}' \
   "$API_URL/v1/chat/completions" > /private/stream.txt
 ```
 
@@ -532,7 +534,7 @@ Target checks, all **NOT RUN** until an owner records evidence:
 | Network isolation | From an unrelated unprivileged test Pod, database, SGLang, WebUI and gateway connections fail; only the documented pairs succeed; remove only that test Pod afterward |
 | Proxy chain | Browser WebSocket remains usable through idle intervals; streaming delivers incrementally; client disconnect cancels; TLS SAN/chain and private CIDRs are enforced |
 | Retrieval | User A queries an allowed collection through MCP and opens citation; B's private collection denied; deleted document gives no stale snippet; rerun RAG quality fixtures |
-| Images | Only after split admission/build qualification: generate one image, restart WebUI/Swarm, retain the artifact; another user denied; large mode returns bounded unavailable |
+| Images and video | In shared (or split) mode: generate one image and one short clip, restart WebUI/Swarm, retain the artifacts; a user without picture permission is denied; large mode returns bounded unavailable |
 | Handover | Concurrent mode changes cannot acquire the same lock; verify actual devices released before allocation; failure keeps recoverable state and no fabricated completed image |
 | Recovery | Complete independent SSD and S3 drills in SERVICE-RECOVERY.md, including login/conversation/document/retrieval/image, gateway keys and gaming-home state |
 | Alerts | Inject an authorized test alert, confirm owner receipt/resolution; maintenance inhibits model outage only; stop the observer's HTTPS target to verify independent failure detection |

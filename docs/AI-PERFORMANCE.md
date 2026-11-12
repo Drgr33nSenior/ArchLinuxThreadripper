@@ -209,14 +209,14 @@ descriptors; non-root or incomplete `/proc` visibility cannot prove release.
 ./bin/workstationctl --config config/workstation.conf session plan gaming
 # Owner-only target commands, after qualification; NOT executed by coding tests:
 sudo ./bin/workstationctl --config config/workstation.conf session switch \
-  maintenance artifacts/target-boot-02/hardware.json /var/lib/workstation/session --execute
+  maintenance artifacts/target-boot-02/hardware.json /var/lib/workstation-session --execute
 sudo ./bin/workstationctl --config config/workstation.conf session switch \
-  ai artifacts/target-boot-02/hardware.json /var/lib/workstation/session --execute
+  ai artifacts/target-boot-02/hardware.json /var/lib/workstation-session --execute
 sudo ./bin/workstationctl --config config/workstation.conf session switch \
-  gaming artifacts/target-boot-02/hardware.json /var/lib/workstation/session --execute
-sudo ./bin/workstationctl session status /var/lib/workstation/session
+  gaming artifacts/target-boot-02/hardware.json /var/lib/workstation-session --execute
+sudo ./bin/workstationctl session status /var/lib/workstation-session
 sudo ./bin/workstationctl --config config/workstation.conf session restore \
-  artifacts/target-boot-02/hardware.json /var/lib/workstation/session --execute
+  artifacts/target-boot-02/hardware.json /var/lib/workstation-session --execute
 ```
 
 `restore` restores the replica snapshot taken on the first successful transition

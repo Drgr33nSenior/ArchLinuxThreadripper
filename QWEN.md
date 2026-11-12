@@ -64,6 +64,8 @@ record that cites it.
 | Task | Start with |
 | --- | --- |
 | Browser assistant, gateway, serving contract | `docs/ASSISTANT.md`, `docs/AI-SERVICE.md` |
+| Shared vs large mode, what each GPU holds, switching | `docs/MODES.md` |
+| Day-to-day AI service tasks (status, reboot fix, markers, power cap) | `docs/OPERATIONS.md` (AI service) |
 | Coding clients (Qwen Code, DSH, Hermes) | `docs/AGENT-HARNESSES.md` |
 | Serving stack, models, profiles and arms | `infrastructure/ai-stack/README.md` |
 | Retrieval, memory, handoffs, web search | `docs/RAG.md`, `docs/MEMORY.md`, `docs/WEB-SEARCH.md` |

@@ -1,51 +1,61 @@
-# Model defaults and qualification
+# Models
 
-Prefer open-weight models that fit the selected
-workload and serving backend. Pin each release; do not use a moving `latest`
-checkpoint or assume that a newer model is faster on this workstation.
+Every model the workstation runs, what it is for and where it comes from. Each one is pinned to
+an exact repository revision and its files' hashes, so an upgrade is a deliberate catalogue
+change, never a moving `latest`.
 
-The current assistant target is the selected native Qwen3.8-27B Quark AWQ
-MXFP4/C4 candidate with 128K context. Its contract and remaining integration
-gates are in [native candidate integration](ASSISTANT.md#native-candidate-integration).
-The table below describes the older checked-in container profiles; it does
-not describe that native candidate or establish a deployed service.
+## In use
 
-Model fine-tuning, including QLoRA, is deferred as optional post-install work.
-See [current delivery scope](ASSISTANT.md#current-delivery-scope).
-The [programming-book and adaptation plan](RAG.md#programming-books-and-later-model-adaptation)
-starts with source-grounded retrieval, then uses observed coding failures to
-decide whether a separate adapter-training experiment is useful.
+| Purpose | Model | Pinned revision | Runs on | Catalogue |
+| --- | --- | --- | --- | --- |
+| Chat and coding | `amd/Qwen3.8-27B-Quark-AWQ-MXFP4`, served as `Qwen3.8-27B-MXFP4` | `5233554c…` | SGLang on both GPUs | [`qwen3.8-27b-mxfp4.json`](../infrastructure/ai-stack/models/qwen3.8-27b-mxfp4.json) |
+| Speculative draft | `incoai/Qwen3.8-27B-DFlash2` | `015e7956…` | Inside SGLang, beside the chat model | Same entry |
+| Pictures | `stabilityai/stable-diffusion-xl-base-1.0` (single-file checkpoint) | `46216598…` | ComfyUI on both GPUs, read from the NAS | [`sdxl-base-1.0.json`](../infrastructure/ai-stack/models/sdxl-base-1.0.json) |
+| Video | Wan 2.2 T2V A14B: two 14B experts (FP8), lightx2v 4-step LoRAs (`1217`), umt5-xxl text encoder, Wan 2.1 VAE | `ee6f4a40…` (Comfy-Org repack), `57adea58…` (LoRAs) | ComfyUI on GPU 0, shared mode only | [`wan2.2-t2v-a14b.json`](../infrastructure/ai-stack/models/wan2.2-t2v-a14b.json) |
+| Document and memory embeddings | `Qwen/Qwen3-Embedding-0.6B` | Hash-checked on staging | CPU (Open WebUI, and Text Embeddings Inference for memory) | [RAG](RAG.md) |
+| Search reranking | `cross-encoder/ms-marco-MiniLM-L6-v2` | Hash-checked on staging | CPU | [RAG](RAG.md) |
+| Voice input | `Systran/faster-whisper-base` (int8) | Hash-checked on staging | CPU, inside Open WebUI | [RAG](RAG.md) (`rag stage-whisper`) |
 
-Dense Qwen4 preparation is isolated in [Qwen4 readiness](QWEN4-READINESS.md).
-Its profile is disabled pending official checkpoint assets and ROCm execution
-evidence; it does not change the selections below.
+The chat model's context depends on the mode: 81,888 tokens per conversation in shared mode
+and 262,112 in large mode ([service modes](MODES.md)). Its serving settings live in the
+[serving profile](../infrastructure/ai-stack/serving/qwen3.8-27b-mxfp4-tp2.json), which is
+`qualified`; the catalogue holds only identity and file hashes.
 
-The published serving source and package/admission gaps are tracked in
-[Serving integration](SERVING-INTEGRATION.md).
+Licences: Qwen3.8 and the DFlash2 draft follow their model cards; SDXL base 1.0 uses the
+CreativeML Open RAIL++-M licence (fetched with the weights); Wan 2.2, umt5 and the lightx2v
+LoRAs are Apache 2.0.
 
-## Current serving model
+### Where the weights live
 
-Status, 9 November 2026: the
-[AI serving stack pipeline](../infrastructure/ai-stack/README.md) builds the
-serving image, stages the model and qualifies the server. It replaces the
-FP8 container default and the `llm-models` staging procedure below, which
-apply to the legacy `apps/` overlays only.
+- **Chat model, draft and SDXL:** the NAS `ai-models` volume, staged by a `render-fetch.py`
+  Job into `/models/<owner>/<name>/<revision>/` with `VERIFIED.json` written last. Both
+  ComfyUIs mount the SDXL checkpoint read-only from there. See
+  [AI stack models](../infrastructure/ai-stack/README.md#models).
+- **Wan 2.2:** the local-NVMe `creative-models` volume (`Video/`), staged with
+  `stage-video.py` (about 36.8 GB) because ComfyUI streams it from disk on every step; see
+  [short videos](ASSISTANT.md#short-videos-shared-mode).
+- **Embeddings, reranker and Whisper:** the `webui-rag-qwen3-models` volume, staged by the
+  `rag` commands.
 
-| Item | Value |
-| --- | --- |
-| Model | `amd/Qwen3.8-27B-Quark-AWQ-MXFP4` at `5233554c…` |
-| Draft | `incoai/Qwen3.8-27B-DFlash2` at `015e7956…` |
-| Served name | `Qwen3.8-27B-MXFP4`, TP2, context 131,040 |
-| Catalog | [`models/qwen3.8-27b-mxfp4.json`](../infrastructure/ai-stack/models/qwen3.8-27b-mxfp4.json): model and draft identity and file hashes only |
-| Serving profile | [`serving/qwen3.8-27b-mxfp4-tp2.json`](../infrastructure/ai-stack/serving/qwen3.8-27b-mxfp4-tp2.json): flags and environment; status unqualified |
+### Adding or changing a model
 
-To stage a model, follow
-[Models](../infrastructure/ai-stack/README.md#models): `render-fetch.py`
-renders a Job that downloads into the NAS `ai-models` volume at
-`/models/<owner>/<name>/<revision>/` and writes `VERIFIED.json`. To qualify a
-profile, follow [Serving](../infrastructure/ai-stack/README.md#serving).
+Create a catalogue entry with `models/inventory.py`, add or update a serving profile, run the
+tests, then qualify it with the bench Job before any profile marks it the default. The steps
+are in [AI stack models](../infrastructure/ai-stack/README.md#models) and
+[serving](../infrastructure/ai-stack/README.md#serving).
 
-## Selected defaults (legacy `apps/` overlays)
+Fine-tuning, including QLoRA, is optional future work; the
+[programming-book plan](RAG.md#programming-books-and-later-model-adaptation) starts with
+retrieval and uses observed failures to decide whether an adapter is worth training. Qwen4
+preparation is parked in [Qwen4 readiness](QWEN4-READINESS.md).
+
+## Legacy container profiles
+
+Everything below describes the older `apps/` overlays (Qwen3.8-27B-FP8 and Qwen3.5-9B
+containers). They have not been applied since the November 2026 reinstall and are kept for
+comparison.
+
+### Selected defaults (legacy `apps/` overlays)
 
 These container profiles are legacy. They have not been applied since the
 2026-11 reinstall.
@@ -74,7 +84,7 @@ from BF16 or an AWQ/NVFP4 substitute. The checkpoint configuration selects its
 quantization; `--dtype bfloat16` controls the remaining tensors. The old forced
 `--quantization awq` has been removed from both profiles.
 
-## Model inventory
+### Model inventory
 
 | Area and source | Previous selection | Decision and evidence |
 | --- | --- | --- |
@@ -99,7 +109,7 @@ In particular, Qwen Image FP8 loading can exceed the existing 12 GiB SwarmUI
 host-memory budget. Do not select a large new model without its dependency and
 memory review. Hosted API models are not interchangeable with downloadable weights.
 
-## Revisions and serving compatibility
+### Revisions and serving compatibility
 
 `versions.lock` records the two chat repository/revision pairs and the embedding
 pair. Rendered chat paths include their revisions; tests reject drift between
@@ -138,7 +148,7 @@ after a reviewed image change.
 `--revision` does not checksum an arbitrary local directory. Verify transferred
 files independently; never qualify a workload from its path or model name alone.
 
-## Stage chat weights explicitly (legacy)
+### Stage chat weights explicitly (legacy)
 
 This procedure stages weights into the `llm-models` volume of the legacy
 `apps/` overlays. For the current model, use the
@@ -181,7 +191,7 @@ read access to UID/GID 1000. The container mounts `/models` read-only and keeps
 `HF_HUB_OFFLINE=1`; it will not fetch missing shards on startup. Do not store
 weights in container writable layers or the installer image.
 
-## Render, qualify and compare
+### Render, qualify and compare
 
 These commands do not contact a cluster:
 
@@ -232,7 +242,7 @@ through maintenance. Leave replicas at zero if no combination has passed.
 Retain old model and RAG data volumes; do not overwrite, delete or reinterpret
 MiniLM indexes as Qwen embeddings. The [RAG migration](RAG.md) uses new volumes.
 
-## Qualification boundary
+### Qualification boundary
 
 Source validation covers model locks, rendered defaults, model staging refusal
 paths and RAG migration fixtures. It does not prove runtime compatibility,

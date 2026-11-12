@@ -13,11 +13,10 @@ the same selected model. There is no automatic fallback between clients.
 
 ## Preconditions and boundary
 
-Do not configure a live endpoint until the selected SGLang image, model, tool
-parsing, context accounting, and profile have passed the target-machine
-qualification in [MODELS.md](MODELS.md). The checked-in SGLang Deployment starts
-at zero replicas and remains pending qualification. This guide does not make an
-endpoint available.
+The live endpoint serves `Qwen3.8-27B-MXFP4` from the qualified serving profile. Its
+context per conversation depends on the [mode](MODES.md): 81,888 tokens in shared mode,
+262,112 in large mode. Take the client values from the current render's `client.conf`,
+not from the defaults below, and regenerate the bundle whenever the mode changes.
 
 The shared-service client path is `https://<actual-api-host>/v1` (standard port 443), using a
 revocable per-client virtual key from [AI-SERVICE.md](AI-SERVICE.md). The IDE
@@ -69,7 +68,9 @@ user changes that file, the launcher rejects the bundle. Generate a fresh bundle
 and recheck it; do not edit a checked bundle or delete an existing client session
 directory as a recovery shortcut.
 
-`config/workstation.conf` has these non-secret defaults:
+`config/workstation.conf.example` still carries the older FP8 container's defaults, shown
+below. Replace them with the current render's `client.conf` values (model
+`Qwen3.8-27B-MXFP4` and the mode's context and output limits):
 
 ```sh
 AGENT_HARNESS=qwen
@@ -283,5 +284,5 @@ preserve permissions or resume state is not qualified for unattended work.
 Stop the local port-forward or SSH tunnel, close the client, and remove the
 client's native credential when it is no longer needed. Do not delete a bundle
 or model volume as a recovery shortcut. To restore the baseline, select the
-existing approved client configuration and leave the SGLang Deployment at zero
-replicas unless it has already passed the documented workload promotion process.
+existing approved client configuration. Don't scale the shared SGLang Deployment down to
+recover a client: the family service uses it too.
