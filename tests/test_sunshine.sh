@@ -98,7 +98,7 @@ STUB
 chmod +x "$work/sunshine-fixture"
 export SUNSHINE_TEST_ARGS="$work/args.txt"
 ws_require_user() { :; }
-ws_sunshine_version() { printf 'Sunshine version: 2026.906.222525\n'; }
+ws_sunshine_version() { printf 'Sunshine version: %s\n' "$(common::lock_get "$repo_root/versions.lock" SUNSHINE_VERSION)"; }
 ws_sunshine_device() { jq -n '{bdf:"0000:21:00.0",render_node:"/dev/dri/renderD135",card_node:"/dev/dri/card1"}'; }
 ws_sunshine_launch "$work/sunshine-fixture" "$work/sunshine.conf" 2>/dev/null
 grep -Fxq 'encoder=vulkan' "$work/args.txt"
@@ -214,11 +214,21 @@ ws_sunshine_image_build "$work/build-x11" x11 >/dev/null
 jq -e '.session == "x11" and .build_target == "x11"' "$work/build-x11/build-result.json" >/dev/null
 grep -Fxq 'x11' "$work/docker-success-args.txt"
 ws_sunshine_image_build "$work/build-arch" arch-wayland >/dev/null
-jq -e '.session == "arch-wayland" and .build_target == "arch-wayland" and .sunshine_deb_sha256 == null and .mesa_debian_version == null and .arch_repository_snapshot == "2026/10/31" and (.base|startswith("docker.io/library/archlinux@sha256:"))' "$work/build-arch/build-result.json" >/dev/null
+snapshot=$(common::lock_get "$repo_root/versions.lock" SUNSHINE_ARCH_SNAPSHOT)
+jq -e --arg snapshot "$snapshot" '.session == "arch-wayland" and .build_target == "arch-wayland" and .sunshine_deb_sha256 == null and .mesa_debian_version == null and .arch_repository_snapshot == $snapshot and (.base|startswith("docker.io/library/archlinux@sha256:"))' "$work/build-arch/build-result.json" >/dev/null
 grep -Fxq 'arch-wayland' "$work/docker-success-args.txt"
-grep -Fxq 'ARCH_SNAPSHOT=2026/10/31' "$work/docker-success-args.txt"
+grep -Fxq "ARCH_SNAPSHOT=$snapshot" "$work/docker-success-args.txt"
 grep -Fxq "$(cd "$work/build-arch" && pwd -P)/context/infrastructure/gaming/Dockerfile.arch" "$work/docker-success-args.txt"
 [[ -s $work/build-arch/context/sunshine.pkg.tar.zst && ! -e $work/build-arch/context/sunshine.deb ]]
+# Podman builds with the same options when selected (or when Docker is absent).
+# shellcheck disable=SC2329 # Called indirectly by the image-build fixture.
+podman() {
+  printf 'podman\n' >"$work/engine.txt"
+  docker "$@"
+}
+SUNSHINE_BUILD_ENGINE=podman ws_sunshine_image_build "$work/build-podman" arch-wayland >/dev/null
+[[ $(<"$work/engine.txt") == podman ]]
+grep -Fxq 'arch-wayland' "$work/docker-success-args.txt"
 reject ws_sunshine_image_build "$work/build-invalid" legacy
 [[ ! -e $work/build-invalid ]]
 ws_read_lock() {

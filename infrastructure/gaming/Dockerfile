@@ -7,7 +7,7 @@ ARG SUNSHINE_SHA256
 ARG MESA_VERSION
 USER root
 COPY sunshine.deb /tmp/workstation-sunshine.deb
-COPY infrastructure/gaming/trixie-backports.sources /etc/apt/sources.list.d/workstation-backports.sources
+COPY --chmod=644 infrastructure/gaming/trixie-backports.sources /etc/apt/sources.list.d/workstation-backports.sources
 RUN printf '%s  %s\n' "$SUNSHINE_SHA256" /tmp/workstation-sunshine.deb | sha256sum -c - \
     && apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends -t trixie-backports \
@@ -51,7 +51,7 @@ RUN apt-get update \
     && sed -i 's|^Exec=.*|Exec=/usr/lib/workstation/sunshine.real|' /usr/share/applications/dev.lizardbyte.app.Sunshine.kwin.desktop \
     && dpkg-query -W '-f=${binary:Package}\t${Version}\n' > /usr/share/workstation/gaming-packages.tsv
 COPY --chmod=755 infrastructure/gaming/wayland-session.sh /usr/lib/workstation/wayland-session
-COPY infrastructure/gaming/wayland-apps.json /usr/share/workstation/wayland-apps.json
+COPY --chmod=644 infrastructure/gaming/wayland-apps.json /usr/share/workstation/wayland-apps.json
 ENV HOME=/home/default USER=default USER_HOME=/home/default \
     XDG_CONFIG_HOME=/home/default/.config XDG_CACHE_HOME=/home/default/.cache \
     XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=KDE \

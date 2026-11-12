@@ -60,9 +60,10 @@ k3s_load_config "$config_file" "$repo_root/versions.lock"
 [ "$KWIN_DEBIAN_VERSION" = '4:6.3.6-1' ]
 # The shared lock remains loadable without admitting arbitrary Arch keys,
 # mutable image references or environment overrides.
-[[ $SUNSHINE_ARCH_BASE_IMAGE == docker.io/library/archlinux@sha256:dfc5be7be44cf1acf3d9b3b902e3e9c8a29f97ed41e35631823cdc9c97e5d4f0 ]]
-[[ $SUNSHINE_ARCH_SNAPSHOT == 2026/10/31 ]]
-[[ $SUNSHINE_ARCH_SHA256 == efe1f0229f9d6da026d8d4d8d93f70211965a1d125defff71b747dd8b6cdd42a ]]
+# Loaded exactly as written; refresh.sh moves these pins, so compare with the file.
+for key in SUNSHINE_ARCH_BASE_IMAGE SUNSHINE_ARCH_SNAPSHOT SUNSHINE_ARCH_SHA256; do
+  [[ ${!key} == "$(sed -n "s|^$key=||p" "$repo_root/versions.lock")" ]]
+done
 for invalid in docker.io/library/archlinux:latest docker.io/library/ubuntu@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; do
   if (k3s_validate_value SUNSHINE_ARCH_BASE_IMAGE "$invalid") >/dev/null 2>&1; then
     echo 'unreviewed Arch base accepted' >&2
@@ -75,13 +76,13 @@ if (k3s_validate_value SUNSHINE_ARCH_SNAPSHOT latest) >/dev/null 2>&1 ||
   echo 'invalid Arch lock setting accepted' >&2
   exit 1
 fi
-SUNSHINE_ARCH_BASE_IMAGE=invalid
-SUNSHINE_ARCH_SNAPSHOT=invalid
-SUNSHINE_ARCH_SHA256=invalid
+# shellcheck disable=SC2034 # Stale values the reload must replace; read back via ${!key}.
+SUNSHINE_ARCH_BASE_IMAGE=invalid SUNSHINE_ARCH_SNAPSHOT=invalid SUNSHINE_ARCH_SHA256=invalid
 k3s_load_config "$config_file" "$repo_root/versions.lock"
-[[ $SUNSHINE_ARCH_BASE_IMAGE == docker.io/library/archlinux@sha256:dfc5be7be44cf1acf3d9b3b902e3e9c8a29f97ed41e35631823cdc9c97e5d4f0 ]]
-[[ $SUNSHINE_ARCH_SNAPSHOT == 2026/10/31 ]]
-[[ $SUNSHINE_ARCH_SHA256 == efe1f0229f9d6da026d8d4d8d93f70211965a1d125defff71b747dd8b6cdd42a ]]
+# Loaded exactly as written; refresh.sh moves these pins, so compare with the file.
+for key in SUNSHINE_ARCH_BASE_IMAGE SUNSHINE_ARCH_SNAPSHOT SUNSHINE_ARCH_SHA256; do
+  [[ ${!key} == "$(sed -n "s|^$key=||p" "$repo_root/versions.lock")" ]]
+done
 # Scoped userspace promotion must not leak through environment overrides or
 # broaden the accepted local image family. The legacy vendor lock stays valid.
 [[ $SGLANG_SINGLE_ROCM_IMAGE == localhost/workstation/sglang@sha256:c9e4d0e0ea8818de29ccef4249119fc1c096d7a924b86c63567a6b9f9d5c3c8b ]]

@@ -7,13 +7,14 @@ if [[ -z ${HOME_LAB_GAME_IMAGE:-} ]]; then
   printf 'SKIP: set HOME_LAB_GAME_IMAGE to an already-built local image ID for streaming smoke tests\n'
   exit 0
 fi
+engine=${CONTAINER_ENGINE:-docker}
 [[ $HOME_LAB_GAME_IMAGE =~ ^sha256:[a-f0-9]{64}$ ]] || {
   printf 'Expected a local sha256 image ID\n' >&2
   exit 2
 }
-docker image inspect "$HOME_LAB_GAME_IMAGE" --format '{{.Os}}/{{.Architecture}}' | grep -Fxq linux/amd64
-docker image inspect "$HOME_LAB_GAME_IMAGE" --format '{{.Config.User}}' | grep -Fxq 1000:1000
-entrypoint=$(docker image inspect "$HOME_LAB_GAME_IMAGE" --format '{{json .Config.Entrypoint}}')
+"$engine" image inspect "$HOME_LAB_GAME_IMAGE" --format '{{.Os}}/{{.Architecture}}' | grep -Fxq linux/amd64
+"$engine" image inspect "$HOME_LAB_GAME_IMAGE" --format '{{.Config.User}}' | grep -Fxq 1000:1000
+entrypoint=$("$engine" image inspect "$HOME_LAB_GAME_IMAGE" --format '{{json .Config.Entrypoint}}')
 case $entrypoint in
   '["/usr/bin/dumb-init","--","/usr/lib/workstation/wayland-session"]' | \
     '["/usr/bin/catatonit","--","/usr/lib/workstation/wayland-session"]') ;;
@@ -22,7 +23,8 @@ case $entrypoint in
     exit 1
     ;;
 esac
-docker run --rm --pull never --platform linux/amd64 --network none --read-only \
+# shellcheck disable=SC2016 # The script is expanded inside the container.
+"$engine" run --rm --pull never --platform linux/amd64 --network none --read-only \
   --cap-drop ALL --security-opt no-new-privileges --user 1000:1000 \
   --pids-limit 64 --memory 256m --cpus 1 --tmpfs /tmp:rw,nosuid,nodev,size=16m \
   --env XDG_CONFIG_HOME=/tmp/config --entrypoint /bin/bash "$HOME_LAB_GAME_IMAGE" -c '

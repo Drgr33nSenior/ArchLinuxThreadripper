@@ -190,7 +190,8 @@ ws_sunshine_image_build() (
     [[ $base =~ ^docker\.io/library/archlinux@sha256:[a-f0-9]{64}$ && $snapshot =~ ^[0-9]{4}/[0-9]{2}/[0-9]{2}$ ]] || ws_die 'invalid Arch gaming image lock'
     recipe=Dockerfile.arch
     asset=sunshine.pkg.tar.zst
-    url="https://github.com/LizardByte/Sunshine/releases/download/v$version/sunshine_${version}-1-x86_64.pkg.tar.zst"
+    # Upstream names the Arch asset sunshine-VERSION-1-x86_64 since 2026.914.
+    url="https://github.com/LizardByte/Sunshine/releases/download/v$version/sunshine-${version}-1-x86_64.pkg.tar.zst"
   else
     base=$(ws_read_lock STEAM_HEADLESS_BASE_IMAGE)
     hash=$(ws_read_lock SUNSHINE_DEBIAN_SHA256)
@@ -205,7 +206,10 @@ ws_sunshine_image_build() (
     kwin=$(ws_read_lock KWIN_DEBIAN_VERSION)
     [[ $kwin =~ ^[0-9][a-zA-Z0-9.+~:-]+$ ]] || ws_die 'invalid KWin package version'
   fi
-  command -v docker >/dev/null || ws_die 'image-build requires an existing Docker builder'
+  # Docker where it exists; otherwise the host's rootless Podman (same build options).
+  local engine=${SUNSHINE_BUILD_ENGINE:-docker}
+  command -v "$engine" >/dev/null || engine=podman
+  command -v "$engine" >/dev/null || ws_die 'image-build requires Docker or Podman'
   ws_sunshine_new_output "$output"
   output=$(cd -- "$output" && pwd -P)
   case "$output/" in
@@ -225,7 +229,7 @@ ws_sunshine_image_build() (
   build_args=(--platform linux/amd64 --build-arg "BASE_IMAGE=$base" --build-arg "SUNSHINE_SHA256=$hash")
   if [[ $session == arch-wayland ]]; then build_args+=(--build-arg "ARCH_SNAPSHOT=$snapshot"); else build_args+=(--build-arg "MESA_VERSION=$mesa"); fi
   [[ -z $kwin ]] || build_args+=(--build-arg "KWIN_DEBIAN_VERSION=$kwin")
-  docker build "${build_args[@]}" --target "$session" --iidfile "$output/image.id" \
+  "$engine" build "${build_args[@]}" --target "$session" --iidfile "$output/image.id" \
     -f "$output/context/infrastructure/gaming/$recipe" "$output/context" ||
     ws_die 'gaming image build failed; partial output retained'
   image_id=$(<"$output/image.id")
