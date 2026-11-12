@@ -210,6 +210,20 @@ class BoundaryTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(boundary, "DEFAULT_REASONING_EFFORT", None):
             await request(self.gateway, "/v1/chat/completions", dict(self.chat))
             self.assertNotIn("reasoning_effort", self.seen[-1][1])
+        # Think (effort xhigh) without a cap runs to the context limit: no max_tokens is filled
+        # in, so a long conversation cannot fail input + max_tokens > context. Anything else, or
+        # Think with its own cap, keeps the gateway cap.
+        bare = {k: v for k, v in self.chat.items() if k not in ("max_tokens", "max_completion_tokens")}
+        await request(self.gateway, "/v1/chat/completions", {**bare, "reasoning_effort": "high"})
+        self.assertEqual("xhigh", self.seen[-1][1]["reasoning_effort"])
+        self.assertNotIn("max_tokens", self.seen[-1][1])
+        await request(self.gateway, "/v1/chat/completions", {**bare, "reasoning_effort": "low"})
+        self.assertEqual(boundary.CHAT_MODELS[self.chat["model"]][1], self.seen[-1][1]["max_tokens"])
+        await request(self.gateway, "/v1/chat/completions", {**bare, "reasoning_effort": "xhigh", "max_tokens": 64})
+        self.assertEqual(64, self.seen[-1][1]["max_tokens"])
+        too_many = boundary.CHAT_MODELS[self.chat["model"]][1] + 1
+        result = await request(self.gateway, "/v1/chat/completions", {**bare, "reasoning_effort": "xhigh", "max_tokens": too_many})
+        self.assertEqual("output_limit_exceeded", json.loads(result[-1]["body"])["error"]["code"])
 
     async def test_candidate_alias_tool_roundtrip_with_reasoning_and_later_turn(self):
         """Fixture backend only: proves the boundary path, not native parsing or model behaviour."""
@@ -715,6 +729,10 @@ class ResourceTests(unittest.TestCase):
             self.assertEqual({"type": "ClusterIP", "externalTrafficPolicy": "Local", "externalIPs": ["192.168.77.9"]},
                              values["service"]["spec"])
             self.assertEqual(443, values["ports"]["websecure"]["exposedPort"])
+            # A streamed reply is one long write: Traefik must not cut it before the longest
+            # gateway deadline (large mode, for Think).
+            write = values["ports"]["websecure"]["transport"]["respondingTimeouts"]["writeTimeout"]
+            self.assertGreater(int(write.rstrip("s")), max(service.DEADLINE_SECONDS.values()))
             self.assertEqual({"default": False}, values["ports"]["web"]["expose"])
             # Staging issues into its own Secret; production into the Ingress TLS Secret.
             for name, issuer, secret in (("certificate-staging.yaml", "letsencrypt-staging-cloudflare", "fixture-tls-staging"),
@@ -1014,7 +1032,7 @@ class ServingContractTests(unittest.TestCase):
     def test_each_mode_has_its_own_deadline_and_no_gateway_timeout_undercuts_it(self):
         # Large mode serves 262K contexts (a cold 235K-token prompt takes ~240 s to its first
         # token); shared mode keeps 180 s. LiteLLM's global fallbacks must not cap the route.
-        for mode, deadline in (("large", 300), ("shared", 180)):
+        for mode, deadline in (("large", 1200), ("shared", 600)):
             contract = service.serving_contract(self.PROFILE, mode=mode)
             self.assertEqual({"gateway_seconds": deadline, "route_seconds": deadline - 10,
                               "client_milliseconds": deadline * 1000}, contract["deadlines"])

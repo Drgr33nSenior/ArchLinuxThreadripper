@@ -27,6 +27,11 @@ CHAT_FIELDS = {
 # "high" level, which that template would reject, so it is sent as its
 # nearest level, xhigh. The selected profile uses low.
 REASONING_EFFORTS = {"low": "low", "medium": "medium", "high": "xhigh", "xhigh": "xhigh"}
+# Template effort whose requests, when they set no output cap, run to the context limit
+# instead of the default cap ("Think"): SGLang rejects input + max_tokens > context, so
+# a large fixed cap would fail long conversations, while an unset cap ends at the
+# context and the gateway deadline bounds the time.
+UNCAPPED_EFFORTS = {"xhigh"}
 # Effort for requests that name none (the contract's request default). Applied here, not as an
 # SGLang server default: the pinned SGLang lets a server-default effort override every request's.
 DEFAULT_REASONING_EFFORT = None
@@ -258,10 +263,11 @@ class GatewayBoundary:
             raise Refusal(400, "ambiguous_output_limit")
         field = "max_completion_tokens" if "max_completion_tokens" in data else "max_tokens"
         cap = CHAT_MODELS[model][1]
-        limit = data.get(field, cap)
-        if type(limit) is not int or not 1 <= limit <= cap:
-            raise Refusal(400, "output_limit_exceeded")
-        data[field] = limit
+        if field in data or data.get("reasoning_effort") not in UNCAPPED_EFFORTS:
+            limit = data.get(field, cap)
+            if type(limit) is not int or not 1 <= limit <= cap:
+                raise Refusal(400, "output_limit_exceeded")
+            data[field] = limit
         body = json.dumps(data).encode()
         scope["headers"] += [(b"content-length", str(len(body)).encode())]
         sent = False
