@@ -106,6 +106,7 @@ lib/workstation/coding_eval.py
 lib/workstation/coding_tasks.json
 lib/workstation/inference_cache.py
 lib/workstation/session.sh
+lib/workstation/mode.sh
 lib/workstation/stack_inventory.py
 lib/workstation/storage_benchmark.py
 lib/workstation/sunshine.sh
@@ -149,6 +150,7 @@ tests/hardware/sglang-profile-evidence.py
 tests/hardware/torch-rocm.py
 versions.lock
 docs/TELEMETRY.md
+docs/MODES.md
 infrastructure/observability/config/alerts.yaml
 infrastructure/observability/config/config.alloy
 infrastructure/observability/config/config.metrics.alloy
@@ -203,6 +205,7 @@ templates/workstation/telemetry/workstation-tariff.timer
 lib/workstation/gpu_power.py
 infrastructure/gpu-power/policy.json
 templates/workstation/gpu/workstation-gpu-power.service
+templates/workstation/session/workstation-hardware-evidence.service
 templates/workstation/telemetry/workstation-alloy.service
 templates/workstation/telemetry/workstation-telemetry.service
 templates/workstation/telemetry/workstation-telemetry.sysusers
@@ -256,6 +259,7 @@ infrastructure/sglang/assistant-tasks/terraform-compat/reference/main.tf
 lib/workstation/service_backup.py
 lib/workstation/service_heartbeat.py
 lib/workstation/service_session.py
+lib/workstation/service_mode.py
 docs/TELEMETRY-REFERENCE.md
 docs/HYPERLOOM-REFERENCE.md
 infrastructure/sglang/serving-project.json

@@ -55,6 +55,7 @@ docs/MODEL-KERNELS.md
 docs/WORKSTATION.md
 docs/KERNEL-REQUIREMENTS.md
 docs/OPERATIONS.md
+docs/MODES.md
 docs/ARCHITECTURE.md
 docs/SOURCES.md
 ansible/K3S-OPERATIONS.md
@@ -167,6 +168,7 @@ lib/workstation/coding_eval.py
 lib/workstation/coding_tasks.json
 lib/workstation/inference_cache.py
 lib/workstation/session.sh
+lib/workstation/mode.sh
 lib/workstation/stack_inventory.py
 lib/workstation/storage_benchmark.py
 lib/workstation/sunshine.sh
@@ -280,6 +282,7 @@ tests/workstation/test_telemetry_tariff.py
 lib/workstation/gpu_power.py
 infrastructure/gpu-power/policy.json
 templates/workstation/gpu/workstation-gpu-power.service
+templates/workstation/session/workstation-hardware-evidence.service
 tests/workstation/test_gpu_power.py
 templates/workstation/telemetry/workstation-alloy.service
 templates/workstation/telemetry/workstation-telemetry.service
@@ -366,6 +369,7 @@ tests/workstation/test_assistant_acceptance.py
 lib/workstation/service_backup.py
 lib/workstation/service_heartbeat.py
 lib/workstation/service_session.py
+lib/workstation/service_mode.py
 templates/workstation/restic/workstation-service-backup.service
 templates/workstation/telemetry/workstation-external-heartbeat.service
 templates/workstation/telemetry/workstation-external-heartbeat.timer

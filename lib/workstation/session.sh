@@ -38,7 +38,7 @@ ws_session_service() {
 
 ws_session_service_model() {
   local document config model
-  document="$(ws_session_deployment "$SESSION_AI_DEPLOYMENT")"
+  document="$(ws_session_candidate "$SESSION_AI_DEPLOYMENT")"
   config="$(jq -r '[.spec.template.spec.containers[].envFrom[]?.configMapRef.name | select(startswith("sglang-profile"))] | unique | if length==1 then .[0] elif length==0 then "" else error("several") end' <<<"$document")" || ws_die 'one authoritative model ConfigMap required'
   if [[ -n $config ]]; then
     model="$(ws_session_kubectl -n "$SESSION_NAMESPACE" get configmap "$config" -o json | jq -er .data.SERVED_MODEL_NAME)" || ws_die 'cannot read served model identity'
@@ -143,6 +143,38 @@ ws_session_deployment() {
   ws_session_kubectl -n "$SESSION_NAMESPACE" get deployment "$1" -o json
 }
 
+# The Deployment a switch will run: from the render being applied (--apply) when it
+# carries one, otherwise the live object. Checks made before anything stops therefore
+# judge the templates that will actually start.
+ws_session_candidate() {
+  local document=''
+  if [[ -n ${WS_SESSION_APPLY:-} ]]; then
+    # No match prints nothing (the live object is used); two matches are refused.
+    document="$(jq -c --arg name "$1" '[.items[] | select(.kind == "Deployment" and .metadata.name == $name)] |
+      if length <= 1 then .[0] // empty else error("duplicate Deployment") end' "$WS_SESSION_APPLY")" ||
+      ws_die "the render holds more than one Deployment/$1"
+  fi
+  if [[ -n "$document" ]]; then printf '%s\n' "$document"; else ws_session_deployment "$1"; fi
+}
+
+# A render to apply between stopping and starting the GPU workloads: a JSON List,
+# namespaced objects in the session namespace only, the only cluster-scoped kinds
+# the service render emits, and every session-managed Deployment at zero replicas
+# (the session starts them in order).
+ws_session_apply_check() {
+  local file="$1" managed="$2"
+  [[ -f "$file" && ! -L "$file" ]] || ws_die 'the render to apply must be a regular file'
+  jq -e --arg ns "$SESSION_NAMESPACE" --argjson managed "$managed" '
+    .kind == "List" and (.items | type == "array" and length > 0) and
+    all(.items[];
+      if .kind == "Namespace" then .metadata.name == $ns
+      elif (.kind == "StorageClass" or .kind == "PriorityClass") then true
+      else .metadata.namespace == $ns end) and
+    all(.items[] | select(.kind == "Deployment" and (.metadata.name as $n | $managed | index($n)));
+      .spec.replicas == 0)' "$file" >/dev/null ||
+    ws_die 'the render to apply is not a List for the session namespace with managed GPU Deployments at zero replicas'
+}
+
 # A Bridge lock owner can bind the exact root-qualified desired Pod template.
 # Check it again on every candidate read; the final scale also uses that read's
 # resourceVersion. Empty expectations retain the standalone CLI contract.
@@ -160,7 +192,7 @@ ws_session_template_check() {
 
 ws_session_qualify() {
   local deployment="$1" node="$2" mode="$3" document namespace
-  document="$(ws_session_deployment "$deployment")" || ws_die "cannot inspect Deployment/$deployment"
+  document="$(ws_session_candidate "$deployment")" || ws_die "cannot inspect Deployment/$deployment"
   ws_session_template_check "$deployment" "$document"
   # A digest alone is not qualification. Require a deliberate reviewed marker;
   # existing pending images fail here BEFORE stopping any running workload.
@@ -374,13 +406,21 @@ ws_session_state_write() {
 }
 
 ws_session_switch() (
-  local mode="$1" hardware="$2" dir="$3" execute="$4" node state ai game desired previous_phase image=0 image2=0 want_image=false want_image2=false service_model=none
+  local mode="$1" hardware="$2" dir="$3" execute="$4" apply="${5:-}" node state ai game desired previous_phase image=0 image2=0 want_image=false want_image2=false service_model=none managed
   ws_require_arch
   ws_require_root
   ws_session_config_validate
   ws_build_config_validate
   [[ "$execute" == --execute ]] || ws_die 'session changes require the explicit --execute argument'
   case "$mode" in ai | split | shared | gaming | maintenance | restore) ;; *) ws_die 'invalid session mode' ;; esac
+  managed="$(jq -cn --arg ai "$SESSION_AI_DEPLOYMENT" --arg game "$SESSION_GAME_DEPLOYMENT" --arg image "${SESSION_IMAGE_DEPLOYMENT:-}" \
+    --arg image2 "${SESSION_IMAGE2_DEPLOYMENT:-}" '[$ai, $game, $image, $image2] | map(select(. != ""))')"
+  WS_SESSION_APPLY=''
+  if [[ -n "$apply" ]]; then
+    case "$mode" in ai | split | shared) ;; *) ws_die 'a render can be applied only when switching to ai, split or shared' ;; esac
+    ws_session_apply_check "$apply" "$managed"
+    WS_SESSION_APPLY="$apply"
+  fi
   [[ "$mode" != split || ${SESSION_SERVICE_ENABLED:-false} == true ]] || ws_die 'split requires the explicit shared service configuration'
   [[ "$mode" != shared || -n ${SESSION_IMAGE2_DEPLOYMENT:-} ]] || ws_die 'shared requires the second image Deployment (SESSION_IMAGE2_DEPLOYMENT)'
   ws_session_installed_policy
@@ -494,8 +534,8 @@ ws_session_switch() (
     ws_session_qualify "$SESSION_IMAGE_DEPLOYMENT" "$node" ai
     ws_session_qualify "$SESSION_IMAGE2_DEPLOYMENT" "$node" ai
     local combined
-    combined="$(jq -n --argjson ai "$(ws_session_deployment "$SESSION_AI_DEPLOYMENT")" --argjson image "$(ws_session_deployment "$SESSION_IMAGE_DEPLOYMENT")" \
-      --argjson image2 "$(ws_session_deployment "$SESSION_IMAGE2_DEPLOYMENT")" "$WS_SESSION_GPU_JQ"'
+    combined="$(jq -n --argjson ai "$(ws_session_candidate "$SESSION_AI_DEPLOYMENT")" --argjson image "$(ws_session_candidate "$SESSION_IMAGE_DEPLOYMENT")" \
+      --argjson image2 "$(ws_session_candidate "$SESSION_IMAGE2_DEPLOYMENT")" "$WS_SESSION_GPU_JQ"'
       ($ai.spec.template.spec|gpu_claims) as $model | ($image.spec.template.spec|gpu_claims) as $first |
       ($image2.spec.template.spec|gpu_claims) as $second |
       if ($model|length)==2 and ($first|length)==1 and ($second|length)==1 and (($first+$second)|sort)==$model then
@@ -510,7 +550,7 @@ ws_session_switch() (
     [[ "$service_model" == Qwen3.5-9B ]] || ws_die 'split requires the separately qualified one-GPU Qwen3.5-9B overlay'
     ws_session_qualify "$SESSION_IMAGE_DEPLOYMENT" "$node" ai
     local combined
-    combined="$(jq -n --argjson ai "$(ws_session_deployment "$SESSION_AI_DEPLOYMENT")" --argjson image "$(ws_session_deployment "$SESSION_IMAGE_DEPLOYMENT")" "$WS_SESSION_GPU_JQ"'
+    combined="$(jq -n --argjson ai "$(ws_session_candidate "$SESSION_AI_DEPLOYMENT")" --argjson image "$(ws_session_candidate "$SESSION_IMAGE_DEPLOYMENT")" "$WS_SESSION_GPU_JQ"'
       [$ai,$image] | if all(.[]; (.spec.template.spec|gpu_claims|length)==1) and
           ($ai.spec.template.spec|gpu_claims) != ($image.spec.template.spec|gpu_claims) then
         $ai | .spec.template.spec.containers += $image.spec.template.spec.containers |
@@ -519,8 +559,12 @@ ws_session_switch() (
       else error("split requires one device each") end')" || ws_die 'invalid split device allocation'
     ws_session_capacity_check "$combined" "$node"
   fi
+  if [[ -n "$apply" ]]; then
+    ws_session_kubectl apply --dry-run=server -f "$apply" >/dev/null ||
+      ws_die 'the render failed a server-side dry run; nothing was stopped'
+  fi
   previous_phase="$(jq -r .phase <<<"$state")"
-  if [[ "$previous_phase" == ready && "$(jq -r .mode <<<"$state")" == "$mode" && ${SESSION_SERVICE_ENABLED:-false} == false ]]; then
+  if [[ -z "$apply" && "$previous_phase" == ready && "$(jq -r .mode <<<"$state")" == "$mode" && ${SESSION_SERVICE_ENABLED:-false} == false ]]; then
     local actual_ai actual_game
     actual_ai="$(ws_session_deployment "$SESSION_AI_DEPLOYMENT" | jq -r .spec.replicas)"
     actual_game="$(ws_session_deployment "$SESSION_GAME_DEPLOYMENT" | jq -r .spec.replicas)"
@@ -549,6 +593,18 @@ ws_session_switch() (
   [[ ${SESSION_SERVICE_ENABLED:-false} != true ]] || ws_session_stop "$SESSION_IMAGE_DEPLOYMENT"
   [[ -z ${SESSION_IMAGE2_DEPLOYMENT:-} ]] || ws_session_stop "$SESSION_IMAGE2_DEPLOYMENT"
   ws_session_gpu_free "$hardware"
+  if [[ -n "$apply" ]]; then
+    # The new arm and its consumers change while no GPU workload runs. Other
+    # Deployments in the render (gateway, Open WebUI, tools) roll out first, so the
+    # gateway that receives the admission calls below is the new one.
+    ws_session_kubectl apply -f "$apply" >/dev/null || ws_die 'applying the render failed; the GPU workloads stay stopped'
+    local rolled
+    while IFS= read -r rolled; do
+      ws_session_kubectl -n "$SESSION_NAMESPACE" rollout status "deployment/$rolled" --timeout="${SESSION_TIMEOUT_SECONDS}s" >/dev/null ||
+        ws_die "Deployment/$rolled did not roll out after the apply"
+    done < <(jq -r --argjson managed "$managed" '.items[] | select(.kind == "Deployment" and (.spec.replicas // 1) > 0) |
+      .metadata.name | select(. as $n | $managed | index($n) | not)' "$apply")
+  fi
   if [[ -n "$desired" ]]; then
     [[ "$service_model" == none ]] || ws_session_service starting "$service_model"
     ws_session_qualify "$desired" "$node" "$qualification_mode"

@@ -58,7 +58,8 @@ Commands:
   telemetry status                      (read-only local monitoring readiness)
   secure-boot check                     (read-only: firmware trusts this install's sbctl keys; run as root)
   session plan <ai|split|shared|gaming|maintenance>
-  session switch <ai|split|shared|gaming|maintenance> <hardware.json> <state-directory> --execute
+  session switch <ai|split|shared|gaming|maintenance> <hardware.json> <state-directory> --execute [--apply <render.json>]
+  mode <family|coder|gaming|maintenance> [--execute]  # render, checks and session switch in one step
   session restore <hardware.json> <state-directory> --execute
   session status <state-directory>
   sunshine profile <new-output-directory>
@@ -257,14 +258,23 @@ main() {
       ws_session_plan "$3"
       ;;
     session:switch)
-      (($# == 6)) || return 2
+      (($# == 6)) || [[ $# == 8 && $7 == --apply ]] || return 2
       shift 2
-      ws_session_switch "$@"
+      if (($# == 6)); then ws_session_switch "$1" "$2" "$3" "$4" "$6"; else ws_session_switch "$@"; fi
       ;;
     session:restore)
       (($# == 5)) || return 2
       shift 2
       ws_session_switch restore "$@"
+      ;;
+    mode:family | mode:coder | mode:gaming | mode:maintenance)
+      (($# == 2)) || [[ $# == 3 && $3 == --execute ]] || return 2
+      # The everyday form is `sudo workstationctl mode NAME`: use the host config.
+      if [[ -z $config_file ]]; then
+        [[ -f /etc/workstation/workstation.conf ]] || ws_die 'pass --config FILE (no /etc/workstation/workstation.conf)'
+        ws_load_config /etc/workstation/workstation.conf
+      fi
+      ws_mode "$2" "${3:-}"
       ;;
     session:status)
       (($# == 3)) || return 2

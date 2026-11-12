@@ -228,14 +228,18 @@ In shared mode every one of these should be `Running` and ready: `sglang`, `lite
 gateway), `gateway-postgres`, `open-webui`, `service-tools`, `swarmui`, `comfyui-gpu0`,
 and for memory `graphiti-memory`, `memory-embedding` and `neo4j`. The Grafana Workloads
 dashboard shows serving speed, GPU memory and power ([monitoring](TELEMETRY.md)). The
-gateway's own state (`phase`, `model`, `images`, `active` requests) is at `/_service/status`;
-the command is in [service modes](MODES.md#switch-between-shared-and-large), step 5.
+gateway's own state (`phase`, `model`, `images`, `active` requests):
+
+```sh
+kubectl -n ai-home-lab exec deploy/litellm -c gateway -- python -c \
+  "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:4000/_service/status').read().decode())"
+```
 
 ### Common situations
 
 | Situation | What to do |
 | --- | --- |
-| Switch between shared and large mode | Re-render and apply, then switch the session: [service modes](MODES.md) |
+| Switch between family (shared), coder (large), gaming and maintenance | `sudo workstationctl mode family` (or `coder`, `gaming`, `maintenance`); add `--execute` after checking the plan. See [service modes](MODES.md#switch-modes) |
 | After a reboot, a GPU pod fails with `unresolvable CDI devices` | The DRA driver lost its per-claim device files. Scale the GPU consumers to zero and back: [post-reboot CDI fix](HOME-LAB.md#4-gpu-operator-and-allocation) |
 | Pictures refused with `image_backend_needs_operator_check` | A cancelled or failed picture left a marker. Check both generators are idle, then remove it: [picture recovery](ASSISTANT.md#pinned-inputs-and-gates) |
 | A video never arrives or chat says `video_busy` | Check `comfyui-gpu0`'s queue: [short videos](ASSISTANT.md#short-videos-shared-mode) |
