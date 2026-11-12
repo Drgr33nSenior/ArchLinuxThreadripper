@@ -33,7 +33,8 @@ else
 fi
 
 if command -v kubectl >/dev/null && command -v ruby >/dev/null; then
-  for overlay in default single-gpu dual-gpu rdna4-compat parent kids family; do
+  for overlay in default single-gpu dual-gpu rdna4-compat parent kids family \
+    assistant assistant-shared assistant-split assistant-memory assistant-memory-shared assistant-memory-split; do
     kubectl kustomize "$root/apps/overlays/$overlay" >"$work/$overlay.yaml"
   done
   kubectl kustomize "$root/apps/overlays/default" >"$work/default-repeated.yaml"
