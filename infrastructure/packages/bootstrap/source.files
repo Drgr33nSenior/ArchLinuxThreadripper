@@ -563,6 +563,10 @@ tests/rag/wait-ready.sh
 tests/test_rag.sh
 tests/fixtures/rag/questions.json
 tests/home-lab/check-rag.rb
+infrastructure/ai-stack/k8s/models.yaml
+infrastructure/ai-stack/models/cache.py
+infrastructure/ai-stack/models/fetch.py
+infrastructure/ai-stack/models/qwen3.8-27b-mxfp4.json
 infrastructure/ai-stack/serving/RESEARCH-20261108.md
 infrastructure/ai-stack/serving/RESULTS.md
 infrastructure/ai-stack/serving/bench.py
@@ -572,3 +576,4 @@ infrastructure/ai-stack/serving/kernel_check.py
 infrastructure/ai-stack/serving/qualify.py
 infrastructure/ai-stack/serving/qwen3.8-27b-mxfp4-tp2.json
 infrastructure/ai-stack/serving/render.py
+infrastructure/ai-stack/stack.lock
