@@ -1094,7 +1094,8 @@ def site_values(path):
     site = json.loads(Path(path).read_text())
     # "environment" is no longer used; older private site files may still carry it.
     # "webui_default_group" is optional: the Open WebUI group new accounts join.
-    require(set(site) - {"environment", "webui_default_group"} == {"context", "node", "node_address", "management_cidr",
+    # "streaming_client_cidrs" is optional: Moonlight client networks; none admits no stream.
+    require(set(site) - {"environment", "webui_default_group", "streaming_client_cidrs"} == {"context", "node", "node_address", "management_cidr",
                                                                    "client_cidrs", "webui_host", "api_host", "tls_secret"},
             "unexpected/missing site keys")
     group = site.setdefault("webui_default_group", "")
@@ -1108,7 +1109,9 @@ def site_values(path):
             "use actual private IPv4 node/management network")
     require(isinstance(site["client_cidrs"], list) and 1 <= len(site["client_cidrs"]) <= 8,
             "supply approved client CIDRs")
-    for cidr in site["client_cidrs"]:
+    streaming = site.setdefault("streaming_client_cidrs", [])
+    require(isinstance(streaming, list) and len(streaming) <= 8, "streaming_client_cidrs must be a list of at most 8")
+    for cidr in site["client_cidrs"] + streaming:
         network = ipaddress.ip_network(cidr)
         require(network.version == 4 and any(network.subnet_of(n) for n in private), "client CIDR must be private")
     for key in ("webui_host", "api_host"):
@@ -1140,6 +1143,38 @@ def traefik_config(site):
 
     # KubeDumper keeps the embedded chart values reviewable as a block, as in the source.
     return kube_yaml(config)
+
+
+# Moonlight/Sunshine streaming ports. The Sunshine web UI (47990) is deliberately absent:
+# pairing uses a loopback kubectl port-forward, never the LAN.
+STREAMING_PORTS = [(47984, "TCP"), (47989, "TCP"), (48010, "TCP"), (47998, "UDP"), (47999, "UDP"), (48000, "UDP")]
+
+
+def gaming_objects(site):
+    """The shared game-streaming Deployment, its home claim, Service and flows, at zero replicas.
+
+    `workstationctl mode gaming` scales it once it is qualified. The Service is reachable only
+    through the site node address with source preservation, like Traefik; the policy admits the
+    streaming ports only from streaming_client_cidrs (none when the site lists none)."""
+    objects = kustomize(ROOT / "apps/base/steam-headless")
+    for obj in objects:
+        obj["metadata"]["namespace"] = "ai-home-lab"
+        if obj["kind"] == "Deployment":
+            require(obj["spec"]["replicas"] == 0, "the gaming Deployment must render at zero replicas")
+        if obj["kind"] == "Service":
+            spec = obj["spec"]
+            require(spec.get("type") == "ClusterIP" and "externalIPs" not in spec and
+                    sorted((p["port"], p["protocol"]) for p in spec["ports"]) == sorted(STREAMING_PORTS),
+                    "gaming Service source must expose only the Moonlight ports")
+            spec["externalIPs"] = [site["node_address"]]
+            spec["externalTrafficPolicy"] = "Local"
+        if obj["kind"] == "NetworkPolicy":
+            require("ingress" not in obj["spec"], "gaming ingress comes only from the site render")
+            if site["streaming_client_cidrs"]:
+                obj["spec"]["ingress"] = [{"from": [{"ipBlock": {"cidr": cidr}} for cidr in site["streaming_client_cidrs"]],
+                                           "ports": [{"port": port, "protocol": protocol}
+                                                     for port, protocol in STREAMING_PORTS]}]
+    return objects
 
 
 def certificates(site):
@@ -1183,7 +1218,8 @@ def render(args):
                     "claim metadata has wrong kind or namespace")
             existing[claim["metadata"]["name"]] = {"uid": claim["metadata"]["uid"],
                 "storage_class": claim["spec"].get("storageClassName", "")}
-    for obj in objects:
+    gaming = gaming_objects(site)
+    for obj in objects + gaming:
         name, kind = obj["metadata"]["name"], obj["kind"]
         if kind == "Deployment" and name == "service-tools":
             obj["spec"]["template"]["spec"]["containers"][0].setdefault("env", []).append(
@@ -1214,6 +1250,7 @@ def render(args):
                     "spec": {"ipAllowList": {"sourceRange": site["client_cidrs"]}}})
     output = new_directory(args.output)
     (output / "workloads.yaml").write_text(kube_yaml_all(objects))
+    (output / "gaming.yaml").write_text(kube_yaml_all(gaming))
     (output / "traefik.yaml").write_text(traefik_config(site))
     for name, certificate in certificates(site).items():
         (output / name).write_text(kube_yaml(certificate))
@@ -1243,7 +1280,7 @@ def render(args):
             client.write(f'AGENT_MEMORY_ENABLED={"true" if experience == "assistant-memory" else "false"}\n')
             # Handoff tools follow the rendered service: offered only when it serves them.
             client.write(f'AGENT_HANDOFF_ENABLED={"true" if tools_env.get("HANDOFF_ENABLED") == "true" else "false"}\n')
-    files = ["workloads.yaml", "traefik.yaml", "certificate-staging.yaml", "certificate.yaml", "migration.yaml",
+    files = ["workloads.yaml", "gaming.yaml", "traefik.yaml", "certificate-staging.yaml", "certificate.yaml", "migration.yaml",
              "site.json", "client.conf"]
     if contract:
         (output / "serving-contract.json").write_text(json.dumps(public_contract(contract), indent=2) + "\n")
@@ -1260,7 +1297,8 @@ def render(args):
                              if contract else {"contract": None, "note": "legacy source composition; no serving contract"}),
         "files": {n: sha(output / n) for n in files},
         "required": ["TLS certificate issued", "private DNS", "host firewall 443/6443 review", "retained-PV migration",
-                     "backup restore acceptance", "database migration", "workload qualification"]
+                     "backup restore acceptance", "database migration", "workload qualification",
+                     "gaming: Secret gaming-credentials, host streaming guard, on-GPU qualification"]
                     + (["serving contract: " + item for item in contract["missing_inputs"]] if contract else [])},
         indent=2) + "\n")
     print("Rendered service source; replicas remain zero:", output)

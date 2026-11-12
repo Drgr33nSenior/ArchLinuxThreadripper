@@ -279,6 +279,13 @@
       - lab_https_client_cidrs | select('match', '^[0-9]{1,3}([.][0-9]{1,3}){3}/[0-9]{1,2}$') | list | length == lab_https_client_cidrs | length
     fail_msg: lab_https_client_cidrs must list the site's private client_cidrs (IPv4 CIDRs); empty admits no HTTPS client.
 
+- name: Require IPv4 CIDRs for the game-streaming host-guard allowlist
+  ansible.builtin.assert:
+    that:
+      - lab_streaming_client_cidrs | length <= 8
+      - lab_streaming_client_cidrs | select('match', '^[0-9]{1,3}([.][0-9]{1,3}){3}/[0-9]{1,2}$') | list | length == lab_streaming_client_cidrs | length
+    fail_msg: lab_streaming_client_cidrs must list the site's streaming_client_cidrs (IPv4 CIDRs); empty admits no Moonlight client.
+
 - name: Create the owned nftables include directory
   ansible.builtin.file:
     path: /etc/nftables.d

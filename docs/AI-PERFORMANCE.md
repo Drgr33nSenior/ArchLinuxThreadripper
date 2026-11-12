@@ -191,14 +191,14 @@ SESSION_CONTEXT=reviewed-kube-context
 SESSION_NODE=actual-node-name
 SESSION_NAMESPACE=ai-home-lab
 SESSION_AI_DEPLOYMENT=sglang
-SESSION_GAME_DEPLOYMENT=parent-steam-headless
+SESSION_GAME_DEPLOYMENT=steam-headless
 SESSION_TIMEOUT_SECONDS=300
 SESSION_AI_STARTUP_TIMEOUT_SECONDS=2100
 SESSION_STREAMING_PATH=sunshine
 ```
 
-Use `steam-headless` instead of the parent-prefixed deployment for the base
-overlay, or the exact kids deployment when selected. These commands manage only
+`steam-headless` is the shared gaming Deployment from the service render's
+`gaming.yaml` (everyone uses their own Steam account). These commands manage only
 the named AI/game Deployments. AI rollout now has a separate 2100-second allowance for the
 1800-second startup probe window; termination/release waits remain 300 seconds.
 An unrelated SwarmUI or pending GPU Pod blocks

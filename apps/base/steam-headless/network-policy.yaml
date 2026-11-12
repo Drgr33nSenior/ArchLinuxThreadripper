@@ -1,0 +1,17 @@
+# Game streaming flows; supplements the base default-deny and DNS policies.
+# Ingress is added by the service render from the site's streaming_client_cidrs
+# (Moonlight ports only, through the node address); without them nothing is admitted.
+# Egress is the public internet only (Steam, game downloads), never private ranges.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: steam-headless-flows}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: steam-headless}
+  # No ingress rule here: policyTypes Ingress with no rules admits nothing.
+  policyTypes: [Ingress, Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16]

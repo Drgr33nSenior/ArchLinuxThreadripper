@@ -15,6 +15,9 @@ lab_tls_sans: []
 lab_api_client_cidrs: ['{{ lab_management_cidr }}']
 lab_api_interfaces: ['{{ lab_network_interface }}']
 lab_https_client_cidrs: []
+# Moonlight clients admitted to the gaming Service on lab_node_ip (the service site file's
+# streaming_client_cidrs). Empty admits none.
+lab_streaming_client_cidrs: []
 lab_hardware_report: ''
 lab_manage_service: false
 lab_network_reviewed: false
