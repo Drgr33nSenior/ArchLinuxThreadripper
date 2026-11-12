@@ -26,6 +26,24 @@ end
 
 directory = ARGV.fetch(0)
 
+# Liveness probes may only test that the process answers: dependency-free paths, and a
+# restart only after at least two minutes without an answer (no restart loops under load).
+LIVENESS = { 'open-webui' => '/health', 'litellm' => '/_service/status' }.freeze
+Dir.glob(File.join(directory, '*.yaml')).sort.each do |file|
+  YAML.load_stream(File.read(file)).compact.each do |doc|
+    next unless doc['kind'] == 'Deployment' && LIVENESS.key?(doc.dig('metadata', 'name'))
+    doc.dig('spec', 'template', 'spec', 'containers').each do |c|
+      probe = c['livenessProbe']
+      next unless probe
+      name = doc.dig('metadata', 'name')
+      require_check(probe.dig('httpGet', 'path') == LIVENESS[name],
+                    "#{File.basename(file)}: #{name} liveness must use the dependency-free #{LIVENESS[name]}")
+      window = probe.fetch('periodSeconds', 10) * probe.fetch('failureThreshold', 3)
+      require_check(window >= 120, "#{File.basename(file)}: #{name} liveness restarts after #{window} s; keep it >= 120 s")
+    end
+  end
+end
+
 # Static CPU Manager with full-pcpus-only gives Guaranteed containers whole cores (both
 # SMT threads) and refuses one that asks for an odd number of whole CPUs. Check every
 # rendered overlay, init containers included.
