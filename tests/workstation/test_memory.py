@@ -353,6 +353,13 @@ class DeploymentTests(unittest.TestCase):
                 self.assertNotIn(obj["spec"].get("type"), ("NodePort", "LoadBalancer"))
         embedding = self.find(self.memory, "Deployment", "memory-embedding")["spec"]["template"]["spec"]
         self.assertTrue(embedding["volumes"][0]["persistentVolumeClaim"]["readOnly"])
+        # OpenMP is TEI's compute pool on CPU: one thread per CPU of quota, never per visible CPU.
+        tei = embedding["containers"][0]
+        tei_env = {e["name"]: e["value"] for e in tei["env"]}
+        self.assertEqual(tei["resources"]["limits"]["cpu"], tei_env["OMP_NUM_THREADS"])
+        args = tei["args"]
+        self.assertEqual("32", args[args.index("--max-concurrent-requests") + 1])
+        self.assertEqual("2048", args[args.index("--max-batch-tokens") + 1])
         neo4j = self.find(self.memory, "Deployment", "neo4j")["spec"]["template"]["spec"]
         environment = {e["name"]: e["value"] for e in neo4j["containers"][0]["env"]}
         self.assertEqual("false", environment["NEO4J_server_http_enabled"])
