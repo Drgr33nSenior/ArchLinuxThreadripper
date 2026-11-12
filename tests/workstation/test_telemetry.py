@@ -268,8 +268,8 @@ class TelemetryTests(unittest.TestCase):
         self.assertEqual(quota["spec"]["hard"]["pods"], "3")
         # The collector's measured footprint (OOMKilled at 1Gi) fits its own limit and the quota.
         limits = pod["containers"][0]["resources"]["limits"]
-        self.assertEqual("2Gi", limits["memory"])
-        self.assertEqual("2560Mi", quota["spec"]["hard"]["limits.memory"])
+        self.assertEqual("3Gi", limits["memory"])
+        self.assertEqual("3584Mi", quota["spec"]["hard"]["limits.memory"])
         self.assertGreaterEqual(evidence["component_limits_mib"]["cluster_stack_mib"], 896 + 1024)
         # The default render has no eBPF collector.
         with self.resolving("192.168.30.10"):

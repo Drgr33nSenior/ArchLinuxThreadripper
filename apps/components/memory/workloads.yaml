@@ -107,9 +107,11 @@ spec:
             - {name: HOME, value: /tmp}
             - {name: HUGGINGFACE_HUB_CACHE, value: /tmp/hf}
           ports: [{name: http, containerPort: 8080}]
+          # Measured 2026-11-12: 2.4 GiB unreclaimable, memory.peak 3.4 GiB (84% of the old
+          # 4Gi limit). Request the steady state; leave about 2x for bursts.
           resources:
             requests: {cpu: '1', memory: 3Gi}
-            limits: {cpu: '4', memory: 4Gi}
+            limits: {cpu: '4', memory: 6Gi}
           securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
           startupProbe:
             httpGet: {path: /health, port: http}

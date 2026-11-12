@@ -48,9 +48,11 @@ spec:
           args: ['run', '--server.http.listen-addr=127.0.0.1:12346', '--storage.path=/var/lib/alloy', '/etc/alloy/config.alloy']
           resources:
             # Measured 2026-11-11 under Alloy 1.19.2: steady 948 MiB, memory.peak at the old 1Gi
-            # limit and OOMKilled (exit 137). Request the steady state; leave 2x for bursts.
+            # limit and OOMKilled (exit 137). At 2Gi (2026-11-12): 904 MiB unreclaimable
+            # (anon, kernel/eBPF maps, shmem), memory.peak at the limit and 1808 reclaim events.
+            # Request the steady state; leave over 3x for kernel-side bursts.
             requests: {cpu: 200m, memory: 1Gi}
-            limits: {cpu: '2', memory: 2Gi}
+            limits: {cpu: '2', memory: 3Gi}
           securityContext:
             privileged: true
           volumeMounts:

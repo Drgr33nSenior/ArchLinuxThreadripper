@@ -209,7 +209,7 @@ To enable it on the installed workstation:
    podman save --format docker-archive "$T" | sudo k3s ctr -n k8s.io images import -
    ```
 2. Render with `service render <site.json> <new-dir> --experience assistant-memory`.
-   Run `service plan` with fresh resources. Memory adds about 7 GiB of declared
+   Run `service plan` with fresh resources. Memory adds about 9 GiB of declared
    limits. These are estimates, not measurements, and `service plan` counts
    limits, so measure real use on the running host before adjusting them.
 3. Create the `memory-service` Secret from the files `service credentials`
