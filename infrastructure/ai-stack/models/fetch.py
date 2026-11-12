@@ -24,14 +24,16 @@ CHUNK = 8 << 20
 SYNC_EVERY = 256 << 20
 
 
-def digest(path: pathlib.Path, record: dict) -> bool:
+def hasher(record: dict):
+    """The catalogue's hash for a file and its expected value (cache.py shares this)."""
     if "sha256" in record:
-        h = hashlib.sha256()
-        expected = record["sha256"]
-    else:
-        # Git blob identity: sha1("blob <size>\0" + content).
-        h = hashlib.sha1(f"blob {record['size']}\0".encode())
-        expected = record["git_sha1"]
+        return hashlib.sha256(), record["sha256"]
+    # Git blob identity: sha1("blob <size>\0" + content).
+    return hashlib.sha1(f"blob {record['size']}\0".encode()), record["git_sha1"]
+
+
+def digest(path: pathlib.Path, record: dict) -> bool:
+    h, expected = hasher(record)
     with path.open("rb") as f:
         for chunk in iter(lambda: f.read(CHUNK), b""):
             h.update(chunk)

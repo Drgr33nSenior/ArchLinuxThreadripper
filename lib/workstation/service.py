@@ -854,8 +854,10 @@ def serving_contract(profile_path=SERVING_PROFILE, arm=None, runtime_image=None,
                    "access_modes": claim["spec"]["accessModes"],
                    "model_path": single("--model-path"), "draft_path": single("--speculative-draft-model-path"),
                    "verified_marker": "VERIFIED.json",
-                   "storage_note": "NAS-backed nas-nfs claim; the NAS storage guide recommends workstation-local "
-                                   "caching for active models. Recorded for the serving owner, not changed here."},
+                   "storage_note": "NAS-backed nas-nfs claim; the SGLang pod serves a verified workstation-local "
+                                   "copy of exactly these revisions (MODEL_CACHE_CLAIM, staged by cache.py).",
+                   # The revisions (with every file's size and hash) the local cache must hold.
+                   "cache_entry": {"model": catalog["model"], "draft": catalog["draft"]}},
         "requirements": {"gpus": numbers["tp_size"], "gpu_groups": list(render_module.GPU_GROUPS),
                          "node_selector": {"ai-home-lab.local/gfx": lock.get("GPU_TARGET")},
                          "pod_security": "restricted",
@@ -872,6 +874,61 @@ def contract_view(contract):
             "context_length": budgets["context_length"], "max_total_tokens": budgets["max_total_tokens"],
             "max_running_requests": budgets["max_running_requests"],
             "request_defaults": contract["reasoning"]["request_defaults"]}
+
+
+# Local NVMe copy of the served model and draft. The NAS (ai-models) stays the archive of
+# every revision; this Delete-reclaim claim holds only the revisions the contract names,
+# at the same <owner>/<name>/<revision> paths, so the launch arguments do not change.
+# Measured 2026-11-12: NFS direct reads 150-170 MB/s (the 19.8 GB model took 107 s to
+# load, about all of it reading) against about 20 GB/s from the local array.
+MODEL_CACHE_CLAIM = "sglang-model-cache"
+MODEL_CACHE_SIZE = "64Gi"
+MODEL_CACHE_LIMIT_GIB = 60
+
+
+def model_cache_objects(contract):
+    """The cache claim and the stager ConfigMap (name hashed from its contents)."""
+    models = ROOT / "infrastructure/ai-stack/models"
+    data = {"cache.py": (models / "cache.py").read_text(), "fetch.py": (models / "fetch.py").read_text(),
+            "entry.json": json.dumps(contract["assets"]["cache_entry"], indent=2, sort_keys=True) + "\n"}
+    digest = hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()[:10]
+    labels = {"app.kubernetes.io/name": "sglang", "app.kubernetes.io/component": "model-cache"}
+    claim = {"apiVersion": "v1", "kind": "PersistentVolumeClaim",
+             "metadata": {"name": MODEL_CACHE_CLAIM, "namespace": "ai-home-lab", "labels": labels},
+             "spec": {"accessModes": ["ReadWriteOnce"], "storageClassName": "local-path",
+                      "resources": {"requests": {"storage": MODEL_CACHE_SIZE}}}}
+    config = {"apiVersion": "v1", "kind": "ConfigMap",
+              "metadata": {"name": f"{MODEL_CACHE_CLAIM}-{digest}", "namespace": "ai-home-lab", "labels": labels},
+              "data": data}
+    return claim, config
+
+
+def add_model_cache(spec, container, contract, config_name):
+    """Serve /models from the local cache, staged and verified by an init container."""
+    for volume in spec["volumes"]:
+        if volume["name"] == "models":
+            volume["persistentVolumeClaim"] = {"claimName": MODEL_CACHE_CLAIM}
+    for mount in container["volumeMounts"]:
+        if mount["name"] == "models":
+            mount["readOnly"] = True
+    spec["volumes"] += [
+        {"name": "model-source", "persistentVolumeClaim": {"claimName": contract["assets"]["claim"], "readOnly": True}},
+        {"name": "model-cache-stage", "configMap": {"name": config_name}}]
+    spec["initContainers"] = [{
+        "name": "model-cache",
+        # The serving image already carries Python; cache.py needs only the standard library.
+        "image": container["image"], "imagePullPolicy": container.get("imagePullPolicy", "IfNotPresent"),
+        "command": ["python3", "-I", "-u", "/stage/cache.py", "/stage/entry.json", "/source", "/models",
+                    "--limit-gib", str(MODEL_CACHE_LIMIT_GIB)],
+        # Guaranteed like the pod; whole even CPUs for the static CPU Manager (full-pcpus-only).
+        # An init container counts by maximum, so the pod's request stays SGLang's.
+        "resources": {"requests": {"cpu": "2", "memory": "2Gi"}, "limits": {"cpu": "2", "memory": "2Gi"}},
+        "securityContext": {"allowPrivilegeEscalation": False, "readOnlyRootFilesystem": True,
+                            "capabilities": {"drop": ["ALL"]}},
+        "volumeMounts": [{"name": "model-cache-stage", "mountPath": "/stage", "readOnly": True},
+                         {"name": "model-source", "mountPath": "/source", "readOnly": True},
+                         {"name": "models", "mountPath": "/models"}],
+    }] + spec.get("initContainers", [])
 
 
 def contract_deployment(contract, objects):
@@ -905,6 +962,8 @@ def contract_deployment(contract, objects):
     for volume in spec["volumes"]:
         if volume["name"] == "models":
             volume["persistentVolumeClaim"] = {"claimName": contract["assets"]["claim"], "readOnly": True}
+    if contract["assets"].get("cache_entry"):
+        add_model_cache(spec, container, contract, model_cache_objects(contract)[1]["metadata"]["name"])
     # The qualification Job's Service selects this label; carrying it keeps the
     # sglang Service and telemetry pointed at whichever server holds the GPUs.
     pod["metadata"]["labels"].update({rendered["server_label"]: "true",
@@ -962,6 +1021,8 @@ def apply_contract(objects, contract, mode, experience):
             continue  # the legacy sglang-profile; the contract Deployment does not read it
         if kind == "Deployment" and name == "sglang":
             obj = contract_deployment(contract, objects)
+            if contract["assets"].get("cache_entry"):
+                result.extend(model_cache_objects(contract))
         elif kind == "ConfigMap" and "litellm.yaml" in data:
             config = yaml.safe_load(data["litellm.yaml"])
             config["model_list"] = [rendered["route"]] + [route for route in config["model_list"]

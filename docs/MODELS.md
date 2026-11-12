@@ -31,6 +31,17 @@ LoRAs are Apache 2.0.
   Job into `/models/<owner>/<name>/<revision>/` with `VERIFIED.json` written last. Both
   ComfyUIs mount the SDXL checkpoint read-only from there. See
   [AI stack models](../infrastructure/ai-stack/README.md#models).
+  The NAS is the archive of every revision. **SGLang reads a local NVMe copy** of exactly
+  the model and draft its serving contract names, from the `sglang-model-cache` claim
+  (`local-path`, so deleting the claim deletes the copy). Before SGLang starts, the
+  `model-cache` init container runs
+  [`cache.py`](../infrastructure/ai-stack/models/cache.py). If the revision is cached and its
+  `VERIFIED.json` matches the catalogue, it does nothing. Otherwise it copies from the NAS's
+  verified copy, checking every file's size and hash in the same pass, publishes the revision
+  with one rename, and deletes every revision the contract no longer names, so old models
+  never accumulate on the NVMe. The paths are the same as on the NAS, so the launch
+  arguments do not change. The first start after a model change runs at NAS speed (about
+  150 MB/s, measured 2026-11-12); later starts read at local-array speed.
 - **Wan 2.2:** the local-NVMe `creative-models` volume (`Video/`), staged with
   `stage-video.py` (about 36.8 GB) because ComfyUI streams it from disk on every step; see
   [short videos](ASSISTANT.md#short-videos-shared-mode).
