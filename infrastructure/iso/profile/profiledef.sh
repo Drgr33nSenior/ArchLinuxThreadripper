@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Adapted from archlinux/archiso v90 configs/releng/profiledef.sh.
+# Adapted from archlinux/archiso v92 configs/releng/profiledef.sh (v92 defaults
+# buildmodes to iso; kept explicit here).
 # shellcheck disable=SC2034
 iso_name=arch-workstation
 : "${SOURCE_DATE_EPOCH:?Use infrastructure/iso/build.sh with the reviewed release lock}"

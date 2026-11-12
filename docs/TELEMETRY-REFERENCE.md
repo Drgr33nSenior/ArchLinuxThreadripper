@@ -55,27 +55,27 @@ authoritative in [versions.json](../infrastructure/observability/versions.json).
 Use its selected Tempo single-binary schema when reviewing configuration.
 
 The host uses Arch's `grafana-alloy` package, executable
-`/usr/bin/grafana-alloy`, pinned to 1.13.2-1 by the selected package sources.
-Validate its config with the matching official 1.13.2 image parser and
+`/usr/bin/grafana-alloy`, pinned to 1.21.3-1 by the selected package sources (2026/11/11 snapshot).
+Validate its config with the matching official 1.21.3 image parser and
 log-filter tests before deployment. This intentionally differs from cluster
 Alloy 1.19.2: they exchange OTLP, not shared libraries. Check package signatures
 and service behavior after each rolling update; a retained target pass applies
 only to its recorded package. See [Arch metadata](https://archlinux.org/packages/extra/x86_64/grafana-alloy/)
 and [Alloy Linux configuration](https://grafana.com/docs/alloy/latest/configure/linux/).
 
-The two pinned collector versions expose different memory-limiter metric names.
-Host Alloy 1.13.2 embeds collector 0.142 and emits the deprecated
-`otelcol_processor_refused_*_total` family. Cluster Alloy 1.19.2 embeds collector
-0.158 and emits `otelcol_processor_memory_limiter_refused_*_total`. The alert
-matches both families and includes spans, log records and metric points. The
+Host Alloy 1.21.3 embeds collector 0.162 and cluster Alloy 1.19.2 embeds
+collector 0.158; both emit `otelcol_processor_memory_limiter_refused_*_total`.
+Host Alloy 1.13.2 (collector 0.142, the earlier pin) emitted the deprecated
+`otelcol_processor_refused_*_total` family. The alert still matches both
+families and includes spans, log records and metric points. The
 rule fixture is evaluated with the pinned Prometheus image; it is not evidence
 that a live collector was placed under memory pressure.
 
-The version linkage is from [Alloy 1.13.2's module file](https://github.com/grafana/alloy/blob/v1.13.2/go.mod)
+The version linkage is from [Alloy 1.21.3's module file](https://github.com/grafana/alloy/blob/v1.21.3/go.mod)
 and [Alloy 1.19.2's module file](https://github.com/grafana/alloy/blob/v1.19.2/go.mod).
-The collector [0.142 metadata](https://github.com/open-telemetry/opentelemetry-collector/blob/v0.142.0/processor/memorylimiterprocessor/metadata.yaml)
+The collector [0.162 metadata](https://github.com/open-telemetry/opentelemetry-collector/blob/v0.162.0/processor/memorylimiterprocessor/metadata.yaml)
 and [0.158 metadata](https://github.com/open-telemetry/opentelemetry-collector/blob/v0.158.0/processor/memorylimiterprocessor/metadata.yaml)
-define the two families. The pinned transform can remove scope attributes but
+define the current family. The pinned transform can remove scope attributes but
 does not provide an individual span-link transform context. The collector
 [0.158 transform documentation](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/v0.158.0/processor/transformprocessor/README.md)
 therefore supports the fail-closed rule that drops spans with links. The local

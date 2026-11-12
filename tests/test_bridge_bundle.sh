@@ -59,9 +59,10 @@ done
 bsdtar -czf "$dir/arch-workstation.db.tar.gz" -C "$work/db" .
 printf 'SYNTHETIC SIGNATURE\n' >"$dir/arch-workstation.db.tar.gz.sig"
 jq -s . "$work"/arch-workstation-*.json "$work/spry-ai-workstation-bridge.json" >"$work/packages.json"
+snapshot=$(sed -n 's/^ARCH_SNAPSHOT=//p' "$root/infrastructure/iso/versions.lock")
 jq -n --arg hash "$source_hash" --arg db "$(common::sha256_file "$dir/arch-workstation.db.tar.gz")" \
-  --slurpfile packages "$work/packages.json" --slurpfile deps "$work/bash.json" \
-  '{schema:1,installer_source:$hash,bridge_source:$hash,snapshot:"2026/09/04",database_sha256:$db,packages:$packages[0],dependencies:$deps}' >"$dir/bridge-bundle.json"
+  --arg snapshot "$snapshot" --slurpfile packages "$work/packages.json" --slurpfile deps "$work/bash.json" \
+  '{schema:1,installer_source:$hash,bridge_source:$hash,snapshot:$snapshot,database_sha256:$db,packages:$packages[0],dependencies:$deps}' >"$dir/bridge-bundle.json"
 printf 'SYNTHETIC SIGNATURE\n' >"$dir/bridge-bundle.json.sig"
 # Failed official-keyring preparation must preserve failure and clean its own
 # scratch directory without an unbound-variable trap masking the primary error.

@@ -136,10 +136,11 @@ output package must have the selected version, x86_64 architecture, matching
 image ID, fetched repository/commit, snapshot package list, actual Go version/target/options and official
 compiler archive digest. Package tests are not service or hardware qualification.
 
-The frozen 2026/09/04 Arch snapshot provides Go 1.27.0; the reviewed Bridge source
-requires 1.27.1. Keep the snapshot intact. Its Go package satisfies makepkg's
-build dependency; the build job uses the separately pinned official Linux AMD64
-compiler archive, with `GOTOOLCHAIN=local`. Verify the version and SHA256
+The reviewed Bridge source requires exactly the Go version in its `.go-version`
+(1.27.4 since 2026-11-12), and `BRIDGE_GO_VERSION` in `versions.lock` must equal it.
+The installer's Arch snapshot need not ship that version: its Go package satisfies
+makepkg's build dependency, and the build job uses the separately pinned official
+Linux AMD64 compiler archive, with `GOTOOLCHAIN=local`. Verify the version and SHA256
 against [Go's download metadata](https://go.dev/dl/?mode=json).
 Neither compiler is included as a Bridge runtime dependency. No toolchain, recipe,
 source digest, module integrity or test check is bypassed. A changed Bridge
@@ -241,8 +242,8 @@ Never copy a private key or a complete personal GnuPG home into build artifacts.
 
 ## 2. Review signed release inputs
 
-Use the reviewed inputs in `infrastructure/iso/versions.lock`: Archiso 90-1,
-the recorded v90 source commit and the 2026/09/04 Arch repository snapshot.
+Use the reviewed inputs in `infrastructure/iso/versions.lock`: Archiso 92-1,
+the recorded v92 source commit and the 2026/11/11 Arch repository snapshot.
 The Dockerfile upgrades only its container filesystem coherently against that
 snapshot. Preparation checks the installed Archiso version and package-file
 integrity and records the builder inventory. No host packages are installed.
@@ -446,8 +447,8 @@ path implicitly.
 
 Primary references:
 
-- [Archiso v90 sources](https://github.com/archlinux/archiso/tree/v90)
-- [Archiso profiles](https://github.com/archlinux/archiso/blob/v90/docs/README.profile.rst)
+- [Archiso v92 sources](https://github.com/archlinux/archiso/tree/v92)
+- [Archiso profiles](https://github.com/archlinux/archiso/blob/v92/docs/README.profile.rst)
 - [Arch Linux Archive](https://wiki.archlinux.org/title/Arch_Linux_Archive)
 - [Arch Secure Boot installation media](https://wiki.archlinux.org/title/Secure_Boot#Booting_an_installation_medium)
 - [OVMF package files](https://archlinux.org/packages/extra/any/edk2-ovmf/files/)

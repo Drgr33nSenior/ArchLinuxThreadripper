@@ -51,8 +51,9 @@ groups:
         labels: {severity: warning}
         annotations: {summary: 'Telemetry export failures; inspect backend readiness, limits and bounded queues'}
       - alert: WorkstationTelemetryRefused
-        # Host Alloy 1.13.2 embeds collector 0.142 (old family); cluster Alloy
-        # 1.19.2 embeds 0.158 (memory_limiter family). Both report all signals.
+        # Host Alloy 1.21.3 (collector 0.162) and cluster Alloy 1.19.2 (0.158) both
+        # emit the memory_limiter family; the older processor_refused family stays
+        # matched for older collectors. All signals are covered.
         expr: 'sum(increase({__name__=~"otelcol_processor(_memory_limiter)?_refused_(spans|log_records|metric_points)_total"}[5m])) > 0'
         for: 2m
         labels: {severity: warning}
