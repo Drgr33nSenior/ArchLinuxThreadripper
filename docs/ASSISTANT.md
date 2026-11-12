@@ -123,7 +123,7 @@ Deployment starts exactly what the qualification Job starts.
 | `runtime` | `--runtime-image` (lab registry or its `ghcr.io` copy, pinned by digest); SGLang commit, patch series and GPU target from `stack.lock`; digest of the launch argv and environment |
 | `parsers` | Profile `--reasoning-parser`, `--tool-call-parser`, `--grammar-backend` |
 | `reasoning` | Profile `--default-chat-template-kwargs`; template-accepted efforts; client mapping |
-| `budgets`, `concurrency`, `deadlines` | Profile context, pool and running-request limits; `--output-tokens` (default 12,288, at most half the context, unqualified); gateway admission 4; deadline 300 s in large mode (a cold 235K-token prompt takes ~240 s to its first token), 180 s in shared mode |
+| `budgets`, `concurrency`, `deadlines` | Profile context, pool and running-request limits; `--output-tokens` (default 12,288, at most half the context, unqualified); gateway admission 4; deadline 1,200 s in large mode and 600 s in shared mode, so Think (effort `xhigh`, which runs to the context limit with no output cap) can finish; ordinary replies keep the 12,288 cap |
 | `assets`, `requirements` | Model and draft paths from the argv; `ai-models` claim from `k8s/models.yaml`; GPU count, groups and node label from the profile, `render.py` and `stack.lock` |
 
 `status` is `incomplete` while a deployment input is missing, `provisional`
@@ -157,7 +157,7 @@ keeps the contract's default (thinking at `low` effort):
 
 | Preset | Request |
 | --- | --- |
-| `<model> · Think` | thinking on, `reasoning_effort: xhigh` |
+| `<model> · Think` | thinking on, `reasoning_effort: xhigh`, no output cap: runs until done, the context is full, or the deadline (10 min shared, 20 min large) |
 | `<model> · Fast` | thinking off (`enable_thinking: false`) |
 
 Open WebUI keeps presets in its database. Apply them with the admin account's **session

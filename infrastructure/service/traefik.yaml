@@ -33,7 +33,9 @@ spec:
         transport:
           respondingTimeouts:
             readTimeout: 30s
-            writeTimeout: 240s
+            # Streamed replies are one long write: cover the longest gateway deadline
+            # (large mode 1200 s, for Think) plus margin, or Traefik cuts them first.
+            writeTimeout: 1260s
             idleTimeout: 240s
     logs:
       access:

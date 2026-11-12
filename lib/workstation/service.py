@@ -630,13 +630,17 @@ CATALOGUE_STATES = {"candidate": False, "selected": True}
 # Per-request output allowance for the gateway and coding clients. 4096 truncated
 # single-file tool writes (Qwen Code refused a cut-off write_file, 2026-11-11); thinking
 # shares the same budget. 12288 tokens decode in ~105-135 s (113-117 tok/s at 32-64K,
-# ~92 at 120K, measured), inside the route's 170 s timeout and the 180 s deadline.
+# ~92 at 120K, measured), well inside every mode's deadline. Think (effort xhigh) is not
+# capped at the gateway: it runs to the context limit (boundary.UNCAPPED_EFFORTS).
 DEFAULT_OUTPUT_TOKENS = 12288
 # Gateway deadline per mode (the route times out 10 s earlier). Large mode serves 262K
 # contexts: a cold 235K-token prompt took 238.7 s to its first token (arm UQL, 2026-11-11),
 # so 300 s leaves ~60 s of answer for it. Shared mode's 81,888-token context prefills in
 # under 30 s and keeps 180 s, so a stuck request frees its slot sooner beside the images.
-DEADLINE_SECONDS = {"large": 300, "shared": 180}
+# Raised 2026-11-12 for "Think" (effort xhigh), which runs to the context limit: about
+# 50k tokens in 10 min (shared) and 100k in 20 min (large) at ~85 tok/s. Ordinary replies
+# keep the 12,288-token cap and end long before; the deadline only bounds a stuck request.
+DEADLINE_SECONDS = {"large": 1200, "shared": 600}
 
 
 def ai_stack_render():

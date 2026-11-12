@@ -111,7 +111,7 @@ ws_agent_configure() (
   # names). Other eager-by-default built-ins (skill, agent, memory, plan mode, web) are
   # deferred: still registered, loaded on demand through the tool_search/tool_call bridge,
   # so a local model's context is not spent on tools a session may never use.
-  # Client timeouts cover the longest gateway deadline (large mode, 300 s: a cold 235K-token
+  # Client timeouts cover the longest gateway deadline (large mode, 1200 s; a cold 235K-token
   # prompt streams nothing for ~240 s), so the gateway, not the client, ends a request.
   # "$version" is Qwen Code's settings schema (SETTINGS_VERSION 4 since 0.27);
   # without it the client migrates the file on first run and the launcher's
@@ -127,7 +127,7 @@ ws_agent_configure() (
         "run_shell_command","todo_write","ask_user_question"]},permissions:{deny:["WebFetch"]},context:{fileName:["AGENTS.md","QWEN.md"]},
       model:{name:$model},modelProviders:{openai:[{id:$model,name:"Workstation local Qwen",
         baseUrl:$url,envKey:"WORKSTATION_AGENT_API_KEY",generationConfig:{contextWindowSize:$context,
-          timeout:300000,streamIdleTimeoutMs:300000,maxRetries:0,
+          timeout:1200000,streamIdleTimeoutMs:1200000,maxRetries:0,
           samplingParams:({max_tokens:$output} + $defaults)}}]} } +
       (if $retrieval=="" then {} else {mcpServers:{workstationKnowledge:{httpUrl:$retrieval,
         headers:{Authorization:"Bearer ${WORKSTATION_RETRIEVAL_API_KEY}"},trust:false,timeout:35000,

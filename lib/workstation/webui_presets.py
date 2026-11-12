@@ -38,8 +38,9 @@ def presets(contract):
     deepest = "xhigh" if "xhigh" in efforts else efforts[-1]
     stem = re.sub(r"[^a-z0-9.]+", "-", alias.lower()).strip("-")
     rows = [
-        (f"{stem}-think", "Think", f"Thinks carefully before answering (reasoning effort {deepest}). Slower; "
-         "for hard questions, planning and code.",
+        (f"{stem}-think", "Think", f"Thinks carefully before answering (reasoning effort {deepest}), with no fixed "
+         "length cap: it can think for up to about 10 minutes (20 in large mode). For hard questions, planning "
+         "and code.",
          {"reasoning_effort": deepest, "custom_params": {"chat_template_kwargs": {"enable_thinking": True}}}),
         (f"{stem}-fast", "Fast", "Answers straight away without a thinking phase. Quickest; for simple questions.",
          {"custom_params": {"chat_template_kwargs": {"enable_thinking": False}}}),
