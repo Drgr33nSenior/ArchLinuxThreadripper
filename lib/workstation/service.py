@@ -1201,7 +1201,11 @@ def render(args):
             current = annotations.get("traefik.ingress.kubernetes.io/router.middlewares", "")
             annotations["traefik.ingress.kubernetes.io/router.middlewares"] = ",".join(filter(None, [current, "ai-home-lab-private-clients@kubernetescrd"]))
         if kind == "PersistentVolumeClaim":
-            obj["spec"]["storageClassName"] = existing.get(name, {}).get("storage_class", "workstation-retain")
+            # New claims default to the Retain class so data survives a deleted claim. The model
+            # cache is the exception: a reproducible copy of NAS files that must not outlive its
+            # claim, so it keeps its own Delete-reclaim class.
+            default = obj["spec"]["storageClassName"] if name == MODEL_CACHE_CLAIM else "workstation-retain"
+            obj["spec"]["storageClassName"] = existing.get(name, {}).get("storage_class", default)
             if name in {"webui-rag-qwen3-data", "webui-data", "creative-models", "gateway-postgres", "service-tools-state",
                         "graphiti-neo4j"}:
                 obj["metadata"].setdefault("labels", {})["workstation.ai/backup"] = "irreplaceable"
