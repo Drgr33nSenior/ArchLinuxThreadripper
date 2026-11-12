@@ -35,6 +35,9 @@ CAPTURES = Path("/var/lib/workstation-service-backup")
 TELEMETRY = Path("/var/lib/workstation-telemetry")
 HOST_INCLUDE = Path("/etc/restic/workstation.include")
 HOST_EXCLUDE = Path("/etc/restic/workstation.exclude")
+# Re-stageable weights in the creative-models claim: SDXL under Models/, the pinned Wan 2.2
+# video stack (about 37 GB, infrastructure/ai-stack/models/wan2.2-t2v-a14b.json) under Video/.
+CREATIVE_WEIGHTS = ("./Models", "./Video")
 REPOSITORY_ENTRY_LIMIT = 1000000
 MODEL_LOCKS = {"Qwen3.8-27B-FP8": "SGLANG_DUAL", "Qwen3.5-9B": "SGLANG_SINGLE"}
 
@@ -716,7 +719,7 @@ class Capture:
             for name, volume in volumes.items():
                 if name != "gateway-postgres":
                     archive(Path(volume["source"]), output / (name + ".tar"),
-                            ("./Models",) if name == "creative-models" else ())
+                            CREATIVE_WEIGHTS if name == "creative-models" else ())
             # K3s stop does not stop containers. The Pod and CRI checks above
             # happen first, then the offline SQLite/server/token capture.
             run(["systemctl", "stop", "k3s.service"])
