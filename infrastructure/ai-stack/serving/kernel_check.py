@@ -9,7 +9,12 @@ own DRA claim, selected by PCI address. DRA never allocates a device to two clai
 Job stays Pending while SGLang or SwarmUI hold that card; pause them first.
 Output is a JSON List: ConfigMap, ResourceClaimTemplate and Job.
 
-Usage: kernel_check.py IMAGE_REF --serving SERVING_REPOSITORY_ROOT [--pci 0000:c3:00.0] [--quick]
+--tool int4-bench runs tools/bench_int4_kv.py instead: the UQ3 investigation's INT4 KV verify
+micro-benchmark (production bf16 and fp8 kernels against INT4 read as bf16 or through the INT8 dot
+path), in the same one-card Job.
+
+Usage: kernel_check.py IMAGE_REF --serving SERVING_REPOSITORY_ROOT [--tool fp8-check|int4-bench]
+                       [--pci 0000:c3:00.0] [--quick]
 """
 import argparse
 import hashlib
@@ -19,7 +24,9 @@ import re
 
 NAMESPACE = "ai-home-lab"
 GPU_GROUPS = [987, 983]  # render, video on gr33nstein (as the SGLang serving contract)
-TOOL = "tools/check_fp8_kv_dequant.py"
+# --tool: (serving repository path, Job name prefix)
+TOOLS = {"fp8-check": ("tools/check_fp8_kv_dequant.py", "fp8-kv-check"),
+         "int4-bench": ("tools/bench_int4_kv.py", "int4-kv-bench")}
 
 
 def main() -> None:
@@ -27,16 +34,19 @@ def main() -> None:
     parser.add_argument("image", help="SGLang image built with patches 0026/0027, pinned by digest")
     parser.add_argument("--serving", required=True, help="serving repository root (holds the check tool)")
     parser.add_argument("--pci", default="0000:c3:00.0", help="card to use (default gpu-1)")
-    parser.add_argument("--quick", action="store_true", help="1k and 8k prefixes only")
+    parser.add_argument("--tool", choices=sorted(TOOLS), default="fp8-check")
+    parser.add_argument("--quick", action="store_true", help="fewer prefixes (each tool's quick set)")
     args = parser.parse_args()
     if not re.fullmatch(r"[a-z0-9./_-]+(:[A-Za-z0-9._-]+)?@sha256:[a-f0-9]{64}", args.image):
         parser.error("the image must be pinned by digest")
     if not re.fullmatch(r"[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]", args.pci):
         parser.error("--pci must be a PCI address like 0000:c3:00.0")
-    tool = (pathlib.Path(args.serving) / TOOL).read_text()
+    path, prefix = TOOLS[args.tool]
+    filename = pathlib.Path(path).name
+    tool = (pathlib.Path(args.serving) / path).read_text()
     key = hashlib.sha256(json.dumps([args.image, args.pci, tool, args.quick]).encode()).hexdigest()[:10]
-    name = f"fp8-kv-check-{key}"
-    labels = {"app.kubernetes.io/name": "fp8-kv-check"}
+    name = f"{prefix}-{key}"
+    labels = {"app.kubernetes.io/name": prefix}
     meta = {"name": name, "namespace": NAMESPACE, "labels": labels}
     claim = {"apiVersion": "resource.k8s.io/v1", "kind": "ResourceClaimTemplate", "metadata": meta,
              "spec": {"spec": {"devices": {"requests": [{"name": "gpu", "exactly": {
@@ -53,7 +63,7 @@ def main() -> None:
         "name": "check",
         "image": args.image,
         "imagePullPolicy": "IfNotPresent",
-        "command": ["python3", "-u", "/check/check_fp8_kv_dequant.py", *(["--quick"] if args.quick else [])],
+        "command": ["python3", "-u", f"/check/{filename}", *(["--quick"] if args.quick else [])],
         "env": env,
         "resources": {"requests": {"cpu": "8", "memory": "16Gi"}, "limits": {"cpu": "8", "memory": "16Gi"},
                       "claims": [{"name": "gpu"}]},
@@ -77,7 +87,7 @@ def main() -> None:
            "spec": {"backoffLimit": 0, "activeDeadlineSeconds": 1800, "ttlSecondsAfterFinished": 604800,
                     "template": {"metadata": {"labels": labels}, "spec": pod}}}
     config = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": meta,
-              "data": {"check_fp8_kv_dequant.py": tool}}
+              "data": {filename: tool}}
     print(json.dumps({"apiVersion": "v1", "kind": "List", "items": [config, claim, job]}, indent=2))
 
 

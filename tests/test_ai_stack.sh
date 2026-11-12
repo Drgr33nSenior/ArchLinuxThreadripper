@@ -167,6 +167,7 @@ PY
 # image, the serving repository's tool in a ConfigMap, both gfx1201 switches, no model.
 serving_fake=$(mktemp -d)
 mkdir -p "$serving_fake/tools" && printf 'print("check")\n' >"$serving_fake/tools/check_fp8_kv_dequant.py"
+printf 'print("bench")\n' >"$serving_fake/tools/bench_int4_kv.py"
 python3 -I - "$root/infrastructure/ai-stack/serving/kernel_check.py" "$serving_fake" <<'PY' ||
 import json, subprocess, sys
 render = lambda *a: subprocess.run([sys.executable, "-I", sys.argv[1], *a], capture_output=True, text=True)
@@ -184,6 +185,15 @@ env = {e["name"]: e["value"] for e in c["env"]}
 assert env["SGLANG_GFX1201_VERIFY_ATTENTION"] == env["SGLANG_GFX1201_FP8_KV_DEQUANT"] == "1"
 assert pod["securityContext"]["supplementalGroups"] == [987, 983] and pod["resourceClaims"][0]["resourceClaimTemplateName"] == job["metadata"]["name"]
 assert not any("persistentVolumeClaim" in v for v in pod["volumes"])
+assert job["metadata"]["name"].startswith("fp8-kv-check-")
+# --tool int4-bench: the same one-card Job running the INT4 KV micro-benchmark
+config, claim, job = json.loads(render(image, "--serving", sys.argv[2], "--tool", "int4-bench").stdout)["items"]
+assert config["data"] == {"bench_int4_kv.py": 'print("bench")\n'}
+assert job["metadata"]["name"].startswith("int4-kv-bench-")
+c = job["spec"]["template"]["spec"]["containers"][0]
+assert c["command"] == ["python3", "-u", "/check/bench_int4_kv.py"] and c["image"] == image
+assert claim["spec"]["spec"]["devices"]["requests"][0]["exactly"]["count"] == 1
+assert render(image, "--serving", sys.argv[2], "--tool", "nonsense").returncode != 0
 PY
   fail 'kernel_check.py must render a one-card, digest-pinned UQ2 kernel check'
 rm -r "$serving_fake"
