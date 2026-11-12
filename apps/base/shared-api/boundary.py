@@ -4,6 +4,7 @@ LiteLLM still authenticates every translated virtual key and owns its database,
 allowlists, expiry, revocation and quotas. No custom authentication bypass.
 """
 import asyncio
+import base64
 import hmac
 import json
 import time
@@ -15,6 +16,11 @@ CHAT_MODELS = {"Qwen3.8-27B-FP8": (32768, 4096), "Qwen3.5-9B": (4096, 1024)}
 # profile. A rendered policy replaces it (shared mode adds the two-GPU contract model).
 IMAGE_MODELS = {"Qwen3.5-9B"}
 MAX_BODY = 1024 * 1024
+# Chat bodies may be larger: Open WebUI resends every image a tool returned earlier in the chat
+# as base64 on each later turn, and a generate_video clip is an animated WEBP of up to 4 MiB
+# (5.4 MiB as base64). 32 MiB holds a chat with a few clips; the clips are replaced below.
+MAX_CHAT_BODY = 32 * 1024 * 1024
+VIDEO_NOTE = "[A short video clip made earlier in this chat was shown to the user here.]"
 CHAT_FIELDS = {
     "model", "messages", "stream", "stream_options", "max_tokens",
     "max_completion_tokens", "temperature", "top_p", "top_k", "seed", "stop",
@@ -121,6 +127,40 @@ async def reply(send, status, value):
         headers.append((b"retry-after", b"5"))
     await send({"type": "http.response.start", "status": status, "headers": headers})
     await send({"type": "http.response.body", "body": body})
+
+
+def is_animated_webp(url):
+    """True for a data URI holding an animated WEBP: RIFF/WEBP, a VP8X chunk, animation flag set."""
+    prefix = "data:image/webp;base64,"
+    if not isinstance(url, str) or not url.startswith(prefix):
+        return False
+    try:
+        head = base64.b64decode(url[len(prefix):len(prefix) + 32], validate=True)
+    except ValueError:
+        return False
+    return len(head) > 20 and head[:4] == b"RIFF" and head[8:16] == b"WEBPVP8X" and bool(head[20] & 0x02)
+
+
+def drop_video_clips(messages):
+    """Replace animated WEBP image parts with a text note; returns how many were replaced.
+
+    They are generate_video clips coming back from the chat history. The model cannot use a
+    5-second animation as a picture, and each one would cost a vision encode on every turn.
+    Still images, such as a photo the user uploaded, pass unchanged.
+    """
+    replaced = 0
+    for message in messages if isinstance(messages, list) else ():
+        content = message.get("content") if isinstance(message, dict) else None
+        if not isinstance(content, list):
+            continue
+        for index, part in enumerate(content):
+            if not isinstance(part, dict) or part.get("type") not in ("image_url", "input_image"):
+                continue
+            image = part.get("image_url")
+            if is_animated_webp(image.get("url") if isinstance(image, dict) else image):
+                content[index] = {"type": "text", "text": VIDEO_NOTE}
+                replaced += 1
+    return replaced
 
 
 async def read_body(receive, limit=MAX_BODY):
@@ -232,9 +272,10 @@ class GatewayBoundary:
     async def chat(self, scope, receive, send):
         if scope["method"] != "POST":
             raise Refusal(405, "method_not_allowed")
-        data = json.loads(await read_body(receive))
+        data = json.loads(await read_body(receive, MAX_CHAT_BODY))
         if not isinstance(data, dict):
             raise Refusal(400, "invalid_request")
+        drop_video_clips(data.get("messages"))
         # Open WebUI may supply a user field. Key ownership is authoritative.
         data.pop("user", None)
         if set(data) - CHAT_FIELDS:

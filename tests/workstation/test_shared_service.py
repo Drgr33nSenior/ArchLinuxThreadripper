@@ -1,5 +1,6 @@
 """Software boundaries with deterministic backends; never a GPU/DR qualification."""
 import asyncio
+import base64
 import importlib.util
 import json
 import os
@@ -170,6 +171,30 @@ class BoundaryTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual("auto", body["tool_choice"])
             self.assertFalse(self.gateway.active)
 
+
+    async def test_video_clips_in_history_become_a_note_and_photos_pass(self):
+        # Open WebUI resends a generate_video clip (animated WEBP, up to 4 MiB) as base64 on
+        # every later turn; that once failed the next message with request_too_large.
+        def webp(flags, size):
+            raw = b"RIFF" + (size - 8).to_bytes(4, "little") + b"WEBPVP8X" + b"\x0a\x00\x00\x00" + bytes([flags])
+            return "data:image/webp;base64," + base64.b64encode(raw + b"\x00" * (size - len(raw))).decode()
+        clip, still = webp(0x1a, 4 << 20), webp(0x10, 256)
+        photo = "data:image/png;base64," + base64.b64encode(b"\x89PNG" + b"\x00" * 64).decode()
+        history = [{"role": "user", "content": "make a fox video"},
+                   {"role": "user", "content": [
+                       {"type": "text", "text": "Here are the images from the tool results above."},
+                       {"type": "image_url", "image_url": {"url": clip}},
+                       {"type": "image_url", "image_url": {"url": still}},
+                       {"type": "image_url", "image_url": {"url": photo}}]},
+                   {"role": "user", "content": "now a poem"}]
+        result = await request(self.gateway, "/v1/chat/completions", {**self.chat, "messages": history})
+        self.assertEqual(200, result[0]["status"])
+        parts = self.seen[-1][1]["messages"][1]["content"]
+        self.assertEqual({"type": "text", "text": boundary.VIDEO_NOTE}, parts[1])
+        self.assertEqual([still, photo], [p["image_url"]["url"] for p in parts[2:]])
+        # The chat body bound is still enforced.
+        huge = {**self.chat, "messages": [{"role": "user", "content": "x" * (boundary.MAX_CHAT_BODY + 1)}]}
+        self.assertEqual(413, (await request(self.gateway, "/v1/chat/completions", huge))[0]["status"])
 
     async def test_selected_profile_fields_reach_backend_unchanged(self):
         # Open WebUI 0.12.5 sends max_tokens and copies DEFAULT_MODEL_PARAMS to
