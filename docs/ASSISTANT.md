@@ -176,6 +176,12 @@ python3 lib/workstation/webui_presets.py apply RENDER/webui-presets.json \
 
 Re-running updates the presets in place. Admins see every preset.
 
+Each preset also switches on the **Workstation tools** server (`server:mcp:workstation`): Open
+WebUI does not pass the base model's default tools on to a preset, and without them a Think or
+Fast chat cannot make videos, recall memory or search the web. The server stays visible to every
+user, and service-tools still checks each call against the user's own permissions (videos need
+picture access), so this changes the default, not who may do what.
+
 ### Shared mode (chat and pictures together)
 
 `--mode shared` keeps the two-GPU contract model and adds image generation in the VRAM
@@ -245,6 +251,10 @@ square 624x624. No size has more pixels than the measured 832x480.
 - only users bound with `service browser-bind --images` (Admin and Parents) may call the tool;
 - the gateway must be `ready` with images on the contract model;
 - one clip runs at a time.
+
+Open WebUI stores each clip as a chat file, so its `RAG_FILE_MAX_SIZE` cap (4 MiB) bounds the clip; a
+5-second clip is about 2.3 MiB at WEBP quality 80. The profile's `max_bytes` matches that cap, so a
+larger clip fails as `video_artifact_too_large` instead of an upload error in the chat.
 
 Busy, not-ready and permission refusals come back as tool errors the model can explain. Like
 every service-tools MCP tool, an account with the Open WebUI `admin` role is refused; use the
