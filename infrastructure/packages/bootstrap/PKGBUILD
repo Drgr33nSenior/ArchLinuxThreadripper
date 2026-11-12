@@ -137,6 +137,8 @@ package_arch-workstation-bridge-runtime() {
   done
   install -Dm644 "$srcdir/project/templates/workstation/gpu/workstation-gpu-power.service" \
     "$pkgdir/usr/lib/systemd/system/workstation-gpu-power.service"
+  # The CLI on PATH; it resolves its libraries from the packaged runtime tree.
+  install -Dm755 "$srcdir/project/infrastructure/packages/bootstrap/launch-workstationctl" "$pkgdir/usr/bin/workstationctl"
   install -Dm644 "$srcdir/project/templates/workstation/telemetry/workstation-telemetry.sysusers" \
     "$pkgdir/usr/lib/sysusers.d/workstation-telemetry.conf"
   # No active configuration, executable approvals, credentials or unit activation.

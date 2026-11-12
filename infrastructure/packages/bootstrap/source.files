@@ -66,6 +66,7 @@ infrastructure/packages/bootstrap/launch-bootstrap
 infrastructure/packages/bootstrap/launch-live
 infrastructure/packages/bootstrap/launch-codex
 infrastructure/packages/bootstrap/launch-network
+infrastructure/packages/bootstrap/launch-workstationctl
 infrastructure/packages/bootstrap/source.files
 apps/base/kustomization.yaml
 apps/base/namespace.yaml
