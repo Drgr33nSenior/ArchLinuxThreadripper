@@ -238,8 +238,11 @@ ws_session_capacity_check() {
   # Kubernetes scheduling requests, not apparent free RAM, determine fit.
   # Only this repository's explicit integer CPU and Mi/Gi memory quantities
   # are accepted for the selected Guaranteed workload; unknown units fail.
-  jq -en --argjson d "$document" --argjson node "$node" --argjson pods "$pods" \
-    --argjson managed "$managed" --argjson smt "$smt" "$WS_SESSION_GPU_JQ"'
+  # Cluster documents go through file descriptors, never argv: one argument is capped at
+  # 128 KiB on Linux and the node's Pod list alone is far larger.
+  jq -en --slurpfile d <(printf '%s' "$document") --slurpfile node <(printf '%s' "$node") \
+    --slurpfile pods <(printf '%s' "$pods") --argjson managed "$managed" --argjson smt "$smt" \
+    '$d[0] as $d | $node[0] as $node | $pods[0] as $pods | '"$WS_SESSION_GPU_JQ"'
     def cpu: tostring | if test("^[0-9]+m$") then rtrimstr("m")|tonumber/1000 else tonumber end;
     def mem: tostring | if test("^[0-9]+(Ki|Mi|Gi|Ti)?$") then . else error("unhandled memory quantity") end |
       capture("^(?<n>[0-9]+)(?<u>Ki|Mi|Gi|Ti)?$") as $q |
@@ -281,8 +284,7 @@ ws_session_managed_uids() {
   ai="$(ws_session_managed_pods "$SESSION_AI_DEPLOYMENT")" || return 1
   game='[]'
   ! ws_session_game_present || game="$(ws_session_managed_pods "$SESSION_GAME_DEPLOYMENT")" || return 1
-  jq -n --argjson ai "$ai" --argjson game "$game" --argjson images "$images" --argjson images2 "$images2" \
-    '($ai+$game+$images+$images2)|map(.metadata.uid)'
+  printf '%s\n' "$ai" "$game" "$images" "$images2" | jq -s 'add | map(.metadata.uid)'
 }
 
 ws_session_other_gpu_check() {
@@ -303,7 +305,8 @@ ws_session_managed_pods() {
   uid="$(ws_session_deployment "$deployment" | jq -er '.metadata.uid')" || return 1
   replicasets="$(ws_session_kubectl -n "$SESSION_NAMESPACE" get replicasets -o json)" || return 1
   pods="$(ws_session_kubectl -n "$SESSION_NAMESPACE" get pods -o json)" || return 1
-  jq -n --arg uid "$uid" --argjson rs "$replicasets" --argjson pods "$pods" '
+  jq -n --arg uid "$uid" --slurpfile rs <(printf '%s' "$replicasets") --slurpfile pods <(printf '%s' "$pods") '
+    $rs[0] as $rs | $pods[0] as $pods |
     [$rs.items[] | select(any(.metadata.ownerReferences[]?; .uid == $uid and .kind == "Deployment")) | .metadata.uid] as $ids |
     [$pods.items[] | select(any(.metadata.ownerReferences[]?; .kind == "ReplicaSet" and (.uid as $id | $ids | index($id)) != null))]'
 }
@@ -561,8 +564,8 @@ ws_session_switch() (
     ws_session_qualify "$SESSION_IMAGE_DEPLOYMENT" "$node" ai
     ws_session_qualify "$SESSION_IMAGE2_DEPLOYMENT" "$node" ai
     local combined
-    combined="$(jq -n --argjson ai "$(ws_session_candidate "$SESSION_AI_DEPLOYMENT")" --argjson image "$(ws_session_candidate "$SESSION_IMAGE_DEPLOYMENT")" \
-      --argjson image2 "$(ws_session_candidate "$SESSION_IMAGE2_DEPLOYMENT")" "$WS_SESSION_GPU_JQ"'
+    combined="$(jq -n --slurpfile ai <(ws_session_candidate "$SESSION_AI_DEPLOYMENT") --slurpfile image <(ws_session_candidate "$SESSION_IMAGE_DEPLOYMENT") \
+      --slurpfile image2 <(ws_session_candidate "$SESSION_IMAGE2_DEPLOYMENT") '$ai[0] as $ai | $image[0] as $image | $image2[0] as $image2 | '"$WS_SESSION_GPU_JQ"'
       ($ai.spec.template.spec|gpu_claims) as $model | ($image.spec.template.spec|gpu_claims) as $first |
       ($image2.spec.template.spec|gpu_claims) as $second |
       if ($model|length)==2 and ($first|length)==1 and ($second|length)==1 and (($first+$second)|sort)==$model then
@@ -577,7 +580,8 @@ ws_session_switch() (
     [[ "$service_model" == Qwen3.5-9B ]] || ws_die 'split requires the separately qualified one-GPU Qwen3.5-9B overlay'
     ws_session_qualify "$SESSION_IMAGE_DEPLOYMENT" "$node" ai
     local combined
-    combined="$(jq -n --argjson ai "$(ws_session_candidate "$SESSION_AI_DEPLOYMENT")" --argjson image "$(ws_session_candidate "$SESSION_IMAGE_DEPLOYMENT")" "$WS_SESSION_GPU_JQ"'
+    combined="$(jq -n --slurpfile ai <(ws_session_candidate "$SESSION_AI_DEPLOYMENT") --slurpfile image <(ws_session_candidate "$SESSION_IMAGE_DEPLOYMENT") \
+      '$ai[0] as $ai | $image[0] as $image | '"$WS_SESSION_GPU_JQ"'
       [$ai,$image] | if all(.[]; (.spec.template.spec|gpu_claims|length)==1) and
           ($ai.spec.template.spec|gpu_claims) != ($image.spec.template.spec|gpu_claims) then
         $ai | .spec.template.spec.containers += $image.spec.template.spec.containers |

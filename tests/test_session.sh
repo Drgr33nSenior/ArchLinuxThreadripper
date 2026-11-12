@@ -414,3 +414,21 @@ grep -q 'recorded in the session state but no longer exists' "$work/failure.log"
 cp "$work/game.json" "$work/api/parent-steam-headless.json"
 set_document "$work/api/parent-steam-headless.json" '.spec.replicas=0'
 printf 'absent game Deployment fixture tests passed\n'
+
+# Live clusters are big: ~1 MB of ReplicaSet history and ~0.5 MB of Pods on the node. Cluster
+# documents must reach jq through file descriptors, not argv (Linux caps one argument at
+# 128 KiB; macOS caps the whole list at 1 MiB, which this padding exceeds).
+cp "$work/api/rs.json" "$work/rs.small.json" && cp "$work/api/pods.json" "$work/pods.small.json"
+pad="$(head -c 400000 /dev/zero | tr '\0' x)"
+jq --arg pad "$pad" '.items += [range(3) | {kind: "ReplicaSet", metadata: {uid: "padding-rs-\(.)", name: "old-\(.)", annotations: {padding: $pad}}}]' \
+  "$work/rs.small.json" >"$work/api/rs.json"
+jq --arg pad "$pad" '.items += [range(3) | {metadata: {uid: "padding-pod-\(.)", name: "done-\(.)", namespace: "other", annotations: {padding: $pad}},
+  spec: {nodeName: "fixture-node", containers: [{name: "c"}]}, status: {phase: "Succeeded"}}]' \
+  "$work/pods.small.json" >"$work/api/pods.json"
+(($(wc -c <"$work/api/rs.json") > 1048576))
+make_render
+ws_session_switch shared "$work/fixture.json" "$work/state" --execute "$work/render.json"
+jq -e '.phase == "ready" and .mode == "shared"' "$work/state/state.json" >/dev/null
+ws_session_switch maintenance "$work/fixture.json" "$work/state" --execute
+cp "$work/rs.small.json" "$work/api/rs.json" && cp "$work/pods.small.json" "$work/api/pods.json"
+printf 'large cluster document fixture tests passed\n'
