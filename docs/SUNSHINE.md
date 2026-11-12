@@ -103,6 +103,35 @@ process and replace `localhost/workstation/steam-headless:UNQUALIFIED` with the
 resulting immutable image reference. Publication and deployment are deliberately
 not automated here. Never mark the upstream base image as the finished recipe.
 
+## Deploy on the workstation
+
+There is one shared gaming Deployment, `steam-headless`: everyone signs in to their
+own Steam account, so there are no per-person profiles. Every service render writes
+it to `gaming.yaml` at zero replicas, with its `gaming-home` claim (Retain class),
+Service and NetworkPolicy. `workstationctl mode gaming` scales it once it is
+qualified; `mode family`/`coder` stop it. The mode switch never applies `gaming.yaml`:
+apply it yourself to install or update gaming.
+
+| Layer | Admits |
+| --- | --- |
+| Service | `externalIPs` = the site `node_address`, `externalTrafficPolicy: Local` (like Traefik); TCP 47984, 47989, 48010 and UDP 47998–48000 |
+| NetworkPolicy `steam-headless-flows` | Those ports only from the site's optional `streaming_client_cidrs` (none listed: nothing); egress to the public internet only (Steam), never private ranges |
+| Host guard | The same ports only to `lab_node_ip` from `lab_streaming_client_cidrs`, before kube-proxy's DNAT (Ansible `k3s_baremetal`) |
+
+The Sunshine web UI (47990) is not exposed. Pair a device through a loopback
+port-forward, then open `https://localhost:47990` and enter the PIN Moonlight shows:
+
+```sh
+kubectl -n ai-home-lab port-forward deployment/steam-headless 47990:47990
+```
+
+In Moonlight, add the host by the node address (mDNS discovery does not cross
+VLANs). Before the first start, create the web-UI account Secret
+`gaming-credentials` (keys `username` and `sunshine-password`) interactively; it is
+never rendered. Qualify on the target as in [Image and target
+qualification](#image-and-target-qualification) before marking the Deployment
+`workstation.ai/qualification: qualified`; until then `mode gaming` refuses it.
+
 ## Configure a profile
 
 The default profile is KWin capture, Vulkan Video, and a 1920x1080 virtual

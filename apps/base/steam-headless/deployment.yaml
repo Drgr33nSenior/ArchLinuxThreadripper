@@ -8,10 +8,10 @@ spec:
   replicas: 0
   strategy: {type: Recreate}
   selector:
-    matchLabels: {app.kubernetes.io/name: steam-headless, ai-home-lab.local/profile: unset}
+    matchLabels: {app.kubernetes.io/name: steam-headless, ai-home-lab.local/profile: shared}
   template:
     metadata:
-      labels: {app.kubernetes.io/name: steam-headless, ai-home-lab.local/profile: unset}
+      labels: {app.kubernetes.io/name: steam-headless, ai-home-lab.local/profile: shared}
     spec:
       automountServiceAccountToken: false
       priorityClassName: family-gaming-priority

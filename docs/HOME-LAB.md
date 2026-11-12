@@ -61,7 +61,8 @@ isolation. Family members receive application accounts, not permission to create
 pods, change priorities, read Secrets or attach arbitrary PVCs. NetworkPolicy
 does not make a shared kernel or GPU equivalent to separate virtual machines.
 
-Gaming is intentionally not enabled. The Wayland candidate runs as UID/GID 1000
+Gaming is installed from the service render's `gaming.yaml` (see
+[Sunshine](SUNSHINE.md#deploy-on-the-workstation)) and stays disabled until qualified. The Wayland candidate runs as UID/GID 1000
 with RuntimeDefault seccomp and all Linux capabilities dropped, so it no longer
 requires the former `SYS_ADMIN` or `SYS_NICE` exception. That source change is
 not qualification: verify GPU device-node access, capture, input, audio, private

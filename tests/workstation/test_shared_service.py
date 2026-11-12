@@ -1077,6 +1077,45 @@ class ServingContractTests(unittest.TestCase):
         self.assertTrue(digest_a and digest_b and digest_a != digest_b)
         self.assertEqual(digest_a, digest_a2)  # deterministic: an unchanged config does not roll it
 
+    def test_gaming_render_admits_only_streaming_clients_through_the_node_address(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            site = {"context": "fixture", "node": "fixture", "node_address": "192.168.77.9",
+                    "management_cidr": "192.168.77.0/24", "client_cidrs": ["192.168.0.0/16"],
+                    "webui_host": "chat.fixture.test", "api_host": "api.fixture.test", "tls_secret": "fixture-tls"}
+            path = root / "site.json"
+            path.write_text(json.dumps(site))
+            service.render(SimpleNamespace(site=path, output=root / "closed", mode="large"))
+            closed = service.load_objects((root / "closed/gaming.yaml").read_text())
+            policy = next(o for o in closed if o["kind"] == "NetworkPolicy")
+            self.assertNotIn("ingress", policy["spec"])  # no streaming networks: nothing admitted
+            path.write_text(json.dumps(dict(site, streaming_client_cidrs=["192.168.1.0/24", "192.168.2.0/24"])))
+            service.render(SimpleNamespace(site=path, output=root / "open", mode="large"))
+            objects = service.load_objects((root / "open/gaming.yaml").read_text())
+            self.assertTrue(all(o["metadata"]["namespace"] == "ai-home-lab" for o in objects))
+            game = next(o for o in objects if o["kind"] == "Deployment")
+            self.assertEqual(("steam-headless", 0), (game["metadata"]["name"], game["spec"]["replicas"]))
+            svc = next(o for o in objects if o["kind"] == "Service")
+            self.assertEqual(("ClusterIP", ["192.168.77.9"], "Local"),
+                             (svc["spec"]["type"], svc["spec"]["externalIPs"], svc["spec"]["externalTrafficPolicy"]))
+            self.assertNotIn(47990, {port["port"] for port in svc["spec"]["ports"]})  # web UI stays off the LAN
+            labels = game["spec"]["template"]["metadata"]["labels"]
+            self.assertTrue(all(labels.get(k) == v for k, v in svc["spec"]["selector"].items()))
+            policy = next(o for o in objects if o["kind"] == "NetworkPolicy")
+            (rule,) = policy["spec"]["ingress"]
+            self.assertEqual([{"ipBlock": {"cidr": "192.168.1.0/24"}}, {"ipBlock": {"cidr": "192.168.2.0/24"}}], rule["from"])
+            self.assertEqual(sorted(service.STREAMING_PORTS), sorted((p["port"], p["protocol"]) for p in rule["ports"]))
+            egress = policy["spec"]["egress"][0]["to"][0]["ipBlock"]
+            self.assertEqual("0.0.0.0/0", egress["cidr"])
+            self.assertTrue({"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"} <= set(egress["except"]))
+            claim = next(o for o in objects if o["kind"] == "PersistentVolumeClaim")
+            self.assertEqual(("gaming-home", "workstation-retain"), (claim["metadata"]["name"], claim["spec"]["storageClassName"]))
+            self.assertNotIn("steam-headless", {o["metadata"]["name"] for o in
+                                                service.load_objects((root / "open/workloads.yaml").read_text())})
+            path.write_text(json.dumps(dict(site, streaming_client_cidrs=["8.8.8.0/24"])))
+            with self.assertRaises(ValueError):
+                service.site_values(path)
+
     def test_model_cache_claim_keeps_delete_reclaim_through_the_site_render(self):
         """New claims default to Retain; the model cache must not, or a deleted claim leaves 23 GB."""
         with tempfile.TemporaryDirectory() as directory:

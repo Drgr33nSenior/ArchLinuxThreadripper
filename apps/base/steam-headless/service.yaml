@@ -3,7 +3,7 @@ kind: Service
 metadata: {name: steam-headless}
 spec:
   type: ClusterIP
-  selector: {app.kubernetes.io/name: steam-headless, ai-home-lab.local/profile: unset}
+  selector: {app.kubernetes.io/name: steam-headless, ai-home-lab.local/profile: shared}
   ports:
     - {name: http, port: 47989, targetPort: http, protocol: TCP}
     - {name: https, port: 47984, targetPort: https, protocol: TCP}
