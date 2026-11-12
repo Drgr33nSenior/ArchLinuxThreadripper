@@ -150,7 +150,12 @@ class HealthTests(unittest.TestCase):
                 connection.executemany("INSERT INTO mc_event VALUES (?, ?)",
                                        [(1, "Corrected"), (2, "Uncorrected"), (3, "Corrected")])
                 connection.execute("CREATE TABLE aer_event (id INTEGER, err_type TEXT)")
-                connection.execute("CREATE TABLE mce_record (id INTEGER)")
+                connection.execute("CREATE TABLE mce_record (id INTEGER, status INTEGER)")
+                # MCi_STATUS with VAL (63, so negative as SQLite INTEGER) and UC (61) set, and a corrected one.
+                connection.executemany("INSERT INTO mce_record VALUES (?, ?)",
+                                       [(1, (1 << 63 | 1 << 61) - (1 << 64)), (2, (1 << 63) - (1 << 64))])
+                connection.execute("CREATE TABLE non_standard_event (id INTEGER, severity TEXT)")
+                connection.execute("CREATE TABLE memory_failure_event (id INTEGER, pfn TEXT)")
 
             def fake_run(argv, timeout=120, check=True, env=None):
                 if argv[0] == "smartctl":
@@ -176,7 +181,12 @@ class HealthTests(unittest.TestCase):
         self.assertIn('workstation_ras_events_recorded{table="mc_event",severity="corrected"} 2', text)
         self.assertIn('workstation_ras_events_recorded{table="aer_event",severity="all"} 0', text)
         self.assertIn('workstation_ras_events_recorded{table="aer_event",severity="fatal"} 0', text)
-        self.assertNotIn('table="mce_record",severity="fatal"', text)
+        self.assertIn('workstation_ras_events_recorded{table="mce_record",severity="uncorrected"} 1', text)
+        self.assertIn('workstation_ras_events_recorded{table="mce_record",severity="corrected"} 1', text)
+        self.assertIn('workstation_ras_events_recorded{table="non_standard_event",severity="fatal"} 0', text)
+        self.assertIn('workstation_ras_events_recorded{table="memory_failure_event",severity="all"} 0', text)
+        self.assertNotIn('table="memory_failure_event",severity="fatal"', text)
+        self.assertIn("workstation_ras_database_readable 1", text)
         self.assertIn('workstation_maintenance_service_active{unit="rasdaemon.service"} 0', text)
         self.assertIn('workstation_maintenance_backup_configured{kind="service"} 0', text)
 

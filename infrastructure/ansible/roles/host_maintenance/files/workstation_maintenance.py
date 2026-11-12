@@ -415,9 +415,17 @@ RAS_SEVERITY = (
     (re.compile(r"deferred", re.I), "deferred"),
     (re.compile(r"correct", re.I), "corrected"),
 )
-RAS_TABLES = {"mc_event": "err_type", "aer_event": "err_type", "mce_record": None,
-              "memory_failure_event": None, "non_standard_event": "sev", "extlog_event": None,
-              "arm_event": None, "devlink_event": None, "disk_errors": None}
+# Table -> (column that must exist, SQL expression giving its severity text).
+# Column names are from rasdaemon 0.8.5's ras-record.c (checked live with
+# PRAGMA table_info before use). MCE severity is the MCi_STATUS UC bit (61).
+RAS_TABLES = {
+    "mc_event": ("err_type", "err_type"),
+    "aer_event": ("err_type", "err_type"),
+    "non_standard_event": ("severity", "severity"),
+    "mce_record": ("status", "CASE WHEN (status >> 61) & 1 THEN 'uncorrected' ELSE 'corrected' END"),
+    "memory_failure_event": None, "extlog_event": None, "arm_event": None,
+    "devlink_event": None, "disk_errors": None,
+}
 
 
 def controller_of(device):
@@ -463,10 +471,12 @@ def ras_counts(database):
     try:
         tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         counts = {}
-        for table, column in RAS_TABLES.items():
+        for table, severity_source in RAS_TABLES.items():
             if table not in tables:
                 continue
             counts[(table, "all")] = connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            columns = {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}
+            column = severity_source[1] if severity_source and severity_source[0] in columns else None
             if column:
                 # Zero-valued series exist before the first event, so a rate or
                 # delta over them sees the first error too.
