@@ -272,6 +272,25 @@ assert env["UQ3_CAPTURE_LAYERS"] == ",".join(str(i) for i in range(3, 64, 4))
 assert c["args"][c["args"].index("--kv-cache-dtype") + 1] == "bf16"
 assert "python3 /qualify/capture.py" in c["command"][2]
 assert c["securityContext"]["readOnlyRootFilesystem"] and not c["securityContext"]["allowPrivilegeEscalation"]
+assert c["args"][c["args"].index("--extra-metric-labels") + 1] == '{"server":"capture"}'
+PY
+# Every server labels its own metrics with its role (family service vs bench/qualify/capture
+# Jobs behind the same sglang Service); an unknown role is refused.
+python3 -I - "$dir/serving" "$dir/serving/qwen3.8-27b-mxfp4-tp2.json" "$digest" <<'PY' || fail 'server metric role label'
+import json, sys
+sys.path.insert(0, sys.argv[1])
+import render
+profile, catalog = render.load(sys.argv[2])
+label = lambda argv: json.loads(argv[argv.index("--extra-metric-labels") + 1])
+assert label(render.server_argv(profile, catalog, "UQS")) == {"server": "family"}
+for kind, bench in (("qualify", None), ("bench", b"x")):
+    job = next(i for i in render.job(profile, catalog, sys.argv[3], "UQS", bench)["items"] if i["kind"] == "Job")
+    assert label(job["spec"]["template"]["spec"]["containers"][0]["args"]) == {"server": kind}, kind
+try:
+    render.server_argv(profile, catalog, "UQS", server="pod-name")
+    raise AssertionError("unknown role accepted")
+except SystemExit:
+    pass
 PY
 # A minimal stand-in for the serving repository's vendored BetterBench.
 bb=$work/serving-repo/benchmarks/betterbench/native-v2
@@ -306,7 +325,7 @@ for profile in "$dir"/serving/*.json; do
   grep -q "^image=$public$" "$sa/run.sh" || fail 'standalone run.sh does not pin the image digest'
   cmp -s "$sa/cosign.pub" "$dir/signing/cosign.pub" || fail 'standalone folder does not carry the signing key'
   ! grep -q '@[A-Z_]*@' "$sa/README.md" "$sa/run.sh" || fail 'standalone placeholders left unfilled'
-  python3 -I "$render" argv "$profile" >"$work/argv-default.json"
+  python3 -I "$render" argv "$profile" --server standalone >"$work/argv-default.json"
   python3 -I -c 'import json,sys; assert json.load(open(sys.argv[1])) == json.load(open(sys.argv[2]))' \
     "$sa/server-args.json" "$work/argv-default.json" || fail 'standalone argv differs from the default arm'
   python3 -I - "$profile" "$sa/server.env" <<'PY' || fail 'standalone env differs from the default arm'
@@ -388,12 +407,14 @@ assert argv["A"][argv["A"].index("--mamba-radix-cache-strategy") + 1] == "no_buf
 assert "--disable-overlap-schedule" in argv["A"]
 assert argv["B"][argv["B"].index("--mamba-radix-cache-strategy") + 1] == "extra_buffer_lazy"
 assert "--disable-overlap-schedule" not in argv["B"]
+# Every argv ends with the server role label, then --host and --port (6 entries).
+assert all(a[-6] == "--extra-metric-labels" and a[-4] == "--host" for a in argv.values())
 # Arm C is arm A plus block verification, nothing else.
-assert argv["C"] == argv["A"][:-4] + ["--speculative-use-block-verification"] + argv["A"][-4:]
+assert argv["C"] == argv["A"][:-6] + ["--speculative-use-block-verification"] + argv["A"][-6:]
 # Verify-path arms: D/E/F change only the environment, G adds ReplaySSM, H is all of them.
 for arm in "DEFI":
     assert argv[arm] == argv["A"] and len(profile["arms"][arm]["env"]) == 1, arm
-assert argv["G"] == argv["A"][:-4] + ["--enable-linear-replayssm-spec"] + argv["A"][-4:]
+assert argv["G"] == argv["A"][:-6] + ["--enable-linear-replayssm-spec"] + argv["A"][-6:]
 # H is the qualified ports only: arm A's flags (no ReplaySSM) with D, E, F and I's environment.
 assert argv["H"] == argv["A"]
 assert ({e["name"] for e in profile["arms"]["H"]["env"]} ==
@@ -407,7 +428,7 @@ assert argv["K"] == argv["A"]
 assert ([e["name"] for e in profile["arms"]["K"]["env"]] ==
         [e["name"] for e in profile["arms"]["J"]["env"]] + ["SGLANG_GFX1201_SPLITK_WIDE"])
 # L is K with the draft quantized to FP8; the later flag overrides the base unquant.
-assert argv["L"] == argv["A"][:-4] + ["--speculative-draft-model-quantization", "fp8"] + argv["A"][-4:]
+assert argv["L"] == argv["A"][:-6] + ["--speculative-draft-model-quantization", "fp8"] + argv["A"][-6:]
 assert argv["A"].index("unquant") < argv["L"].index("fp8")
 assert profile["arms"]["L"]["env"] == profile["arms"]["K"]["env"]
 # M is K with the PCIe custom all-reduce: the base disable flag dropped, one env switch added.
@@ -424,7 +445,7 @@ assert argv["O"] == argv["N"]
 assert ([e["name"] for e in profile["arms"]["O"]["env"]] ==
         [e["name"] for e in profile["arms"]["N"]["env"]] + ["SGLANG_GFX1201_EXTEND_WARPS8"])
 # P is O with the FP8 draft (as L is K) and fused KV kept for it.
-assert argv["P"] == argv["O"][:-4] + ["--speculative-draft-model-quantization", "fp8"] + argv["O"][-4:]
+assert argv["P"] == argv["O"][:-6] + ["--speculative-draft-model-quantization", "fp8"] + argv["O"][-6:]
 assert ([e["name"] for e in profile["arms"]["P"]["env"]] ==
         [e["name"] for e in profile["arms"]["O"]["env"]] + ["SGLANG_DFLASH_FUSED_KV_FP8"])
 # Q is O with the fused split-K reduce: same flags, one env switch added.
@@ -521,7 +542,8 @@ for arm in profile["arms"]:
     pod = job["spec"]["template"]["spec"]
     c = pod["containers"][0]
     assert config["data"]["qualify.py"] == (root / "serving" / "qualify.py").read_text()
-    assert c["args"] == argv[arm] and "@sha256:" in c["image"]
+    # Same server as the family argv, labelled as a qualification server in its metrics.
+    assert c["args"] == argv[arm][:-5] + ['{"server":"qualify"}'] + argv[arm][-4:] and "@sha256:" in c["image"]
     assert pod["securityContext"]["runAsNonRoot"] and pod["securityContext"]["seccompProfile"]["type"] == "RuntimeDefault"
     assert pod["automountServiceAccountToken"] is False
     assert c["securityContext"] == {"allowPrivilegeEscalation": False, "readOnlyRootFilesystem": True,
@@ -560,7 +582,10 @@ for variant in ("bench", "bench-greedy"):
     spec, base = job["spec"]["template"]["spec"], qualify["spec"]["template"]["spec"]
     assert spec["securityContext"] == base["securityContext"] and spec["volumes"][0] == base["volumes"][0]
     c, q = spec["containers"][0], base["containers"][0]
-    assert c["args"] == q["args"] and c["image"] == q["image"] and c["securityContext"] == q["securityContext"]
+    # The same server as the qualify Job; only the metrics role label differs.
+    strip = lambda a: a[:-5] + a[-4:]
+    assert strip(c["args"]) == strip(q["args"]) and c["args"][-5] == '{"server":"bench"}'
+    assert c["image"] == q["image"] and c["securityContext"] == q["securityContext"]
     assert "/qualify/bench.py" in c["command"][2] and job["metadata"]["labels"]["app.kubernetes.io/name"] == "sglang-bench"
     # Guaranteed QoS that schedules beside the assistant services (44.1 GiB allocatable, 12.4 GiB
     # requested by them on gr33nstein): 38Gi stayed Pending with "Insufficient memory".
