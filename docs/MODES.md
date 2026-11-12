@@ -105,10 +105,12 @@ gaming.
    `SESSION_IMAGE2_DEPLOYMENT=comfyui-gpu0` and `MODE_SERVICE_SITE` (the site file the
    service renders use). The [example config](../config/workstation.conf.example) lists
    the optional `MODE_*` overrides.
-4. **Gaming only:** the game Deployment must itself be installed and qualified (built
-   image, display, input and security). Until then `mode gaming` is refused before
-   anything stops; the other modes work without it. Installed later, it is adopted
-   while stopped.
+4. **Gaming only:** the game Deployment (`steam-headless`, from each render's
+   `gaming.yaml`) must itself be installed and qualified (built image, display, input
+   and security); see [Sunshine: deploy on the workstation](SUNSHINE.md#deploy-on-the-workstation).
+   Until then `mode gaming` is refused before anything stops; the other modes work
+   without it. Installed later, it is adopted while stopped. The mode switch applies
+   only `workloads.yaml` and never re-applies `gaming.yaml`.
 
 ### Render modes and session modes
 

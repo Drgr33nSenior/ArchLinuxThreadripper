@@ -50,7 +50,8 @@ assert not any('DynamicResourceAllocation' in arg for arg in config['kubelet-arg
 # approved clients (checked before kube-proxy DNAT); 6443 only from the API
 # client networks on the listed internal interfaces, or from in-cluster sources. It owns only its table.
 guard_template = environment.from_string((role / 'templates/k3s-host-guard.nft.j2').read_text())
-guard = guard_template.render(**dict(variables, lab_https_client_cidrs=['192.168.0.0/16']))
+guard = guard_template.render(**dict(variables, lab_https_client_cidrs=['192.168.0.0/16'],
+                                     lab_streaming_client_cidrs=['192.168.1.0/24', '192.168.2.0/24']))
 assert 'type filter hook prerouting priority -150; policy accept;' in guard
 assert 'iifname "synthetic0" ip daddr 192.168.50.10 ip saddr @https_clients_v4 tcp dport 443 accept' in guard
 assert 'fib daddr type local tcp dport 443 counter drop' in guard
@@ -66,6 +67,12 @@ assert 'tcp dport 6443 ip saddr @cluster_v4 accept' in guard and 'tcp dport 6443
 assert 'tcp dport 10250 counter drop' in guard and 'udp dport 8472 counter drop' in guard
 assert 'flush ruleset' not in guard and guard.count('destroy table inet k3s_host_guard') == 1
 assert 'elements' not in guard_template.render(**variables).split('set https_clients_v4')[1].split('}')[0]
+# Streaming: only listed clients reach the gaming Service ports; the web UI port is never admitted.
+assert 'elements = { 192.168.1.0/24, 192.168.2.0/24 }' in guard.split('set streaming_clients_v4')[1].split('}')[0] + '}'
+assert 'ip saddr @streaming_clients_v4 udp dport 47998-48000 accept' in guard
+assert 'fib daddr type local tcp dport { 47984, 47989, 48010 } counter drop' in guard
+assert '47990' not in guard
+assert 'elements' not in guard_template.render(**variables).split('set streaming_clients_v4')[1].split('}')[0]
 guard_unit = (role / 'files/k3s-host-guard.service').read_text()
 assert 'ExecStart=/usr/bin/nft -f /etc/nftables.d/k3s-host-guard.nft' in guard_unit
 assert 'RequiredBy=k3s.service' in guard_unit
