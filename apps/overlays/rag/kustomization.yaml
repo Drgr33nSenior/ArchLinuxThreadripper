@@ -4,13 +4,6 @@ namespace: ai-home-lab
 resources: [../dual-gpu, pvc.yaml]
 patches:
   - path: webui.yaml
-  # webui.yaml moves Open WebUI to webui-rag-qwen3-data, so the base claim has no consumer.
-  - target: {kind: PersistentVolumeClaim, name: webui-data}
-    patch: |-
-      $patch: delete
-      apiVersion: v1
-      kind: PersistentVolumeClaim
-      metadata: {name: webui-data}
 images:
   - name: registry.invalid/ai-home-lab/open-webui
     newName: registry.lan.thespry.family/local/open-webui
