@@ -1481,6 +1481,13 @@ class ServingContractTests(unittest.TestCase):
         memory = next(o for o in objects if o["kind"] == "ConfigMap" and "MEMORY_LLM_MODEL" in o.get("data", {}))
         self.assertEqual("Qwen3.8-27B-MXFP4", memory["data"]["MEMORY_LLM_MODEL"])
         self.assertEqual("shared", json.loads((output / "evidence.json").read_text())["mode"])
+        # Every claim has a consumer: the legacy webui-data and llm-models claims were left
+        # Pending for days because their mounts moved to the RAG and contract claims.
+        claims = {o["metadata"]["name"] for o in objects if o["kind"] == "PersistentVolumeClaim"}
+        mounted = {v["persistentVolumeClaim"]["claimName"] for o in objects if o["kind"] in {"Deployment", "StatefulSet"}
+                   for v in o["spec"]["template"]["spec"].get("volumes", []) if "persistentVolumeClaim" in v}
+        self.assertEqual(set(), claims - mounted)
+        self.assertFalse({"webui-data", "llm-models"} & claims)
         # shared exists only as a serving contract, and only for the assistant experiences
         for change, name in (({"serving_profile": None}, "no-profile"), ({"experience": "service"}, "service")):
             with self.subTest(name), self.assertRaises(ValueError):

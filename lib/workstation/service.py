@@ -1067,6 +1067,8 @@ def apply_contract(objects, contract, mode, experience):
         data = obj.get("data", {})
         if kind == "ConfigMap" and "MODEL_REVISION" in data:
             continue  # the legacy sglang-profile; the contract Deployment does not read it
+        if kind == "PersistentVolumeClaim" and name == "llm-models":
+            continue  # the legacy model volume; the contract Deployment mounts the contract's claim
         if kind == "Deployment" and name == "sglang":
             obj = contract_deployment(contract, objects)
             if contract["assets"].get("cache_entry"):
@@ -1300,7 +1302,7 @@ def render(args):
             # claim, so it keeps its own Delete-reclaim class.
             default = obj["spec"]["storageClassName"] if name == MODEL_CACHE_CLAIM else "workstation-retain"
             obj["spec"]["storageClassName"] = existing.get(name, {}).get("storage_class", default)
-            if name in {"webui-rag-qwen3-data", "webui-data", "creative-models", "gateway-postgres", "service-tools-state",
+            if name in {"webui-rag-qwen3-data", "creative-models", "gateway-postgres", "service-tools-state",
                         "graphiti-neo4j"}:
                 obj["metadata"].setdefault("labels", {})["workstation.ai/backup"] = "irreplaceable"
     objects.append({"apiVersion": "traefik.io/v1alpha1", "kind": "Middleware",
