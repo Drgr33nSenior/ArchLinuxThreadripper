@@ -1260,6 +1260,13 @@ class ServingContractTests(unittest.TestCase):
         self.assertNotIn(service.LEGACY_ALIAS, policy["chat_models"])
         webui = {e["name"]: e.get("value") for e in named("Deployment", "open-webui")["spec"]["template"]["spec"]["containers"][0]["env"]}
         self.assertEqual(alias, webui["DEFAULT_MODELS"])
+        # pin-config.py gets the names (only) of every variable the deployment sets, env files included.
+        pinned = set(webui["WEBUI_PINNED_ENV"].split(","))
+        self.assertTrue({"OPENAI_API_BASE_URL", "OPENAI_API_KEY", "ENABLE_SIGNUP", "DEFAULT_USER_ROLE",
+                         "USER_PERMISSIONS_CHAT_CONTROLS", "DEFAULT_MODEL_PARAMS", "TOOL_SERVER_CONNECTIONS",
+                         "RAG_TOP_K", "RAG_EMBEDDING_MODEL", "EXTERNAL_WEB_SEARCH_API_KEY"} <= pinned, pinned)
+        self.assertFalse({"ENABLE_PERSISTENT_CONFIG", "WEBUI_PINNED_ENV"} & pinned)
+        self.assertTrue(all(name.replace("_", "").isalnum() and name.isupper() for name in pinned))
         webui_params = json.loads(webui["DEFAULT_MODEL_PARAMS"])
         self.assertEqual("native", webui_params["function_calling"])
         # Effort and the thinking switch come from the slider and the gateway default, never

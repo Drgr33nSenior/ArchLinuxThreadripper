@@ -306,10 +306,12 @@ installer or relax namespace security to enable RAG.
 7. Restart through maintenance and verify document/index persistence. Recheck
    offline loading and perform an off-array backup/restore test while stopped.
 
-Settings in `rag.env` take precedence on restart because
-`ENABLE_PERSISTENT_CONFIG=false`. This is deliberate and applies to all
-Open WebUI persistent settings, not just RAG. Admin UI changes are not a durable
-configuration source in this pilot. Export/review needed settings before reuse;
+Settings in `rag.env` take precedence on restart. In the RAG pilot overlays this is
+because `ENABLE_PERSISTENT_CONFIG=false`, which applies to all Open WebUI settings.
+The assistant overlays keep Admin Panel settings, but re-apply every setting the
+deployment sets, including this profile, at each start
+([Admin Panel settings](ASSISTANT.md#admin-panel-settings)). Admin UI changes to the
+RAG profile are therefore not a durable configuration source in either. Export/review needed settings before reuse;
 never point this profile at an existing WebUI database without a migration review.
 See [configuration precedence](https://docs.openwebui.com/reference/env-configuration/).
 

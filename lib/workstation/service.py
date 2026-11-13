@@ -1005,6 +1005,27 @@ def gateway_policy(contract, rendered, mode="large"):
             "admission_limit": contract["concurrency"]["gateway_admission"]}
 
 
+def pin_webui_settings(container, objects):
+    """Name every variable this deployment gives Open WebUI, for pin-config.py.
+
+    Open WebUI keeps Admin Panel settings (persistent config); the settings these variables
+    feed are re-applied from the environment at every start, so the deployment keeps owning
+    connections, keys, permissions and the RAG profile. Names only, never values."""
+    names = {entry["name"] for entry in container.get("env", [])}
+    for source in container.get("envFrom", []):
+        ref = (source.get("configMapRef") or {}).get("name")
+        config = next((o for o in objects if o["kind"] == "ConfigMap" and o["metadata"]["name"] == ref), None)
+        if ref and config is None:
+            raise ValueError(f"open-webui envFrom ConfigMap {ref} is not in the render")
+        names |= set((config or {}).get("data", {}))
+        if source.get("secretRef"):
+            raise ValueError("open-webui envFrom Secret: its keys cannot be named at render time")
+    names -= {"WEBUI_PINNED_ENV", "ENABLE_PERSISTENT_CONFIG"}
+    env = container["env"]
+    env[:] = [entry for entry in env if entry["name"] != "WEBUI_PINNED_ENV"]
+    env.append({"name": "WEBUI_PINNED_ENV", "value": ",".join(sorted(names))})
+
+
 def apply_contract(objects, contract, mode, experience):
     """Rewrite every consumer in a rendered composition from one contract."""
     require(mode in {"large", "shared"}, "the serving contract needs both GPUs; render it with --mode large or shared")
@@ -1053,6 +1074,8 @@ def apply_contract(objects, contract, mode, experience):
                 values = {}
             env[:] = [entry for entry in env if entry["name"] not in values]
             env += [{"name": key, "value": value} for key, value in values.items()]
+            if name == "open-webui":
+                pin_webui_settings(container, objects)
         result.append(obj)
     # The rewritten gateway config keeps the name kustomize hashed from the source file,
     # so a contract change (output cap, policy) would not roll its consumers: LiteLLM

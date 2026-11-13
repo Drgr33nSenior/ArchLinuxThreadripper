@@ -129,6 +129,34 @@ is about 62 GiB.
 Existing split limits exceed the reviewed CPU budget; this change does not lower
 them to obtain admission. Shared UI configuration is not physical GPU ownership.
 
+### Admin Panel settings
+
+Open WebUI keeps its Admin Panel settings across restarts and deployments
+(`ENABLE_PERSISTENT_CONFIG=true`). The settings the deployment sets itself stay owned by
+the deployment. Before Open WebUI starts, `apps/components/assistant/pin-config.py`
+re-applies them from the environment:
+
+- the gateway connection and its keys;
+- sign-up and the default role;
+- the default user permissions;
+- the tool server, web search and page loader;
+- model defaults and prompt suggestions;
+- the reviewed RAG profile.
+
+About 56 of Open WebUI's roughly 450 settings are owned this way. Change those in
+source (`assistant.env`, `webui.yaml`, `rag.env`), not in the Admin Panel: an
+Admin Panel change to one of them lasts only until the next deployment. That is
+also how a rotated key or a changed permission default reaches Open WebUI. Every
+other setting (interface, banners, image options, evaluations and so on) is
+changed in the Admin Panel and kept.
+
+The render (`lib/workstation/service.py`) names every variable it gives Open WebUI in
+`WEBUI_PINNED_ENV`, names only. The script reads the installed Open WebUI's `config.py`
+to find which settings those variables feed. Its first log line lists them. Group
+permissions, model records and access grants were always stored in the database
+and are unaffected. With persistent config on, the database also holds the
+connection keys, so treat `webui.db` backups as secrets.
+
 <a id="native-candidate-integration"></a>
 
 ## The served model

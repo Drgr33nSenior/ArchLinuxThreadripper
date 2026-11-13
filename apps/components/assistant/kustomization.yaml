@@ -10,6 +10,8 @@ images:
 configMapGenerator:
   - name: webui-assistant-profile
     envs: [assistant.env]
+  - name: webui-config-pins
+    files: [pin-config.py]
 patches:
   - path: webui.yaml
   - path: tools.yaml
