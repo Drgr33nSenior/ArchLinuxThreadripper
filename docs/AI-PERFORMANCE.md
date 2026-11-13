@@ -192,13 +192,16 @@ SESSION_NODE=actual-node-name
 SESSION_NAMESPACE=ai-home-lab
 SESSION_AI_DEPLOYMENT=sglang
 SESSION_GAME_DEPLOYMENT=steam-headless
+SESSION_GAME_NAMESPACE=gaming
 SESSION_TIMEOUT_SECONDS=300
 SESSION_AI_STARTUP_TIMEOUT_SECONDS=2100
 SESSION_STREAMING_PATH=sunshine
 ```
 
 `steam-headless` is the shared gaming Deployment from the service render's
-`gaming.yaml` (everyone uses their own Steam account). These commands manage only
+`gaming.yaml` (everyone uses their own Steam account). `SESSION_GAME_NAMESPACE`
+names its namespace when it differs from `SESSION_NAMESPACE`; the session state
+records it, so moving the game to another namespace is a new target. These commands manage only
 the named AI/game Deployments. AI rollout now has a separate 2100-second allowance for the
 1800-second startup probe window; termination/release waits remain 300 seconds.
 An unrelated SwarmUI or pending GPU Pod blocks

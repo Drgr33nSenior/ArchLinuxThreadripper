@@ -207,6 +207,8 @@ SESSION_NAMESPACE=ai-home-lab
 SESSION_AI_DEPLOYMENT=sglang
 # The shared game-streaming Deployment from the service render's gaming.yaml.
 SESSION_GAME_DEPLOYMENT=steam-headless
+# Its namespace, when it is not SESSION_NAMESPACE (gaming needs a weaker Pod Security level).
+# SESSION_GAME_NAMESPACE=gaming
 # Opt-in service admission and image ownership; configure only after qualification.
 SESSION_SERVICE_ENABLED=false
 SESSION_IMAGE_DEPLOYMENT=swarmui
