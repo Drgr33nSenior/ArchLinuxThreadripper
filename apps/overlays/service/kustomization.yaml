@@ -17,6 +17,14 @@ patches:
       apiVersion: networking.k8s.io/v1
       kind: NetworkPolicy
       metadata: {name: sglang-from-webui}
+  # The rag overlay keeps the base webui-data claim so a RAG pilot can roll back to it
+  # (tests/home-lab/check-rag.rb); the service experiences only mount webui-rag-qwen3-data.
+  - target: {kind: PersistentVolumeClaim, name: webui-data}
+    patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata: {name: webui-data}
   - target: {kind: PersistentVolumeClaim, name: 'gateway-postgres|service-tools-state'}
     patch: |-
       - op: replace
