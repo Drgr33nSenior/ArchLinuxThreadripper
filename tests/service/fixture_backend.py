@@ -5,7 +5,9 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 app = FastAPI()
-state = {"active_streams": 0, "unavailable_calls": 0}
+state = {"active_streams": 0, "unavailable_calls": 0, "last_request": {}}
+# What the backend last received for the fields the gateway shapes; LiteLLM must pass them on.
+SHAPED = ("reasoning_effort", "chat_template_kwargs", "max_completion_tokens", "max_tokens")
 
 
 @app.get("/fixture/status")
@@ -21,6 +23,7 @@ async def models():
 @app.post("/v1/chat/completions")
 async def chat(request: Request):
     data = await request.json()
+    state["last_request"] = {field: data.get(field) for field in SHAPED}
     if data["messages"][0].get("content") == "unavailable-fixture":
         state["unavailable_calls"] += 1
         return JSONResponse({"error": {"message": "fixture unavailable", "type": "service_unavailable"}}, status_code=503)

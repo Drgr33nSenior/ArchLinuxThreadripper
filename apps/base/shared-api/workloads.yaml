@@ -85,7 +85,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: gateway
-          image: ghcr.io/berriai/litellm:v1.106.2@sha256:d1da6edc025e6a59be6faa50b4e8e42c115e1c99644aa3fc2ac416dd353f41da
+          image: ghcr.io/berriai/litellm:v1.109.1@sha256:192404922cf3ede22cfef2692a0f0e9915413c2d72e623b5d3cf0eabb0bc5eb9
           command: [python, -m, uvicorn, 'gateway_entry:app', --app-dir, /runtime, --host, 0.0.0.0, --port, '4000', --workers, '1', --no-access-log, --log-level, error, --timeout-graceful-shutdown, '185']
           env:
             - {name: HOME, value: /tmp}
@@ -163,7 +163,7 @@ spec:
       containers:
         - name: tools
           # Reuse the reviewed Python/FastAPI/httpx runtime, without DB/admin keys.
-          image: ghcr.io/berriai/litellm:v1.106.2@sha256:d1da6edc025e6a59be6faa50b4e8e42c115e1c99644aa3fc2ac416dd353f41da
+          image: ghcr.io/berriai/litellm:v1.109.1@sha256:192404922cf3ede22cfef2692a0f0e9915413c2d72e623b5d3cf0eabb0bc5eb9
           command: [python, -m, uvicorn, 'service_tools:create_app', --factory, --app-dir, /runtime, --host, 0.0.0.0, --port, '8000', --workers, '1', --no-access-log, --log-level, error, --timeout-graceful-shutdown, '150']
           env: [{name: PYTHONDONTWRITEBYTECODE, value: '1'}]
           ports: [{name: http, containerPort: 8000}]

@@ -18,7 +18,7 @@ and Qwen Code.
 | --- | --- | --- | --- |
 | Traefik | Node management address only, TCP 443 (Service externalIP); browser and API DNS names | cert-manager-issued TLS Secret; private client CIDRs | K3s configuration and SQLite backup; certificate reissued by cert-manager |
 | Open WebUI 0.13.3 (`service` and `assistant`) | Browser HTTPS → WebUI → internal `/webui/v1` gateway route | WebUI login; server-held application credential and user-ID mapping | Accounts, conversations, uploads, embedded Chroma on `webui-rag-qwen3-data` |
-| LiteLLM OSS 1.106.2 | API HTTPS `/v1/models`, `/v1/chat/completions` → internal SGLang | Per-client virtual keys; separate master, salt and host-control credentials | Scoped `litellm` PostgreSQL role/database; dump plus matching K3s Secrets |
+| LiteLLM OSS 1.109.1 | API HTTPS `/v1/models`, `/v1/chat/completions` → internal SGLang | Per-client virtual keys; separate master, salt and host-control credentials | Scoped `litellm` PostgreSQL role/database; dump plus matching K3s Secrets |
 | SGLang | ClusterIP only; unchanged qualified model/runtime inputs | No ordinary user access to backend | Weights and caches rebuildable; model revisions retained |
 | service-tools (MCP) | HTTPS `/mcp` → retrieval, memory, web search, handoffs and video | Caller's own WebUI session or restricted API key; the `admin` role is refused | Reuses WebUI document ACLs; handoffs and picture markers on `service-tools-state`; memory in Neo4j |
 | Image adapter | WebUI native OpenAI image connector → internal adapter → SwarmUI API | Trusted browser application identity plus per-user image permission | Unresolved job marker on `service-tools-state`; WebUI stores returned image under caller |
