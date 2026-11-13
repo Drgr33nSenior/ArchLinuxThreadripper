@@ -62,7 +62,10 @@ class AssistantTests(unittest.TestCase):
             self.assertEqual(4, len(json.loads(env["DEFAULT_PROMPT_SUGGESTIONS"])))
             pin = service.yaml.safe_load((ROOT / "apps/components/assistant/kustomization.yaml").read_text())["images"][0]
             image = pin["name"] + ":" + pin["newTag"] + "@" + pin["digest"]
-            self.assertEqual("v0.13.3", pin["newTag"])
+            # The manifests pin the image versions.lock records (the webui AI-stack stage's output).
+            lock = dict(line.split("=", 1) for line in (ROOT / "versions.lock").read_text().splitlines()
+                        if "=" in line and not line.startswith("#"))
+            self.assertEqual(lock["OPEN_WEBUI_IMAGE"], image)
             pod = named(objects, "Deployment", "open-webui")["spec"]["template"]["spec"]
             self.assertTrue(all(c["image"] == image for c in pod["initContainers"] + pod["containers"]))
 

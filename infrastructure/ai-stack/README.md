@@ -52,6 +52,7 @@ a refresh that only moves SGLang rebuilds only the SGLang stage and the image.
 | `creative` | `registry.lan.thespry.family/local/creative-gfx1201:<key>`: SwarmUI plus ComfyUI, installed offline |
 | `graphiti` | `registry.lan.thespry.family/local/graphiti-memory:<key>`: the [memory service](../../docs/MEMORY.md) from `infrastructure/graphiti` and its hashed lock; CPU only, independent of the ROCm stages, with an offline import smoke test (`graphiti/smoke.py`) |
 | `gaming` | `registry.lan.thespry.family/local/steam-headless:<key>`: the [game-streaming image](../../docs/SUNSHINE.md) (`workstationctl sunshine image-build`, `arch-wayland`) built with Podman from a full checkout; the key covers every file the image copies; gated by the offline non-root smoke test `tests/test_sunshine_image.sh` |
+| `webui` | `registry.lan.thespry.family/local/open-webui:<key>`: Open WebUI from the workstation fork (`OPEN_WEBUI_FORK_*` in `stack.lock`: an upstream release plus provider-declared Model Controls, the [reasoning slider](../../docs/ASSISTANT.md#reasoning-effort)), built with the fork's Dockerfile from the pinned commit; gated by an offline smoke test (`webui/smoke.py`) that drives the slider through Open WebUI's API against a fixture provider |
 
 Each stage also records its progress for monitoring: `stage-metrics.py` writes
 `/var/lib/workstation-ai-stack/ai-stack.prom`, which node-exporter reads. The

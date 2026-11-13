@@ -117,14 +117,16 @@ Canonical sources are `apps/overlays/rag/`, `lib/workstation/rag.sh` and
 and adds its configuration and two PVCs. Other overlays are unchanged.
 
 - Open WebUI: **0.13.3** for every overlay (`rag`/`service` and the assistant
-  overlays), source commit `b0e6098e940942281d9c83f3529ea117287a3a22`, Linux/amd64
-  manifest `sha256:e731360d9e6eeb25482d90cf3d564ce81a1c4a10e6a84ed9e6c63aa7ac48b0b6`,
+  overlays), built by the `webui` AI-stack stage from the workstation fork (commit
+  `21bc3e3da87d25e988b412710bafcefd4b4261db`, upstream `b0e6098e9409` plus the reasoning slider),
+  image `registry.lan.thespry.family/local/open-webui:2f743ea641c7@sha256:ec62ad7e6610614f48846889a0ebf7fa1586043f3d40bef1e0441d2e10ed7560`,
   recorded in `versions.lock` and digest-pinned in
   `apps/overlays/rag/kustomization.yaml` and
   `apps/components/assistant/kustomization.yaml` (13 November 2026; previously
   0.11.4 and 0.12.5). The reranker and speech-to-text profiles were reviewed
-  against the 0.12.5 source; 0.13.3 ships the same sentence-transformers (5.5.1),
-  faster-whisper (1.2.1), transformers, torch and chromadb versions, and its
+  against the 0.12.5 source; the fork moves sentence-transformers to 5.6.1 (a
+  critical advisory; the init container's `check-reranker.py` load-and-score gates it)
+  and ships the same faster-whisper (1.2.1), transformers, torch and chromadb versions, and its
   health, knowledge-listing, model-import and API-key rules are unchanged.
 - Reranker (assistant overlays only): `cross-encoder/ms-marco-MiniLM-L6-v2`,
   revision `233902d25c440f23af6f7d6e94d2946bac0bee0a`, Apache-2.0, CPU; per-file

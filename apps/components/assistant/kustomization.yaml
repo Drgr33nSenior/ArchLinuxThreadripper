@@ -2,10 +2,11 @@ apiVersion: kustomize.config.k8s.io/v1alpha1
 kind: Component
 resources: [network-policy.yaml]
 images:
-  # Release/source b0e6098e940942281d9c83f3529ea117287a3a22; Linux amd64.
-  - name: ghcr.io/open-webui/open-webui
-    newTag: v0.13.3
-    digest: sha256:e731360d9e6eeb25482d90cf3d564ce81a1c4a10e6a84ed9e6c63aa7ac48b0b6
+  # Open WebUI 0.13.3 from the workstation fork (provider-declared Model Controls), built,
+  # scanned and signed by the webui AI-stack stage from 21bc3e3da87d25e988b412710bafcefd4b4261db.
+  - name: registry.lan.thespry.family/local/open-webui
+    newTag: 2f743ea641c7
+    digest: sha256:ec62ad7e6610614f48846889a0ebf7fa1586043f3d40bef1e0441d2e10ed7560
 configMapGenerator:
   - name: webui-assistant-profile
     envs: [assistant.env]

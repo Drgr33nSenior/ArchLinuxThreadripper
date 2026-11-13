@@ -53,7 +53,7 @@ k3s_validate_value() {
     OPEN_WEBUI_COMMIT | RAG_EMBEDDING_REVISION | RAG_RERANKER_REVISION | STT_WHISPER_REVISION | SGLANG_DUAL_MODEL_REVISION | SGLANG_SINGLE_MODEL_REVISION) [[ "$value" =~ ^[a-f0-9]{40}$ ]] || k3s_die "$key must be an exact source revision" ;;
     SGLANG_DUAL_MODEL_REPOSITORY) [[ "$value" == Qwen/Qwen3.8-27B-FP8 ]] || k3s_die "$key must select the reviewed dual-GPU checkpoint" ;;
     SGLANG_SINGLE_MODEL_REPOSITORY) [[ "$value" == Qwen/Qwen3.5-9B ]] || k3s_die "$key must select the reviewed single-GPU checkpoint" ;;
-    OPEN_WEBUI_IMAGE) [[ "$value" =~ ^ghcr\.io/open-webui/open-webui:v[0-9]+\.[0-9]+\.[0-9]+@sha256:[a-f0-9]{64}$ ]] || k3s_die "$key must be a digest-pinned Open WebUI image" ;;
+    OPEN_WEBUI_IMAGE) [[ "$value" =~ ^(ghcr\.io/open-webui/open-webui:v[0-9]+\.[0-9]+\.[0-9]+|registry\.lan\.thespry\.family/local/open-webui:[a-f0-9]{12})@sha256:[a-f0-9]{64}$ ]] || k3s_die "$key must be a digest-pinned Open WebUI image (upstream release or the webui stage)" ;;
     RAG_EMBEDDING_REPOSITORY) [[ "$value" == Qwen/Qwen3-Embedding-0.6B ]] || k3s_die "$key must select the reviewed Qwen embedding model" ;;
     RAG_RERANKER_REPOSITORY) [[ "$value" == cross-encoder/ms-marco-MiniLM-L6-v2 ]] || k3s_die "$key must select the reviewed MiniLM cross-encoder" ;;
     STT_WHISPER_REPOSITORY) [[ "$value" == Systran/faster-whisper-base ]] || k3s_die "$key must select the reviewed faster-whisper model" ;;

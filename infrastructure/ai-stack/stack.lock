@@ -39,6 +39,13 @@ CREATIVE_IMAGE_REPOSITORY=registry.lan.thespry.family/local/creative-gfx1201
 # Graphiti memory service (infrastructure/graphiti), built by the graphiti stage.
 GRAPHITI_IMAGE_REPOSITORY=registry.lan.thespry.family/local/graphiti-memory
 GAMING_IMAGE_REPOSITORY=registry.lan.thespry.family/local/steam-headless
+# Open WebUI from the workstation fork, built by the webui stage: an upstream release plus
+# provider-declared Model Controls (the reasoning slider), offered upstream. refresh.sh moves
+# the commit to the branch head; rebasing the branch onto a new upstream release is reviewed by hand.
+OPEN_WEBUI_FORK_REPOSITORY=https://github.com/Drgr33nSenior/open-webui.git
+OPEN_WEBUI_FORK_BRANCH=workstation/reasoning-controls
+OPEN_WEBUI_FORK_COMMIT=21bc3e3da87d25e988b412710bafcefd4b4261db
+WEBUI_IMAGE_REPOSITORY=registry.lan.thespry.family/local/open-webui
 # Supply-chain tools, pinned by digest and upgraded by review (refresh.sh
 # leaves them unchanged). Releases at least two weeks old when pinned.
 COSIGN_IMAGE=ghcr.io/sigstore/cosign/cosign:v3.1.4@sha256:0f06154836d2de34f887a5c273506d52ca43edaa1d9e53e6510fa78a48f69c2d

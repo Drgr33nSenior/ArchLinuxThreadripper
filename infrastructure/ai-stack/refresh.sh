@@ -40,6 +40,7 @@ new[SGLANG_COMMIT]=$(head_of "$(get SGLANG_REPOSITORY)")
 new[SGLANG_PATCHSET_SHA256]=$(bash "$here/patchset-hash.sh" "$series")
 new[SWARMUI_COMMIT]=$(head_of "$(get SWARMUI_REPOSITORY)" master)
 new[COMFYUI_COMMIT]=$(head_of "$(get COMFYUI_REPOSITORY)" master)
+new[OPEN_WEBUI_FORK_COMMIT]=$(head_of "$(get OPEN_WEBUI_FORK_REPOSITORY)" "$(get OPEN_WEBUI_FORK_BRANCH)")
 
 # Resolve a docker.io tag to its current manifest-list digest (Docker Hub).
 hub_image() {
