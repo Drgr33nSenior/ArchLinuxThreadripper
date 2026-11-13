@@ -238,7 +238,7 @@ class DeploymentTests(unittest.TestCase):
         env = {e["name"]: e.get("value") for e in webui["spec"]["template"]["spec"]["containers"][0]["env"]}
         allowed = env["API_KEYS_ALLOWED_ENDPOINTS"].split(",")
 
-        def admitted(path):  # pinned Open WebUI 0.12.5 utils/auth.py rule
+        def admitted(path):  # pinned Open WebUI 0.13.3 utils/auth.py rule
             return any(path == entry or path.startswith(entry + "/") for entry in allowed)
         self.assertTrue(admitted("/api/v1/knowledge/"))
         for path in ("/api/v1/knowledge/create", "/api/v1/knowledge/kb-1", "/api/v1/knowledge/kb-1/update",

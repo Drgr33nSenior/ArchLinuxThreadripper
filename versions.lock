@@ -103,9 +103,9 @@ SUNSHINE_ARCH_SNAPSHOT=2026/11/12
 SUNSHINE_ARCH_SHA256=17eb8c4d823a2693038f40aeeab56943ef0d5d6ace8ac90b3693905b0acbba87
 # CPU-only RAG pilot inputs reviewed 2026-11-01. Registry config revision matches
 # the source commit; runtime, first-admin bootstrap and retrieval remain unqualified.
-OPEN_WEBUI_VERSION=0.11.4
-OPEN_WEBUI_COMMIT=8bd8b4fac5e059578ac0c74b3c18d11139f88b7d
-OPEN_WEBUI_IMAGE=ghcr.io/open-webui/open-webui:v0.11.4@sha256:332438e079ad23bb11b0ab278b43e7c98b50e8cec14b0840281644e8a289f49f
+OPEN_WEBUI_VERSION=0.13.3
+OPEN_WEBUI_COMMIT=b0e6098e940942281d9c83f3529ea117287a3a22
+OPEN_WEBUI_IMAGE=ghcr.io/open-webui/open-webui:v0.13.3@sha256:e731360d9e6eeb25482d90cf3d564ce81a1c4a10e6a84ed9e6c63aa7ac48b0b6
 RAG_EMBEDDING_REPOSITORY=Qwen/Qwen3-Embedding-0.6B
 RAG_EMBEDDING_REVISION=97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3
 # Per-file SHA-256 inputs: apps/overlays/rag/SHA256SUMS (safetensors, no pickle).

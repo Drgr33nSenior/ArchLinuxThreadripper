@@ -1,6 +1,6 @@
 """Offline load-and-score check for the reviewed cross-encoder (WebUI init container).
 
-Open WebUI 0.12.5 loads RAG_RERANKING_MODEL at startup with
+Open WebUI 0.13.3 loads RAG_RERANKING_MODEL at startup with
 sentence_transformers.CrossEncoder(path, device=DEVICE_TYPE ('cpu' here),
 trust_remote_code=RAG_RERANKING_MODEL_TRUST_REMOTE_CODE, backend='torch',
 activation_fn=Sigmoid()) (routers/retrieval.py get_rf). If that load fails it

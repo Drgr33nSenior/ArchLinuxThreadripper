@@ -3,7 +3,7 @@
 A project is an Open WebUI knowledge collection that the caller can read. The
 only authority is Open WebUI's knowledge ACL (owner, direct or group read
 grant, public read grant), read with the caller's own credential from
-``GET /api/v1/knowledge/``. Pinned Open WebUI 0.12.5 applies the same owner and
+``GET /api/v1/knowledge/``. Pinned Open WebUI 0.13.3 applies the same owner and
 read-grant rules to knowledge collections in /api/v1/retrieval/query/collection,
 so a project usable here is a collection the caller can also retrieve from.
 

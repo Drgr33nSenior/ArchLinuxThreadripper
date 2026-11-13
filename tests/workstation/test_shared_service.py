@@ -197,7 +197,7 @@ class BoundaryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(413, (await request(self.gateway, "/v1/chat/completions", huge))[0]["status"])
 
     async def test_selected_profile_fields_reach_backend_unchanged(self):
-        # Open WebUI 0.12.5 sends max_tokens and copies DEFAULT_MODEL_PARAMS to
+        # Open WebUI 0.13.3 sends max_tokens and copies DEFAULT_MODEL_PARAMS to
         # the top level; this is that request shape for the selected profile.
         body = {**self.chat, "stream": True, "stop": ["</s>"], "max_tokens": 2048, "temperature": 0.0,
                 "top_k": 1, "top_p": 1.0, "reasoning_effort": "low", "chat_template_kwargs": {"enable_thinking": True},

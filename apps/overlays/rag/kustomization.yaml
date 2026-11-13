@@ -7,8 +7,8 @@ patches:
 images:
   - name: registry.invalid/ai-home-lab/open-webui
     newName: ghcr.io/open-webui/open-webui
-    newTag: v0.11.4
-    digest: sha256:332438e079ad23bb11b0ab278b43e7c98b50e8cec14b0840281644e8a289f49f
+    newTag: v0.13.3
+    digest: sha256:e731360d9e6eeb25482d90cf3d564ce81a1c4a10e6a84ed9e6c63aa7ac48b0b6
 configMapGenerator:
   - name: webui-rag-profile
     envs: [rag.env]
