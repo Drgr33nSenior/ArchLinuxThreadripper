@@ -11,7 +11,7 @@ For a one-page overview of what is running, start with the [README](../README.md
 
 | Document | What it covers |
 | --- | --- |
-| [Family assistant](ASSISTANT.md) | What the family can do (chat, Think/Fast, pictures, video, voice, search, memory), who may do what, and how a request flows |
+| [Family assistant](ASSISTANT.md) | What the family can do (chat, reasoning effort, pictures, video, voice, search, memory), who may do what, and how a request flows |
 | [Service modes](MODES.md) | Shared vs large mode, what each GPU holds, and how to switch |
 | [Coding clients](AGENT-HARNESSES.md) | Qwen Code and other IDE agents against the gateway |
 | [Session memory](MEMORY.md) | Graphiti memory: per-user facts across chat and coding sessions |
@@ -99,7 +99,7 @@ edited; where they disagree with a current guide, the current guide wins.
 | **CU mask** | `HSA_CU_MASK`: limits a process to some of a GPU's 64 compute units |
 | **MCP** | Model Context Protocol: how Open WebUI and coding agents call `service-tools` |
 | **Gateway** | LiteLLM wrapped by our boundary (`apps/base/shared-api/boundary.py`), which maps user keys, checks limits and admits pictures |
-| **Think / Fast** | Open WebUI model presets: thinking at the highest effort, or no thinking |
+| **Reasoning Effort** | Open WebUI's Chat Controls setting for how long the model thinks (`none` to `xhigh`) |
 
 ## Keep the runtime layers distinct
 

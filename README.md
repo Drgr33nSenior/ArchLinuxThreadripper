@@ -63,7 +63,7 @@ More detail: [architecture](docs/ARCHITECTURE.md) and [the family assistant](doc
 
 | You want to… | Read |
 | --- | --- |
-| Use the assistant: chat, Think/Fast, pictures, video, voice | [Family assistant](docs/ASSISTANT.md) |
+| Use the assistant: chat, reasoning effort, pictures, video, voice | [Family assistant](docs/ASSISTANT.md) |
 | Switch between shared and large mode | [Service modes](docs/MODES.md) |
 | Check, restart or recover the AI service | [Operations](docs/OPERATIONS.md#ai-service), [service recovery](docs/SERVICE-RECOVERY.md) |
 | Look at GPUs, power and serving in Grafana | [Monitoring](docs/TELEMETRY.md) |
