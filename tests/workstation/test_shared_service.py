@@ -86,6 +86,8 @@ class BoundaryTests(unittest.IsolatedAsyncioTestCase):
                          [(o["reasoningEffort"], o["label"]) for o in served["supportedReasoningEfforts"]])
         self.assertNotIn("defaultReasoningEffort", served)  # no contract default in this fixture
         self.assertNotIn("supportedReasoningEfforts", other)
+        self.assertEqual(boundary.CHAT_MODELS[served["id"]][0], served["context_window"])
+        self.assertNotIn("context_window", other)
         self.assertEqual(int(dict(messages[0]["headers"])[b"content-length"]), len(body))
         with mock.patch.object(boundary, "DEFAULT_REASONING_EFFORT", "high"):
             self.assertEqual("xhigh", boundary.reasoning_declaration()["defaultReasoningEffort"])
@@ -97,6 +99,30 @@ class BoundaryTests(unittest.IsolatedAsyncioTestCase):
         messages = await request(boundary.GatewayBoundary(failing, self.mapping, self.control), "/v1/models", None, {}, "GET")
         self.assertEqual(401, messages[0]["status"])
         self.assertNotIn(b"supportedReasoningEfforts", b"".join(m.get("body", b"") for m in messages[1:]))
+
+    async def test_model_list_reports_full_context_without_changing_input_or_output_budgets(self):
+        async def listing(scope, receive, send):
+            await boundary.reply(send, 200, {"data": [
+                {"id": "fixture-chat", "max_input_tokens": 1200, "max_output_tokens": 512, "context_window": 1},
+                {"id": "fixture-embedding"},
+                None,
+            ]})
+        gateway = boundary.GatewayBoundary(listing, self.mapping, self.control)
+        # Context metadata must not depend on a model supporting reasoning controls.
+        with patch.dict(boundary.CHAT_MODELS, {"fixture-chat": (2048, 512)}, clear=True), \
+                patch.object(boundary, "reasoning_declaration", return_value={}):
+            messages = await request(gateway, "/v1/models", None, {}, "GET")
+        self.assertEqual(200, messages[0]["status"])
+        body = b"".join(m.get("body", b"") for m in messages[1:])
+        chat, embedding, malformed = json.loads(body)["data"]
+        self.assertEqual(2048, chat["context_window"])
+        self.assertEqual(1200, chat["max_input_tokens"])
+        self.assertEqual(512, chat["max_output_tokens"])
+        self.assertNotEqual(chat["context_window"], chat["max_input_tokens"] + chat["max_output_tokens"])
+        self.assertNotIn("supportedReasoningEfforts", chat)
+        self.assertEqual({"id": "fixture-embedding"}, embedding)
+        self.assertIsNone(malformed)
+        self.assertEqual(len(body), int(dict(messages[0]["headers"])[b"content-length"]))
 
     async def test_model_identity_and_output_limits(self):
         for data, expected in (({**self.chat, "model": "other"}, 404),
