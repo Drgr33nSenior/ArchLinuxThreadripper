@@ -87,6 +87,35 @@ class AssistantTests(unittest.TestCase):
         cls.large = service.kustomize(ROOT / "apps/overlays/assistant")
         cls.split = service.kustomize(ROOT / "apps/overlays/assistant-split")
 
+    def test_family_theme_replaces_open_webui_static_sources(self):
+        """Open WebUI empties its static folder at startup and copies /app/build/static,
+        so the theme must mount over that source, one file each, from one small ConfigMap."""
+        import base64, struct
+        theme = ROOT / "apps/components/assistant/theme"
+        sizes = {"favicon.png": 512, "favicon-96x96.png": 96, "apple-touch-icon.png": 180,
+                 "web-app-manifest-192x192.png": 192, "web-app-manifest-512x512.png": 512,
+                 "logo.png": 500, "splash.png": 500, "splash-dark.png": 500}
+        for name, size in sizes.items():  # drop-in replacements at upstream dimensions
+            header = (theme / name).read_bytes()[:24]
+            self.assertEqual(b"\x89PNG\r\n\x1a\n", header[:8], name)
+            self.assertEqual((size, size), struct.unpack(">II", header[16:24]), name)
+        self.assertEqual((theme / "logo.svg").read_bytes(), (theme / "favicon.svg").read_bytes())
+        manifest = json.loads((theme / "site.webmanifest").read_text())
+        self.assertEqual("Family AI", manifest["name"])
+        for objects in (self.large, self.split):
+            config = next(o for o in objects if o["kind"] == "ConfigMap"
+                          and o["metadata"]["name"].startswith("webui-theme-"))
+            files = set(config.get("data", {})) | set(config.get("binaryData", {}))
+            total = sum(len(v) for v in config.get("data", {}).values()) + sum(
+                len(base64.b64decode(v)) for v in config.get("binaryData", {}).values())
+            self.assertLess(total, 900_000)  # ConfigMaps are limited to 1 MiB
+            app, _ = environment(objects)
+            mounts = {m["subPath"]: m for m in app["volumeMounts"] if m["name"] == "webui-theme"}
+            self.assertEqual(files, set(mounts))
+            for name, mount in mounts.items():
+                self.assertEqual(f"/app/build/static/{name}", mount["mountPath"])
+                self.assertTrue(mount["readOnly"])
+
     def test_effective_family_configuration_retains_rag_and_private_gateway(self):
         for objects, model, images in ((self.large, "Qwen3.8-27B-FP8", "false"),
                                        (self.split, "Qwen3.5-9B", "true")):
@@ -143,8 +172,9 @@ class AssistantTests(unittest.TestCase):
                              and o["metadata"]["name"].startswith("webui-rag-profile-")) for rendered in (previous, objects)]
             self.assertEqual({**profiles[0], **reranker}, profiles[1])
             self.assertEqual(("none", "ms-marco-minilm-l6-v2"), tuple(p["RAG_RERANKER_PROFILE"] for p in profiles))
-            # Added: the assistant profile, its network policy and the pin-config.py ConfigMap.
-            self.assertEqual(len(previous) + 3, len(objects))
+            # Added: the assistant profile, its network policy, the pin-config.py ConfigMap
+            # and the Family AI theme ConfigMap.
+            self.assertEqual(len(previous) + 4, len(objects))
             self.assertTrue(any(o["kind"] == "ConfigMap" and "pin-config.py" in o.get("data", {}) for o in objects))
             for obj in objects:
                 self.assertNotEqual("Secret", obj["kind"])
@@ -153,8 +183,9 @@ class AssistantTests(unittest.TestCase):
             pod = named(objects, "Deployment", "open-webui")["spec"]["template"]["spec"]
             old_pod = named(previous, "Deployment", "open-webui")["spec"]["template"]["spec"]
             self.assertEqual(old_pod["securityContext"], pod["securityContext"])
-            # Storage is unchanged; the only addition is the read-only pin-config.py ConfigMap.
-            self.assertEqual(old_pod["volumes"], [v for v in pod["volumes"] if v["name"] != "webui-config-pins"])
+            # Storage is unchanged; the additions are read-only ConfigMaps (pins, theme).
+            self.assertEqual(old_pod["volumes"],
+                             [v for v in pod["volumes"] if v["name"] not in {"webui-config-pins", "webui-theme"}])
             tools = named(objects, "Deployment", "service-tools")["spec"]["template"]["spec"]
             old_tools = named(previous, "Deployment", "service-tools")["spec"]["template"]["spec"]
             self.assertEqual(old_tools["securityContext"], tools["securityContext"])
