@@ -221,6 +221,7 @@ class ServiceTools:
         return {"status": "process-ready", "image_busy": len(self.active) >= self.image_slots,
                 "image_active": len(self.active), "image_slots": self.image_slots,
                 "image_recovery_required": bool(self.stale_markers()),
+                "video_active": bool(self.video and self.video.active),
                 "image_profile": self.image_profile["id"], "workflow_sha256": self.workflow_sha256,
                 "retrieval": self.retrieval.status(),
                 "web_search": self.web_search.status() if self.web_search else {"status": "disabled"}}

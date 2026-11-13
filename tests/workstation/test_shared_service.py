@@ -22,9 +22,11 @@ import service_backup
 import service
 
 
-async def request(app, path, body=None, headers=None, method="POST"):
+async def request(app, path, body=None, headers=None, method="POST", disconnect_after=None):
     queue = asyncio.Queue()
     await queue.put({"type": "http.request", "body": json.dumps(body).encode(), "more_body": False})
+    if disconnect_after is not None:  # the caller goes away while the response is still running
+        asyncio.get_running_loop().call_later(disconnect_after, queue.put_nowait, {"type": "http.disconnect"})
     messages = []
     async def send(message):
         messages.append(message)
@@ -148,6 +150,67 @@ class BoundaryTests(unittest.IsolatedAsyncioTestCase):
         result = await request(self.gateway, "/v1/chat/completions", self.chat)
         self.assertEqual(1, len([m for m in result if m["type"] == "http.response.start"]))
         self.assertNotIn(b"[DONE]", b"".join(m.get("body", b"") for m in result))
+        self.assertFalse(self.gateway.active)
+
+    async def uvicorn_like(self, path, body, after_body=None):
+        """Drive the gateway like uvicorn: once the final body is written, receive() reports
+        http.disconnect at once (RequestResponseCycle.response_complete)."""
+        complete, messages, sent = asyncio.Event(), [], False
+        async def receive():
+            nonlocal sent
+            if not sent:
+                sent = True
+                return {"type": "http.request", "body": json.dumps(body).encode(), "more_body": False}
+            await complete.wait()
+            return {"type": "http.disconnect"}
+        async def send(message):
+            messages.append(message)
+            if message["type"] == "http.response.body" and not message.get("more_body", False):
+                complete.set()
+                await asyncio.sleep(0)  # let the disconnect reach the gateway before send returns
+        scope = {"type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "scheme": "http",
+                 "path": path, "raw_path": path.encode(), "query_string": b"", "method": "POST",
+                 "headers": [], "client": ("127.0.0.1", 1), "server": ("test", 80)}
+        await self.gateway(scope, receive, send)
+        return messages
+
+    async def test_finished_responses_count_as_ok_and_keep_post_response_work(self):
+        """The server closing a finished response is not a caller cancellation (seen live:
+        0 ok / 85 cancelled, and LiteLLM's post-response work was cancelled)."""
+        for stream in (False, True):
+            finished_work = []
+            async def backend(scope, receive, send):
+                await receive()
+                await send({"type": "http.response.start", "status": 200, "headers": []})
+                if stream:
+                    await send({"type": "http.response.body", "body": b"data: {}\n\n", "more_body": True})
+                await send({"type": "http.response.body", "body": b"data: [DONE]\n\n" if stream else b"{}"})
+                await asyncio.sleep(0.01)  # post-response work (usage logging, callbacks)
+                finished_work.append(True)
+            self.gateway.app = backend
+            before = dict(self.gateway.requests)
+            await self.uvicorn_like("/v1/chat/completions", {**self.chat, "stream": stream})
+            delta = {k: v - before.get(k, 0) for k, v in self.gateway.requests.items() if v != before.get(k, 0)}
+            self.assertEqual({"ok": 1}, delta, stream)
+            self.assertEqual([True], finished_work, stream)
+            self.assertFalse(self.gateway.active)
+
+    async def test_caller_leaving_mid_stream_still_cancels_the_backend(self):
+        cancelled = []
+        async def backend(scope, receive, send):
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b"data: {}\n\n", "more_body": True})
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                cancelled.append(True)
+                raise
+        self.gateway.app = backend
+        before = self.gateway.requests["cancelled"]
+        with self.assertRaises(asyncio.CancelledError):
+            await request(self.gateway, "/v1/chat/completions", {**self.chat, "stream": True}, disconnect_after=0.05)
+        self.assertEqual(before + 1, self.gateway.requests["cancelled"])
+        self.assertEqual([True], cancelled)
         self.assertFalse(self.gateway.active)
 
     async def test_active_cancellation_is_bounded(self):
@@ -361,6 +424,32 @@ CLI = ["--model-path", "/mnt/models", "--served-model-name", "fp8-serving-screen
 RESOLVED = {"context_length": 131040, "max_total_tokens": 262144, "max_running_requests": 2, "tp_size": 2,
             "chunked_prefill_size": 2048, "kv_cache_dtype": "bf16", "speculative_draft_kv_cache_dtype": "bf16",
             "model_config_sha256": "d" * 64, "prefix_cache": {"mamba_max_states_per_path": 3}}
+
+
+class MediaDrainTests(unittest.TestCase):
+    """A mode switch waits for running pictures/videos before stopping the image backends."""
+
+    def test_waits_until_jobs_finish_then_returns(self):
+        import service_session
+        seen = iter([2, 1, 0])
+        with mock.patch.object(service_session, "media_active", lambda address: next(seen)), \
+                mock.patch.object(service_session.time, "sleep", lambda seconds: None):
+            service_session.wait_for_media("10.43.0.5:8000", 60)
+
+    def test_jobs_still_running_at_the_deadline_fail_the_switch(self):
+        import service_session
+        clock = iter(range(0, 1000, 30))
+        with mock.patch.object(service_session, "media_active", lambda address: 1), \
+                mock.patch.object(service_session.time, "sleep", lambda seconds: None), \
+                mock.patch.object(service_session.time, "monotonic", lambda: next(clock)):
+            with self.assertRaisesRegex(ValueError, "still running"):
+                service_session.wait_for_media("10.43.0.5:8000", 120)
+
+    def test_only_a_private_cluster_address_is_polled(self):
+        import service_session
+        for address in ("8.8.8.8:8000", "10.43.0.5:http", "10.43.0.5"):
+            with self.assertRaises(ValueError):
+                service_session.media_active(address)
 
 
 class CandidatePlanTests(unittest.TestCase):

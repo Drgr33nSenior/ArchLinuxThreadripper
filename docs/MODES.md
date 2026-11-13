@@ -59,7 +59,8 @@ sudo workstationctl mode maintenance   # every GPU workload stopped
 
 Run it without `--execute` first: it renders, runs every check and prints the plan
 without changing anything. Add `--execute` to switch. Chat is unavailable while it runs:
-draining takes up to 3 minutes, and SGLang then needs a few minutes to load.
+draining takes up to 3 minutes (longer while a picture or video finishes, up to about 20
+minutes for a video), and SGLang then needs a few minutes to load.
 
 | Mode | Session mode | Render |
 | --- | --- | --- |
@@ -79,6 +80,7 @@ For `family` and `coder` the command:
 3. **Hands it to `session switch --apply`.** Before anything stops, the session checks the
    templates that will start (qualification, pinned images, security settings, combined CPU
    and memory) and runs a server-side dry run of the whole render. Then it drains chat,
+   waits for running pictures and videos to finish (new ones are refused while draining),
    stops every GPU workload, confirms both cards are free, applies the render, waits for
    the gateway and other services to roll out, and starts SGLang, then the picture
    generators in family mode.
@@ -131,7 +133,8 @@ flowchart TD
   A["session switch MODE"] --> B{"Pre-checks<br/>pass?"}
   B -->|no| X["Refused;<br/>nothing stopped"]
   B -->|yes| Dr["Gateway drains chat<br/>(up to 180 s)"]
-  Dr --> C["Stop all managed GPU workloads"]
+  Dr --> Dm["Running pictures/videos finish<br/>(up to 21 min)"]
+  Dm --> C["Stop all managed GPU workloads"]
   C --> D["Check both cards are released"]
   D --> E["Start SGLang first<br/>(it sizes its cache)"]
   E --> F{"Shared mode?"}

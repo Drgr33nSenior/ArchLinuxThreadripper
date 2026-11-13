@@ -280,6 +280,7 @@ apps/base/shared-api/wan-t2v-workflow.json
 apps/components/assistant/kustomization.yaml
 apps/components/assistant/assistant.env
 apps/components/assistant/webui.yaml
+apps/components/assistant/pin-config.py
 apps/components/rag-reranker/kustomization.yaml
 apps/components/rag-reranker/reranker.env
 apps/components/rag-reranker/webui.yaml
