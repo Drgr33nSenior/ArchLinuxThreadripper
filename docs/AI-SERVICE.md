@@ -55,6 +55,14 @@ metadata is not a tokenizer:
 SGLang's actual context gate and the existing client/model qualification remain
 required. A different active model returns 503; it never silently replaces one.
 
+The gateway model list also publishes `context_window` for each configured chat model.
+This is the full per-request window from the serving policy. Existing `max_input_tokens`
+and `max_output_tokens` remain unchanged: the input budget reserves both output capacity
+and scheduler headroom, so adding the two fields does not recover the full window.
+Open WebUI preserves the provider field in `/api/models`, including in its nested `openai`
+metadata. ACP clients can use it for their context usage display after a catalog refresh.
+This metadata does not raise any inference limit or bypass provider enforcement.
+
 The browser application credential alone grants no model usage. The private
 `/webui` route requires that credential **and** a mapped, unexpired WebUI user ID,
 then translates to that person's native virtual key. Public ingress exposes only

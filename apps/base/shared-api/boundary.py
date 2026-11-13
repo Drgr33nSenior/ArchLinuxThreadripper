@@ -278,10 +278,11 @@ class GatewayBoundary:
             return await reply(send, 503, {"error": {"code": "service_configuration_unavailable"}})
 
     async def models(self, scope, receive, send):
-        """The backend's model list, each chat model declaring the reasoning levels this gateway accepts.
+        """Publish each configured chat model's context window and accepted reasoning levels.
 
-        Open WebUI turns supportedReasoningEfforts/defaultReasoningEffort into a reasoning slider
-        (Model Controls). A response that is not a plain JSON list passes through unchanged."""
+        context_window is the serving contract's full per-request token window. Keep the router's
+        max_input_tokens unchanged: it reserves output capacity and scheduler headroom. Open WebUI
+        preserves these model fields for clients. Non-list responses pass through unchanged."""
         start, chunks = {}, []
 
         async def capture(message):
@@ -297,9 +298,11 @@ class GatewayBoundary:
             try:
                 listing = json.loads(body)
                 declaration = reasoning_declaration()
-                for model in listing.get("data", []) if declaration else ():
+                entries = listing.get("data", [])
+                for model in entries if isinstance(entries, list) else ():
                     if isinstance(model, dict) and model.get("id") in CHAT_MODELS:
                         model.update(declaration)
+                        model["context_window"] = CHAT_MODELS[model["id"]][0]
                 body = json.dumps(listing).encode()
             except (ValueError, AttributeError):
                 pass
