@@ -49,7 +49,7 @@ short note before the model). It admits four active model requests. Its source d
 apply only to renders without a serving profile. A serving-contract render replaces the
 FP8 route with `Qwen3.8-27B-MXFP4` at the mode's context (12,288-token output cap) and sets
 streaming budgets ([time limits](ASSISTANT.md#time-limits)): 600 seconds to first content,
-180 seconds of silence between chunks, a 3,600-second overall cap; the 9B split route
+300 seconds of silence between chunks, a 3,600-second overall cap; the 9B split route
 stays. Native per-key limits are lower by default. Context
 metadata is not a tokenizer:
 SGLang's actual context gate and the existing client/model qualification remain
