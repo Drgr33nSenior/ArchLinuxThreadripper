@@ -188,7 +188,7 @@ The chat model comes from the [AI serving stack](../infrastructure/ai-stack/READ
 image built from [`stack.lock`](../infrastructure/ai-stack/stack.lock) (SGLang main with the
 gfx1201 patch series, PyTorch 2.16 nightly for ROCm 10.3.0-dev) and the
 [serving profile](../infrastructure/ai-stack/serving/qwen3.8-27b-mxfp4-tp2.json), which is
-`qualified`: arm `UQS` for shared mode and `UQL` for large mode, both on 11 November 2026.
+`qualified`: arm `UQSB` for shared mode and `UQLB` for large mode, both on 13 November 2026.
 The earlier op234 candidate is described under [History](#history-the-op234-candidate).
 
 ### Serving contract
@@ -292,19 +292,22 @@ enforces these budgets.
 ### Shared mode (chat and pictures together)
 
 `--mode shared` keeps the two-GPU contract model and adds image generation in the VRAM
-it leaves free on both cards. It renders the profile's shared default arm, UQS (`--arm`
-can still choose another); the large mode renders the general default, UQL (FP8 KV, the
+it leaves free on both cards. It renders the profile's shared default arm, UQSB (`--arm`
+can still choose another); the large mode renders the general default, UQLB (FP8 KV, the
 model's full 262,112-token context). Each arm has its own qualification record on its own
 image, so each mode's contract is `active`:
 
 ```sh
 ./bin/workstationctl service render /private/service-site.json /private/assistant-shared \
   --experience assistant --mode shared --existing-claims /private/service-pvcs.json \
-  --serving-profile infrastructure/ai-stack/serving/qwen3.8-27b-mxfp4-tp2.json --arm UQS
+  --serving-profile infrastructure/ai-stack/serving/qwen3.8-27b-mxfp4-tp2.json --arm UQSB
 ```
 
-- Arm `UQS` caps the KV pool at 163,840 tokens (81,888 per conversation). That left
-  9.04 GB free per card in qualification. Measured live on 2026-11-13 (32,624 MiB per card):
+- Arm `UQSB` holds 201,600 tokens (100,768 per conversation) in the memory `UQS` used for
+  163,840 (81,888 per conversation): the DFlash draft's cache is bundled to 43,008 tokens
+  (serving patches 0028-0030). Free memory per card after startup is unchanged (8.36 GB
+  against 8.35 GB on 2026-11-13); `UQS` left 9.04 GB in its 2026-11-11 qualification.
+  Measured live with `UQS` on 2026-11-13 (32,624 MiB per card; `UQSB` leaves the same):
 
   | | Pictures card (`gpu-1`, SwarmUI) | Video card (`gpu-0`, `comfyui-gpu0`) |
   | --- | --- | --- |
@@ -314,9 +317,10 @@ image, so each mode's contract is `active`:
   | Kept after use (models stay loaded) | +3,371 MiB | +2,227 MiB |
 
   The pool costs about 21 KiB per token per card (FP8 target and draft KV), so 1 GiB is
-  about 50,000 tokens. The video card has no room to grow the pool: more chat context in
-  shared mode means slower, offloaded clips. For long contexts, use large mode
-  (262,112 per conversation, no pictures or video).
+  about 50,000 tokens. The video card has no room to grow the memory the pool uses, so
+  shared mode's extra context comes from bundling the draft cache, not from the image
+  generators' share. For longer contexts, use large mode (262,112 per conversation, no
+  pictures or video).
 - SwarmUI and its self-started ComfyUI use `gpu-1`. A second ComfyUI
   (`apps/base/comfyui-gpu0`) uses `gpu-0`, the matching gap SGLang leaves there, and
   SwarmUI reaches it as a remote `comfyui_api` backend.

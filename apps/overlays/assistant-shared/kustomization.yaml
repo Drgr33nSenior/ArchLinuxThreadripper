@@ -1,5 +1,5 @@
-# Shared mode: the two-GPU contract model (serving arm UQS, render with
-# `service render --mode shared --serving-profile ... --arm UQS`) plus image
+# Shared mode: the two-GPU contract model (serving arm UQSB, render with
+# `service render --mode shared --serving-profile ... --arm UQSB`) plus image
 # generation in the VRAM it leaves free on both cards: SwarmUI with its self-started
 # ComfyUI on gpu-1 and a second ComfyUI on gpu-0 (apps/base/comfyui-gpu0). The large
 # assistant's budgets apply; only images are added.

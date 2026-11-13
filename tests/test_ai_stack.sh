@@ -428,20 +428,20 @@ for e in profile["args"]:
 for e in profile["env"]:
     assert e["reason"] and e["source"] and e["confidence"] in ("H", "M", "L"), e
 assert sum(1 for arm in profile["arms"].values() if arm["default"]) == 1
-# Shared mode's own default (UQS); the general default is UQL for the large mode.
-assert [n for n, a in profile["arms"].items() if a.get("shared_default")] == ["UQS"]
+# Shared mode's own default (UQSB); the general default is UQLB for the large mode.
+assert [n for n, a in profile["arms"].items() if a.get("shared_default")] == ["UQSB"]
 # One qualification record per qualified arm, each pinned to the image it was measured on.
 records = profile["qualification"] if isinstance(profile["qualification"], list) else [profile["qualification"]]
-assert sorted(r["arm"] for r in records) == ["UQL", "UQS", "Y"] and len({r["arm"] for r in records}) == len(records)
+assert sorted(r["arm"] for r in records) == ["UQL", "UQLB", "UQS", "UQSB", "Y"] and len({r["arm"] for r in records}) == len(records)
 for r in records:
     assert r["arm"] in profile["arms"] and re.fullmatch(r"registry\.lan\.thespry\.family/local/sglang-gfx1201@sha256:[a-f0-9]{64}", r["image"]), r["arm"]
     assert r["evidence"] and r["host_resources"]["requests"] == r["host_resources"]["limits"], r["arm"]
-# Arm UQL (arm Y's ports and fusions with FP8 KV at the model's full context) is the
-# default since 2026-11-11; arm Y (arm U's ports and fusions plus P1 expansion from kq3
+# Arm UQLB (UQL with DFlash draft KV bundling) is the default since 2026-11-13, UQL
+# (arm Y's ports and fusions with FP8 KV at the model's full context) before it; arm Y (arm U's ports and fusions plus P1 expansion from kq3
 # records and prefill all-reduces on the PCIe custom all-reduce, without arm V's
 # prefill-attention tile) stays as its BF16 comparison, arm A as the baseline arm, and
 # K-X as the comparisons for each addition.
-assert profile["arms"]["UQL"]["default"] and not profile["arms"]["Y"]["default"] and not profile["arms"]["A"]["default"]
+assert profile["arms"]["UQLB"]["default"] and not profile["arms"]["UQL"]["default"] and not profile["arms"]["Y"]["default"] and not profile["arms"]["A"]["default"]
 flags = [e["flag"] for e in profile["args"]]
 assert len(flags) == len(set(flags)), "duplicate flag"
 unset = {e["name"] for e in profile["must_unset_env"]}
@@ -577,6 +577,22 @@ assert int(flag("UQL", "--max-total-tokens")) * (16 + 5) == int(flag("Y", "--max
 assert strip(argv["UQL"]) == strip(argv["UQ"])
 assert profile["arms"]["UQL"]["env"] == profile["arms"]["UQ"]["env"]
 assert not profile["arms"]["UQL"].get("shared_default")
+# UQSB and UQLB are UQS and UQL plus draft KV bundling (serving patches 0028-0030). The
+# draft pool shrinks to one 2,047-token window per Mamba checkpoint plus the running
+# requests (43,008 tokens), and the target pool takes the freed bytes: 16 KiB target plus
+# 5 KiB draft per token per card, so each arm costs the same as the arm it extends.
+BUNDLE, DRAFT_POOL = "--speculative-draft-kv-bundling", 43008
+for bundled, base in (("UQSB", "UQS"), ("UQLB", "UQL")):
+    a = argv[bundled]
+    assert a.count(BUNDLE) == 1 and BUNDLE not in argv[base]
+    assert strip([x for x in a if x != BUNDLE]) == strip(argv[base])
+    assert profile["arms"][bundled]["env"] == profile["arms"][base]["env"]
+    pool, base_pool = int(flag(bundled, "--max-total-tokens")), int(flag(base, "--max-total-tokens"))
+    assert pool * 16 + DRAFT_POOL * 5 == base_pool * (16 + 5)
+assert (flag("UQSB", "--max-total-tokens"), flag("UQSB", "--context-length")) == ("201600", "100768")
+assert flag("UQLB", "--context-length") == flag("UQL", "--context-length") == "262112"
+assert 2 * (int(flag("UQSB", "--context-length")) + 32) <= int(flag("UQSB", "--max-total-tokens"))
+assert not profile["arms"]["UQSB"]["default"] and not profile["arms"]["UQLB"].get("shared_default")
 for arm in profile["arms"]:
     items = json.loads((work / f"job-{arm}.json").read_text())["items"]
     config, job, claims = items

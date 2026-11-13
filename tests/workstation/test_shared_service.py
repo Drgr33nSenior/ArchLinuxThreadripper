@@ -1464,6 +1464,21 @@ class ServingContractTests(unittest.TestCase):
                   for name in ("sglang", "swarmui", "comfyui-gpu0")}
         self.assertEqual({"sglang": ["gpu-0", "gpu-1"], "swarmui": ["gpu-1"], "comfyui-gpu0": ["gpu-0"]}, claims)
 
+    def test_default_arms_bundle_the_draft_kv_and_are_active_only_on_their_image(self):
+        # Since 2026-11-13 both modes default to DFlash draft KV bundling (serving patches
+        # 0028-0030): shared mode gets 100,768 tokens per conversation in UQS's bytes, large
+        # mode keeps the model's 262,112 with a larger pool. A mode switch keeps the live image,
+        # so a contract is active only on the image its arm was qualified on.
+        new = "registry.lan.thespry.family/local/sglang-gfx1201@sha256:38fc4d8a6318be676ca46ae18355fadeab5af6d4b8a2915b1d8ea83be9282ce1"
+        old = "registry.lan.thespry.family/local/sglang-gfx1201@sha256:9fc1a58ca06ae493a2e76ebab3d325245b740e98552b7db3214ef543e01e1c9c"
+        for mode, arm, context, pool in (("shared", "UQSB", 100768, 201600), ("large", "UQLB", 262112, 674688)):
+            with self.subTest(mode):
+                contract = service.serving_contract(self.PROFILE, runtime_image=new, mode=mode)
+                self.assertEqual((f"qwen3.8-27b-mxfp4-tp2.{arm}", "active"), (contract["contract"], contract["status"]))
+                self.assertEqual((context, pool), (contract["budgets"]["context_length"], contract["budgets"]["max_total_tokens"]))
+                self.assertIn("--speculative-draft-kv-bundling", contract["_render"]["argv"])
+                self.assertEqual("provisional", service.serving_contract(self.PROFILE, runtime_image=old, mode=mode)["status"])
+
     def test_shared_render_serves_uqs_with_both_image_generators(self):
         site = self.root / "site.json"
         site.write_text(json.dumps({"context": "fixture", "node": "fixture", "node_address": "192.168.77.9",
