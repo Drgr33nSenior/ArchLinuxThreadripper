@@ -264,11 +264,13 @@ matter today for `qwen3.8-27b-mxfp4-tp2`:
 
 | Arm | Used for | Chat cache | Context per conversation | Qualified |
 | --- | --- | --- | --- | --- |
-| `UQS` | Shared mode (`shared_default`) | FP8, pool capped at 163,840 tokens | 81,888 tokens, two conversations | 2026-11-11: C1 / C2 135.1 / 224.8 tokens/s |
-| `UQL` | Large mode (`default`) | FP8, 524,288 tokens requested; 502,093 fitted at qualification (one full conversation plus one of about 240K) | 262,112 tokens (the model's maximum) | 2026-11-11: C1 / C2 133.8 / 229.9 tokens/s |
+| `UQSB` | Shared mode (`shared_default`) | FP8 with the draft cache bundled to 43,008 tokens; target pool 201,600 | 100,768 tokens, two conversations | 2026-11-13: same memory as `UQS`; quality, verify step and prefill unchanged |
+| `UQLB` | Large mode (`default`) | FP8 with the draft cache bundled; 674,688 tokens requested, 645,558 fitted at qualification | 262,112 tokens (the model's maximum) | 2026-11-13: same memory as `UQL`; 28.6% larger pool |
+| `UQS` | Shared mode until 2026-11-13; fallback | FP8, pool capped at 163,840 tokens | 81,888 tokens, two conversations | 2026-11-13 on the current image: C1 / C2 146.9 / 244.3 tokens/s |
+| `UQL` | Large mode until 2026-11-13; fallback | FP8, 524,288 tokens requested; 502,093 fitted at qualification (one full conversation plus one of about 240K) | 262,112 tokens (the model's maximum) | 2026-11-11: C1 / C2 133.8 / 229.9 tokens/s |
 | `Y` | Previous default | BF16, 262,144-token pool | 131,040 tokens | 2026-11-10: C1 / C2 139.2 / 254.7 tokens/s |
 
-All three carry every adopted gfx1201 optimisation (arm `Y`'s set, below). `UQS` and `UQL`
+All of them carry every adopted gfx1201 optimisation (arm `Y`'s set, below). `UQS` and `UQL`
 add the FP8 cache, which serving patches 0026 and 0027 read back as BF16 so the attention
 maths and speed match a BF16 cache. Which mode uses which arm, and how to switch, is in
 [service modes](../../docs/MODES.md).
@@ -369,7 +371,8 @@ variables, which the Job adds to the profile's.
 | `W` | `V` plus `SGLANG_GFX1201_P1_FROM_KQ3=1` (P1 expands its FP8 weight directly from kq3 records, removing the prefill weight rebuild, about -27 ms per chunk, bitwise equal; serving patch 0024) |
 | `X` | `W` plus `SGLANG_GFX1201_PCIE_CUSTOM_AR_MAX_BYTES=25165824` (prefill-chunk all-reduces on the PCIe custom all-reduce instead of RCCL, about -10 ms per chunk, bitwise equal; serving patch 0025 grows its buffer to the cap) |
 | `Y` | `U` plus `SGLANG_GFX1201_P1_FROM_KQ3=1` and the 24 MiB `SGLANG_GFX1201_PCIE_CUSTOM_AR_MAX_BYTES` (0024, 0025) without `V`'s prefill-attention tile; output bitwise equal to `U`; the default from 10 to 11 November |
-| `UQS`, `UQL` | `Y` with FP8 target and draft KV read as BF16 (0026, 0027); `UQS` caps the pool for shared mode. The current defaults |
+| `UQS`, `UQL` | `Y` with FP8 target and draft KV read as BF16 (0026, 0027); `UQS` caps the pool for shared mode. Defaults until 2026-11-13 |
+| `UQSB`, `UQLB` | `UQS` and `UQL` with DFlash draft KV bundling (0028-0030, upstream SGLang PRs 47057 and 47058): the draft cache holds one window per Mamba checkpoint, and the target pool takes the freed memory. The current defaults |
 
 Enable an item in arm A only after its arm matches arm A's quality result and
 greedy acceptance.

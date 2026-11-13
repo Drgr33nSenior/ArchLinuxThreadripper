@@ -7,15 +7,17 @@ such as working through a whole codebase.
 
 | Mode | Chat model (both cards) | Context per conversation | Pictures | Video | Use it for |
 | --- | --- | --- | --- | --- | --- |
-| **Shared** (default) | Qwen3.8-27B MXFP4, arm UQS | 81,888 tokens, two conversations at once | Yes, one generator per card | Yes, on card 0 | Everyday family use |
-| **Large** | Qwen3.8-27B MXFP4, arm UQL | 262,112 tokens, the model's maximum | No | No | Long documents and coding sessions |
+| **Shared** (default) | Qwen3.8-27B MXFP4, arm UQSB | 100,768 tokens, two conversations at once | Yes, one generator per card | Yes, on card 0 | Everyday family use |
+| **Large** | Qwen3.8-27B MXFP4, arm UQLB | 262,112 tokens, the model's maximum | No | No | Long documents and coding sessions |
 | Split (legacy) | Qwen3.5-9B on one card | 4,096 tokens | Yes, on the other card | No | Kept for comparison; not used day to day |
 | Gaming | None | — | No | No | Game streaming; the AI workloads are stopped |
 | Maintenance | None | — | No | No | Updates and recovery; every GPU workload is stopped |
 
 The large mode's numbers come from the [serving profile](../infrastructure/ai-stack/serving/qwen3.8-27b-mxfp4-tp2.json)
-(arms `UQS` and `UQL`, both qualified on 2026-11-11). Large mode's pool holds one full-length
-conversation plus one of about 240K tokens. No mode can go past 262,112 tokens: that is the
+(arms `UQSB` and `UQLB`, both qualified on 2026-11-13). Both bundle the DFlash draft's cache
+(serving patches 0028-0030): the draft keeps one 2,047-token window per saved checkpoint
+instead of a slot for every token, and the target cache takes the freed memory. Large
+mode's pool holds about 645,000 tokens, two full-length conversations with room to spare. No mode can go past 262,112 tokens: that is the
 model's trained limit (262,144 positions, less a 32-token reserve).
 
 ## What each card holds
@@ -64,8 +66,8 @@ minutes for a video), and SGLang then needs a few minutes to load.
 
 | Mode | Session mode | Render |
 | --- | --- | --- |
-| `family` | `shared` | `service render --mode shared` (the profile's shared arm, `UQS`) |
-| `coder` | `ai` | `service render --mode large` (the profile's default arm, `UQL`) |
+| `family` | `shared` | `service render --mode shared` (the profile's shared arm, `UQSB`) |
+| `coder` | `ai` | `service render --mode large` (the profile's default arm, `UQLB`) |
 | `gaming` | `gaming` | none |
 | `maintenance` | `maintenance` | none |
 
@@ -121,8 +123,8 @@ run on their own:
 
 | You want | Render with | Session mode |
 | --- | --- | --- |
-| Shared | `--mode shared` (arm `UQS`) | `shared` |
-| Large | `--mode large` (arm `UQL`) | `ai` |
+| Shared | `--mode shared` (arm `UQSB`) | `shared` |
+| Large | `--mode large` (arm `UQLB`) | `ai` |
 | Split (legacy) | `--mode split` | `split` |
 | Gaming or maintenance | (any render) | `gaming`, `maintenance` |
 

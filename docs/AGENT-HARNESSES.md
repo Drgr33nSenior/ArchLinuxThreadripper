@@ -14,7 +14,7 @@ the same selected model. There is no automatic fallback between clients.
 ## Preconditions and boundary
 
 The live endpoint serves `Qwen3.8-27B-MXFP4` from the qualified serving profile. Its
-context per conversation depends on the [mode](MODES.md): 81,888 tokens in shared mode,
+context per conversation depends on the [mode](MODES.md): 100,768 tokens in shared mode,
 262,112 in large mode. Take the client values from the current render's `client.conf`,
 not from the defaults below, and regenerate the bundle whenever the mode changes.
 

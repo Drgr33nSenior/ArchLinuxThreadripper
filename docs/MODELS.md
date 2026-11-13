@@ -16,7 +16,7 @@ change, never a moving `latest`.
 | Search reranking | `cross-encoder/ms-marco-MiniLM-L6-v2` | Hash-checked on staging | CPU | [RAG](RAG.md) |
 | Voice input | `Systran/faster-whisper-base` (int8) | Hash-checked on staging | CPU, inside Open WebUI | [RAG](RAG.md) (`rag stage-whisper`) |
 
-The chat model's context depends on the mode: 81,888 tokens per conversation in shared mode
+The chat model's context depends on the mode: 100,768 tokens per conversation in shared mode
 and 262,112 in large mode ([service modes](MODES.md)). Its serving settings live in the
 [serving profile](../infrastructure/ai-stack/serving/qwen3.8-27b-mxfp4-tp2.json), which is
 `qualified`; the catalogue holds only identity and file hashes.
