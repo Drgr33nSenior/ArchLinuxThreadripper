@@ -1358,14 +1358,14 @@ class ServingContractTests(unittest.TestCase):
 
     def test_each_mode_has_its_own_deadline_and_no_gateway_timeout_undercuts_it(self):
         # Streaming budgets, not one total deadline: 600 s to first content (a cold 235K-token
-        # prompt takes ~240 s in large mode), 180 s idle between chunks, a 3600 s overall cap.
+        # prompt takes ~240 s in large mode), 300 s idle between chunks, a 3600 s overall cap.
         # LiteLLM's global fallbacks must not cap the route, and each LiteLLM limit ends 10 s
         # before the gateway's matching budget.
         for mode, deadline in (("large", 3600), ("shared", 3600)):
             contract = service.serving_contract(self.PROFILE, mode=mode)
             self.assertEqual({"gateway_seconds": deadline, "route_seconds": deadline - 10,
                               "client_milliseconds": deadline * 1000,
-                              "first_token_seconds": 600, "idle_seconds": 180}, contract["deadlines"])
+                              "first_token_seconds": 600, "idle_seconds": 300}, contract["deadlines"])
             objects, _, _ = service.apply_contract(service.kustomize(ROOT / "apps/overlays/assistant"),
                                                   contract, mode, "assistant")
             data = next(o for o in objects if o["kind"] == "ConfigMap" and "litellm.yaml" in o.get("data", {}))["data"]
@@ -1375,7 +1375,7 @@ class ServingContractTests(unittest.TestCase):
             self.assertEqual(deadline - 10, config["router_settings"]["timeout"])
             self.assertEqual(deadline - 10, config["litellm_settings"]["request_timeout"])
             policy = json.loads(data["gateway-policy.json"])
-            self.assertEqual((deadline, 600, 180), (policy["request_timeout"], policy["first_token_timeout"], policy["idle_timeout"]))
+            self.assertEqual((deadline, 600, 300), (policy["request_timeout"], policy["first_token_timeout"], policy["idle_timeout"]))
             self.assertEqual(590, route["litellm_params"]["stream_timeout"])
         short = service.serving_contract(self.PROFILE, mode="large", deadline_seconds=180)["deadlines"]
         self.assertEqual((180, 180, 180), (short["gateway_seconds"], short["first_token_seconds"], short["idle_seconds"]))

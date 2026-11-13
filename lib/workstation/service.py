@@ -656,14 +656,15 @@ DEFAULT_OUTPUT_TOKENS = 12288
 # (600 s shared, 1200 s large) cut long Max-effort replies and tool turns mid-stream.
 # - First content: 600 s for queueing, prefill and the start of thinking. A cold 235K-token
 #   prompt took 238.7 s to its first token in large mode (arm UQL, 2026-11-11).
-# - Idle: 180 s between chunks once content flows. Reasoning streams as content, so a
-#   thinking model is not idle; a stream silent this long has stalled.
+# - Idle: 300 s between chunks once content flows. Reasoning streams as content, so a
+#   thinking model is not idle; a stream silent this long has stalled. 300 s matches
+#   Codex's stream idle default (owner, 2026-11-13: this model thinks more slowly).
 # - Overall cap: 3600 s in every mode, a backstop only (Max effort runs to the context
 #   limit at ~85 tok/s: about 50k tokens per 10 minutes).
 # The OpenAI and Anthropic SDKs use the same shape: a 600 s read timeout per chunk, no total.
 DEADLINE_SECONDS = {"large": 3600, "shared": 3600}
 FIRST_TOKEN_SECONDS = 600
-IDLE_SECONDS = 180
+IDLE_SECONDS = 300
 
 
 def ai_stack_render():
