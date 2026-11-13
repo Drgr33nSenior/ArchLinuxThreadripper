@@ -246,7 +246,7 @@ kubectl -n ai-home-lab exec deploy/litellm -c gateway -- python -c \
 | After a reboot, a GPU pod fails with `unresolvable CDI devices` | The DRA driver lost its per-claim device files. Scale the GPU consumers to zero and back: [post-reboot CDI fix](HOME-LAB.md#4-gpu-operator-and-allocation) |
 | Pictures refused with `image_backend_needs_operator_check` | A cancelled or failed picture left a marker. Check both generators are idle, then remove it: [picture recovery](ASSISTANT.md#pinned-inputs-and-gates) |
 | A video never arrives or chat says `video_busy` | Check `comfyui-gpu0`'s queue: [short videos](ASSISTANT.md#short-videos-shared-mode) |
-| After a fresh render, the Think/Fast presets lack tools or vanish for the children | Re-apply the presets with **both** `--group Parents --group Family`: [presets](ASSISTANT.md#reasoning-choices-in-the-model-menu) |
+| Someone wants longer or no thinking | Chat Controls → Advanced Params → Reasoning Effort (`xhigh` or `none`): [reasoning effort](ASSISTANT.md#reasoning-effort) |
 | Someone new needs an account, pictures or a coding key | [AI service setup](AI-SERVICE.md) (`service provision`, `service browser-bind --images`) |
 
 ### GPU power cap

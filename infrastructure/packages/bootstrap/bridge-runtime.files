@@ -375,7 +375,6 @@ lib/workstation/hyperloom_owner_result.py
 lib/workstation/hyperloom_sdk_adapter.py
 lib/workstation/hyperloom_workload.py
 lib/workstation/rocprof_trace.py
-lib/workstation/webui_presets.py
 infrastructure/ai-stack/k8s/models.yaml
 infrastructure/ai-stack/models/cache.py
 infrastructure/ai-stack/models/fetch.py

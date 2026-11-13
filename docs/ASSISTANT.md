@@ -14,7 +14,7 @@ It runs in **shared mode** today. [Service modes](MODES.md) explains the alterna
 
 | Feature | How to use it | Who |
 | --- | --- | --- |
-| Chat | Pick a model in the menu: `Qwen3.8-27B-MXFP4` (thinks briefly), `· Think` (thinks as long as it needs) or `· Fast` (no thinking) | Everyone with an account |
+| Chat | Chat with `Qwen3.8-27B-MXFP4` (thinks briefly). To change how long it thinks: **Chat Controls → Advanced Params → Reasoning Effort** (`none`, `low`, `medium`, `high`, `xhigh`) | Everyone with an account |
 | Pictures | Ask for a picture, or use the image button; SDXL makes it in about 7 s | Accounts with picture permission (Admin and Parents) |
 | Short videos | Ask for a short video; a 5-second clip appears in the chat after about 80 s | Accounts with picture permission and the normal `user` role (the Parents' daily accounts); shared mode only |
 | Voice input | The microphone button; speech is transcribed on the workstation | Everyone |
@@ -24,8 +24,8 @@ It runs in **shared mode** today. [Service modes](MODES.md) explains the alterna
 | Coding agents | Qwen Code and other IDE agents use the same model through an API key | Accounts given a key; see [coding clients](AGENT-HARNESSES.md) |
 
 **Accounts and groups.** Each person has their own Open WebUI account; sign-up is closed.
-Parents are in the `Parents` group and the children in `Family`; both groups see the Think
-and Fast presets. Picture permission is granted per account, to the Admin and Parents
+Parents are in the `Parents` group and the children in `Family`; everyone can set Reasoning
+Effort in Chat Controls. Picture permission is granted per account, to the Admin and Parents
 accounts. The tools server (video, memory, search, documents through MCP) refuses every call
 from an account with Open WebUI's `admin` role, so the owner uses a daily account for those;
 the admin account is for administration and pictures.
@@ -192,40 +192,26 @@ not reach the new alias: issue keys for `Qwen3.8-27B-MXFP4` with
 `service provision` (the alias is now in its allowlist) and revoke the old ones
 as before.
 
-### Reasoning choices in the model menu
+### Reasoning effort
 
-`service render` writes `webui-presets.json` from the contract. These are two Open WebUI
-presets on the contract model, shown in the model dropdown next to the base model, which
-keeps the contract's default (thinking at `low` effort):
+There is one chat model; Open WebUI's own **Reasoning Effort** control chooses how long it
+thinks. Open a chat's **Chat Controls → Advanced Params → Reasoning Effort** (or set a
+personal default in Settings → General → Advanced Parameters). The gateway accepts:
 
-| Preset | Request |
+| Value | Request |
 | --- | --- |
-| `<model> · Think` | thinking on, `reasoning_effort: xhigh`, no output cap: runs until done, the context is full, or the deadline (10 min shared, 20 min large) |
-| `<model> · Fast` | thinking off (`enable_thinking: false`) |
+| *(unset)* or `low` | the contract default: thinking at `low` effort, output capped at 12,288 tokens |
+| `medium` | thinking at `medium` effort, same cap |
+| `high` or `xhigh` | thinking at `xhigh`, no output cap: runs until done, the context is full, or the deadline (10 min shared, 20 min large) |
+| `none` | no thinking (`enable_thinking: false`) |
 
-Open WebUI keeps presets in its database. Apply them with the admin account's **session
-token** (Settings → Account → API keys → JWT Token), saved in a `chmod 600` file. An API
-key does not work here: `ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS` limits `sk-` keys to the
-coding clients' endpoints, so the groups and model-import calls answer 403 even for an
-admin's key. Run it from a LAN client such as your Mac, not on the workstation itself: the
-host's own requests reach Traefik from the pod network, outside the `private-clients`
-allowlist, and are refused with 403 before Open WebUI sees them. Each `--group` gets read
-access, so presets are never public. Delete the token file afterwards:
+Any other value is refused with `invalid_reasoning_effort`. Chat Controls and Params are
+enabled for every user (`USER_PERMISSIONS_CHAT_CONTROLS`/`_PARAMS`, pinned in
+`apps/components/assistant/assistant.env`), so the Family group has the control too.
 
-```sh
-python3 lib/workstation/webui_presets.py apply RENDER/webui-presets.json \
-  --url https://chat.example --key-file /private/webui-admin-token --group Parents --group Family
-```
-
-Re-running updates the presets in place, and grants read access to exactly the groups you
-name. **Always name both groups**: leaving out `--group Family` removes the presets from the
-children's accounts. Admins see every preset.
-
-Each preset also switches on the **Workstation tools** server (`server:mcp:workstation`): Open
-WebUI does not pass the base model's default tools on to a preset, and without them a Think or
-Fast chat cannot make videos, recall memory or search the web. The server stays visible to every
-user, and service-tools still checks each call against the user's own permissions (videos need
-picture access), so this changes the default, not who may do what.
+The earlier `· Think` and `· Fast` model presets are retired. A deployment that still has
+them keeps them in Open WebUI's database: an admin deletes them under **Admin Panel →
+Settings → Models** (or Workspace → Models). Nothing re-creates them.
 
 ### Shared mode (chat and pictures together)
 

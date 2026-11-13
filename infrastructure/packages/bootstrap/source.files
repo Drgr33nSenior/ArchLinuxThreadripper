@@ -539,7 +539,6 @@ lib/workstation/hyperloom_owner_result.py
 lib/workstation/hyperloom_sdk_adapter.py
 lib/workstation/hyperloom_workload.py
 lib/workstation/rocprof_trace.py
-lib/workstation/webui_presets.py
 tests/workstation/test_component_profiling.py
 tests/workstation/test_hyperloom_chatgpt.py
 tests/workstation/test_hyperloom_evidence.py
