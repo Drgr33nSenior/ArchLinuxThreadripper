@@ -179,9 +179,39 @@ context, node and new output paths; placeholders are not site values.
    it sends a bearer key in plaintext. The client URLs are
    `https://chat.lan.thespry.family` and `https://api.lan.thespry.family/v1`.
 
-   **DNS (owner, UniFi).** Add two internal A records: `chat.lan.thespry.family`
-   → `192.168.30.11` and `api.lan.thespry.family` → `192.168.30.11`. No public
-   record is needed: certificates use DNS-01.
+   **DNS (owner, UniFi).** The lab depends on these internal A records on the
+   UniFi gateway. No public record is needed: certificates use DNS-01.
+
+   | Record | Address | Used by |
+   | --- | --- | --- |
+   | `chat.lan.thespry.family` | `192.168.30.11` | Open WebUI in browsers and the JetBrains ACP agent |
+   | `api.lan.thespry.family` | `192.168.30.11` | the OpenAI-compatible API (`/v1`, `/mcp`) for coding clients |
+   | `threadripper-ai.lan.thespry.family` | `192.168.30.11` | the K3s API (`:6443`); `kubectl` on the workstation uses it, and the API certificate names it |
+   | `registry.lan.thespry.family` | `192.168.30.10` | the image registry on the NAS; K3s pulls every local image from it |
+   | `microserver.lan.thespry.family` | `192.168.30.10` | the NAS: NFS storage and monitoring |
+
+   These are hand-made records, so restoring an older gateway configuration
+   can remove them. On 2026-11-13 a rollback removed the first four. After
+   any gateway restore, check that each name answers with its address, from
+   a client and from the workstation:
+
+   ```sh
+   for n in chat api threadripper-ai registry microserver; do
+     h="$n.lan.thespry.family"
+     printf '%-16s %s\n' "$n" "$({ getent hosts "$h" || dig +short "$h"; } 2>/dev/null | awk '{print $1; exit}')"
+   done
+   ```
+
+   The workstation has `getent` but not `dig`; macOS has `dig` but not
+   `getent`.
+
+   While a record is missing, upstream DNS answers "no such name", and clients
+   cache that answer for up to 30 minutes after the record returns. On a Mac,
+   clear the cache with `sudo dscacheutil -flushcache; sudo killall -HUP
+   mDNSResponder`; Chrome keeps its own copy (*chrome://net-internals/#dns* →
+   *Clear host cache*). Other devices recover when they rejoin the network.
+   The JetBrains ACP agent reports a cached failure as "Connection failed:
+   check URL, TLS/private CA and network".
 
    **Host firewall.** Set `lab_https_client_cidrs: ["192.168.0.0/16"]`,
    `lab_management_cidr: 192.168.30.0/24`, `lab_node_ip: 192.168.30.11`,
