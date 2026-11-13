@@ -293,6 +293,9 @@ apps/components/assistant/theme/web-app-manifest-512x512.png
 apps/components/assistant/theme/logo.png
 apps/components/assistant/theme/splash.png
 apps/components/assistant/theme/splash-dark.png
+apps/components/assistant/theme/README.md
+apps/components/assistant/theme/logo.svg
+apps/components/assistant/theme/render-assets.sh
 apps/components/rag-reranker/kustomization.yaml
 apps/components/rag-reranker/reranker.env
 apps/components/rag-reranker/webui.yaml
