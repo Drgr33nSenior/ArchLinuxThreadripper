@@ -9,6 +9,10 @@ ws_session_config_validate() {
     [[ "$value" =~ ^[a-zA-Z0-9][a-zA-Z0-9._:/@-]*$ ]] || ws_die "$key must explicitly identify the reviewed target"
   done
   [[ "$SESSION_AI_DEPLOYMENT" != "$SESSION_GAME_DEPLOYMENT" ]] || ws_die 'AI and gaming deployments must differ'
+  # The game Deployment may live in its own namespace (a weaker Pod Security level than
+  # the AI namespace allows); every other managed Deployment is in SESSION_NAMESPACE.
+  [[ -z ${SESSION_GAME_NAMESPACE:-} || $SESSION_GAME_NAMESPACE =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]] ||
+    ws_die 'SESSION_GAME_NAMESPACE must be a namespace name'
   [[ "${SESSION_TIMEOUT_SECONDS:-300}" =~ ^[1-9][0-9]*$ ]] || ws_die 'SESSION_TIMEOUT_SECONDS must be positive'
   [[ "${SESSION_AI_STARTUP_TIMEOUT_SECONDS:-2100}" =~ ^[1-9][0-9]{0,4}$ ]] || ws_die 'SESSION_AI_STARTUP_TIMEOUT_SECONDS must be a bounded positive integer'
   case "${SESSION_SERVICE_ENABLED:-false}" in true | false) ;; *) ws_die 'SESSION_SERVICE_ENABLED must be true or false' ;; esac
@@ -139,15 +143,20 @@ ws_session_target_check() {
   printf '%s\n' "$node"
 }
 
+# The namespace of a managed Deployment: the game's own, when configured, else the session's.
+ws_session_ns() {
+  if [[ "$1" == "$SESSION_GAME_DEPLOYMENT" ]]; then printf '%s\n' "${SESSION_GAME_NAMESPACE:-$SESSION_NAMESPACE}"; else printf '%s\n' "$SESSION_NAMESPACE"; fi
+}
+
 ws_session_deployment() {
-  ws_session_kubectl -n "$SESSION_NAMESPACE" get deployment "$1" -o json
+  ws_session_kubectl -n "$(ws_session_ns "$1")" get deployment "$1" -o json
 }
 
 # The game Deployment may not be installed yet: gaming is qualified separately. Print it,
 # or nothing when it does not exist; an API failure is still an error, so a running game
 # is never mistaken for an absent one.
 ws_session_game_document() {
-  ws_session_kubectl -n "$SESSION_NAMESPACE" get deployment "$SESSION_GAME_DEPLOYMENT" --ignore-not-found -o json
+  ws_session_kubectl -n "$(ws_session_ns "$SESSION_GAME_DEPLOYMENT")" get deployment "$SESSION_GAME_DEPLOYMENT" --ignore-not-found -o json
 }
 
 ws_session_game_present() { [[ ${SESSION_GAME_PRESENT:-true} == true ]]; }
@@ -217,7 +226,7 @@ ws_session_qualify() {
     ((.spec.template.spec.hostNetwork // false) == false) and
     all(.spec.template.spec.volumes[]?; has("hostPath")|not)' <<<"$document" >/dev/null ||
     ws_die "Deployment/$deployment is not qualified: require digest-pinned containers, reviewed qualification and baseline-compatible device/security access"
-  namespace="$(ws_session_kubectl get namespace "$SESSION_NAMESPACE" -o json)" || ws_die 'cannot inspect Pod Security policy'
+  namespace="$(ws_session_kubectl get namespace "$(ws_session_ns "$deployment")" -o json)" || ws_die 'cannot inspect Pod Security policy'
   jq -e '.metadata.labels["pod-security.kubernetes.io/enforce"] == "baseline" or .metadata.labels["pod-security.kubernetes.io/enforce"] == "restricted"' \
     <<<"$namespace" >/dev/null || ws_die 'session namespace must retain baseline or restricted Pod Security enforcement'
   ws_session_capacity_check "$document" "$node"
@@ -306,8 +315,8 @@ ws_session_managed_pods() {
   # ownership UIDs instead of trusting a label or a generated-name prefix.
   local deployment="$1" uid replicasets pods
   uid="$(ws_session_deployment "$deployment" | jq -er '.metadata.uid')" || return 1
-  replicasets="$(ws_session_kubectl -n "$SESSION_NAMESPACE" get replicasets -o json)" || return 1
-  pods="$(ws_session_kubectl -n "$SESSION_NAMESPACE" get pods -o json)" || return 1
+  replicasets="$(ws_session_kubectl -n "$(ws_session_ns "$deployment")" get replicasets -o json)" || return 1
+  pods="$(ws_session_kubectl -n "$(ws_session_ns "$deployment")" get pods -o json)" || return 1
   jq -n --arg uid "$uid" --slurpfile rs <(printf '%s' "$replicasets") --slurpfile pods <(printf '%s' "$pods") '
     $rs[0] as $rs | $pods[0] as $pods |
     [$rs.items[] | select(any(.metadata.ownerReferences[]?; .uid == $uid and .kind == "Deployment")) | .metadata.uid] as $ids |
@@ -319,7 +328,7 @@ ws_session_stop() {
   document="$(ws_session_checked_deployment "$deployment")"
   count="$(jq -er '.spec.replicas' <<<"$document")" || ws_die 'cannot read current replica count'
   if ((count != 0)); then
-    ws_session_kubectl -n "$SESSION_NAMESPACE" scale "deployment/$deployment" --resource-version="$(jq -r .metadata.resourceVersion <<<"$document")" --current-replicas="$count" --replicas=0 >/dev/null ||
+    ws_session_kubectl -n "$(ws_session_ns "$deployment")" scale "deployment/$deployment" --resource-version="$(jq -r .metadata.resourceVersion <<<"$document")" --current-replicas="$count" --replicas=0 >/dev/null ||
       ws_die "concurrent change or failure stopping $deployment"
   fi
   deadline=$((SECONDS + ${SESSION_TIMEOUT_SECONDS:-300}))
@@ -469,8 +478,10 @@ ws_session_switch() (
   if [[ -f "$dir/state.json" ]]; then
     state="$(<"$dir/state.json")"
     jq -e --arg context "$SESSION_CONTEXT" --arg node "$SESSION_NODE" --arg ns "$SESSION_NAMESPACE" \
+      --arg game_ns "$(ws_session_ns "$SESSION_GAME_DEPLOYMENT")" \
       --arg ai "$SESSION_AI_DEPLOYMENT" --arg game "$SESSION_GAME_DEPLOYMENT" '
       .schema_version == 1 and .context == $context and .node == $node and .namespace == $ns and
+      (.game_namespace // .namespace) == $game_ns and
       .ai == $ai and .game == $game and (.ai_uid|type == "string") and (.game_uid|type == "string") and
       ([.previous.ai,.previous.game]|all(. == 0 or . == 1)) and (.previous.ai+.previous.game <= 1)' \
       <<<"$state" >/dev/null || ws_die 'session state belongs to a different target or is invalid'
@@ -481,10 +492,11 @@ ws_session_switch() (
     ! ws_session_game_present || game="$(jq -er '.spec.replicas' <<<"$game_document")"
     ((ai <= 1 && game <= 1 && ai + game <= 1)) || ws_die 'initial state must have at most one managed GPU deployment active; concurrent placement is not yet qualified'
     state="$(jq -n --arg context "$SESSION_CONTEXT" --arg node "$SESSION_NODE" --arg ns "$SESSION_NAMESPACE" \
+      --arg game_ns "$(ws_session_ns "$SESSION_GAME_DEPLOYMENT")" \
       --arg ai "$SESSION_AI_DEPLOYMENT" --arg game "$SESSION_GAME_DEPLOYMENT" --argjson ac "$ai" --argjson gc "$game" \
       --arg ai_uid "$(ws_session_deployment "$SESSION_AI_DEPLOYMENT" | jq -er .metadata.uid)" \
       --arg game_uid "$(if ws_session_game_present; then jq -er .metadata.uid <<<"$game_document"; else printf absent; fi)" \
-      '{schema_version:1,context:$context,node:$node,namespace:$ns,ai:$ai,game:$game,ai_uid:$ai_uid,game_uid:$game_uid,
+      '{schema_version:1,context:$context,node:$node,namespace:$ns,game_namespace:$game_ns,ai:$ai,game:$game,ai_uid:$ai_uid,game_uid:$game_uid,
         previous:{ai:$ac,game:$gc},mode:"baseline",phase:"ready"}')"
   fi
   # A game Deployment installed after the state was written is adopted only while stopped;
@@ -608,7 +620,7 @@ ws_session_switch() (
       [[ "$desired" == "$SESSION_AI_DEPLOYMENT" ]] || ws_session_stop "$SESSION_AI_DEPLOYMENT"
       [[ "$desired" == "$SESSION_GAME_DEPLOYMENT" ]] || ! ws_session_game_present || ws_session_stop "$SESSION_GAME_DEPLOYMENT"
       [[ -n "$desired" ]] || ws_session_gpu_free "$hardware"
-      [[ -z "$desired" ]] || ws_session_kubectl -n "$SESSION_NAMESPACE" rollout status "deployment/$desired" --timeout="$(ws_session_rollout_timeout "$desired")" >/dev/null
+      [[ -z "$desired" ]] || ws_session_kubectl -n "$(ws_session_ns "$desired")" rollout status "deployment/$desired" --timeout="$(ws_session_rollout_timeout "$desired")" >/dev/null
       if [[ "$desired" == "$SESSION_GAME_DEPLOYMENT" ]]; then ws_session_build_gate inhibit; else ws_session_build_gate release; fi
       ws_note "session already $mode; no replica changes"
       exit 0
@@ -635,7 +647,7 @@ ws_session_switch() (
     ws_session_kubectl apply -f "$apply" >/dev/null || ws_die 'applying the render failed; the GPU workloads stay stopped'
     local rolled
     while IFS= read -r rolled; do
-      ws_session_kubectl -n "$SESSION_NAMESPACE" rollout status "deployment/$rolled" --timeout="${SESSION_TIMEOUT_SECONDS}s" >/dev/null ||
+      ws_session_kubectl -n "$(ws_session_ns "$rolled")" rollout status "deployment/$rolled" --timeout="${SESSION_TIMEOUT_SECONDS}s" >/dev/null ||
         ws_die "Deployment/$rolled did not roll out after the apply"
     done < <(jq -r --argjson managed "$managed" '.items[] | select(.kind == "Deployment" and (.spec.replicas // 1) > 0) |
       .metadata.name | select(. as $n | $managed | index($n) | not)' "$apply")
@@ -646,9 +658,9 @@ ws_session_switch() (
     local candidate
     candidate="$(ws_session_checked_deployment "$desired")"
     ws_session_gpu_free "$hardware"
-    ws_session_kubectl -n "$SESSION_NAMESPACE" scale "deployment/$desired" --resource-version="$(jq -r .metadata.resourceVersion <<<"$candidate")" --current-replicas=0 --replicas=1 >/dev/null ||
+    ws_session_kubectl -n "$(ws_session_ns "$desired")" scale "deployment/$desired" --resource-version="$(jq -r .metadata.resourceVersion <<<"$candidate")" --current-replicas=0 --replicas=1 >/dev/null ||
       ws_die 'selected deployment changed concurrently or failed to start'
-    ws_session_kubectl -n "$SESSION_NAMESPACE" rollout status "deployment/$desired" --timeout="$(ws_session_rollout_timeout "$desired")" >/dev/null ||
+    ws_session_kubectl -n "$(ws_session_ns "$desired")" rollout status "deployment/$desired" --timeout="$(ws_session_rollout_timeout "$desired")" >/dev/null ||
       ws_die 'selected deployment did not become ready; session remains failed until explicit restore or retry'
   fi
   local -a images=()
@@ -658,8 +670,8 @@ ws_session_switch() (
   for starting in "${images[@]}"; do
     ws_session_qualify "$starting" "$node" ai
     candidate="$(ws_session_checked_deployment "$starting")"
-    ws_session_kubectl -n "$SESSION_NAMESPACE" scale "deployment/$starting" --resource-version="$(jq -r .metadata.resourceVersion <<<"$candidate")" --current-replicas=0 --replicas=1 >/dev/null || ws_die 'image Deployment changed concurrently'
-    ws_session_kubectl -n "$SESSION_NAMESPACE" rollout status "deployment/$starting" --timeout="$(ws_session_rollout_timeout "$starting")" >/dev/null || ws_die 'image backend did not become ready'
+    ws_session_kubectl -n "$(ws_session_ns "$starting")" scale "deployment/$starting" --resource-version="$(jq -r .metadata.resourceVersion <<<"$candidate")" --current-replicas=0 --replicas=1 >/dev/null || ws_die 'image Deployment changed concurrently'
+    ws_session_kubectl -n "$(ws_session_ns "$starting")" rollout status "deployment/$starting" --timeout="$(ws_session_rollout_timeout "$starting")" >/dev/null || ws_die 'image backend did not become ready'
   done
   if [[ "$service_model" != none ]]; then ws_session_service ready "$service_model" "$want_image"; else ws_session_service maintenance; fi
   state="$(jq '.phase="ready"' <<<"$state")"

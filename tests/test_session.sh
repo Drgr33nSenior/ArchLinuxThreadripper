@@ -456,3 +456,29 @@ for memory in 11G 1.5Gi; do
 done
 printf '{"items":[]}\n' >"$work/api/pods.json"
 printf 'decimal memory quantity fixture tests passed\n'
+
+# The game Deployment in its own namespace: every call about it goes there, the AI
+# Deployments stay in SESSION_NAMESPACE, and the state records the game namespace.
+# A state written before the move (no game_namespace) is a different target.
+namespaced_kubectl() {
+  if [[ ${1:-} == -n ]]; then printf '%s %s %s %s\n' "$2" "$3" "$4" "${5:-}" >>"$work/namespaces.log"; fi
+  fixture_kubectl "$@"
+}
+ws_session_kubectl() { namespaced_kubectl "$@"; }
+SESSION_GAME_NAMESPACE=gaming
+expect_failure ws_session_switch maintenance "$work/fixture.json" "$work/state" --execute
+grep -q 'session state belongs to a different target' "$work/failure.log"
+mv "$work/state/state.json" "$work/state-before-move.json"
+: >"$work/namespaces.log"
+ws_session_switch maintenance "$work/fixture.json" "$work/state" --execute
+jq -e '.game_namespace == "gaming" and .namespace == "ai-home-lab" and .mode == "maintenance"' "$work/state/state.json" >/dev/null
+grep -q '^gaming get deployment parent-steam-headless' "$work/namespaces.log"
+if grep -E '^ai-home-lab .* (deployment/)?parent-steam-headless' "$work/namespaces.log"; then exit 1; fi
+if grep -E '^gaming .* (deployment/)?(sglang|swarmui|comfyui-gpu0)( |$)' "$work/namespaces.log"; then exit 1; fi
+# The AI side (its Pods and ReplicaSets) is still read in the session namespace.
+grep -q '^ai-home-lab get replicasets' "$work/namespaces.log"
+ws_session_switch maintenance "$work/fixture.json" "$work/state" --execute
+unset SESSION_GAME_NAMESPACE
+mv "$work/state-before-move.json" "$work/state/state.json"
+ws_session_kubectl() { fixture_kubectl "$@"; }
+printf 'game namespace fixture tests passed\n'
