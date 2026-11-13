@@ -304,7 +304,19 @@ image, so each mode's contract is `active`:
 ```
 
 - Arm `UQS` caps the KV pool at 163,840 tokens (81,888 per conversation). That left
-  9.04 GB free per card in qualification and leaves about 8.35 GB live.
+  9.04 GB free per card in qualification. Measured live on 2026-11-13 (32,624 MiB per card):
+
+  | | Pictures card (`gpu-1`, SwarmUI) | Video card (`gpu-0`, `comfyui-gpu0`) |
+  | --- | --- | --- |
+  | In use before any picture | 25,585 MiB | 25,121 MiB |
+  | Peak | 29,885 MiB (two pictures at once) | 31,913 MiB (a 5-second clip) |
+  | Free at the peak | 2,739 MiB | 711 MiB |
+  | Kept after use (models stay loaded) | +3,371 MiB | +2,227 MiB |
+
+  The pool costs about 21 KiB per token per card (FP8 target and draft KV), so 1 GiB is
+  about 50,000 tokens. The video card has no room to grow the pool: more chat context in
+  shared mode means slower, offloaded clips. For long contexts, use large mode
+  (262,112 per conversation, no pictures or video).
 - SwarmUI and its self-started ComfyUI use `gpu-1`. A second ComfyUI
   (`apps/base/comfyui-gpu0`) uses `gpu-0`, the matching gap SGLang leaves there, and
   SwarmUI reaches it as a remote `comfyui_api` backend.
