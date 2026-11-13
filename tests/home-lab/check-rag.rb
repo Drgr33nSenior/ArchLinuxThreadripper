@@ -34,7 +34,10 @@ check(pod.dig('securityContext', 'runAsUser') == 1000 && pod.dig('securityContex
       pod.dig('securityContext', 'runAsNonRoot') == true && pod.dig('securityContext', 'seccompProfile', 'type') == 'RuntimeDefault', 'RAG must stay non-root and sandboxed')
 lock = File.readlines(File.join(root, 'versions.lock')).reject { |l| l.start_with?('#') || l.strip.empty? }.map { |l| l.strip.split('=', 2) }.to_h
 image = lock.fetch('OPEN_WEBUI_IMAGE')
-check(image.match?(/\Aghcr\.io\/open-webui\/open-webui:v#{Regexp.escape(lock.fetch('OPEN_WEBUI_VERSION'))}@sha256:[a-f0-9]{64}\z/), 'RAG image is not locked')
+# The upstream release, or the webui AI-stack stage's build of the workstation fork (as lib/k3s/common.sh).
+upstream = /\Aghcr\.io\/open-webui\/open-webui:v#{Regexp.escape(lock.fetch('OPEN_WEBUI_VERSION'))}@sha256:[a-f0-9]{64}\z/
+stage = /\Aregistry\.lan\.thespry\.family\/local\/open-webui:[a-f0-9]{12}@sha256:[a-f0-9]{64}\z/
+check(image.match?(upstream) || image.match?(stage), 'RAG image is not locked')
 check(lock.fetch('OPEN_WEBUI_COMMIT').match?(/\A[a-f0-9]{40}\z/) && lock.fetch('RAG_EMBEDDING_REVISION').match?(/\A[a-f0-9]{40}\z/), 'Missing source/model revisions')
 containers = pod.fetch('initContainers') + pod.fetch('containers')
 containers.each do |c|
