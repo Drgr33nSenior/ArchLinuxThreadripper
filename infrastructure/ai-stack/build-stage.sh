@@ -3,7 +3,7 @@
 # from stack.lock. Each run directory is keyed by the pins that affect it, so a
 # refresh rebuilds only stages whose inputs changed; ccache and source clones
 # persist under $AI_STACK_ROOT across runs.
-# Usage: build-stage.sh rocm|torch|sglang|image|comfyui|swarmui|creative|graphiti|gaming
+# Usage: build-stage.sh rocm|torch|sglang|image|comfyui|swarmui|creative|graphiti|gaming|webui
 set -euo pipefail
 stop() {
   printf 'STOP: %s\n' "$*" >&2
@@ -11,8 +11,8 @@ stop() {
 }
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 stage=${1:-}
-[[ $stage =~ ^(rocm|torch|sglang|image|comfyui|swarmui|creative|graphiti|gaming)$ ]] ||
-  stop 'usage: build-stage.sh rocm|torch|sglang|image|comfyui|swarmui|creative|graphiti|gaming'
+[[ $stage =~ ^(rocm|torch|sglang|image|comfyui|swarmui|creative|graphiti|gaming|webui)$ ]] ||
+  stop 'usage: build-stage.sh rocm|torch|sglang|image|comfyui|swarmui|creative|graphiti|gaming|webui'
 lock=$here/stack.lock
 read_lock() {
   awk -F= -v key="$1" '$1 == key {print substr($0, index($0, "=") + 1); n++} END {exit n != 1}' "$lock" ||
@@ -93,6 +93,13 @@ graphiti_src=$(cd -- "$here/../graphiti" && pwd -P)
 graphiti_files=("$graphiti_src"/{Containerfile,memory_service.py,requirements-python314.lock} "$here/graphiti/smoke.py")
 graphiti_key=$(key_of "$(read_lock GRAPHITI_IMAGE_REPOSITORY)" "$(content "${graphiti_files[@]}")")
 graphiti_run=$root/builds/graphiti-$graphiti_key
+# Open WebUI from the workstation fork (an upstream release plus provider-declared Model
+# Controls), built with the fork's own Dockerfile. The key covers the fork commit and the smoke test.
+export OPEN_WEBUI_FORK_REPOSITORY OPEN_WEBUI_FORK_COMMIT
+OPEN_WEBUI_FORK_REPOSITORY=$(read_lock OPEN_WEBUI_FORK_REPOSITORY)
+OPEN_WEBUI_FORK_COMMIT=$(commit OPEN_WEBUI_FORK_COMMIT)
+webui_key=$(key_of "$(read_lock WEBUI_IMAGE_REPOSITORY)" "$OPEN_WEBUI_FORK_COMMIT" "$(content "$here/webui/smoke.py")")
+webui_run=$root/builds/webui-$webui_key
 patches=$root/patches/$SGLANG_PATCHSET_SHA256
 need() { [[ -s $1/out/RECEIPT.json ]] || stop "build the $2 stage first ($1)"; }
 
@@ -174,6 +181,34 @@ if [[ $stage == graphiti ]]; then
     -v "$here/graphiti/smoke.py:/smoke.py:ro" --entrypoint python "$tag" -I /smoke.py
   printf 'IMAGE=%s\n' "$tag"
   [[ ${AI_STACK_PUSH:-0} != 1 ]] || publish "$tag" "$graphiti_run" "$here/graphiti/scan-allowlist.json"
+  exit 0
+fi
+if [[ $stage == webui ]]; then
+  tag=$(read_lock WEBUI_IMAGE_REPOSITORY):$webui_key
+  if podman image exists "$tag" && [[ ${AI_STACK_PUSH:-0} != 1 || -s $webui_run/out/image.digest ]]; then
+    printf 'BUILT=webui %s\n' "$tag"
+    exit 0
+  fi
+  track /dev/null
+  # The source is exactly the pinned commit, fetched by id and checked before it is built.
+  rm -rf -- "$webui_run/git" "$webui_run/src"
+  mkdir -p "$webui_run/git" "$webui_run/src" "$webui_run/out"
+  git -C "$webui_run/git" init -q
+  git -C "$webui_run/git" fetch -q --depth 1 "$OPEN_WEBUI_FORK_REPOSITORY" "$OPEN_WEBUI_FORK_COMMIT"
+  [[ $(git -C "$webui_run/git" rev-parse FETCH_HEAD) == "$OPEN_WEBUI_FORK_COMMIT" ]] || stop 'fetched Open WebUI commit does not match the pin'
+  git -C "$webui_run/git" archive FETCH_HEAD | tar -x -C "$webui_run/src"
+  rm -rf -- "$webui_run/git"
+  # The revision label is what tests/rag/native-smoke.sh compares with OPEN_WEBUI_COMMIT.
+  podman build --pull=missing --build-arg BUILD_HASH="$OPEN_WEBUI_FORK_COMMIT" \
+    --label org.opencontainers.image.revision="$OPEN_WEBUI_FORK_COMMIT" \
+    --label org.opencontainers.image.source="${OPEN_WEBUI_FORK_REPOSITORY%.git}" -t "$tag" "$webui_run/src"
+  rm -rf -- "$webui_run/src"
+  # Offline: a fixture provider declares reasoning levels; the slider, the choices and
+  # admin precedence are checked through Open WebUI's own HTTP API.
+  podman run --rm --pull=never --network none -v "$here/webui/smoke.py:/smoke.py:ro" \
+    --entrypoint python "$tag" -I /smoke.py
+  printf 'IMAGE=%s\n' "$tag"
+  [[ ${AI_STACK_PUSH:-0} != 1 ]] || publish "$tag" "$webui_run" "$here/webui/scan-allowlist.json"
   exit 0
 fi
 # The game-streaming image: the repository's own Sunshine recipe (`workstationctl sunshine

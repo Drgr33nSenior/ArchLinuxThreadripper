@@ -49,9 +49,26 @@ grep -Fq 'CONTAINER_ENGINE=podman HOME_LAB_GAME_IMAGE=$image_id bash "$repo/test
   fail 'gaming image is not smoke tested'
 # shellcheck disable=SC2016 # literal text in build-stage.sh
 grep -Fq 'publish "$tag" "$gaming_run" "$here/gaming/scan-allowlist.json"' "$dir/build-stage.sh" || fail 'gaming does not use the publish path'
-grep -Eq '^for stage in .* gaming; do$' "$dir/build-all.sh" || fail 'build-all does not build gaming'
+grep -Eq '^for stage in .* gaming( [a-z ]+)?; do$' "$dir/build-all.sh" || fail 'build-all does not build gaming'
 python3 -I -c 'import json, sys; assert json.load(open(sys.argv[1])) == []' "$dir/gaming/scan-allowlist.json" || fail 'gaming allowlist is not empty'
 python3 -I -c 'import ast, sys; ast.parse(open(sys.argv[1]).read())' "$dir/graphiti/smoke.py" || fail 'graphiti smoke does not parse'
+# Open WebUI fork: built from the pinned commit, gated by the offline Model Controls smoke,
+# published through the same path; refresh follows the fork branch.
+grep -Eq '^OPEN_WEBUI_FORK_COMMIT=[a-f0-9]{40}$' "$lock" || fail 'Open WebUI fork commit'
+grep -Eq '^WEBUI_IMAGE_REPOSITORY=registry\.lan\.thespry\.family/local/[a-z0-9-]+$' "$lock" || fail 'webui image repository'
+# shellcheck disable=SC2016 # literal text in build-stage.sh
+grep -Fq 'webui_key=$(key_of "$(read_lock WEBUI_IMAGE_REPOSITORY)" "$OPEN_WEBUI_FORK_COMMIT" "$(content "$here/webui/smoke.py")")' "$dir/build-stage.sh" ||
+  fail 'webui key does not cover the fork commit and smoke test'
+# shellcheck disable=SC2016 # literal text in build-stage.sh
+grep -Fq '[[ $(git -C "$webui_run/git" rev-parse FETCH_HEAD) == "$OPEN_WEBUI_FORK_COMMIT" ]]' "$dir/build-stage.sh" || fail 'webui source is not checked against the pin'
+# shellcheck disable=SC2016 # literal text in build-stage.sh
+grep -Fq -- '--network none -v "$here/webui/smoke.py:/smoke.py:ro"' "$dir/build-stage.sh" || fail 'webui smoke is not offline'
+# shellcheck disable=SC2016 # literal text in build-stage.sh
+grep -Fq 'publish "$tag" "$webui_run" "$here/webui/scan-allowlist.json"' "$dir/build-stage.sh" || fail 'webui does not use the publish path'
+grep -Eq '^for stage in .* webui; do$' "$dir/build-all.sh" || fail 'build-all does not build webui'
+grep -Fq 'new[OPEN_WEBUI_FORK_COMMIT]' "$dir/refresh.sh" || fail 'refresh does not follow the fork branch'
+python3 -I -c 'import ast, sys; ast.parse(open(sys.argv[1]).read())' "$dir/webui/smoke.py" || fail 'webui smoke does not parse'
+python3 -I -c 'import json, sys; assert json.load(open(sys.argv[1])) == []' "$dir/webui/scan-allowlist.json" || fail 'webui allowlist is not empty'
 python3 -I -c 'import json, sys; assert json.load(open(sys.argv[1])) == []' "$dir/graphiti/scan-allowlist.json" || fail 'graphiti allowlist is not empty'
 
 # The patch-series hash is order-independent of the filesystem and content-sensitive.

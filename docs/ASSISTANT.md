@@ -14,7 +14,7 @@ It runs in **shared mode** today. [Service modes](MODES.md) explains the alterna
 
 | Feature | How to use it | Who |
 | --- | --- | --- |
-| Chat | Chat with `Qwen3.8-27B-MXFP4` (thinks briefly). To change how long it thinks: **Chat Controls → Advanced Params → Reasoning Effort** (`none`, `low`, `medium`, `high`, `xhigh`) | Everyone with an account |
+| Chat | Chat with `Qwen3.8-27B-MXFP4` (thinks briefly). To change how long it thinks: the **Reasoning effort** slider in the message box (Off, Low, Medium, Max) | Everyone with an account |
 | Pictures | Ask for a picture, or use the image button; SDXL makes it in about 7 s | Accounts with picture permission (Admin and Parents) |
 | Short videos | Ask for a short video; a 5-second clip appears in the chat after about 80 s | Accounts with picture permission and the normal `user` role (the Parents' daily accounts); shared mode only |
 | Voice input | The microphone button; speech is transcribed on the workstation | Everyone |
@@ -194,9 +194,14 @@ as before.
 
 ### Reasoning effort
 
-There is one chat model; Open WebUI's own **Reasoning Effort** control chooses how long it
-thinks. Open a chat's **Chat Controls → Advanced Params → Reasoning Effort** (or set a
-personal default in Settings → General → Advanced Parameters). The gateway accepts:
+There is one chat model; a **Reasoning effort** slider in the message box chooses how long it
+thinks: **Off**, **Low** (the default), **Medium**, **Max**. The slider comes from the model
+itself: the gateway declares the levels it accepts in its model list (`supportedReasoningEfforts`
+with display labels, and `defaultReasoningEffort` from the serving contract), and our Open WebUI
+build (the `webui` [AI-stack stage](../infrastructure/ai-stack/README.md), from the fork
+`Drgr33nSenior/open-webui`) turns that declaration into Model Controls. An admin who defines
+Model Controls for the model in Workspace → Models replaces the declared slider. The older
+**Chat Controls → Advanced Params → Reasoning Effort** field still works. The gateway accepts:
 
 | Value | Request |
 | --- | --- |
@@ -205,10 +210,7 @@ personal default in Settings → General → Advanced Parameters). The gateway a
 | `high` or `xhigh` | thinking at `xhigh`, no output cap: runs until done, the context is full, or the deadline (10 min shared, 20 min large) |
 | `none` | no thinking (`enable_thinking: false`) |
 
-Any other value is refused with `invalid_reasoning_effort`. The gateway also declares these levels in its
-model list (`supportedReasoningEfforts`, with display labels Off/Low/Medium/Max, and
-`defaultReasoningEffort` from the serving contract), the fields Open WebUI's provider-declared
-Model Controls read, so a build that supports them shows a reasoning slider in the message box. Chat Controls and Params are
+Any other value is refused with `invalid_reasoning_effort`. Chat Controls and Params are
 enabled for every user (`USER_PERMISSIONS_CHAT_CONTROLS`/`_PARAMS`, pinned in
 `apps/components/assistant/assistant.env`), so the Family group has the control too.
 
@@ -440,9 +442,11 @@ failed-test-to-fix cycle, interrupt and resume, and context compaction.
 
 ## Pinned inputs and gates
 
-The new experience pins Open WebUI **0.13.3**, source
-`b0e6098e940942281d9c83f3529ea117287a3a22`, Linux amd64 manifest
-`sha256:e731360d9e6eeb25482d90cf3d564ce81a1c4a10e6a84ed9e6c63aa7ac48b0b6`.
+The new experience pins Open WebUI **0.13.3** from the workstation fork
+(`Drgr33nSenior/open-webui`, commit `21bc3e3da87d25e988b412710bafcefd4b4261db`: upstream
+`b0e6098e9409` plus provider-declared Model Controls and four dependency fixes), built,
+scanned and signed by the `webui` AI-stack stage as
+`registry.lan.thespry.family/local/open-webui:2f743ea641c7@sha256:ec62ad7e6610614f48846889a0ebf7fa1586043f3d40bef1e0441d2e10ed7560`.
 The legacy `service` experience retains its previous selection. The older RAG
 functional gate is evidence for its recorded image, not qualification of 0.13.3.
 Run a fresh UI/account, upload/ACL, retrieval, web-search/tool and image-return

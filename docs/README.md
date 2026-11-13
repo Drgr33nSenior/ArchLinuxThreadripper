@@ -99,7 +99,7 @@ edited; where they disagree with a current guide, the current guide wins.
 | **CU mask** | `HSA_CU_MASK`: limits a process to some of a GPU's 64 compute units |
 | **MCP** | Model Context Protocol: how Open WebUI and coding agents call `service-tools` |
 | **Gateway** | LiteLLM wrapped by our boundary (`apps/base/shared-api/boundary.py`), which maps user keys, checks limits and admits pictures |
-| **Reasoning Effort** | Open WebUI's Chat Controls setting for how long the model thinks (`none` to `xhigh`) |
+| **Reasoning effort** | The message-box slider for how long the model thinks (Off, Low, Medium, Max), declared by the gateway in its model list |
 
 ## Keep the runtime layers distinct
 

@@ -4,7 +4,7 @@
 # Run detached: systemd-run --user --unit=ai-stack-build --collect bash build-all.sh
 set -euo pipefail
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
-for stage in rocm torch sglang image comfyui swarmui creative graphiti gaming; do
+for stage in rocm torch sglang image comfyui swarmui creative graphiti gaming webui; do
   printf '=== %s %s\n' "$stage" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   bash "$here/build-stage.sh" "$stage"
 done
