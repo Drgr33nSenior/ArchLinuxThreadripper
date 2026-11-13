@@ -73,7 +73,7 @@ Dir.glob(File.join(directory, '*.yaml')).sort.each do |file|
 end
 family = documents(directory, 'family')
 deployments = family.select { |d| d['kind'] == 'Deployment' }
-require_check(deployments.length == 5, 'Family overlay lost a workload')
+require_check(deployments.length == 4, 'Family overlay lost a workload')
 require_check(family.none? { |d| d['kind'] == 'Secret' }, 'Never render credential values')
 deployments.each do |d|
   require_check(d.dig('spec', 'replicas') == 0, 'Unqualified workloads must stay disabled')
@@ -214,38 +214,48 @@ compat = documents(directory, 'rdna4-compat')
 env = named(compat, 'Deployment', 'sglang').dig('spec', 'template', 'spec', 'containers')[0]['env']
 require_check(env.any? { |e| e == {'name' => 'HSA_OVERRIDE_GFX_VERSION', 'value' => '12.0.1'} }, 'Compatibility overlay missing explicit override')
 
-%w[parent kids].each do |owner|
-  deployment = named(family, 'Deployment', "#{owner}-steam-headless")
-  service = named(family, 'Service', "#{owner}-steam-headless")
-  labels = deployment.dig('spec', 'template', 'metadata', 'labels')
-  require_check(service.dig('spec', 'selector').all? { |key, value| labels[key] == value }, 'Gaming service cross-selects another profile')
-  require_check(deployment.dig('spec', 'template', 'spec', 'volumes')[0].dig('persistentVolumeClaim', 'claimName') == "#{owner}-gaming-home", 'Gaming profiles share user PVCs')
-  require_check(deployment.dig('spec', 'template', 'spec', 'containers')[0].dig('resources', 'limits') == {'cpu' => '12', 'memory' => '12Gi'} && gpu_claims(deployment.dig('spec', 'template', 'spec')) == %w[gpu-1], 'Steam resource envelope changed')
-  guaranteed_pod(deployment.dig('spec', 'template', 'spec'))
-  game = deployment.dig('spec', 'template', 'spec', 'containers')[0]
-  pod_security = deployment.dig('spec', 'template', 'spec', 'securityContext')
-  require_check(pod_security['runAsNonRoot'] == true && pod_security['runAsUser'] == 1000 && pod_security['runAsGroup'] == 1000 && pod_security['fsGroup'].nil? &&
-                pod_security.dig('seccompProfile', 'type') == 'RuntimeDefault', 'Wayland gaming session must stay non-root with RuntimeDefault seccomp')
-  require_check(game.dig('securityContext', 'allowPrivilegeEscalation') == false &&
-                game.dig('securityContext', 'capabilities', 'drop') == ['ALL'] &&
-                game.dig('securityContext', 'capabilities', 'add').nil?, 'Wayland gaming session must not require elevated Linux capabilities')
-  require_check(game['image'].match?(%r{\Aregistry\.lan\.thespry\.family/local/steam-headless@sha256:[a-f0-9]{64}\z}), 'Gaming must use the signed pipeline image by digest')
-  require_check(deployment.dig('metadata', 'annotations', 'workstation.ai/qualification') != 'qualified', 'Streaming settings cannot qualify gaming')
-  require_check(game['volumeMounts'].include?({'name' => 'user', 'mountPath' => '/home/default'}), 'Persistent home must match the maintained image')
-  require_check(game['env'].include?({'name' => 'XDG_CACHE_HOME', 'value' => '/home/default/.cache'}) &&
-                game['env'].include?({'name' => 'MESA_SHADER_CACHE_MAX_SIZE', 'value' => '2G'}), 'Shader cache must remain bounded and persistent')
-  reference = game.fetch('envFrom')[0].fetch('configMapRef').fetch('name')
-  require_check(reference.start_with?("#{owner}-sunshine-profile-"), 'Gaming profile ConfigMaps must remain independent')
-  settings = named(family, 'ConfigMap', reference).fetch('data')
-  require_check(settings == {'SUNSHINE_ENCODER' => 'vulkan', 'SUNSHINE_CAPTURE' => 'kwin', 'SUNSHINE_OUTPUT_NAME' => '',
-                             'SUNSHINE_HEVC_MODE' => '0', 'SUNSHINE_AV1_MODE' => '0', 'SUNSHINE_VK_TUNE' => '2',
-                             'SUNSHINE_VAAPI_STRICT_RC_BUFFER' => 'disabled', 'GAMING_WIDTH' => '1920', 'GAMING_HEIGHT' => '1080',
-                             'GAMING_REFRESH_HZ' => '60'}, 'Streaming baseline changed without review')
-  require_check(game['env'].none? { |env| settings.key?(env['name']) || env['name'] == 'AMD_DEBUG' }, 'Do not shadow profile settings or duplicate upstream lowlatencyenc')
-end
-kids_env = named(family, 'Deployment', 'kids-steam-headless').dig('spec', 'template', 'spec', 'containers')[0]['env']
-require_check(kids_env.any? { |e| e['name'] == 'STEAM_ARGS' && e['value'] == '-tenfoot' }, 'Kids profile lost Big Picture mode')
+# One shared gaming Deployment (everyone uses their own Steam account) in its own namespace.
+deployment = named(family, 'Deployment', 'steam-headless')
+service = named(family, 'Service', 'steam-headless')
+require_check([deployment, service].all? { |o| o.dig('metadata', 'namespace') == 'gaming' }, 'Gaming lives in the gaming namespace')
+labels = deployment.dig('spec', 'template', 'metadata', 'labels')
+require_check(service.dig('spec', 'selector').all? { |key, value| labels[key] == value }, 'Gaming service does not select the gaming pod')
+pod = deployment.dig('spec', 'template', 'spec')
+require_check(pod['volumes'][0].dig('persistentVolumeClaim', 'claimName') == 'gaming-home', 'Gaming home claim changed')
+require_check(pod['containers'][0].dig('resources', 'limits') == {'cpu' => '12', 'memory' => '12Gi'} && gpu_claims(pod) == %w[gpu-1], 'Steam resource envelope changed')
+guaranteed_pod(pod)
+game = pod['containers'][0]
+pod_security = pod['securityContext']
+require_check(pod_security['runAsNonRoot'] == true && pod_security['runAsUser'] == 1000 && pod_security['runAsGroup'] == 1000 && pod_security['fsGroup'].nil? &&
+              pod_security.dig('seccompProfile', 'type') == 'RuntimeDefault', 'Wayland gaming session must stay non-root with RuntimeDefault seccomp')
+# The two reviewed differences from restricted: its own user namespace, and the unmasked
+# /proc Steam's sandbox mounts inside it; plus the Localhost seccomp profile for that sandbox.
+require_check(pod['hostUsers'] == false && game.dig('securityContext', 'procMount') == 'Unmasked' &&
+              game.dig('securityContext', 'seccompProfile') == {'type' => 'Localhost', 'localhostProfile' => 'profiles/workstation-gaming-userns.json'},
+              'Gaming sandbox settings changed')
+require_check(game.dig('securityContext', 'allowPrivilegeEscalation') == false &&
+              game.dig('securityContext', 'capabilities', 'drop') == ['ALL'] &&
+              game.dig('securityContext', 'capabilities', 'add').nil?, 'Wayland gaming session must not require elevated Linux capabilities')
+require_check(game['image'].match?(%r{\Aregistry\.lan\.thespry\.family/local/steam-headless@sha256:[a-f0-9]{64}\z}), 'Gaming must use the signed pipeline image by digest')
+require_check(deployment.dig('metadata', 'annotations', 'workstation.ai/qualification') != 'qualified', 'Streaming settings cannot qualify gaming')
+require_check(game['volumeMounts'].include?({'name' => 'user', 'mountPath' => '/home/default'}), 'Persistent home must match the maintained image')
+require_check(game['env'].include?({'name' => 'XDG_CACHE_HOME', 'value' => '/home/default/.cache'}) &&
+              game['env'].include?({'name' => 'MESA_SHADER_CACHE_MAX_SIZE', 'value' => '2G'}), 'Shader cache must remain bounded and persistent')
+reference = game.fetch('envFrom')[0].fetch('configMapRef').fetch('name')
+settings = named(family, 'ConfigMap', reference).fetch('data')
+require_check(settings == {'SUNSHINE_ENCODER' => 'vulkan', 'SUNSHINE_CAPTURE' => 'kwin', 'SUNSHINE_OUTPUT_NAME' => '',
+                           'SUNSHINE_HEVC_MODE' => '0', 'SUNSHINE_AV1_MODE' => '0', 'SUNSHINE_VK_TUNE' => '2',
+                           'SUNSHINE_VAAPI_STRICT_RC_BUFFER' => 'disabled', 'GAMING_WIDTH' => '1920', 'GAMING_HEIGHT' => '1080',
+                           'GAMING_REFRESH_HZ' => '60'}, 'Streaming baseline changed without review')
+require_check(game['env'].none? { |env| settings.key?(env['name']) || env['name'] == 'AMD_DEBUG' }, 'Do not shadow profile settings or duplicate upstream lowlatencyenc')
+# ai-home-lab stays restricted; only the gaming namespace enforces baseline, still warning
+# and auditing at restricted.
 require_check(named(family, 'Namespace', 'ai-home-lab').dig('metadata', 'labels', 'pod-security.kubernetes.io/enforce') == 'restricted', 'No implicit namespace-wide gaming exception')
+gaming_labels = named(family, 'Namespace', 'gaming').dig('metadata', 'labels')
+require_check(gaming_labels.values_at('pod-security.kubernetes.io/enforce', 'pod-security.kubernetes.io/warn', 'pod-security.kubernetes.io/audit') ==
+              %w[baseline restricted restricted], 'Gaming namespace Pod Security changed')
+require_check(family.none? { |d| d['kind'] == 'Deployment' && d.dig('metadata', 'namespace') == 'ai-home-lab' && (d.dig('spec', 'template', 'spec', 'hostUsers') == false ||
+              d.dig('spec', 'template', 'spec', 'containers').any? { |c| c.dig('securityContext', 'procMount') }) }, 'Only gaming may change user namespaces or /proc')
 if File.file?(File.join(directory, 'operator.yaml'))
   operator = documents(directory, 'operator')
   require_check(operator.none? { |d| d.dig('metadata', 'annotations', 'helm.sh/hook') }, 'Helm lifecycle hooks must not become ordinary manifest resources')

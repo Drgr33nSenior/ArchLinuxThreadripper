@@ -12,8 +12,11 @@ apps/base/sglang/pvc.yaml
 apps/base/sglang/service.yaml
 apps/base/steam-headless/deployment.yaml
 apps/base/steam-headless/kustomization.yaml
+apps/base/steam-headless/namespace-policies.yaml
+apps/base/steam-headless/namespace.yaml
 apps/base/steam-headless/network-policy.yaml
 apps/base/steam-headless/pvc.yaml
+apps/base/steam-headless/resourceclaim.yaml
 apps/base/steam-headless/service.yaml
 apps/base/swarmui/Backends.fds
 apps/base/swarmui/deployment.yaml
@@ -28,10 +31,6 @@ apps/overlays/default/kustomization.yaml
 apps/overlays/dual-gpu/kustomization.yaml
 apps/overlays/dual-gpu/sglang.yaml
 apps/overlays/family/kustomization.yaml
-apps/overlays/kids/kustomization.yaml
-apps/overlays/kids/profile.yaml
-apps/overlays/parent/kustomization.yaml
-apps/overlays/parent/profile.yaml
 apps/overlays/rag-dense/kustomization.yaml
 apps/overlays/rag/SHA256SUMS
 apps/overlays/rag/RERANKER-SHA256SUMS
