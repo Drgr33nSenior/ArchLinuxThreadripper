@@ -157,6 +157,25 @@ permissions, model records and access grants were always stored in the database
 and are unaffected. With persistent config on, the database also holds the
 connection keys, so treat `webui.db` backups as secrets.
 
+### API keys
+
+Users can create API keys (`USER_PERMISSIONS_FEATURES_API_KEYS`). With endpoint
+restrictions on, a key reaches only the paths in `API_KEYS_ALLOWED_ENDPOINTS`
+(`apps/overlays/service/webui.yaml`). Open WebUI 0.13.3 matches an entry exactly or
+as `entry + "/"`, never by HTTP method. The list is a deployment-owned setting
+([above](#admin-panel-settings)): change it in source, because an Admin Panel edit
+lasts only until the next deployment.
+
+| Entries | For |
+| --- | --- |
+| `/api/v1/users/user/status`, `/api/v1/retrieval/query/collection`, `/api/v1/files`, `/api/v1/knowledge/` | service-tools and coding clients (knowledge listing only) |
+| `/api/models`, `/api/chat/completions` | the JetBrains ACP agent's chat (`Drgr33nSenior/openwebui-acp-agent`) |
+| `/api/version`, `/api/config`, `/api/v1/tools/`, `/api/v1/chats`, `/api/tasks/chat` | the ACP agent's server-tools mode |
+
+`/api/v1/chats` must be a prefix to reach `/api/v1/chats/{id}`, so a key can do anything
+its owner can do to their own chats, including deleting them all. Treat a saved key
+like the account's password.
+
 <a id="native-candidate-integration"></a>
 
 ## The served model
