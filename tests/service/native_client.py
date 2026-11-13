@@ -123,6 +123,13 @@ def main(mode):
     tool_message = json.loads(result)["choices"][0]["message"]
     expect("tool-result", call("tool-result", "/v1/chat/completions", valid, {**chat, "messages": chat["messages"] + [tool_message,
         {"role": "tool", "tool_call_id": "call-fixture", "content": '{"value":7}'}]})[0] == 200)
+    # Through the gateway and the real LiteLLM: Open WebUI's "high" arrives as the template's xhigh, the
+    # template switch and the output limit unchanged (drop_params: false; no renaming of max_completion_tokens).
+    status, _ = call("reasoning", "/v1/chat/completions", valid, {**chat, "reasoning_effort": "high",
+                     "chat_template_kwargs": {"enable_thinking": True}, "max_completion_tokens": 64})
+    seen = fixture_status("reasoning-seen")["last_request"]
+    expect("reasoning", status == 200 and seen == {"reasoning_effort": "xhigh", "chat_template_kwargs": {"enable_thinking": True},
+                                                   "max_completion_tokens": 64, "max_tokens": None})
     expect("switch-model", call("switch-model", "/_service/control", control, {"phase": "ready", "model": "Qwen3.5-9B"})[0] == 200)
     expect("wrong-model", call("wrong-model", "/v1/chat/completions", valid, {**chat, "model": "Qwen3.5-9B"})[0] in {401, 403})
     expect("reset-model", call("reset-model", "/_service/control", control, {"phase": "ready", "model": "Qwen3.8-27B-FP8"})[0] == 200)

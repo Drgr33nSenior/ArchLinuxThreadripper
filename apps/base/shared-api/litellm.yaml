@@ -1,4 +1,4 @@
-# LiteLLM OSS v1.106.2. One process/replica: limits are not distributed.
+# LiteLLM OSS v1.109.1. One process/replica: limits are not distributed.
 model_list:
   - model_name: Qwen3.8-27B-FP8
     litellm_params:

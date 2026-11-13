@@ -1271,7 +1271,7 @@ def render(args):
         container.pop(name, None)
     template["spec"]["restartPolicy"] = "Never"
     job = {"apiVersion": "batch/v1", "kind": "Job",
-           "metadata": {"generateName": "litellm-migrate-1-106-2-", "namespace": "ai-home-lab"},
+           "metadata": {"generateName": "litellm-migrate-1-109-1-", "namespace": "ai-home-lab"},
            "spec": {"backoffLimit": 0, "activeDeadlineSeconds": 660, "template": template}}
     (output / "migration.yaml").write_text(kube_yaml(job))
     (output / "site.json").write_text(json.dumps(site, indent=2) + "\n")

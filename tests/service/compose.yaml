@@ -14,14 +14,14 @@ services:
     mem_limit: 1g
     cpus: 1
   sglang:
-    image: ghcr.io/berriai/litellm:v1.106.2@sha256:d1da6edc025e6a59be6faa50b4e8e42c115e1c99644aa3fc2ac416dd353f41da
+    image: ghcr.io/berriai/litellm:v1.109.1@sha256:192404922cf3ede22cfef2692a0f0e9915413c2d72e623b5d3cf0eabb0bc5eb9
     user: '1000:1000'
     entrypoint: [python, -m, uvicorn, 'fixture_backend:app', --app-dir, /fixture, --host, 0.0.0.0, --port, '30000', --no-access-log]
     volumes: ['./:/fixture:ro']
     mem_limit: 512m
     cpus: 1
   gateway:
-    image: ghcr.io/berriai/litellm:v1.106.2@sha256:d1da6edc025e6a59be6faa50b4e8e42c115e1c99644aa3fc2ac416dd353f41da
+    image: ghcr.io/berriai/litellm:v1.109.1@sha256:192404922cf3ede22cfef2692a0f0e9915413c2d72e623b5d3cf0eabb0bc5eb9
     user: '1000:1000'
     entrypoint: [python, -m, uvicorn, 'gateway_entry:app', --app-dir, /runtime, --host, 0.0.0.0, --port, '4000', --workers, '1', --no-access-log, --log-level, error]
     environment: {HOME: /tmp, DISABLE_SCHEMA_UPDATE: 'true'}
@@ -34,7 +34,7 @@ services:
     mem_limit: 2g
     cpus: 1
   client:
-    image: ghcr.io/berriai/litellm:v1.106.2@sha256:d1da6edc025e6a59be6faa50b4e8e42c115e1c99644aa3fc2ac416dd353f41da
+    image: ghcr.io/berriai/litellm:v1.109.1@sha256:192404922cf3ede22cfef2692a0f0e9915413c2d72e623b5d3cf0eabb0bc5eb9
     entrypoint: [python, /fixture/native_client.py]
     volumes:
       - ./:/fixture:ro
