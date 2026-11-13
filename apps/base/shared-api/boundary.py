@@ -42,6 +42,10 @@ UNCAPPED_EFFORTS = {"xhigh"}
 # Effort for requests that name none (the contract's request default). Applied here, not as an
 # SGLang server default: the pinned SGLang lets a server-default effort override every request's.
 DEFAULT_REASONING_EFFORT = None
+# Reasoning levels advertised in the model list, in increasing order, with the labels Open
+# WebUI shows on its reasoning slider (Model Controls declared by the provider).
+REASONING_ORDER = ("low", "medium", "high", "xhigh")
+REASONING_LABELS = {"none": "Off", "low": "Low", "medium": "Medium", "high": "High", "xhigh": "Max"}
 # Template variables a client may set. Other variables can change the rendered
 # prompt in unreviewed ways, so they are refused rather than forwarded.
 TEMPLATE_KWARGS = {"enable_thinking": bool}
@@ -177,6 +181,20 @@ async def read_body(receive, limit=MAX_BODY):
             return bytes(body)
 
 
+def reasoning_declaration():
+    """The reasoning levels this gateway accepts, as Open WebUI's provider-declared Model Controls."""
+    levels = (["none"] if "enable_thinking" in TEMPLATE_KWARGS else []) + [
+        level for level in REASONING_ORDER if level in set(REASONING_EFFORTS.values())]
+    if not levels:
+        return {}
+    declaration = {"supportedReasoningEfforts": [
+        {"reasoningEffort": level, "label": REASONING_LABELS.get(level, level)} for level in levels]}
+    default = REASONING_EFFORTS.get(DEFAULT_REASONING_EFFORT) if DEFAULT_REASONING_EFFORT else None
+    if default in levels:
+        declaration["defaultReasoningEffort"] = default
+    return declaration
+
+
 class GatewayBoundary:
     def __init__(self, app, browser_file, control_file, request_timeout=180):
         self.app, self.browser_file, self.control_file = app, browser_file, control_file
@@ -231,6 +249,8 @@ class GatewayBoundary:
                          if k in {b"authorization", b"content-type", b"accept"}])
             if scope["path"] == "/v1/chat/completions":
                 return await self.chat(scope, receive, send)
+            if scope["path"] == "/v1/models" and scope["method"] == "GET":
+                return await self.models(scope, receive, send)
             if scope["path"] in {"/v1/responses", "/responses"}:
                 raise Refusal(501, "responses_api_not_qualified")
             return await self.app(scope, receive, send)
@@ -246,6 +266,36 @@ class GatewayBoundary:
             if response_started:
                 raise
             return await reply(send, 503, {"error": {"code": "service_configuration_unavailable"}})
+
+    async def models(self, scope, receive, send):
+        """The backend's model list, each chat model declaring the reasoning levels this gateway accepts.
+
+        Open WebUI turns supportedReasoningEfforts/defaultReasoningEffort into a reasoning slider
+        (Model Controls). A response that is not a plain JSON list passes through unchanged."""
+        start, chunks = {}, []
+
+        async def capture(message):
+            if message["type"] == "http.response.start":
+                start.update(message)
+            elif message["type"] == "http.response.body":
+                chunks.append(message.get("body", b""))
+
+        await self.app(scope, receive, capture)
+        body = b"".join(chunks)
+        headers = start.get("headers", [])
+        if start.get("status") == 200 and not any(k.lower() == b"content-encoding" for k, _ in headers):
+            try:
+                listing = json.loads(body)
+                declaration = reasoning_declaration()
+                for model in listing.get("data", []) if declaration else ():
+                    if isinstance(model, dict) and model.get("id") in CHAT_MODELS:
+                        model.update(declaration)
+                body = json.dumps(listing).encode()
+            except (ValueError, AttributeError):
+                pass
+        headers = [(k, v) for k, v in headers if k.lower() != b"content-length"] + [(b"content-length", str(len(body)).encode())]
+        await send({"type": "http.response.start", "status": start.get("status", 502), "headers": headers})
+        await send({"type": "http.response.body", "body": body})
 
     async def control(self, scope, headers, receive, send):
         key = Path(self.control_file).read_text().strip()
