@@ -508,8 +508,12 @@ kubectl -n ai-home-lab exec deploy/service-tools -c tools -- rm /state/image-inf
 ```
 
 Check SwarmUI's own backend the same way (its server log shows no running generation).
-Restarting either image backend while pictures are in flight leaves a marker; the
-session tooling only starts them before images are admitted.
+Restarting either image backend while pictures are in flight leaves a marker. A mode
+switch therefore waits, once draining refuses new pictures and videos, until service-tools
+reports none running (`image_active`, `video_active` on `/health`; up to
+`SESSION_MEDIA_DRAIN_SECONDS`, default 1260). If any are still running then, the switch
+fails before stopping any workload; as with a chat drain that does not finish, the
+gateway stays closed until the switch is run again.
 
 Requested sizes snap to SDXL's native sizes: an exact `512x512`, or the nearest aspect
 of 1024x1024, 1152x896, 1216x832 or 1344x768 (and their portrait forms). Open WebUI's

@@ -374,13 +374,18 @@ class GatewayBoundary:
         scope["headers"] += [(b"content-length", str(len(body)).encode())]
         sent = False
         started = False
+        finishing = False
         response_status = 500
 
         async def tracked_send(message):
-            nonlocal started, response_status
+            nonlocal started, finishing, response_status
             if message["type"] == "http.response.start":
                 started = True
                 response_status = message["status"]
+            elif message["type"] == "http.response.body" and not message.get("more_body", False):
+                # Set before sending: uvicorn reports http.disconnect as soon as the final
+                # body is written, which can reach watch_disconnect before this returns.
+                finishing = True
             await send(message)
 
         disconnected = asyncio.Event()
@@ -408,7 +413,9 @@ class GatewayBoundary:
         try:
             async with asyncio.timeout(self.request_timeout):
                 done, _ = await asyncio.wait((backend_task, disconnect_task), return_when=asyncio.FIRST_COMPLETED)
-                if disconnect_task in done:
+                # A disconnect after the final body is the server closing a finished response,
+                # not the caller leaving: let the backend finish its own post-response work.
+                if disconnect_task in done and not finishing:
                     raise asyncio.CancelledError()
                 await backend_task
             result = "ok" if response_status < 400 else "limited" if response_status == 429 else "backend_error" if response_status >= 500 else "refused"

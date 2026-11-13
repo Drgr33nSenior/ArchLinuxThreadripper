@@ -37,6 +37,13 @@ ws_session_service() {
   address="$(ws_session_kubectl -n "$SESSION_NAMESPACE" get service litellm -o json | jq -er .spec.clusterIP)" || ws_die 'cannot resolve internal gateway'
   local -a extra=()
   [[ ${3:-false} != true ]] || extra=(--images)
+  # Draining also waits for pictures/videos service-tools is running: they bypass the
+  # gateway's request count, and stopping an image backend under one strands its marker.
+  local tools media
+  if [[ $phase == draining ]] && tools="$(ws_session_kubectl -n "$SESSION_NAMESPACE" get service service-tools -o json 2>/dev/null)"; then
+    media="$(jq -er '.spec.clusterIP + ":" + (.spec.ports[0].port | tostring)' <<<"$tools")" || ws_die 'cannot resolve service-tools'
+    extra+=(--media-address "$media")
+  fi
   "$(ws_measure_python)" "$(ws_repo_root)/lib/workstation/service_session.py" "$address" "$SESSION_SERVICE_CONTROL_FILE" "$phase" "$model" "${extra[@]}"
 }
 
