@@ -11,7 +11,7 @@ import urllib.request
 CHECKPOINTS = frozenset({
     "startup", "activate", "restart-load", "restart-valid", "restart-revoked", "restart-chat",
     "user-create", "valid-key", "revoked-key", "self-primary", "self-secondary", "cross-user", "expired-key", "expired-model",
-    "invalid-key", "chat", "model-list", "stream", "tool-call", "tool-usage", "tool-result",
+    "invalid-key", "chat", "model-list", "stream", "tool-call", "tool-usage", "tool-result", "reasoning", "reasoning-seen",
     "switch-model", "wrong-model", "reset-model", "rpm-key", "rpm-first", "rpm-limit",
     "tpm-key", "tpm-first", "tpm-limit", "concurrency-slow", "concurrency-overlap",
     "concurrency-complete", "disconnect-stream", "cancel-backend", "cancel-admission",
