@@ -205,7 +205,10 @@ personal default in Settings → General → Advanced Parameters). The gateway a
 | `high` or `xhigh` | thinking at `xhigh`, no output cap: runs until done, the context is full, or the deadline (10 min shared, 20 min large) |
 | `none` | no thinking (`enable_thinking: false`) |
 
-Any other value is refused with `invalid_reasoning_effort`. Chat Controls and Params are
+Any other value is refused with `invalid_reasoning_effort`. The gateway also declares these levels in its
+model list (`supportedReasoningEfforts`, with display labels Off/Low/Medium/Max, and
+`defaultReasoningEffort` from the serving contract), the fields Open WebUI's provider-declared
+Model Controls read, so a build that supports them shows a reasoning slider in the message box. Chat Controls and Params are
 enabled for every user (`USER_PERMISSIONS_CHAT_CONTROLS`/`_PARAMS`, pinned in
 `apps/components/assistant/assistant.env`), so the Family group has the control too.
 

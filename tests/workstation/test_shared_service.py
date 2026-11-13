@@ -9,6 +9,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from unittest.mock import patch
 from types import SimpleNamespace
 
@@ -68,6 +69,32 @@ class BoundaryTests(unittest.IsolatedAsyncioTestCase):
         self.gateway = boundary.GatewayBoundary(backend, self.mapping, self.control)
         self.gateway.state = {"phase": "ready", "model": "Qwen3.8-27B-FP8", "images": False}
         self.chat = {"model": "Qwen3.8-27B-FP8", "messages": [{"role": "user", "content": "fixture"}]}
+
+    async def test_model_list_declares_reasoning_levels_for_open_webui(self):
+        """Open WebUI turns these fields into its reasoning slider (provider-declared Model Controls)."""
+        async def listing(scope, receive, send):
+            await boundary.reply(send, 200, {"object": "list", "data": [{"id": "Qwen3.8-27B-FP8"}, {"id": "embedding-x"}]})
+        gateway = boundary.GatewayBoundary(listing, self.mapping, self.control)
+        # Open WebUI's /webui/v1/models is rewritten to /v1/models before this handler (tested above).
+        messages = await request(gateway, "/v1/models", None, {}, "GET")
+        self.assertEqual(200, messages[0]["status"])
+        body = b"".join(m.get("body", b"") for m in messages[1:])
+        served, other = json.loads(body)["data"]
+        self.assertEqual([("none", "Off"), ("low", "Low"), ("medium", "Medium"), ("xhigh", "Max")],
+                         [(o["reasoningEffort"], o["label"]) for o in served["supportedReasoningEfforts"]])
+        self.assertNotIn("defaultReasoningEffort", served)  # no contract default in this fixture
+        self.assertNotIn("supportedReasoningEfforts", other)
+        self.assertEqual(int(dict(messages[0]["headers"])[b"content-length"]), len(body))
+        with mock.patch.object(boundary, "DEFAULT_REASONING_EFFORT", "high"):
+            self.assertEqual("xhigh", boundary.reasoning_declaration()["defaultReasoningEffort"])
+        with mock.patch.object(boundary, "TEMPLATE_KWARGS", {}):
+            self.assertNotIn("none", [o["reasoningEffort"] for o in boundary.reasoning_declaration()["supportedReasoningEfforts"]])
+
+        async def failing(scope, receive, send):
+            await boundary.reply(send, 401, {"error": {"message": "unauthorised"}})
+        messages = await request(boundary.GatewayBoundary(failing, self.mapping, self.control), "/v1/models", None, {}, "GET")
+        self.assertEqual(401, messages[0]["status"])
+        self.assertNotIn(b"supportedReasoningEfforts", b"".join(m.get("body", b"") for m in messages[1:]))
 
     async def test_model_identity_and_output_limits(self):
         for data, expected in (({**self.chat, "model": "other"}, 404),

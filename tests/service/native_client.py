@@ -114,6 +114,9 @@ def main(mode):
     expect("chat", call("chat", "/v1/chat/completions", valid, chat)[0] == 200)
     listed = json.loads(call("model-list", "/v1/models", valid)[1])
     expect("model-list", "Qwen3.8-27B-FP8" in {m["id"] for m in listed["data"]})
+    # Through the real LiteLLM: the gateway adds the reasoning levels Open WebUI shows as a slider.
+    levels = next(m for m in listed["data"] if m["id"] == "Qwen3.8-27B-FP8").get("supportedReasoningEfforts", [])
+    expect("model-list", [o.get("reasoningEffort") for o in levels] == ["none", "low", "medium", "xhigh"])
     status, stream = call("stream", "/v1/chat/completions", valid, {**chat, "stream": True})
     expect("stream", status == 200 and b"[DONE]" in stream)
     status, result = call("tool-call", "/v1/chat/completions", valid, {**chat, "tools": [{"type": "function", "function": {
