@@ -12,6 +12,22 @@ configMapGenerator:
     envs: [assistant.env]
   - name: webui-config-pins
     files: [pin-config.py]
+  # Family AI theme (theme/README.md): stylesheet, app manifest and icons rendered
+  # from theme/logo.svg. Binary files become binaryData; the total stays well under 1 MiB.
+  - name: webui-theme
+    files:
+      - theme/custom.css
+      - theme/site.webmanifest
+      - theme/favicon.svg
+      - theme/favicon.ico
+      - theme/favicon.png
+      - theme/favicon-96x96.png
+      - theme/apple-touch-icon.png
+      - theme/web-app-manifest-192x192.png
+      - theme/web-app-manifest-512x512.png
+      - theme/logo.png
+      - theme/splash.png
+      - theme/splash-dark.png
 patches:
   - path: webui.yaml
   - path: tools.yaml

@@ -157,6 +157,10 @@ permissions, model records and access grants were always stored in the database
 and are unaffected. With persistent config on, the database also holds the
 connection keys, so treat `webui.db` backups as secrets.
 
+### Theme
+
+Open WebUI shows the **Family AI** brand: a sprout-and-speech-bubble mark, a deep-green palette, a green sign-in page and the installed-app name. The files and how to change them are in [`apps/components/assistant/theme/`](../apps/components/assistant/theme/README.md). Each user's Light, Dark or OLED choice still applies, and the theme tints all three. Rebranding is allowed by Open WebUI's licence for deployments with at most 50 end users in a rolling 30 days. The title keeps Open WebUI's own " (Open WebUI)" suffix.
+
 ### API keys
 
 Users can create API keys (`USER_PERMISSIONS_FEATURES_API_KEYS`). With endpoint

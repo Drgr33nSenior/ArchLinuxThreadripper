@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Family AI mark: a sprout growing from a speech bubble, on a deep-green tile.
+       Source for every icon in this folder (render-assets.sh). -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1F8A5B"/>
+      <stop offset="1" stop-color="#0B4430"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="116" fill="url(#tile)"/>
+  <path d="M140 120h232a56 56 0 0 1 56 56v124a56 56 0 0 1-56 56H244l-76 60v-60h-28a56 56 0 0 1-56-56V176a56 56 0 0 1 56-56z" fill="#F4FBF7"/>
+  <path d="M256 318v-74" stroke="#14704A" stroke-width="18" stroke-linecap="round" fill="none"/>
+  <path d="M254 258c-8-48-46-76-96-70 6 48 44 76 96 70z" fill="#1F8A5B"/>
+  <path d="M258 240c6-54 48-86 104-80-6 54-48 86-104 80z" fill="#2FB57A"/>
+</svg>

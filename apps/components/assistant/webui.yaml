@@ -10,6 +10,8 @@ spec:
       volumes:
         - name: webui-config-pins
           configMap: {name: webui-config-pins}
+        - name: webui-theme
+          configMap: {name: webui-theme}
       containers:
         - name: open-webui
           # Admin Panel settings persist (persistent config). Before Open WebUI starts,
@@ -22,6 +24,22 @@ spec:
           workingDir: /app/backend
           volumeMounts:
             - {name: webui-config-pins, mountPath: /webui-pins, readOnly: true}
+            # Family AI theme. At startup Open WebUI empties its static folder and copies
+            # /app/build/static into it, so the theme replaces files in that source.
+            # Rebranding is permitted: the licence's branding clause exempts deployments
+            # with at most 50 end users in a rolling 30 days (this family deployment).
+            - {name: webui-theme, mountPath: /app/build/static/custom.css, subPath: custom.css, readOnly: true}
+            - {name: webui-theme, mountPath: /app/build/static/site.webmanifest, subPath: site.webmanifest, readOnly: true}
+            - {name: webui-theme, mountPath: /app/build/static/favicon.svg, subPath: favicon.svg, readOnly: true}
+            - {name: webui-theme, mountPath: /app/build/static/favicon.ico, subPath: favicon.ico, readOnly: true}
+            - {name: webui-theme, mountPath: /app/build/static/favicon.png, subPath: favicon.png, readOnly: true}
+            - {name: webui-theme, mountPath: /app/build/static/favicon-96x96.png, subPath: favicon-96x96.png, readOnly: true}
+            - {name: webui-theme, mountPath: /app/build/static/apple-touch-icon.png, subPath: apple-touch-icon.png, readOnly: true}
+            - {name: webui-theme, mountPath: /app/build/static/web-app-manifest-192x192.png, subPath: web-app-manifest-192x192.png, readOnly: true}
+            - {name: webui-theme, mountPath: /app/build/static/web-app-manifest-512x512.png, subPath: web-app-manifest-512x512.png, readOnly: true}
+            - {name: webui-theme, mountPath: /app/build/static/logo.png, subPath: logo.png, readOnly: true}
+            - {name: webui-theme, mountPath: /app/build/static/splash.png, subPath: splash.png, readOnly: true}
+            - {name: webui-theme, mountPath: /app/build/static/splash-dark.png, subPath: splash-dark.png, readOnly: true}
           env:
             # Explicit values override both upstream defaults and envFrom (the RAG
             # profile's init-container check still sees its own ENABLE_PERSISTENT_CONFIG=false).
