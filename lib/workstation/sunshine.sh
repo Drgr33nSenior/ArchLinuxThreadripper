@@ -222,7 +222,8 @@ ws_sunshine_image_build() (
   cp -R "$root/lib" "$output/context/"
   cp -R "$root/templates/sunshine" "$output/context/templates/"
   cp "$root/versions.lock" "$output/context/"
-  cp "$root/infrastructure/gaming/"* "$output/context/infrastructure/gaming/"
+  # Top-level recipe files only: infrastructure/gaming/seccomp is the node's profile, not image input.
+  find "$root/infrastructure/gaming" -maxdepth 1 -type f -exec cp -- {} "$output/context/infrastructure/gaming/" \;
   curl --fail --location --proto '=https' --proto-redir '=https' --max-time 180 --output "$output/context/$asset" "$url" ||
     ws_die 'Sunshine download failed; partial output retained'
   common::verify_sha256 "$output/context/$asset" "$hash"
