@@ -24,7 +24,17 @@ spec:
             # memory; it does not admit /api/v1/knowledge/<id>/... write routes.
             # /api/v1/users/user/status (exact path) is service-tools' caller
             # identity check; ENABLE_USER_STATUS keeps it available.
-            - {name: API_KEYS_ALLOWED_ENDPOINTS, value: '/api/v1/users/user/status,/api/v1/retrieval/query/collection,/api/v1/files,/api/v1/knowledge/'}
+            # The JetBrains ACP agent (Drgr33nSenior/openwebui-acp-agent) with the user's
+            # own key: /api/models and /api/chat/completions for chat (/api/models also
+            # admits /base and /unload, which are admin-only). Its server-tools mode:
+            # /api/version and /api/config (exact), /api/v1/tools/ (the listing only, not
+            # create/update/delete), /api/tasks/chat (poll/stop/resume the caller's own
+            # task) and /api/v1/chats. That last one must be a prefix to reach
+            # /api/v1/chats/{id}, so a key can do anything its owner can do to their own
+            # chats, including deleting them all; the allowlist cannot restrict methods.
+            - name: API_KEYS_ALLOWED_ENDPOINTS
+              value: >-
+                /api/v1/users/user/status,/api/v1/retrieval/query/collection,/api/v1/files,/api/v1/knowledge/,/api/models,/api/chat/completions,/api/version,/api/config,/api/v1/tools/,/api/v1/chats,/api/tasks/chat
             - {name: ENABLE_USER_STATUS, value: 'true'}
             - {name: ENABLE_IMAGE_GENERATION, value: 'true'}
             - {name: IMAGE_GENERATION_ENGINE, value: openai}

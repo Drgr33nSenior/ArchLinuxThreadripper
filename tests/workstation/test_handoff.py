@@ -246,5 +246,27 @@ class DeploymentTests(unittest.TestCase):
             self.assertFalse(admitted(path), path)
 
 
+    def test_api_key_allowlist_admits_the_acp_agent_routes_and_nothing_wider(self):
+        """Routes the ACP agent (openwebui-acp-agent README) needs, under 0.13.3's exact-or-prefix rule."""
+        webui = yaml.safe_load((ROOT / "apps/overlays/service/webui.yaml").read_text())
+        env = {e["name"]: e.get("value") for e in webui["spec"]["template"]["spec"]["containers"][0]["env"]}
+        allowed = env["API_KEYS_ALLOWED_ENDPOINTS"].split(",")
+
+        def admitted(path):
+            return any(path == entry or path.startswith(entry + "/") for entry in allowed)
+        chat_id, file_id = "0b1f6c1e-6a3e-4f0e-9a51-2d1c6f0d9e11", "f-1"
+        for path in ("/api/models", "/api/chat/completions", "/api/version", "/api/config", "/api/v1/tools/",
+                     "/api/v1/chats/new", f"/api/v1/chats/{chat_id}", f"/api/tasks/chat/{chat_id}",
+                     f"/api/tasks/chat/{chat_id}/stop", f"/api/v1/files/{file_id}/content"):
+            self.assertTrue(admitted(path), path)
+        # /api/version also admits /api/version/updates (a release check; OFFLINE_MODE blocks
+        # its outbound call). Tool management and admin task control stay closed.
+        for path in ("/api/v1/tools/create", "/api/v1/tools/id/t/update", "/api/v1/tools/id/t/delete",
+                     "/api/tasks/stop/task-1", "/api/v1/users/", "/api/v1/auths/api_key"):
+            self.assertFalse(admitted(path), path)
+        self.assertEqual(len(allowed), len(set(allowed)))
+        self.assertFalse(any(entry != entry.strip() or not entry.startswith("/api/") for entry in allowed))
+
+
 if __name__ == "__main__":
     unittest.main()
