@@ -49,7 +49,7 @@ spec:
           readinessProbe:
             httpGet: {path: /health, port: http}
             timeoutSeconds: 3
-          # Open WebUI 0.12.5's /health is an async handler that returns a constant: no
+          # Open WebUI 0.13.3's /health is an async handler that returns a constant: no
           # database (that is /health/db), model or gateway call, so only a hung event loop
           # fails it. Measured 2026-11-12: about 1 ms, worst 7 ms. Restart only after
           # 3 minutes without any answer, well beyond a long document ingest.

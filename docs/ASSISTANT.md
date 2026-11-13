@@ -393,7 +393,7 @@ The selected arm was throughput-measured with a sampled profile (temperature
 
 | Layer | Behaviour at the pinned versions |
 | --- | --- |
-| Open WebUI 0.12.5 | Copies `DEFAULT_MODEL_PARAMS` to the top level of each request; sends `max_tokens`; drops prior reasoning on the next turn |
+| Open WebUI 0.13.3 | Copies `DEFAULT_MODEL_PARAMS` to the top level of each request; sends `max_tokens`; drops prior reasoning on the next turn |
 | Gateway boundary | Accepts `reasoning_effort` `low`, `medium`, `high` and `xhigh`; sends `high` as `xhigh`, the nearest level the template accepts. Turns `none` (an IDE's *Thinking off*) into `enable_thinking: false` with no effort, and refuses it with `enable_thinking: true`. Accepts `chat_template_kwargs` with only a boolean `enable_thinking`; refuses other fields |
 | LiteLLM 1.106.2 | `drop_params: false`; forwards `reasoning_effort` and `max_completion_tokens` unchanged; passes `top_k` and `chat_template_kwargs` through `extra_body` |
 | SGLang 0.5.21 (op234, historical) | Passes `reasoning_effort` and `chat_template_kwargs` to the template |
@@ -451,11 +451,11 @@ failed-test-to-fix cycle, interrupt and resume, and context compaction.
 
 ## Pinned inputs and gates
 
-The new experience pins Open WebUI **0.12.5**, source
-`f7ac7ee10962ddec0017f5c29b6740d9b9c5faca`, Linux amd64 manifest
-`sha256:0caf3d68199bcd8b7051775778691dfa5f3c8a355d1d6484000171b2974f40f9`.
+The new experience pins Open WebUI **0.13.3**, source
+`b0e6098e940942281d9c83f3529ea117287a3a22`, Linux amd64 manifest
+`sha256:e731360d9e6eeb25482d90cf3d564ce81a1c4a10e6a84ed9e6c63aa7ac48b0b6`.
 The legacy `service` experience retains its previous selection. The older RAG
-functional gate is evidence for its recorded image, not qualification of 0.12.5.
+functional gate is evidence for its recorded image, not qualification of 0.13.3.
 Run a fresh UI/account, upload/ACL, retrieval, web-search/tool and image-return
 gate before use.
 
@@ -537,8 +537,8 @@ for the database and uploads. Do not point an older image at a migrated database
 as a shortcut. No rollback requires deleting a model, cache or PVC.
 
 Sources refreshed 1 November 2026:
-[WebUI 0.12.5](https://github.com/open-webui/open-webui/releases/tag/v0.12.5),
-[image connector source](https://github.com/open-webui/open-webui/blob/f7ac7ee10962ddec0017f5c29b6740d9b9c5faca/backend/open_webui/routers/images.py),
+[WebUI 0.13.3](https://github.com/open-webui/open-webui/releases/tag/v0.13.3),
+[image connector source](https://github.com/open-webui/open-webui/blob/b0e6098e940942281d9c83f3529ea117287a3a22/backend/open_webui/routers/images.py),
 [ASR dependencies](https://github.com/QwenLM/Qwen3-ASR/blob/7c6daf77a2421100f5fb066495372c00129d39ff/pyproject.toml),
 [TTS dependencies](https://github.com/QwenLM/Qwen3-TTS/blob/022e286b98fbec7e1e916cb940cdf532cd9f488e/pyproject.toml).
 

@@ -38,7 +38,7 @@ flowchart TB
 
 | Component | What it does | Source |
 | --- | --- | --- |
-| Open WebUI 0.12.5 | The family's chat window, accounts, knowledge collections and voice input | [`apps/base/open-webui`](../apps/base/open-webui) |
+| Open WebUI 0.13.3 | The family's chat window, accounts, knowledge collections and voice input | [`apps/base/open-webui`](../apps/base/open-webui) |
 | Gateway | LiteLLM behind our boundary: maps each user to a key, enforces limits, admits pictures only when the mode allows | [`boundary.py`](../apps/base/shared-api/boundary.py) |
 | SGLang | Serves Qwen3.8-27B MXFP4 across both GPUs | [`apps/base/sglang`](../apps/base/sglang), [serving profile](../infrastructure/ai-stack/serving/qwen3.8-27b-mxfp4-tp2.json) |
 | service-tools | MCP tools (documents, memory, web search, handoffs, video) and the picture adapter; checks every call against the user | [`service_tools.py`](../apps/base/shared-api/service_tools.py) |

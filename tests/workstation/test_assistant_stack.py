@@ -62,7 +62,7 @@ class AssistantTests(unittest.TestCase):
             self.assertEqual(4, len(json.loads(env["DEFAULT_PROMPT_SUGGESTIONS"])))
             pin = service.yaml.safe_load((ROOT / "apps/components/assistant/kustomization.yaml").read_text())["images"][0]
             image = pin["name"] + ":" + pin["newTag"] + "@" + pin["digest"]
-            self.assertEqual("v0.12.5", pin["newTag"])
+            self.assertEqual("v0.13.3", pin["newTag"])
             pod = named(objects, "Deployment", "open-webui")["spec"]["template"]["spec"]
             self.assertTrue(all(c["image"] == image for c in pod["initContainers"] + pod["containers"]))
 

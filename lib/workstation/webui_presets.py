@@ -6,7 +6,7 @@ contract's request defaults (thinking at its default effort); the presets add:
   Think  thinking on at the template's highest accepted effort
   Fast   thinking off
 Open WebUI stores presets in its database, so `apply` upserts them through the admin
-import endpoint (/api/v1/models/import, Open WebUI 0.12.5) and grants read access to the
+import endpoint (/api/v1/models/import, Open WebUI 0.13.3) and grants read access to the
 named groups only. It needs the admin account's session token (Settings > Account > API keys >
 JWT Token), not an API key: this deployment restricts API keys to a few user endpoints
 (ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS), so an sk- key gets 403 here even for an admin.

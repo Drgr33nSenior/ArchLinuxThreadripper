@@ -37,7 +37,7 @@ sessions or make extracted facts correct. See the
 Compare Graphiti with the memory already available in the pinned clients plus a
 short handoff. Do not introduce a second store solely to duplicate those features.
 
-- Open WebUI 0.11.4 (`service`) and 0.12.5 (`assistant`) include per-user memory,
+- Open WebUI 0.13.3 (`service` and `assistant`) include per-user memory,
   system-context injection and background review controls. Upstream background
   review defaults to off in both pins.
 - Qwen Code 0.27.1 supports `AGENTS.md`/`QWEN.md` briefings and editable Markdown
@@ -51,7 +51,7 @@ Inspect the exact pins in [versions.lock](../versions.lock) and the
 [assistant component](../apps/components/assistant/kustomization.yaml); verify
 effective settings and model behaviour before enabling automatic writes. Sources:
 [WebUI 0.11.4 configuration](https://github.com/open-webui/open-webui/blob/8bd8b4fac5e059578ac0c74b3c18d11139f88b7d/backend/open_webui/config.py),
-[WebUI 0.12.5 configuration](https://github.com/open-webui/open-webui/blob/f7ac7ee10962ddec0017f5c29b6740d9b9c5faca/backend/open_webui/config.py),
+[WebUI 0.13.3 configuration](https://github.com/open-webui/open-webui/blob/b0e6098e940942281d9c83f3529ea117287a3a22/backend/open_webui/config.py),
 [pinned Qwen memory guide](https://github.com/QwenLM/qwen-code/blob/c2eccf7459c8d6d4b2a5df3733d2f3833153763b/docs/users/features/memory.md).
 
 ## What to retain
@@ -168,7 +168,7 @@ A project is an Open WebUI knowledge collection that the caller can read: the
 collection ID that `retrieve_project_passage` takes. The only authority is
 Open WebUI's knowledge ACL (owner, user or group read grant, public read
 grant). service-tools reads `GET /api/v1/knowledge/` with the caller's own
-credential on every project-scoped call; pinned 0.12.5 applies the same owner
+credential on every project-scoped call; pinned 0.13.3 applies the same owner
 and read-grant rules to knowledge collections during retrieval. A client-supplied
 project string is only a lookup key. A collection that is missing or not
 readable is refused with `project_not_authorized`. The listing is read for at
@@ -283,7 +283,7 @@ it during restore and rollback, as for the web request ledger.
 The `assistant` component configures one native MCP tool server in
 `TOOL_SERVER_CONNECTIONS`: `http://service-tools:8000/mcp`, ID `workstation`,
 named "Workstation tools". Its `auth_type` is `session`, so pinned Open WebUI
-0.12.5 sends the signed-in user's own token with each MCP request. service-tools
+0.13.3 sends the signed-in user's own token with each MCP request. service-tools
 checks that token through `/api/v1/users/user/status` as it checks a coding
 client's API key. (Open WebUI 0.12 refuses API keys on `/api/v1/auths/`.) There is no shared credential. The public read grant only lists the server
 in every user's tool menu; each call is authorised for the calling user.

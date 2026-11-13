@@ -2,10 +2,10 @@ apiVersion: kustomize.config.k8s.io/v1alpha1
 kind: Component
 resources: [network-policy.yaml]
 images:
-  # Release/source f7ac7ee10962ddec0017f5c29b6740d9b9c5faca; Linux amd64.
+  # Release/source b0e6098e940942281d9c83f3529ea117287a3a22; Linux amd64.
   - name: ghcr.io/open-webui/open-webui
-    newTag: v0.12.5
-    digest: sha256:0caf3d68199bcd8b7051775778691dfa5f3c8a355d1d6484000171b2974f40f9
+    newTag: v0.13.3
+    digest: sha256:e731360d9e6eeb25482d90cf3d564ce81a1c4a10e6a84ed9e6c63aa7ac48b0b6
 configMapGenerator:
   - name: webui-assistant-profile
     envs: [assistant.env]

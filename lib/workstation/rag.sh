@@ -25,7 +25,7 @@ ws_rag_verify_whisper() {
   bash "$inputs/verify-models.sh" "$1" "$inputs/WHISPER-SHA256SUMS" whisper
 }
 
-# Local speech-to-text for Open WebUI 0.12.5: its faster-whisper loader takes a model
+# Local speech-to-text for Open WebUI 0.13.3: its faster-whisper loader takes a model
 # directory as WHISPER_MODEL and reads it offline (CPU, int8). Same offline staging
 # contract as the RAG models; the files go beside them on the models volume.
 ws_rag_stage_whisper() (
@@ -67,7 +67,7 @@ ws_rag_stage_whisper() (
     --arg checksums "$(common::sha256_file "$output/WHISPER-SHA256SUMS")" \
     '{schema:1,status:"staged-inputs-not-qualified",stt_model:$model,stt_revision:$revision,
       license:"mit",runtime_path:"/rag-models/faster-whisper-base",
-      consumer:"Open WebUI 0.12.5 (source f7ac7ee10962ddec0017f5c29b6740d9b9c5faca) faster-whisper WhisperModel",
+      consumer:"Open WebUI 0.13.3 (source b0e6098e940942281d9c83f3529ea117287a3a22) faster-whisper WhisperModel",
       device:"cpu",checksums_sha256:$checksums}' >"$output/provenance.json"
   ws_note "wrote $output; copy faster-whisper-base/ beside Qwen3-Embedding-0.6B/ on the models volume. No model execution or deployment was performed"
 )
@@ -150,7 +150,7 @@ ws_rag_validate_reranker_manifest() {
 }
 
 # The cross-encoder used by the assistant retrieval profile. Reviewed against the
-# Open WebUI 0.12.5 loader (sentence-transformers 5.5.1 CrossEncoder, CPU, no remote
+# Open WebUI 0.13.3 loader (sentence-transformers 5.5.1 CrossEncoder, CPU, no remote
 # code); see docs/RAG.md. Same offline staging contract as the embedding model.
 ws_rag_stage_reranker() (
   set -euo pipefail
@@ -192,7 +192,7 @@ ws_rag_stage_reranker() (
     --arg checksums "$(common::sha256_file "$output/RERANKER-SHA256SUMS")" \
     '{schema:1,status:"staged-inputs-not-qualified",reranker_model:$model,reranker_revision:$revision,
       license:"apache-2.0",runtime_path:"/rag-models/ms-marco-MiniLM-L6-v2",
-      consumer:"Open WebUI 0.12.5 (source f7ac7ee10962ddec0017f5c29b6740d9b9c5faca) sentence-transformers CrossEncoder",
+      consumer:"Open WebUI 0.13.3 (source b0e6098e940942281d9c83f3529ea117287a3a22) sentence-transformers CrossEncoder",
       scoring:"sigmoid(logit) relevance per query/passage pair",max_tokens:512,device:"cpu",
       checksums_sha256:$checksums}' >"$output/provenance.json"
   ws_note "wrote $output; copy ms-marco-MiniLM-L6-v2/ beside Qwen3-Embedding-0.6B/ on the models volume. No model execution or deployment was performed"

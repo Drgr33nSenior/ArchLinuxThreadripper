@@ -116,17 +116,16 @@ Canonical sources are `apps/overlays/rag/`, `lib/workstation/rag.sh` and
 `versions.lock`. The `rag` overlay extends `dual-gpu`, changes only Open WebUI
 and adds its configuration and two PVCs. Other overlays are unchanged.
 
-- Open WebUI: **0.11.4**, source commit
-  `8bd8b4fac5e059578ac0c74b3c18d11139f88b7d`. The Linux/amd64 image manifest is
-  digest-pinned; its registry configuration identifies the same source revision.
-  This is the `rag`/`service` image and the only Open WebUI pin in
-  `versions.lock`.
-- Assistant overlays: Open WebUI **0.12.5**, source commit
-  `f7ac7ee10962ddec0017f5c29b6740d9b9c5faca`, digest-pinned in
-  `apps/components/assistant/kustomization.yaml`. The lock does not record this
-  pin. Both pins are recorded here rather than merged: changing the lock would
-  also change the `rag` pilot and the disposable test image. The reranker
-  profile was reviewed against the 0.12.5 source.
+- Open WebUI: **0.13.3** for every overlay (`rag`/`service` and the assistant
+  overlays), source commit `b0e6098e940942281d9c83f3529ea117287a3a22`, Linux/amd64
+  manifest `sha256:e731360d9e6eeb25482d90cf3d564ce81a1c4a10e6a84ed9e6c63aa7ac48b0b6`,
+  recorded in `versions.lock` and digest-pinned in
+  `apps/overlays/rag/kustomization.yaml` and
+  `apps/components/assistant/kustomization.yaml` (13 November 2026; previously
+  0.11.4 and 0.12.5). The reranker and speech-to-text profiles were reviewed
+  against the 0.12.5 source; 0.13.3 ships the same sentence-transformers (5.5.1),
+  faster-whisper (1.2.1), transformers, torch and chromadb versions, and its
+  health, knowledge-listing, model-import and API-key rules are unchanged.
 - Reranker (assistant overlays only): `cross-encoder/ms-marco-MiniLM-L6-v2`,
   revision `233902d25c440f23af6f7d6e94d2946bac0bee0a`, Apache-2.0, CPU; per-file
   SHA-256 hashes in `RERANKER-SHA256SUMS`. See

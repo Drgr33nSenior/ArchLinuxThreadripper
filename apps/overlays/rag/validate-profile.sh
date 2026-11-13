@@ -36,7 +36,7 @@ case ${RAG_RERANKER_PROFILE:-} in
     ;;
   ms-marco-minilm-l6-v2)
     [[ ${RAG_RERANKING_MODEL:-} == /rag-models/ms-marco-MiniLM-L6-v2 ]] || fail 'reranker path must be the reviewed MiniLM cross-encoder'
-    # Open WebUI 0.12.5 loads RAG_RERANKING_MODEL only while hybrid search is on.
+    # Open WebUI 0.13.3 loads RAG_RERANKING_MODEL only while hybrid search is on.
     [[ $ENABLE_RAG_HYBRID_SEARCH == true ]] || fail 'the cross-encoder profile requires hybrid search'
     ((RAG_TOP_K <= 16)) || fail 'reranker candidate budget exceeded: RAG_TOP_K above 16 (32 scored pairs)'
     ((RAG_TOP_K_RERANKER <= 8 && RAG_TOP_K_RERANKER <= RAG_TOP_K)) || fail 'final passages must be at most 8 and at most RAG_TOP_K'
