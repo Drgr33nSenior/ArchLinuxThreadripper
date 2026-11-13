@@ -510,7 +510,10 @@ class CandidatePlanTests(unittest.TestCase):
         self.assertEqual(131040 - 8192 - 16, rendered["route"]["model_info"]["max_input_tokens"])
         self.assertEqual({"Qwen3.8-27B-MXFP4": [131040, 8192]}, rendered["gateway"]["chat_models"])
         params = json.loads(rendered["webui"]["DEFAULT_MODEL_PARAMS"])
-        self.assertEqual({"chat_template_kwargs": {"enable_thinking": True}}, params["custom_params"])
+        # Open WebUI gets sampling only: the slider sends the effort and the gateway the default.
+        self.assertEqual({"function_calling": "native", "temperature": 0.0, "top_k": 1, "top_p": 1.0}, params)
+        # The evaluated request profile still carries the contract's thinking defaults.
+        self.assertEqual({"enable_thinking": True}, rendered["request"]["chat_template_kwargs"])
         self.assertNotIn("max_tokens", params)  # shared with the 9B profile; the gateway applies its cap
         self.assertEqual("low", rendered["client"]["AGENT_REASONING_EFFORT"])
         # Admission four and native running two are separate, documented limits.
@@ -1257,7 +1260,13 @@ class ServingContractTests(unittest.TestCase):
         self.assertNotIn(service.LEGACY_ALIAS, policy["chat_models"])
         webui = {e["name"]: e.get("value") for e in named("Deployment", "open-webui")["spec"]["template"]["spec"]["containers"][0]["env"]}
         self.assertEqual(alias, webui["DEFAULT_MODELS"])
-        self.assertEqual("native", json.loads(webui["DEFAULT_MODEL_PARAMS"])["function_calling"])
+        webui_params = json.loads(webui["DEFAULT_MODEL_PARAMS"])
+        self.assertEqual("native", webui_params["function_calling"])
+        # Effort and the thinking switch come from the slider and the gateway default, never
+        # Open WebUI's global defaults (which would contradict the slider's Off).
+        self.assertFalse({"reasoning_effort", "custom_params"} & set(webui_params))
+        self.assertEqual((contract["reasoning"]["request_defaults"] or {}).get("reasoning_effort"),
+                         policy.get("default_reasoning_effort"))
         tools = {e["name"]: e.get("value") for e in named("Deployment", "service-tools")["spec"]["template"]["spec"]["containers"][0]["env"]}
         self.assertEqual((contract["contract"], "incomplete"), (tools["SERVING_CONTRACT"], tools["SERVING_CONTRACT_STATUS"]))
         self.assertFalse(any(o["kind"] == "ConfigMap" and "MODEL_REVISION" in o.get("data", {}) for o in objects))

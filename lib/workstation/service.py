@@ -364,7 +364,12 @@ def candidate_render(contract, output_tokens, deadline_seconds, reserve_tokens):
         params.update({key: defaults[key] for key in ("temperature", "top_k", "top_p") if key in defaults})
         params.update({"reasoning_effort": defaults["reasoning_effort"],
                        "custom_params": {"chat_template_kwargs": defaults["chat_template_kwargs"]}})
-    webui = {"DEFAULT_MODELS": alias, "DEFAULT_MODEL_PARAMS": json.dumps(params, separators=(",", ":"))}
+    # Open WebUI gets the sampling defaults only. Its reasoning slider (provider-declared Model
+    # Controls) sends the effort, and the gateway applies the contract's default effort when none
+    # is sent; the template thinks unless told not to. A thinking switch here would contradict
+    # the slider's Off ("none" with enable_thinking true is refused).
+    webui_params = {key: value for key, value in params.items() if key not in ("reasoning_effort", "custom_params")}
+    webui = {"DEFAULT_MODELS": alias, "DEFAULT_MODEL_PARAMS": json.dumps(webui_params, separators=(",", ":"))}
     request = {"model": alias, "max_tokens": output_tokens,
                **({key: params[key] for key in ("temperature", "top_k", "top_p", "reasoning_effort") if key in params}
                   if defaults else {}),
