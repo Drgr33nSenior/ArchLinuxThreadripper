@@ -51,6 +51,11 @@ REASONING_LABELS = {"none": "Off", "low": "Low", "medium": "Medium", "high": "Hi
 TEMPLATE_KWARGS = {"enable_thinking": bool}
 # Requests admitted at once; the selected runtime may execute fewer and queue.
 ADMISSION_LIMIT = 4
+# Streaming budgets (gateway-policy.json): the wait for a stream's first content and the
+# longest silence once content flows. A long reply that keeps streaming runs to the overall
+# request_timeout; a silent one is ended early. None: the overall deadline only.
+FIRST_TOKEN_TIMEOUT = None
+IDLE_TIMEOUT = None
 # Boolean template switches a rendered policy may allow. Anything else is refused.
 POLICY_TEMPLATE_KWARGS = {"enable_thinking", "preserve_thinking"}
 
@@ -63,12 +68,13 @@ def apply_policy(path):
     models, budgets and reasoning values. The defaults are replaced, not merged:
     a model the contract omits is no longer admitted. Returns the deadline.
     """
-    global ADMISSION_LIMIT, DEFAULT_REASONING_EFFORT
+    global ADMISSION_LIMIT, DEFAULT_REASONING_EFFORT, FIRST_TOKEN_TIMEOUT, IDLE_TIMEOUT
     policy = json.loads(Path(path).read_text())
     models = policy["chat_models"]
     efforts = policy["reasoning_efforts"]
     kwargs = policy["template_kwargs"]
     timeout, admission = policy["request_timeout"], policy["admission_limit"]
+    first_token, idle = policy.get("first_token_timeout"), policy.get("idle_timeout")
     image_models = policy.get("image_models", ["Qwen3.5-9B"] if "Qwen3.5-9B" in models else [])
     if (not isinstance(models, dict) or not models
             or any(type(c) is not int or type(o) is not int or not 1 <= o <= c // 2
@@ -77,6 +83,8 @@ def apply_policy(path):
                                                        for k, v in efforts.items())
             or not isinstance(kwargs, list) or not set(kwargs) <= POLICY_TEMPLATE_KWARGS
             or type(timeout) is not int or not 30 <= timeout <= 3600
+            or any(value is not None and (type(value) is not int or not 10 <= value <= timeout)
+                   for value in (first_token, idle))
             or type(admission) is not int or not 1 <= admission <= 16
             or not isinstance(image_models, list) or not set(image_models) <= set(models)
             or policy.get("default_reasoning_effort") not in (None, *efforts)):
@@ -91,6 +99,7 @@ def apply_policy(path):
     IMAGE_MODELS.update(image_models)
     ADMISSION_LIMIT = admission
     DEFAULT_REASONING_EFFORT = policy.get("default_reasoning_effort")
+    FIRST_TOKEN_TIMEOUT, IDLE_TIMEOUT = first_token, idle
     return timeout
 
 
@@ -196,9 +205,10 @@ def reasoning_declaration():
 
 
 class GatewayBoundary:
-    def __init__(self, app, browser_file, control_file, request_timeout=180):
+    def __init__(self, app, browser_file, control_file, request_timeout=180, first_token_timeout=None, idle_timeout=None):
         self.app, self.browser_file, self.control_file = app, browser_file, control_file
         self.request_timeout = request_timeout
+        self.first_token_timeout, self.idle_timeout = first_token_timeout, idle_timeout
         # A process restart never restores a saved ready flag or completed job.
         self.state = {"phase": "unavailable", "model": None, "images": False}
         self.active = {}
@@ -379,17 +389,34 @@ class GatewayBoundary:
         started = False
         finishing = False
         response_status = 500
+        streaming = data.get("stream") is True
+        content = False
+        last_content = time.monotonic()
 
         async def tracked_send(message):
-            nonlocal started, finishing, response_status
+            nonlocal started, finishing, response_status, content, last_content
             if message["type"] == "http.response.start":
                 started = True
                 response_status = message["status"]
-            elif message["type"] == "http.response.body" and not message.get("more_body", False):
-                # Set before sending: uvicorn reports http.disconnect as soon as the final
-                # body is written, which can reach watch_disconnect before this returns.
-                finishing = True
+            elif message["type"] == "http.response.body":
+                if message.get("body"):
+                    content, last_content = True, time.monotonic()
+                if not message.get("more_body", False):
+                    # Set before sending: uvicorn reports http.disconnect as soon as the final
+                    # body is written, which can reach watch_disconnect before this returns.
+                    finishing = True
             await send(message)
+
+        async def watch_budgets():
+            # A stream gets first_token_timeout for its first content (queue, prefill and the
+            # start of thinking) and then idle_timeout between chunks; reasoning streams as
+            # content, so a model that is thinking is not idle. A non-streamed reply sends
+            # nothing until it is complete, so only the overall deadline bounds it.
+            while True:
+                limit = (self.idle_timeout if content else self.first_token_timeout) if streaming else None
+                if limit is not None and time.monotonic() - last_content > limit:
+                    return "stream_idle" if content else "first_token_deadline"
+                await asyncio.sleep(0.5 if limit is None or limit > 5 else 0.05)
 
         disconnected = asyncio.Event()
 
@@ -413,9 +440,15 @@ class GatewayBoundary:
         self.active[task] = time.monotonic()
         backend_task = asyncio.create_task(self.app(scope, backend_receive, tracked_send))
         disconnect_task = asyncio.create_task(watch_disconnect())
+        budget_task = asyncio.create_task(watch_budgets())
+        deadline_code = "request_deadline"
         try:
             async with asyncio.timeout(self.request_timeout):
-                done, _ = await asyncio.wait((backend_task, disconnect_task), return_when=asyncio.FIRST_COMPLETED)
+                done, _ = await asyncio.wait((backend_task, disconnect_task, budget_task),
+                                             return_when=asyncio.FIRST_COMPLETED)
+                if budget_task in done and not finishing:
+                    deadline_code = budget_task.result()
+                    raise TimeoutError
                 # A disconnect after the final body is the server closing a finished response,
                 # not the caller leaving: let the backend finish its own post-response work.
                 if disconnect_task in done and not finishing:
@@ -426,7 +459,7 @@ class GatewayBoundary:
         except TimeoutError:
             self.requests["backend_error"] += 1
             if not started:
-                await reply(send, 504, {"error": {"code": "request_deadline"}})
+                await reply(send, 504, {"error": {"code": deadline_code}})
             else:
                 # Terminate the stream without a fabricated success/[DONE].
                 await send({"type": "http.response.body", "body": b"", "more_body": False})
@@ -436,8 +469,8 @@ class GatewayBoundary:
                 await reply(send, 503, {"error": {"code": "request_cancelled"}})
             raise
         finally:
-            for child in (backend_task, disconnect_task):
+            for child in (backend_task, disconnect_task, budget_task):
                 if not child.done():
                     child.cancel()
-            await asyncio.gather(backend_task, disconnect_task, return_exceptions=True)
+            await asyncio.gather(backend_task, disconnect_task, budget_task, return_exceptions=True)
             self.active.pop(task, None)

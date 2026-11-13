@@ -239,6 +239,58 @@ class BoundaryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([True], cancelled)
         self.assertFalse(self.gateway.active)
 
+    async def streaming_backend(self, chunks, gap, then_sleep=0.0):
+        async def backend(scope, receive, send):
+            await send({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"text/event-stream")]})
+            for _ in range(chunks):
+                await asyncio.sleep(gap)
+                await send({"type": "http.response.body", "body": b'data: {"choices":[]}\n\n', "more_body": True})
+            await asyncio.sleep(then_sleep)
+            await send({"type": "http.response.body", "body": b"data: [DONE]\n\n"})
+        return backend
+
+    async def test_a_stream_that_keeps_producing_outlives_both_budgets(self):
+        """A long reply is not cut while it streams: 0.4 s of chunks past 0.1 s budgets."""
+        self.gateway.first_token_timeout, self.gateway.idle_timeout = 0.1, 0.1
+        self.gateway.app = await self.streaming_backend(chunks=20, gap=0.02)
+        before = self.gateway.requests["ok"]
+        result = await request(self.gateway, "/v1/chat/completions", {**self.chat, "stream": True})
+        self.assertIn(b"[DONE]", b"".join(m.get("body", b"") for m in result))
+        self.assertEqual(before + 1, self.gateway.requests["ok"])
+
+    async def test_no_first_content_ends_with_first_token_deadline(self):
+        self.gateway.first_token_timeout, self.gateway.idle_timeout = 0.05, 5
+        async def silent(scope, receive, send):
+            await asyncio.sleep(60)
+        self.gateway.app = silent
+        before = self.gateway.requests["backend_error"]
+        result = await request(self.gateway, "/v1/chat/completions", {**self.chat, "stream": True})
+        self.assertEqual(504, result[0]["status"])
+        self.assertEqual("first_token_deadline", json.loads(result[-1]["body"])["error"]["code"])
+        self.assertEqual(before + 1, self.gateway.requests["backend_error"])
+        self.assertFalse(self.gateway.active)
+
+    async def test_a_stream_that_goes_silent_is_ended_without_a_fabricated_done(self):
+        self.gateway.first_token_timeout, self.gateway.idle_timeout = 5, 0.05
+        self.gateway.app = await self.streaming_backend(chunks=2, gap=0.0, then_sleep=60)
+        before = self.gateway.requests["backend_error"]
+        result = await request(self.gateway, "/v1/chat/completions", {**self.chat, "stream": True})
+        self.assertEqual(200, result[0]["status"])
+        self.assertNotIn(b"[DONE]", b"".join(m.get("body", b"") for m in result))
+        self.assertFalse(result[-1].get("more_body", False))
+        self.assertEqual(before + 1, self.gateway.requests["backend_error"])
+        self.assertFalse(self.gateway.active)
+
+    async def test_a_non_streamed_reply_is_bounded_only_by_the_overall_deadline(self):
+        # It sends nothing until it is complete, so the first-token budget cannot apply.
+        self.gateway.first_token_timeout, self.gateway.idle_timeout = 0.05, 0.05
+        async def slow(scope, receive, send):
+            await asyncio.sleep(0.2)
+            await boundary.reply(send, 200, {"choices": [{"message": {"content": "done"}}], "usage": {"completion_tokens": 1}})
+        self.gateway.app = slow
+        result = await request(self.gateway, "/v1/chat/completions", self.chat)
+        self.assertEqual(200, result[0]["status"])
+
     async def test_active_cancellation_is_bounded(self):
         entered = asyncio.Event()
         async def slow(scope, receive, send):
@@ -1305,12 +1357,15 @@ class ServingContractTests(unittest.TestCase):
             self.assertEqual("workstation-retain", kept["spec"]["storageClassName"])
 
     def test_each_mode_has_its_own_deadline_and_no_gateway_timeout_undercuts_it(self):
-        # Large mode serves 262K contexts (a cold 235K-token prompt takes ~240 s to its first
-        # token); shared mode keeps 180 s. LiteLLM's global fallbacks must not cap the route.
-        for mode, deadline in (("large", 1200), ("shared", 600)):
+        # Streaming budgets, not one total deadline: 600 s to first content (a cold 235K-token
+        # prompt takes ~240 s in large mode), 180 s idle between chunks, a 3600 s overall cap.
+        # LiteLLM's global fallbacks must not cap the route, and each LiteLLM limit ends 10 s
+        # before the gateway's matching budget.
+        for mode, deadline in (("large", 3600), ("shared", 3600)):
             contract = service.serving_contract(self.PROFILE, mode=mode)
             self.assertEqual({"gateway_seconds": deadline, "route_seconds": deadline - 10,
-                              "client_milliseconds": deadline * 1000}, contract["deadlines"])
+                              "client_milliseconds": deadline * 1000,
+                              "first_token_seconds": 600, "idle_seconds": 180}, contract["deadlines"])
             objects, _, _ = service.apply_contract(service.kustomize(ROOT / "apps/overlays/assistant"),
                                                   contract, mode, "assistant")
             data = next(o for o in objects if o["kind"] == "ConfigMap" and "litellm.yaml" in o.get("data", {}))["data"]
@@ -1319,8 +1374,11 @@ class ServingContractTests(unittest.TestCase):
             self.assertEqual(deadline - 10, route["litellm_params"]["timeout"])
             self.assertEqual(deadline - 10, config["router_settings"]["timeout"])
             self.assertEqual(deadline - 10, config["litellm_settings"]["request_timeout"])
-            self.assertEqual(deadline, json.loads(data["gateway-policy.json"])["request_timeout"])
-        self.assertEqual(180, service.serving_contract(self.PROFILE, mode="large", deadline_seconds=180)["deadlines"]["gateway_seconds"])
+            policy = json.loads(data["gateway-policy.json"])
+            self.assertEqual((deadline, 600, 180), (policy["request_timeout"], policy["first_token_timeout"], policy["idle_timeout"]))
+            self.assertEqual(590, route["litellm_params"]["stream_timeout"])
+        short = service.serving_contract(self.PROFILE, mode="large", deadline_seconds=180)["deadlines"]
+        self.assertEqual((180, 180, 180), (short["gateway_seconds"], short["first_token_seconds"], short["idle_seconds"]))
 
     def test_every_consumer_is_rendered_from_the_contract_and_none_targets_fp8(self):
         contract = service.serving_contract(self.PROFILE)
@@ -1489,6 +1547,26 @@ class GatewayPolicyTests(unittest.IsolatedAsyncioTestCase):
             self.path.write_text(json.dumps({**service.gateway_policy(contract, rendered), **change}))
             with self.subTest(change=change), self.assertRaises(ValueError):
                 boundary.apply_policy(self.path)
+
+    async def test_rendered_policy_carries_the_streaming_budgets(self):
+        saved = (boundary.FIRST_TOKEN_TIMEOUT, boundary.IDLE_TIMEOUT)
+        def restore():
+            boundary.FIRST_TOKEN_TIMEOUT, boundary.IDLE_TIMEOUT = saved
+        self.addCleanup(restore)
+        contract = service.serving_contract(ServingContractTests.PROFILE)
+        rendered = service.candidate_render(service.contract_view(contract), 4096, 3600, 16, 600, 180)
+        policy = service.gateway_policy(contract, rendered)
+        self.path.write_text(json.dumps(policy))
+        self.assertEqual(3600, boundary.apply_policy(self.path))
+        self.assertEqual((600, 180), (boundary.FIRST_TOKEN_TIMEOUT, boundary.IDLE_TIMEOUT))
+        for change in ({"first_token_timeout": 4000}, {"idle_timeout": 5}, {"idle_timeout": "180"}):
+            self.path.write_text(json.dumps({**policy, **change}))
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                boundary.apply_policy(self.path)
+        # A policy written before the budgets existed keeps the overall deadline only.
+        self.path.write_text(json.dumps({k: v for k, v in policy.items() if k not in ("first_token_timeout", "idle_timeout")}))
+        boundary.apply_policy(self.path)
+        self.assertEqual((None, None), (boundary.FIRST_TOKEN_TIMEOUT, boundary.IDLE_TIMEOUT))
 
     async def test_shared_mode_policy_admits_images_with_the_contract_model(self):
         contract = service.serving_contract(ServingContractTests.PROFILE)
