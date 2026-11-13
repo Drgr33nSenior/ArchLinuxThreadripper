@@ -1,0 +1,14 @@
+# The gaming namespace. Steam's sandbox needs its own user namespace with an unmasked
+# /proc (hostUsers: false, procMount: Unmasked), which the restricted level forbids, so
+# gaming lives here rather than as an exception in ai-home-lab (apps/base/namespace.yaml).
+# Enforcement is baseline; restricted stays the warn and audit level, so anything beyond
+# the gaming pod's two reviewed differences is still reported.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gaming
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce-version: v1.35
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted

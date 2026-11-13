@@ -106,9 +106,13 @@ qualification. Never mark the upstream base image as the finished recipe.
 ## Deploy on the workstation
 
 There is one shared gaming Deployment, `steam-headless`: everyone signs in to their
-own Steam account, so there are no per-person profiles. Every service render writes
-it to `gaming.yaml` at zero replicas, with its `gaming-home` claim (Retain class),
-Service and NetworkPolicy. `workstationctl mode gaming` scales it once it is
+own Steam account, so there are no per-person profiles. It lives in its own `gaming`
+namespace (set `SESSION_GAME_NAMESPACE=gaming`). Every service render writes the bundle
+to `gaming.yaml`: the namespace (Pod Security `baseline` enforced, `restricted` warned
+and audited), its default-deny and DNS policies, its own `gpu-1` claim for card 1, and
+the Deployment at zero replicas with its `gaming-home` claim (Retain class), Service
+and streaming NetworkPolicy. The card is allocated to one claim at a time, so the
+session switcher stops the AI workloads on it before gaming starts. `workstationctl mode gaming` scales it once it is
 qualified; `mode family`/`coder` stop it. The mode switch never applies `gaming.yaml`:
 apply it yourself to install or update gaming.
 
@@ -127,9 +131,13 @@ container therefore uses the `Localhost` profile
 written already resolved (plain OCI: x86_64 with its 32-bit sub-architectures, no
 capability-gated calls) because the kubelet passes Localhost profiles without
 Docker's `archMap`/`includes`; the only addition is user/mount namespace creation.
-The container still holds no capabilities. A fresh `/proc` inside the sandbox
-stays unavailable: `procMount: Unmasked` is forbidden by the namespace's
-`restricted` Pod Security level, and the Steam client does not need it.
+The container still holds no capabilities. The pod also runs in its own user
+namespace (`hostUsers: false`: container root is an unprivileged host UID range)
+with `procMount: Unmasked`, so the sandbox can mount its own `/proc` (Proton games
+need it). `restricted` forbids that, which is why gaming has its own `baseline`
+namespace instead of an exception in `ai-home-lab`. A new `gaming-home` volume is
+created root-owned; give its root directory to UID/GID 1000 once on the host before
+the first start (the session never chowns).
 
 The Sunshine web UI (47990) is not exposed. Pair a device through a loopback
 port-forward, then open `https://localhost:47990` and enter the PIN Moonlight shows:
@@ -239,8 +247,9 @@ performed on existing state. New homes receive minimal default app definitions.
 Inspect old app definitions for Xrandr commands and Xorg connector names; remove
 or replace those commands explicitly. The migration does not rewrite user apps.
 
-Include every bound `gaming-home`, `parent-gaming-home` and `kids-gaming-home`
-claim in the [application-consistent backup](SERVICE-RECOVERY.md). Container
+Include the `gaming-home` claim (namespace `gaming`) in the
+[application-consistent backup](SERVICE-RECOVERY.md). The backup tool still reads
+only `ai-home-lab`, so it does not see this claim yet; extend it before relying on it. Container
 `/home/default` is a PVC mount, not the host's `/home`; the host Restic include
 list does not capture it. Stop games gracefully and verify gaming writers have
 exited before capture. Preserve pairing/configuration/app definitions, Steam

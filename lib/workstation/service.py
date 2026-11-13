@@ -1150,15 +1150,23 @@ def traefik_config(site):
 STREAMING_PORTS = [(47984, "TCP"), (47989, "TCP"), (48010, "TCP"), (47998, "UDP"), (47999, "UDP"), (48000, "UDP")]
 
 
-def gaming_objects(site):
-    """The shared game-streaming Deployment, its home claim, Service and flows, at zero replicas.
+GAMING_NAMESPACE = "gaming"
 
+
+def gaming_objects(site):
+    """The shared game-streaming bundle in its own namespace, at zero replicas.
+
+    The gaming namespace (baseline Pod Security, restricted warn/audit) with its default-deny
+    and DNS flows, its gpu-1 claim, the Deployment, home claim, Service and streaming flows.
     `workstationctl mode gaming` scales it once it is qualified. The Service is reachable only
     through the site node address with source preservation, like Traefik; the policy admits the
     streaming ports only from streaming_client_cidrs (none when the site lists none)."""
     objects = kustomize(ROOT / "apps/base/steam-headless")
+    require([o["metadata"]["name"] for o in objects if o["kind"] == "Namespace"] == [GAMING_NAMESPACE],
+            "the gaming bundle must define exactly the gaming namespace")
     for obj in objects:
-        obj["metadata"]["namespace"] = "ai-home-lab"
+        require(obj["kind"] == "Namespace" or obj["metadata"].get("namespace") == GAMING_NAMESPACE,
+                "every gaming object belongs to the gaming namespace")
         if obj["kind"] == "Deployment":
             require(obj["spec"]["replicas"] == 0, "the gaming Deployment must render at zero replicas")
         if obj["kind"] == "Service":
@@ -1168,7 +1176,7 @@ def gaming_objects(site):
                     "gaming Service source must expose only the Moonlight ports")
             spec["externalIPs"] = [site["node_address"]]
             spec["externalTrafficPolicy"] = "Local"
-        if obj["kind"] == "NetworkPolicy":
+        if obj["kind"] == "NetworkPolicy" and obj["metadata"]["name"] == "steam-headless-flows":
             require("ingress" not in obj["spec"], "gaming ingress comes only from the site render")
             if site["streaming_client_cidrs"]:
                 obj["spec"]["ingress"] = [{"from": [{"ipBlock": {"cidr": cidr}} for cidr in site["streaming_client_cidrs"]],

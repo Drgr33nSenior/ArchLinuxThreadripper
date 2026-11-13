@@ -1087,21 +1087,37 @@ class ServingContractTests(unittest.TestCase):
             path.write_text(json.dumps(site))
             service.render(SimpleNamespace(site=path, output=root / "closed", mode="large"))
             closed = service.load_objects((root / "closed/gaming.yaml").read_text())
-            policy = next(o for o in closed if o["kind"] == "NetworkPolicy")
+            policy = next(o for o in closed if o["kind"] == "NetworkPolicy" and o["metadata"]["name"] == "steam-headless-flows")
             self.assertNotIn("ingress", policy["spec"])  # no streaming networks: nothing admitted
             path.write_text(json.dumps(dict(site, streaming_client_cidrs=["192.168.1.0/24", "192.168.2.0/24"])))
             service.render(SimpleNamespace(site=path, output=root / "open", mode="large"))
             objects = service.load_objects((root / "open/gaming.yaml").read_text())
-            self.assertTrue(all(o["metadata"]["namespace"] == "ai-home-lab" for o in objects))
+            # Its own namespace: baseline enforced (user namespaces, unmasked /proc), restricted
+            # still warned and audited; default-deny and DNS like ai-home-lab; its own gpu-1 claim.
+            self.assertTrue(all(o["metadata"].get("namespace") == "gaming" for o in objects if o["kind"] != "Namespace"))
+            (namespace,) = [o for o in objects if o["kind"] == "Namespace"]
+            self.assertEqual(("gaming", "baseline", "restricted", "restricted"),
+                             (namespace["metadata"]["name"],) + tuple(namespace["metadata"]["labels"][f"pod-security.kubernetes.io/{k}"]
+                                                                       for k in ("enforce", "warn", "audit")))
+            self.assertTrue({"default-deny", "allow-cluster-dns", "steam-headless-flows"} <=
+                            {o["metadata"]["name"] for o in objects if o["kind"] == "NetworkPolicy"})
+            (claim,) = [o for o in objects if o["kind"] == "ResourceClaim"]
+            self.assertEqual("gpu-1", claim["metadata"]["name"])
+            self.assertIn('"0000:c3:00.0"', claim["spec"]["devices"]["requests"][0]["exactly"]["selectors"][0]["cel"]["expression"])
             game = next(o for o in objects if o["kind"] == "Deployment")
             self.assertEqual(("steam-headless", 0), (game["metadata"]["name"], game["spec"]["replicas"]))
+            pod = game["spec"]["template"]["spec"]
+            container = pod["containers"][0]
+            self.assertEqual((False, "Unmasked", "Localhost"), (pod["hostUsers"], container["securityContext"]["procMount"],
+                                                                container["securityContext"]["seccompProfile"]["type"]))
+            self.assertEqual(["ALL"], container["securityContext"]["capabilities"]["drop"])
             svc = next(o for o in objects if o["kind"] == "Service")
             self.assertEqual(("ClusterIP", ["192.168.77.9"], "Local"),
                              (svc["spec"]["type"], svc["spec"]["externalIPs"], svc["spec"]["externalTrafficPolicy"]))
             self.assertNotIn(47990, {port["port"] for port in svc["spec"]["ports"]})  # web UI stays off the LAN
             labels = game["spec"]["template"]["metadata"]["labels"]
             self.assertTrue(all(labels.get(k) == v for k, v in svc["spec"]["selector"].items()))
-            policy = next(o for o in objects if o["kind"] == "NetworkPolicy")
+            policy = next(o for o in objects if o["kind"] == "NetworkPolicy" and o["metadata"]["name"] == "steam-headless-flows")
             (rule,) = policy["spec"]["ingress"]
             self.assertEqual([{"ipBlock": {"cidr": "192.168.1.0/24"}}, {"ipBlock": {"cidr": "192.168.2.0/24"}}], rule["from"])
             self.assertEqual(sorted(service.STREAMING_PORTS), sorted((p["port"], p["protocol"]) for p in rule["ports"]))

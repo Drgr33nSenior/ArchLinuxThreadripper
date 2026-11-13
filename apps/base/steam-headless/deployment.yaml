@@ -14,6 +14,9 @@ spec:
       labels: {app.kubernetes.io/name: steam-headless, ai-home-lab.local/profile: shared}
     spec:
       automountServiceAccountToken: false
+      # Its own user namespace: container root is an unprivileged host UID range, which is
+      # what makes the unmasked /proc below safe (namespace gaming, baseline).
+      hostUsers: false
       priorityClassName: family-gaming-priority
       terminationGracePeriodSeconds: 120
       nodeSelector: {ai-home-lab.local/gfx: gfx1201, kubernetes.io/arch: amd64, kubernetes.io/os: linux}
@@ -52,6 +55,8 @@ spec:
           securityContext:
             privileged: false
             allowPrivilegeEscalation: false
+            # Steam's bubblewrap mounts a fresh /proc for its sandbox; masked paths forbid that.
+            procMount: Unmasked
             capabilities:
               drop: [ALL]
             # RuntimeDefault plus unprivileged user/mount namespace creation, which

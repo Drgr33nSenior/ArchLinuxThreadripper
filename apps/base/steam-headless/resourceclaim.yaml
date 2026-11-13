@@ -1,0 +1,19 @@
+# Card 1 for gaming. Claims are namespaced, so this is the gaming namespace's own claim
+# for the same card as ai-home-lab's gpu-1 (infrastructure/gpu-operator/claims.yaml).
+# The card is allocated to one claim at a time: the session switcher stops the AI
+# workloads on it before it starts gaming, and the reverse.
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaim
+metadata:
+  name: gpu-1
+spec:
+  devices:
+    requests:
+      - name: gpu
+        exactly:
+          deviceClassName: gpu.amd.com
+          allocationMode: ExactCount
+          count: 1
+          selectors:
+            - cel:
+                expression: device.attributes["resource.kubernetes.io"].pciBusID == "0000:c3:00.0"
