@@ -337,14 +337,19 @@ def candidate_client_profile(contract, output_tokens):
     return values
 
 
-def candidate_render(contract, output_tokens, deadline_seconds, reserve_tokens):
+def candidate_render(contract, output_tokens, deadline_seconds, reserve_tokens, first_token_seconds=None, idle_seconds=None):
     """Render inactive gateway, router, browser and client values for one candidate.
 
     Every layer is derived from the same contract so the checks below can
     compare them. Nothing here changes the active profile or its sources.
+    deadline_seconds is the overall cap; first_token_seconds and idle_seconds, when given,
+    are the streaming budgets (first content, then the longest silence between chunks).
     """
     client = candidate_client_profile(contract, output_tokens)
     require(type(deadline_seconds) is int and 30 <= deadline_seconds <= 3600, "deadline must be 30..3600 seconds")
+    for budget in (first_token_seconds, idle_seconds):
+        require(budget is None or (type(budget) is int and 20 <= budget <= deadline_seconds),
+                "streaming budgets must be 20 seconds up to the overall deadline")
     require(type(reserve_tokens) is int and 0 <= reserve_tokens <= 4096, "scheduler reserve must be 0..4096 tokens")
     context, alias = contract["context_length"], contract["client_alias"]
     route = {"model_name": alias,
@@ -355,6 +360,13 @@ def candidate_render(contract, output_tokens, deadline_seconds, reserve_tokens):
                             "input_cost_per_token": 0, "output_cost_per_token": 0}}
     gateway = {"chat_models": {alias: [context, output_tokens]}, "request_timeout": deadline_seconds,
                "admission_limit": GATEWAY_ADMISSION}
+    if first_token_seconds is not None:
+        # LiteLLM's stream_timeout bounds each wait for the next chunk, the first included;
+        # it ends 10 s before the gateway's first-token budget, as the route does overall.
+        route["litellm_params"]["stream_timeout"] = first_token_seconds - 10
+        gateway["first_token_timeout"] = first_token_seconds
+    if idle_seconds is not None:
+        gateway["idle_timeout"] = idle_seconds
     params = {"function_calling": "native"}
     defaults = contract.get("request_defaults")
     if defaults:
@@ -384,7 +396,8 @@ def candidate_render(contract, output_tokens, deadline_seconds, reserve_tokens):
                                        == client["AGENT_MAX_OUTPUT_TOKENS"] == request["max_tokens"]},
         {"id": "input-budget", "matches": route["model_info"]["max_input_tokens"] + output_tokens + reserve_tokens == context},
         {"id": "per-request-within-pool", "matches": context <= native["max_total_tokens"]},
-        {"id": "deadline-order", "matches": route["litellm_params"]["timeout"] < gateway["request_timeout"]},
+        {"id": "deadline-order", "matches": route["litellm_params"]["timeout"] < gateway["request_timeout"]
+                                           and route["litellm_params"].get("stream_timeout", 0) < gateway.get("first_token_timeout", 1)},
         {"id": "request-defaults", "matches": bool(defaults) and request.get("reasoning_effort") == client.get("AGENT_REASONING_EFFORT")
                                               and request.get("chat_template_kwargs") == defaults["chat_template_kwargs"]},
     ]
@@ -638,14 +651,19 @@ CATALOGUE_STATES = {"candidate": False, "selected": True}
 # ~92 at 120K, measured), well inside every mode's deadline. Think (effort xhigh) is not
 # capped at the gateway: it runs to the context limit (boundary.UNCAPPED_EFFORTS).
 DEFAULT_OUTPUT_TOKENS = 12288
-# Gateway deadline per mode (the route times out 10 s earlier). Large mode serves 262K
-# contexts: a cold 235K-token prompt took 238.7 s to its first token (arm UQL, 2026-11-11),
-# so 300 s leaves ~60 s of answer for it. Shared mode's 81,888-token context prefills in
-# under 30 s and keeps 180 s, so a stuck request frees its slot sooner beside the images.
-# Raised 2026-11-12 for "Think" (effort xhigh), which runs to the context limit: about
-# 50k tokens in 10 min (shared) and 100k in 20 min (large) at ~85 tok/s. Ordinary replies
-# keep the 12,288-token cap and end long before; the deadline only bounds a stuck request.
-DEADLINE_SECONDS = {"large": 1200, "shared": 600}
+# Gateway time budgets (the route ends 10 s earlier), 2026-11-13: a streamed reply that keeps
+# producing content is not cut short, a silent one is. Before, one total deadline per mode
+# (600 s shared, 1200 s large) cut long Max-effort replies and tool turns mid-stream.
+# - First content: 600 s for queueing, prefill and the start of thinking. A cold 235K-token
+#   prompt took 238.7 s to its first token in large mode (arm UQL, 2026-11-11).
+# - Idle: 180 s between chunks once content flows. Reasoning streams as content, so a
+#   thinking model is not idle; a stream silent this long has stalled.
+# - Overall cap: 3600 s in every mode, a backstop only (Max effort runs to the context
+#   limit at ~85 tok/s: about 50k tokens per 10 minutes).
+# The OpenAI and Anthropic SDKs use the same shape: a 600 s read timeout per chunk, no total.
+DEADLINE_SECONDS = {"large": 3600, "shared": 3600}
+FIRST_TOKEN_SECONDS = 600
+IDLE_SECONDS = 180
 
 
 def ai_stack_render():
@@ -854,7 +872,9 @@ def serving_contract(profile_path=SERVING_PROFILE, arm=None, runtime_image=None,
                     "input_tokens": numbers["context_length"] - output_tokens - reserve_tokens},
         "concurrency": {"gateway_admission": GATEWAY_ADMISSION, "native_running": numbers["max_running_requests"]},
         "deadlines": {"gateway_seconds": deadline_seconds, "route_seconds": deadline_seconds - 10,
-                      "client_milliseconds": deadline_seconds * 1000},
+                      "client_milliseconds": deadline_seconds * 1000,
+                      "first_token_seconds": min(FIRST_TOKEN_SECONDS, deadline_seconds),
+                      "idle_seconds": min(IDLE_SECONDS, deadline_seconds)},
         "assets": {"claim": claim["metadata"]["name"], "storage_class": claim["spec"]["storageClassName"],
                    "access_modes": claim["spec"]["accessModes"],
                    "model_path": single("--model-path"), "draft_path": single("--speculative-draft-model-path"),
@@ -1002,6 +1022,7 @@ def gateway_policy(contract, rendered, mode="large"):
             "default_reasoning_effort": (contract["reasoning"]["request_defaults"] or {}).get("reasoning_effort"),
             "template_kwargs": contract["reasoning"]["client_template_kwargs"],
             "request_timeout": contract["deadlines"]["gateway_seconds"],
+            **{key: rendered["gateway"][key] for key in ("first_token_timeout", "idle_timeout") if key in rendered["gateway"]},
             "admission_limit": contract["concurrency"]["gateway_admission"]}
 
 
@@ -1036,7 +1057,8 @@ def apply_contract(objects, contract, mode, experience):
     else:
         view = contract_view(contract)
     budgets, deadlines = contract["budgets"], contract["deadlines"]
-    rendered = candidate_render(view, budgets["output_tokens"], deadlines["gateway_seconds"], budgets["reserve_tokens"])
+    rendered = candidate_render(view, budgets["output_tokens"], deadlines["gateway_seconds"], budgets["reserve_tokens"],
+                                deadlines.get("first_token_seconds"), deadlines.get("idle_seconds"))
     alias = view["client_alias"]
     annotation = {"ai-home-lab.local/serving-contract": contract["contract"]}
     result = []

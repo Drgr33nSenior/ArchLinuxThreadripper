@@ -2,6 +2,7 @@
 import os
 from pathlib import Path
 
+import boundary
 from boundary import GatewayBoundary, apply_policy
 
 # Native dependency exceptions/print statements are not a content-safe logging
@@ -30,4 +31,5 @@ os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] = "True"
 from litellm.proxy.proxy_server import app as native_app  # noqa: E402
 
 app = GatewayBoundary(native_app, "/run/browser/mapping.json", "/run/gateway/control-key",
-                      request_timeout=request_timeout)
+                      request_timeout=request_timeout, first_token_timeout=boundary.FIRST_TOKEN_TIMEOUT,
+                      idle_timeout=boundary.IDLE_TIMEOUT)

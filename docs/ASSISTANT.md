@@ -194,7 +194,7 @@ Deployment starts exactly what the qualification Job starts.
 | `runtime` | `--runtime-image` (lab registry or its `ghcr.io` copy, pinned by digest); SGLang commit, patch series and GPU target from `stack.lock`; digest of the launch argv and environment |
 | `parsers` | Profile `--reasoning-parser`, `--tool-call-parser`, `--grammar-backend` |
 | `reasoning` | Profile `--default-chat-template-kwargs`; template-accepted efforts; client mapping |
-| `budgets`, `concurrency`, `deadlines` | Profile context, pool and running-request limits; `--output-tokens` (default 12,288, at most half the context, unqualified); gateway admission 4; deadline 1,200 s in large mode and 600 s in shared mode, so Think (effort `xhigh`, which runs to the context limit with no output cap) can finish; ordinary replies keep the 12,288 cap |
+| `budgets`, `concurrency`, `deadlines` | Profile context, pool and running-request limits; `--output-tokens` (default 12,288, at most half the context, unqualified); gateway admission 4; [time limits](#time-limits): 600 s to first content, 180 s idle between chunks, 3,600 s overall, so Max (effort `xhigh`, which runs to the context limit with no output cap) can finish; ordinary replies keep the 12,288 cap |
 | `assets`, `requirements` | Model and draft paths from the argv; `ai-models` claim from `k8s/models.yaml`; GPU count, groups and node label from the profile, `render.py` and `stack.lock` |
 
 `status` is `incomplete` while a deployment input is missing, `provisional`
@@ -235,7 +235,7 @@ Model Controls for the model in Workspace → Models replaces the declared slide
 | --- | --- |
 | *(unset)* or `low` | the contract default: thinking at `low` effort, output capped at 12,288 tokens |
 | `medium` | thinking at `medium` effort, same cap |
-| `high` or `xhigh` | thinking at `xhigh`, no output cap: runs until done, the context is full, or the deadline (10 min shared, 20 min large) |
+| `high` or `xhigh` | thinking at `xhigh`, no output cap: runs until done, the context is full, or a [time limit](#time-limits) (silent 3 minutes, or 60 minutes overall) |
 | `none` | no thinking (`enable_thinking: false`) |
 
 Any other value is refused with `invalid_reasoning_effort`. Chat Controls and Params are
@@ -245,6 +245,26 @@ enabled for every user (`USER_PERMISSIONS_CHAT_CONTROLS`/`_PARAMS`, pinned in
 The earlier `· Think` and `· Fast` model presets are retired. A deployment that still has
 them keeps them in Open WebUI's database: an admin deletes them under **Admin Panel →
 Settings → Models** (or Workspace → Models). Nothing re-creates them.
+
+### Time limits
+
+A streamed reply is never cut while it keeps producing output. The gateway enforces three
+budgets (`gateway-policy.json`, from the serving contract), the shape the OpenAI and
+Anthropic SDKs use:
+
+| Budget | Value | Ends a request that… | Error |
+| --- | --- | --- | --- |
+| First content | 600 s | has produced nothing yet (queue, prefill, start of thinking) | 504 `first_token_deadline` |
+| Idle | 180 s | streamed, then went silent; reasoning counts as output | stream ended without `[DONE]` |
+| Overall | 3,600 s | is still running after an hour (a backstop) | 504 `request_deadline`, or the stream ends |
+
+A non-streamed reply sends nothing until it is complete, so only the overall cap bounds it.
+LiteLLM ends 10 s earlier at each matching limit (`stream_timeout` 590 s per chunk wait,
+`timeout` 3,590 s). Traefik's `writeTimeout` (3,660 s) is an absolute limit on writing a
+response, so it stays above the overall cap; its `readTimeout` (300 s) covers slow
+uploads. Open WebUI sets no timeout of its own. Its stream idle setting is a socket-read
+timeout shared with tool calls (a video returns only when done), and the gateway already
+enforces these budgets.
 
 ### Shared mode (chat and pictures together)
 

@@ -32,10 +32,14 @@ spec:
         exposedPort: 443
         transport:
           respondingTimeouts:
-            readTimeout: 30s
-            # Streamed replies are one long write: cover the longest gateway deadline
-            # (large mode 1200 s, for Think) plus margin, or Traefik cuts them first.
-            writeTimeout: 1260s
+            # Reading the whole request, body included: a large document upload on a slow
+            # client link needs minutes, not 30 s.
+            readTimeout: 300s
+            # writeTimeout is an absolute limit on writing a response, not an idle one: a
+            # streamed reply is one long write and pings do not extend it. Keep it above the
+            # gateway's overall cap (3600 s) so the gateway's budgets decide, not Traefik.
+            writeTimeout: 3660s
+            # Idle keep-alive connections between requests (not silence within a reply).
             idleTimeout: 240s
     logs:
       access:
