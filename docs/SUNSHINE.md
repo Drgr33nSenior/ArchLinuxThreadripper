@@ -143,11 +143,20 @@ The Sunshine web UI (47990) is not exposed. Pair a device through a loopback
 port-forward, then open `https://localhost:47990` and enter the PIN Moonlight shows:
 
 ```sh
-kubectl -n ai-home-lab port-forward deployment/steam-headless 47990:47990
+kubectl -n gaming port-forward deployment/steam-headless 47990:47990
 ```
 
 In Moonlight, add the host by the node address (mDNS discovery does not cross
-VLANs). Before the first start, create the web-UI account Secret
+VLANs). Switch with `sudo workstationctl --config /etc/workstation/workstation.conf
+mode gaming --execute` (AI stopped, gaming started) and back with `mode family
+--execute`; `mode gaming` starts only a Deployment carrying the live
+`workstation.ai/qualification: qualified` annotation, applied after owner acceptance
+and never committed in source.
+
+Samsung TVs (Tizen): install Moonlight with the `apps2samsung-cli` tool
+(`install "Moonlight" --tv <ip>`). The TV's Developer Mode Host PC IP must be the
+address the installer connects from, and the first install signs in to a Samsung
+account in a browser to create the TV's Partner certificate. Before the first start, create the web-UI account Secret
 `gaming-credentials` (keys `username` and `sunshine-password`) interactively; it is
 never rendered. Qualify on the target as in [Image and target
 qualification](#image-and-target-qualification) before marking the Deployment
