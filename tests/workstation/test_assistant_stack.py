@@ -6,6 +6,7 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
+import unittest.mock
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "apps/base/shared-api"), str(ROOT / "lib/workstation")]
@@ -28,6 +29,58 @@ def environment(objects):
     return app, merged
 
 
+def load_pin_config():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("pin_config", ROOT / "apps/components/assistant/pin-config.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class PinConfigTests(unittest.TestCase):
+    """pin-config.py maps settings to the variables they are computed from (Open WebUI config.py shapes)."""
+
+    SOURCE = """
+import os
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')
+OPENAI_API_KEYS = os.getenv('OPENAI_API_KEYS', '')
+OPENAI_API_KEYS = OPENAI_API_KEYS if OPENAI_API_KEYS != '' else OPENAI_API_KEY
+OPENAI_API_KEYS = [k.strip() for k in OPENAI_API_KEYS.split(';')]
+USER_PERMISSIONS_CHAT_CONTROLS = os.getenv('USER_PERMISSIONS_CHAT_CONTROLS', 'True').lower() == 'true'
+DEFAULT_USER_PERMISSIONS = {'chat': {'controls': USER_PERMISSIONS_CHAT_CONTROLS}}
+try:
+    default_model_params = loads(os.environ.get('DEFAULT_MODEL_PARAMS', '{}'))
+except Exception:
+    default_model_params = {}
+DEFAULT_MODEL_PARAMS = default_model_params
+BANNERS = os.environ['WEBUI_BANNERS']
+UNRELATED = os.getenv('UNRELATED', '')
+DEFAULT_CONFIG = {
+    'openai.api_keys': OPENAI_API_KEYS,
+    'user.permissions': DEFAULT_USER_PERMISSIONS,
+    'models.default_params': DEFAULT_MODEL_PARAMS,
+    'ui.banners': BANNERS,
+    'ui.unrelated': UNRELATED,
+    'ui.constant': 3,
+}
+"""
+
+    def test_settings_follow_reassignment_chains_and_nested_blocks(self):
+        sources = load_pin_config().setting_sources(self.SOURCE)
+        self.assertEqual({"OPENAI_API_KEY", "OPENAI_API_KEYS"}, sources["openai.api_keys"])
+        self.assertEqual({"USER_PERMISSIONS_CHAT_CONTROLS"}, sources["user.permissions"])
+        self.assertEqual({"DEFAULT_MODEL_PARAMS"}, sources["models.default_params"])
+        self.assertEqual({"WEBUI_BANNERS"}, sources["ui.banners"])
+        self.assertEqual(set(), sources["ui.constant"])
+
+    def test_missing_list_fails_closed_and_env_only_mode_pins_nothing(self):
+        import contextlib, io, os
+        pin = load_pin_config()
+        for environ, code in (({"ENABLE_PERSISTENT_CONFIG": "true"}, 1), ({"ENABLE_PERSISTENT_CONFIG": "false"}, 0)):
+            with unittest.mock.patch.dict(os.environ, environ, clear=True), contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(code, pin.main())
+
+
 class AssistantTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -43,7 +96,11 @@ class AssistantTests(unittest.TestCase):
             self.assertEqual("Family AI", env["WEBUI_NAME"])
             self.assertEqual(model, env["DEFAULT_MODELS"])
             self.assertEqual(images, env["ENABLE_IMAGE_GENERATION"])
-            self.assertEqual("false", env["ENABLE_PERSISTENT_CONFIG"])
+            # Admin Panel settings persist; the deployment's own settings are re-applied by
+            # pin-config.py before Open WebUI starts (the list comes from service.py).
+            self.assertEqual("true", env["ENABLE_PERSISTENT_CONFIG"])
+            self.assertEqual(["python3 -I /webui-pins/pin-config.py && exec bash start.sh"], app["args"])
+            self.assertIn({"name": "webui-config-pins", "mountPath": "/webui-pins", "readOnly": True}, app["volumeMounts"])
             self.assertEqual("false", env["ENABLE_SIGNUP"])
             self.assertEqual("false", env["ENABLE_DIRECT_CONNECTIONS"])
             self.assertEqual("true", env["ENABLE_FORWARD_USER_INFO_HEADERS"])
@@ -86,7 +143,9 @@ class AssistantTests(unittest.TestCase):
                              and o["metadata"]["name"].startswith("webui-rag-profile-")) for rendered in (previous, objects)]
             self.assertEqual({**profiles[0], **reranker}, profiles[1])
             self.assertEqual(("none", "ms-marco-minilm-l6-v2"), tuple(p["RAG_RERANKER_PROFILE"] for p in profiles))
-            self.assertEqual(len(previous) + 2, len(objects))
+            # Added: the assistant profile, its network policy and the pin-config.py ConfigMap.
+            self.assertEqual(len(previous) + 3, len(objects))
+            self.assertTrue(any(o["kind"] == "ConfigMap" and "pin-config.py" in o.get("data", {}) for o in objects))
             for obj in objects:
                 self.assertNotEqual("Secret", obj["kind"])
                 if obj["kind"] == "Deployment":
@@ -94,7 +153,8 @@ class AssistantTests(unittest.TestCase):
             pod = named(objects, "Deployment", "open-webui")["spec"]["template"]["spec"]
             old_pod = named(previous, "Deployment", "open-webui")["spec"]["template"]["spec"]
             self.assertEqual(old_pod["securityContext"], pod["securityContext"])
-            self.assertEqual(old_pod["volumes"], pod["volumes"])
+            # Storage is unchanged; the only addition is the read-only pin-config.py ConfigMap.
+            self.assertEqual(old_pod["volumes"], [v for v in pod["volumes"] if v["name"] != "webui-config-pins"])
             tools = named(objects, "Deployment", "service-tools")["spec"]["template"]["spec"]
             old_tools = named(previous, "Deployment", "service-tools")["spec"]["template"]["spec"]
             self.assertEqual(old_tools["securityContext"], tools["securityContext"])

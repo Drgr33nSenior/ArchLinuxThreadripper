@@ -291,8 +291,9 @@ The existing `open-webui` → `service-tools:8000` NetworkPolicy already allows
 the flow.
 
 To use it, select "Workstation tools" in a chat's tool menu, or attach it to a
-model in the admin model settings. With `ENABLE_PERSISTENT_CONFIG=false`,
-change the connection in source, not the admin UI.
+model in the admin model settings. The connection is owned by the deployment
+([Admin Panel settings](ASSISTANT.md#admin-panel-settings)): change it in source,
+not the admin UI.
 
 Known gaps:
 

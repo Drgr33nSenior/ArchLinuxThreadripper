@@ -7,12 +7,26 @@ metadata:
 spec:
   template:
     spec:
+      volumes:
+        - name: webui-config-pins
+          configMap: {name: webui-config-pins}
       containers:
         - name: open-webui
+          # Admin Panel settings persist (persistent config). Before Open WebUI starts,
+          # pin-config.py re-applies the settings this deployment sets, named in
+          # WEBUI_PINNED_ENV by lib/workstation/service.py: connections and keys, sign-up,
+          # default role and permissions, the reviewed RAG profile, model defaults. Those
+          # stay owned by the deployment; every other setting is kept from the Admin Panel.
+          command: [bash, -c]
+          args: ["python3 -I /webui-pins/pin-config.py && exec bash start.sh"]
+          workingDir: /app/backend
+          volumeMounts:
+            - {name: webui-config-pins, mountPath: /webui-pins, readOnly: true}
           env:
-            # Explicit values override both upstream defaults and envFrom.
+            # Explicit values override both upstream defaults and envFrom (the RAG
+            # profile's init-container check still sees its own ENABLE_PERSISTENT_CONFIG=false).
             - {name: WEBUI_NAME, value: Family AI}
-            - {name: ENABLE_PERSISTENT_CONFIG, value: 'false'}
+            - {name: ENABLE_PERSISTENT_CONFIG, value: 'true'}
             - {name: ENABLE_SIGNUP, value: 'false'}
             - {name: DEFAULT_MODEL_PARAMS, value: '{"function_calling":"native"}'}
             - {name: ENABLE_WEB_SEARCH, value: 'true'}
