@@ -340,9 +340,10 @@ class GatewayBoundary:
             limit = data.get("timeout_s", 15)
             if type(limit) not in (int, float) or not 1 <= limit <= 30:
                 raise Refusal(400, "invalid_kv_tail_action")
-            # Ten more seconds for SGLang to see the released memory on both cards.
-            body.update(timeout_s=limit, release_timeout_s=10)
-            wait = limit + 15
+            # SGLang never waits for a running chat (it migrates it out of the tail); it only waits up to
+            # release_timeout_s for both cards to show the memory free. timeout_s bounds this HTTP wait.
+            body["release_timeout_s"] = min(10, limit)
+            wait = limit
         elif "timeout_s" in data:
             raise Refusal(400, "invalid_kv_tail_action")
         elif data["action"] == "grow":

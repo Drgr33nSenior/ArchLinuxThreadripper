@@ -56,8 +56,8 @@ class KvTail:
         METRICS.observe("workstation_assistant_kv_tail_duration_seconds", elapsed, op=op)
         self.last = {"op": op, "outcome": outcome, "seconds": round(elapsed, 2), "at": int(time.time())}
         if answer:
-            self.last.update({k: answer[k] for k in ("state", "tail_tokens", "migrated_tokens", "evicted_tokens",
-                                                     "vram_release_s") if k in answer})
+            self.last.update({k: answer[k] for k in ("state", "tail_tokens", "migrated_tokens", "migrate_s",
+                                                     "evicted_tail_tokens", "evicted_base_tokens", "elapsed_s") if k in answer})
 
     async def _sglang(self, action, timeout, **fields):
         """POST the action; return SGLang's answer, or a synthetic one when the route is unreachable."""
@@ -91,7 +91,7 @@ class KvTail:
                 async with self.lock:
                     if self.backed is False:
                         return
-                    answer = await self._sglang("shrink", self.shrink_wait + 5, timeout_s=self.shrink_wait)
+                    answer = await self._sglang("shrink", self.shrink_wait + 10, timeout_s=self.shrink_wait)
         except TimeoutError:
             answer = {"ok": False, "reason": "timeout"}
         reason = answer.get("reason", "error")
@@ -103,6 +103,7 @@ class KvTail:
             return
         self._record("shrink", reason, started, answer)
         # The tail may still hold the memory the ComfyUI needs: never start the job.
+        # busy: another grow or shrink holds SGLang; timeout: no answer in time (local or gateway).
         raise Refusal(503, "chat_memory_busy" if reason in {"busy", "timeout"} else "chat_memory_unconfirmed")
 
     def schedule_grow(self):
