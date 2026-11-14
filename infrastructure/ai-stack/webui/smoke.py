@@ -1,4 +1,5 @@
-"""Offline smoke test for the forked Open WebUI image: provider-declared Model Controls.
+"""Offline smoke test for the forked Open WebUI image: provider-declared Model Controls and
+the per-group web search confirmation.
 
 Runs inside the image (python -I /smoke.py, no network). Starts a fixture OpenAI-compatible
 backend that declares reasoning levels in /models the way the gateway does and echoes the
@@ -8,7 +9,10 @@ drives the HTTP API like the browser:
 - the model list carries the provider's controls as a slider, labels only;
 - each slider choice, and the default, reaches the backend; an unknown choice is refused;
 - an ordinary user sees the slider on a stored model record without admin controls (the live shape);
-- admin-defined controls replace the provider's.
+- admin-defined controls replace the provider's;
+- the web search confirmation is on for an ordinary user and for a member of a group without
+  the permission, off for an admin and for a member of a group that grants
+  `features.web_search_without_confirmation` (also beside a group that does not).
 
 Passwords are random and never printed; nothing leaves the container.
 """
@@ -90,6 +94,41 @@ def chat(token, choice=None):
     return status, seen
 
 
+def confirms(token=None):
+    """Whether /api/config tells this caller's browser to ask before a web search."""
+    status, body = api("GET", "/api/config", token)
+    return ((body or {}).get("features") or {}).get("enable_web_search_confirmation")
+
+
+def group(admin, name, features, member):
+    """Create a group with these feature permissions and one member. Returns its id."""
+    form = {"name": name, "description": "", "permissions": {"features": features}}
+    status, body = api("POST", "/api/v1/groups/create", admin, form)
+    group_id = (body or {}).get("id")
+    if group_id:
+        api("POST", f"/api/v1/groups/id/{group_id}/update", admin, form)
+        api("POST", f"/api/v1/groups/id/{group_id}/users/add", admin, {"user_ids": [member]})
+    return group_id
+
+
+def confirmation_checks(admin, user, user_id):
+    check("a signed-out browser is not told about the confirmation", confirms() is None, repr(confirms()))
+    check("an ordinary user confirms a web search", confirms(user) is True, repr(confirms(user)))
+    check("an admin does not", confirms(admin) is False, repr(confirms(admin)))
+    status, permissions = api("GET", "/api/v1/users/permissions", user)
+    check("the permission is off by default",
+          ((permissions or {}).get("features") or {}).get("web_search_without_confirmation") is False)
+    family = group(admin, "Family", {"web_search": True}, user_id)
+    check("a member of a group without the permission still confirms", bool(family) and confirms(user) is True,
+          repr(confirms(user)))
+    parents = group(admin, "Parents", {"web_search": True, "web_search_without_confirmation": True}, user_id)
+    check("a group that grants the permission lifts it, also beside one that does not",
+          bool(parents) and confirms(user) is False, repr(confirms(user)))
+    status, _ = api("POST", f"/api/v1/groups/id/{parents}/users/remove", admin, {"user_ids": [user_id]})
+    check("leaving that group brings the confirmation back", status == 200 and confirms(user) is True,
+          f"{status} {confirms(user)!r}")
+
+
 def run_checks():
     password = secrets.token_urlsafe(24)
     status, body = api("POST", "/api/v1/auths/signup", body={
@@ -116,6 +155,8 @@ def run_checks():
     check("admin adds an ordinary user", status == 200, str(status))
     status, body = api("POST", "/api/v1/auths/signin", body={"email": "user@example.invalid", "password": user_password})
     user = (body or {}).get("token")
+    if user:
+        confirmation_checks(admin, user, body.get("id"))
     grant = [{"principal_type": "user", "principal_id": "*", "permission": "read"}]
     record = {"id": MODEL, "name": MODEL, "base_model_id": None, "meta": {}, "params": {}, "access_grants": grant}
     status, _ = api("POST", "/api/v1/models/create", admin, record)
@@ -141,7 +182,7 @@ def main():
     env = dict(os.environ, OPENAI_API_BASE_URL="http://127.0.0.1:9000/v1", OPENAI_API_KEY="fixture",
                ENABLE_OLLAMA_API="false", OFFLINE_MODE="true", HF_HUB_OFFLINE="1",
                RAG_EMBEDDING_MODEL_AUTO_UPDATE="false", WEBUI_SECRET_KEY=secrets.token_hex(32),
-               DATA_DIR="/tmp/webui-smoke")
+               DATA_DIR="/tmp/webui-smoke", ENABLE_WEB_SEARCH="true", ENABLE_WEB_SEARCH_CONFIRMATION="true")
     os.makedirs(env["DATA_DIR"], exist_ok=True)  # a throwaway database, never the image's
     log = open("/tmp/webui-smoke.log", "wb")
     webui = subprocess.Popen(["bash", "start.sh"], cwd="/app/backend", env=env, stdout=log, stderr=subprocess.STDOUT)
