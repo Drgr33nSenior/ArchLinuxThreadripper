@@ -89,8 +89,8 @@ class KvTail:
         try:
             async with asyncio.timeout(self.shrink_wait + 5):
                 async with self.lock:
-                    if self.backed is False:
-                        return
+                    # Always ask, even when this process believes the tail is released: SGLang may have
+                    # restarted or been grown by someone else, and a released tail answers in milliseconds.
                     answer = await self._sglang("shrink", self.shrink_wait + 10, timeout_s=self.shrink_wait)
         except TimeoutError:
             answer = {"ok": False, "reason": "timeout"}
@@ -111,12 +111,28 @@ class KvTail:
         self.timer = asyncio.get_running_loop().create_task(self._grow_later(self.generation))
 
     async def _grow_later(self, generation):
+        """After a quiet spell, make sure the tail is backed; then keep checking every quiet spell.
+
+        The local `backed` flag is only a hint. SGLang's own state decides, so a tail lost to a restart
+        or shrunk by someone else is grown again within one quiet spell.
+        """
         await asyncio.sleep(self.idle_seconds)
         if generation != self.generation or self.jobs:
             return
         async with self.lock:
-            if generation != self.generation or self.jobs or self.backed:
+            if generation != self.generation or self.jobs:
                 return
+            state = (await self._sglang("status", 10)).get("state")
+            if state == "backed":
+                self.backed = True
+                self._state("backed")
+                self.schedule_grow()  # check again after the next quiet spell
+                return
+            if state == "disabled":
+                self.backed = False
+                self._state("disabled")
+                return  # SGLang runs without the tail; nothing to grow
+            self.backed = False if state == "unbacked" else self.backed
             started = time.monotonic()
             if not await self._free_comfys():
                 self._record("free", "not_released", started)
@@ -133,7 +149,7 @@ class KvTail:
                 self._record("grow", "ok", started, answer)
             else:
                 self._record("grow", answer.get("reason", "error"), started, answer)
-                self.schedule_grow()
+            self.schedule_grow()  # keep reconciling: retry a failed grow, or re-check a backed tail
 
     async def _free_comfys(self):
         """Unload every ComfyUI's models; True once each holds less than RELEASED_BYTES."""
