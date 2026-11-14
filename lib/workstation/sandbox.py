@@ -17,9 +17,10 @@ EGRESS_LABEL = "workstation.ai/sandbox-egress"
 # pod. Measured in a scratch K3s on 2026-11-14: a workspace idles at 45-53 MiB and
 # peaked at 239 MiB running pip, npm and a headless Chromium page; the controller held
 # 135 MB; the family proxy 36-38 MiB with its lists, the parents proxy 11 MiB.
-# Ephemeral storage stays requested at its limit.
+# Ephemeral storage stays requested at its limit. The workspace memory limit is the
+# owner's: 4 GiB, with at most six accounts and two slots.
 WORKSPACE_RESOURCES = {"requests": {"cpu": "250m", "memory": "256Mi", "ephemeral-storage": "2Gi"},
-                       "limits": {"cpu": "2", "memory": "2Gi", "ephemeral-storage": "2Gi"}}
+                       "limits": {"cpu": "2", "memory": "4Gi", "ephemeral-storage": "2Gi"}}
 CONTROL_RESOURCES = {"requests": {"cpu": "100m", "memory": "192Mi", "ephemeral-storage": "256Mi"},
                      "limits": {"cpu": "500m", "memory": "512Mi", "ephemeral-storage": "256Mi"}}
 PROXY_RESOURCES = {"requests": {"cpu": "50m", "memory": "64Mi", "ephemeral-storage": "16Mi"},
