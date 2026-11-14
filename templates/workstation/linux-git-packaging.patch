@@ -25,7 +25,7 @@
  )
  
  export KBUILD_BUILD_HOST=archlinux
-@@ -214,14 +216,22 @@
+@@ -214,14 +216,24 @@
  }
  
  _package-headers() {
@@ -34,6 +34,7 @@
    pkgdesc="Headers and scripts for building modules for the $pkgdesc kernel"
    depends=(
      binutils
++    dtc
 +    gawk
      glibc
      libelf
@@ -44,6 +45,7 @@
 +    perl
 +    python
 +    python-cryptography
++    python-ruamel-yaml
 +    sed
      xxhash
      zlib

@@ -216,7 +216,7 @@ fi
   [[ $pkgver == 7.3.4.r0.7595a62d45ee.stable.linux ]]
   _package-headers
   [[ ${#backup[@]} == 0 ]]
-  for dependency in python python-cryptography perl sed make gawk; do
+  for dependency in python python-cryptography python-ruamel-yaml dtc perl sed make gawk; do
     [[ " ${depends[*]} " == *" $dependency "* ]]
   done
 )
