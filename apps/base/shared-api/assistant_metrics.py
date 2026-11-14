@@ -49,6 +49,16 @@ FAMILIES = {
     "workstation_assistant_video_requests_total": (
         "counter", "Video tool calls (generate_video) by outcome.",
         {"client": CLIENTS, "outcome": ("ok", "denied", "busy", "not_ready", "cancelled", "failed", "invalid", "unavailable")}),
+    "workstation_assistant_kv_tail_operations_total": (
+        "counter", "Elastic KV tail hand-overs: shrink before media, ComfyUI unload (free) and grow after a quiet spell.",
+        {"op": ("shrink", "free", "grow"),
+         "outcome": ("ok", "disabled", "busy", "timeout", "release_unconfirmed", "cannot_migrate", "insufficient_vram",
+                     "map_failed", "not_released", "unavailable", "error")}),
+    "workstation_assistant_kv_tail_duration_seconds": (
+        "histogram", "Elastic KV tail hand-over latency by operation.", {"op": ("shrink", "free", "grow")}),
+    "workstation_assistant_kv_tail_state": (
+        "gauge", "Elastic KV tail state last reported by SGLang (value 1).",
+        {"state": ("backed", "unbacked", "disabled", "unknown")}),
     "workstation_assistant_serving_contract_info": (
         "gauge", "Serving contract the clients were rendered for (value 1).",
         {"contract": None, "status": ("active", "provisional", "incomplete")}),

@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "apps/base/shared-api"))
 from assistant_metrics import METRICS
 from retrieval import Retrieval
+from kv_tail import KvTail
 from service_tools import QWEN_SIZES, ServiceTools, snap_size
 
 # A ws_rag_corpus-named source and the chunk Open WebUI's Markdown splitter stores
@@ -50,6 +51,7 @@ class ToolsTests(unittest.IsolatedAsyncioTestCase):
         self.gate = None  # history completes once set
         self.queued = {}  # prompt_id -> ComfyUI host
         self.artifact = {"filename": "picture_00001_.png", "subfolder": "", "type": "output"}
+        self.kv_answer = {"ok": True, "state": "unbacked"}  # SGLang's elastic KV tail, through the gateway
         webui = yaml.safe_load((ROOT / "apps/overlays/service/webui.yaml").read_text())
         environment = {e["name"]: e.get("value") for e in webui["spec"]["template"]["spec"]["containers"][0]["env"]}
         allowed = environment.get("API_KEYS_ALLOWED_ENDPOINTS", "").split(",")
@@ -81,6 +83,8 @@ class ToolsTests(unittest.IsolatedAsyncioTestCase):
                 return httpx.Response(200, json={"id": "doc2", "filename": GUIDE_NAME, "data": {"content": GUIDE}})
             if path == "/_service/status":
                 return httpx.Response(200, json={"phase": "ready", "model": "Qwen3.5-9B", "images": self.available})
+            if path == "/_service/kv_tail":
+                return httpx.Response(200 if self.kv_answer["ok"] else 409, json=self.kv_answer)
             # ComfyUI (comfy1 = gpu-1, comfy0 = gpu-0)
             if req.url.host in ("comfy1", "comfy0"):
                 if path == "/prompt" and req.method == "POST":
@@ -221,6 +225,27 @@ class ToolsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(("comfy1", "picture_00001_.png", "output"),
                          (view.url.host, view.url.params["filename"], view.url.params["type"]))
         self.assertFalse((self.root / "state/image-inflight.json").exists())
+
+    async def test_elastic_kv_tail_is_released_before_the_picture_and_never_without_an_answer(self):
+        self.assertEqual({"enabled": False}, (await self.client.get("/health")).json()["kv_tail"])
+        self.tools.kv_tail = KvTail(self.upstream, "http://gateway", self.mapping, ("http://comfy1", "http://comfy0"),
+                                    idle_seconds=3600)
+        response = await self.client.post("/webui/images/generations", headers=self.headers, json=self.image)
+        self.assertEqual(200, response.status_code)
+        paths = [r.url.path for r in self.calls]
+        self.assertLess(paths.index("/_service/kv_tail"), paths.index("/prompt"))
+        self.assertEqual("shrink", json.loads(next(r for r in self.calls if r.url.path == "/_service/kv_tail").content)["action"])
+        self.assertEqual(False, (await self.client.get("/health")).json()["kv_tail"]["backed"])
+        # Chat still holds the tail (say the release was not confirmed): nothing reaches ComfyUI.
+        self.tools.kv_tail.backed = True
+        self.kv_answer = {"ok": False, "reason": "busy"}
+        self.calls.clear()
+        response = await self.client.post("/webui/images/generations", headers=self.headers, json=self.image)
+        self.assertEqual((503, "chat_memory_busy"), (response.status_code, response.json()["error"]["code"]))
+        self.assertEqual("5", response.headers.get("retry-after"))
+        self.assertEqual([], self.jobs())
+        self.assertFalse((self.root / "state/image-inflight.json").exists())
+        self.tools.kv_tail.timer.cancel()
 
     async def test_unexpected_artifact_names_are_refused_before_any_fetch(self):
         self.tools.image_timeout = 5
