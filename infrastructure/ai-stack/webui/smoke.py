@@ -1,5 +1,5 @@
-"""Offline smoke test for the forked Open WebUI image: provider-declared Model Controls and
-the per-group web search confirmation.
+"""Offline smoke test for the forked Open WebUI image: provider-declared Model Controls, the
+per-group web search confirmation and the model fields the context wheel reads.
 
 Runs inside the image (python -I /smoke.py, no network). Starts a fixture OpenAI-compatible
 backend that declares reasoning levels in /models the way the gateway does and echoes the
@@ -12,7 +12,9 @@ drives the HTTP API like the browser:
 - admin-defined controls replace the provider's;
 - the web search confirmation is on for an ordinary user and for a member of a group without
   the permission, off for an admin and for a member of a group that grants
-  `features.web_search_without_confirmation` (also beside a group that does not).
+  `features.web_search_without_confirmation` (also beside a group that does not);
+- the model list keeps the gateway's `context_window` and `max_output_tokens`, also for an
+  ordinary user on a stored model record: the context wheel has no other source for them.
 
 Passwords are random and never printed; nothing leaves the container.
 """
@@ -34,6 +36,7 @@ DECLARED = {
         {"reasoningEffort": "none", "label": "Off"}, {"reasoningEffort": "low", "label": "Low"},
         {"reasoningEffort": "medium", "label": "Medium"}, {"reasoningEffort": "xhigh", "label": "Max"}],
     "defaultReasoningEffort": "low",
+    "context_window": 100768, "max_output_tokens": 12288,
 }
 BASE = "http://127.0.0.1:8080"
 results = []
@@ -84,6 +87,11 @@ def api(method, path, token=None, body=None):
 def listed(token):
     status, body = api("GET", "/api/models", token)
     return next((m for m in (body or {}).get("data", []) if m["id"] == MODEL), None)
+
+
+def context_fields(model):
+    """What the context wheel reads from a listed model: the declared window and output allowance."""
+    return (model or {}).get("context_window"), (model or {}).get("max_output_tokens")
 
 
 def chat(token, choice=None):
@@ -143,6 +151,8 @@ def run_checks():
     check("labels and default", [o.get("label") for o in effort.get("options", {}).values()] == ["Off", "Low", "Medium", "Max"]
           and effort.get("default") == "low")
     check("clients see labels only", all(set(o) == {"label"} for o in effort.get("options", {}).values()))
+    check("model list keeps the context window and output allowance", context_fields(model) == (100768, 12288),
+          repr(context_fields(model)))
     for choice, expected in (("xhigh", "xhigh"), ("none", "none"), (None, "low")):
         status, seen = chat(admin, choice)
         check(f"choice {choice!r} reaches the backend as {expected!r}", status == 200 and seen == expected, f"{status} {seen!r}")
@@ -163,6 +173,8 @@ def run_checks():
     check("a stored record without controls is saved", status == 200, str(status))
     user_effort = (((listed(user) if user else None) or {}).get("provider_model_controls") or {}).get("reasoning_effort") or {}
     check("an ordinary user sees the provider's slider on the stored model", user_effort.get("display") == "slider")
+    stored = context_fields(listed(user) if user else None)
+    check("and its context window and output allowance", stored == (100768, 12288), repr(stored))
     status, seen = chat(user, "xhigh") if user else (None, None)
     check("the user's choice reaches the backend", status == 200 and seen == "xhigh", f"{status} {seen!r}")
 

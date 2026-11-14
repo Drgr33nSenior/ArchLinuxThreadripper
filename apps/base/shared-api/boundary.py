@@ -297,11 +297,14 @@ class GatewayBoundary:
             return await reply(send, 503, {"error": {"code": "service_configuration_unavailable"}})
 
     async def models(self, scope, receive, send):
-        """Publish each configured chat model's context window and accepted reasoning levels.
+        """Publish each configured chat model's context window, output allowance and reasoning levels.
 
-        context_window is the serving contract's full per-request token window. Keep the router's
-        max_input_tokens unchanged: it reserves output capacity and scheduler headroom. Open WebUI
-        preserves these model fields for clients. Non-list responses pass through unchanged."""
+        context_window is the serving contract's full per-request token window. max_output_tokens is
+        the allowance this boundary gives a request that names none (chat()); SGLang refuses a prompt
+        that does not leave that much room, so a conversation is full at the difference (Open
+        WebUI's context wheel). Keep the router's max_input_tokens unchanged: it also reserves
+        scheduler headroom. Open WebUI preserves these model fields for clients. Non-list responses
+        pass through unchanged."""
         start, chunks = {}, []
 
         async def capture(message):
@@ -321,7 +324,7 @@ class GatewayBoundary:
                 for model in entries if isinstance(entries, list) else ():
                     if isinstance(model, dict) and model.get("id") in CHAT_MODELS:
                         model.update(declaration)
-                        model["context_window"] = CHAT_MODELS[model["id"]][0]
+                        model["context_window"], model["max_output_tokens"] = CHAT_MODELS[model["id"]]
                 body = json.dumps(listing).encode()
             except (ValueError, AttributeError):
                 pass
