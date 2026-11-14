@@ -1095,6 +1095,10 @@ def apply_contract(objects, contract, mode, experience):
                 values = rendered["webui"]
             elif name == "service-tools":
                 values = {"SERVING_CONTRACT": contract["contract"], "SERVING_CONTRACT_STATUS": contract["status"]}
+                # An arm with the elastic KV tail needs service-tools to hand the memory back before each
+                # picture or clip (apps/base/shared-api/kv_tail.py); without it the switch stays unset.
+                if any(entry["name"] == "SGLANG_GFX1201_ELASTIC_KV_BASE_TOKENS" for entry in contract["_render"]["environment"]):
+                    values["KV_TAIL_ENABLED"] = "true"
             else:
                 values = {}
             env[:] = [entry for entry in env if entry["name"] not in values]
