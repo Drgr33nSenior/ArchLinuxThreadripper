@@ -15,7 +15,7 @@ It runs in **shared mode** today. [Service modes](MODES.md) explains the alterna
 | Feature | How to use it | Who |
 | --- | --- | --- |
 | Chat | Chat with `Qwen3.8-27B-MXFP4` (thinks briefly). To change how long it thinks: the **Reasoning effort** slider in the message box (Off, Low, Medium, Max) | Everyone with an account |
-| Pictures | Ask for a picture, or use the image button; Qwen-Image makes a 1328×1328 picture in about 75 s | Accounts with picture permission (Admin and Parents) |
+| Pictures | Ask for a picture, or use the image button; Qwen-Image makes a 1328×1328 picture in about 65 s (75 s if two are rendering) | Accounts with picture permission (Admin and Parents) |
 | Short videos | Ask for a short video; a 5-second clip appears in the chat after about 80 s | Accounts with picture permission and the normal `user` role (the Parents' daily accounts); shared mode only |
 | Voice input | The microphone button; speech is transcribed on the workstation | Everyone |
 | Web search | Automatic when a question needs current public information (Exa) | Everyone |
