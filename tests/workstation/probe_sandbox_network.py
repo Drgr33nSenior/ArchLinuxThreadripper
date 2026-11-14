@@ -9,7 +9,7 @@ question and CONNECT requests, never credentials or content. Exits 1 on any surp
     {"closed": {"node API": ["10.0.2.15", 6443], ...},      direct connects that must fail
      "open":   {"own proxy": ["10.43.0.201", 4750]},        direct connects that must succeed
      "dns": "10.43.0.10",                                   a resolver that must not answer
-     "allowed": ["pypi.org"], "denied": ["github.com", ...]}   CONNECT host[:port] through the proxy
+     "allowed": ["pypi.org"], "denied": ["192.168.1.40:22", ...]}   CONNECT host[:port] through the proxy
 """
 import json
 import os
@@ -73,8 +73,8 @@ def main():
         rows.append((f"proxy {target}", "200", str(proxy_status(target))))
     for target in spec.get("denied", []):
         status = proxy_status(target)
-        # 407 is the proxy's refusal; anything but a 2xx tunnel is a denial.
-        rows.append((f"proxy {target}", "refused", "refused" if not 200 <= status < 300 else f"TUNNEL {status}"))
+        # 403 is the proxy's refusal; anything but a 2xx tunnel is a denial.
+        rows.append((f"proxy {target} ({status})", "refused", "refused" if not 200 <= status < 300 else "TUNNEL"))
     failed = 0
     for name, want, got in rows:
         ok = want == got

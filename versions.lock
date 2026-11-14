@@ -135,4 +135,4 @@ PLAYWRIGHT_VERSION=1.65.2
 # Built, scanned, signed and pushed by the sandbox and egress pipeline stages on 2026-11-14.
 # Candidates: the owner supplies the digests to --sandbox-config after review.
 ASSISTANT_SANDBOX_CANDIDATE_IMAGE=registry.lan.thespry.family/local/assistant-sandbox@sha256:259c186c6dbc088d5c2da67f136095dca73243777804e5e1de69e8711f6b7a36
-SANDBOX_EGRESS_CANDIDATE_IMAGE=registry.lan.thespry.family/local/sandbox-egress@sha256:ec30805aa7a3993d7f679c06bd18d5bf9e7f5c28c793506c47119b19abf1a87e
+SANDBOX_EGRESS_CANDIDATE_IMAGE=registry.lan.thespry.family/local/sandbox-egress@sha256:6b2f50ed118f960a82a5790dc31b6abfbef759d149e50a2488f6aa8f36a86c4a

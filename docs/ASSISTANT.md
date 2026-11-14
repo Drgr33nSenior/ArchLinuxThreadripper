@@ -106,7 +106,7 @@ document permissions remain authoritative. End-to-end search is not yet qualifie
 ## Private coding sandbox (candidate, off by default)
 
 `service render --sandbox-config /private/sandbox.json` adds native Open Terminal
-support in **large/coder mode only**. It writes a separate `sandbox.yaml`; every
+support in coder (large) and family (shared) mode. It writes a separate `sandbox.yaml`; every
 Deployment in it starts at zero replicas. Omitting the flag pins an empty
 `TERMINAL_SERVER_CONNECTIONS` list, including when persistent WebUI settings exist.
 This candidate is not a qualified live service.
@@ -123,7 +123,7 @@ Chromium, and native file tools return its screenshots to the model.
 
 ### Who gets what
 
-| Account | Acts as | Egress list | Home |
+| Account | Acts as | Egress policy | Home |
 | --- | --- | --- | --- |
 | WebUI admin role (the admin account is in no group) | Admin | `parents` | Persistent if mapped, else disposable |
 | Member of Parents only | Parents | `parents` | Same |
@@ -136,14 +136,14 @@ Chromium, and native file tools return its screenshots to the model.
 `most-permissive` (Admin, then Parents, then Family). It matches how Open WebUI
 combines group permissions, which the web search confirmation setting already
 relies on. With it the owner's daily account, which is in both groups so that it
-sees the children's presets, gets the Parents list. `most-restrictive` restores
+sees the children's presets, gets the Parents policy. `most-restrictive` restores
 the earlier rule that a Family membership wins; under it the owner's daily
-account would get the children's list.
+account would get the children's filtered policy.
 
 The homes mapping can name an account's group. An entry's `group` then replaces
 the rule for that account, but it only chooses among groups the account holds
 in WebUI at that moment. A mapping that names a group the account lacks denies
-access; it never grants a wider list. Map the admin account as `Admin`.
+access; it never grants a wider policy. Map the admin account as `Admin`.
 
 Per-user isolation, resource limits and the idle and lifetime teardown are the
 same for every group. The models' content filtering for children is unchanged.
@@ -167,15 +167,18 @@ identifiers, not credentials.
   "egress_service_ips": {"family": "10.43.0.201", "parents": "10.43.0.202"},
   "api_server_cidr": "192.168.30.11/32",
   "api_server_port": 6443,
-  "homes": "/home/OWNER/ai-stack/private/sandbox-users.json"
+  "homes": "/home/OWNER/ai-stack/private/sandbox-users.json",
+  "family_dns": ["1.1.1.3", "1.0.0.3"]
 }
 ```
 
 `egress_service_ips` are two unused addresses in the cluster's service range, one
-per egress list. Workspaces have no DNS, so they reach their proxy by address;
+per egress policy. Workspaces have no DNS, so they reach their proxy by address;
 the render fixes each proxy Service to its address. Choose them from the low end
 of the range, which Kubernetes keeps for fixed assignments
 (`kubectl get svc -A` shows the addresses in use). `homes` is optional.
+`family_dns` is optional: one to four public resolvers that filter for
+children; the default is shown.
 
 ### Isolation and lifecycle
 
@@ -193,7 +196,7 @@ terminal key grants access only to that workspace. A small ASGI gate checks the
 caller's WebUI session, exact user ID and current groups before forwarding to
 the native orchestrator. WebUI always asks for the policy named `sandbox`; the
 gate replaces it with the account's own policy, so a caller cannot name another
-account's home or another group's list. It exposes no policy administration
+account's home or another group's egress policy. It exposes no policy administration
 API. Static tool discovery starts no pod. WebSocket sessions reauthenticate by
 reconnecting after at most 60 seconds.
 
@@ -229,87 +232,180 @@ Treat a home as untrusted input, and delete the dataset's contents to reset it.
 
 The namespace has default-deny policies. Only the controller can open
 connections to workspace port 8000. A workspace can open connections to one
-place: the egress proxy for its list, on port 4750. It has no DNS, no route to
-the node, cluster services, other workspaces, the other list's proxy, the LAN
+place: the egress proxy for its group, on port 4750. It has no DNS, no route to
+the node, cluster services, other workspaces, the other group's proxy, the LAN
 or the Internet. Chromium and local web servers communicate inside the pod
 (`NO_PROXY=localhost,127.0.0.1`). The controller alone can reach WebUI, DNS and
 the exact configured API endpoint. There is no public Ingress, NodePort or
 browser-debugging listener.
 
-**Egress proxy.** Each list has its own proxy Deployment, `sandbox-egress-family`
-and `sandbox-egress-parents`. Which list a workspace gets is decided by which
-proxy the NetworkPolicy lets its pod reach, from a label the gate's policy sets.
-Nothing the workspace sends can select another list. Workspaces receive
+**Egress is open, with blocklists.** A workspace may reach any public host on TCP
+80 and 443 through its proxy. An allowlist is not used: it could not keep up
+with the registries and documentation of every language in use.
+Each group has its own proxy Deployment, `sandbox-egress-parents` and
+`sandbox-egress-family`. Which one a workspace gets is decided by which proxy
+the NetworkPolicy lets its pod reach, from a label the gate's policy sets.
+Nothing the workspace sends can select the other. Workspaces receive
 `HTTP_PROXY`, `HTTPS_PROXY` and their lower-case forms.
 
-The proxy is [Smokescreen](https://github.com/stripe/smokescreen) (MIT) at
-release v0.1.0, built by the `egress` pipeline stage with
-`infrastructure/ai-stack/egress/main.go`:
+| | Parents and Admin | Family |
+| --- | --- | --- |
+| Public hosts | Any, on TCP 80 and 443 | Any, on TCP 80 and 443 |
+| Owner's blocklist | `policies.parents.blocked` | `policies.family.blocked` |
+| Maintained public blocklists | None | Adult content, gambling, and VPN, proxy and DNS-bypass services (about 100,000 domains) |
+| Name resolution | The cluster's DNS | Family-filtering resolvers only; a filtered name is refused |
+| Address literals (`https://203.0.113.9/`) | Allowed if public | Refused: no name filter can judge an address |
+| Private, LAN, cluster, loopback, link-local, carrier-NAT addresses | Refused | Refused |
 
-- It allows a request only when the host is on the group's list. The lists are
-  in [`infrastructure/service/sandbox-egress.json`](../infrastructure/service/sandbox-egress.json);
-  changing one is a reviewed repository change. There is no open or report-only
-  mode in the rendered ACL, and an unknown group gets an empty list.
-- After resolving an allowed name it refuses private, loopback, link-local,
+The owner's blocklists are in
+[`infrastructure/service/sandbox-egress.json`](../infrastructure/service/sandbox-egress.json).
+Both start empty. Add a domain to block it and its subdomains for that group;
+the change is a reviewed repository change followed by a render and a restart
+of that proxy. The file cannot give the Family group the unfiltered policy.
+
+The proxy is [Smokescreen](https://github.com/stripe/smokescreen) (MIT) used as
+a library, built by the `egress` pipeline stage with
+`infrastructure/ai-stack/egress/main.go`. Open egress keeps every address
+protection:
+
+- After resolving a name the proxy refuses private, loopback, link-local,
   carrier-NAT and IPv4-embedding addresses, and the ranges the render passes
   explicitly (`192.168.0.0/16`, `10.0.0.0/8` which holds the pod and service
   ranges, `172.16.0.0/12`, `169.254.0.0/16`, `100.64.0.0/10`, `127.0.0.0/8`).
   It connects to the address it checked, so a name that changes its answer
   cannot redirect the connection.
 - The proxy pods' own NetworkPolicy allows DNS and public addresses on TCP 80
-  and 443 only, with the same private ranges excepted. A listed name therefore
-  cannot be used to reach another port, and the address check does not rest on
-  the proxy alone.
+  and 443 only, with the same private ranges excepted. The address check does
+  not rest on the proxy alone, and no other port is reachable.
 - It logs one line per request with the group, the domain and `allow` or
   `deny`. It does not log paths, queries, headers, client addresses, sizes or
   content, and it does not terminate TLS. Alloy scrapes
   `workstation_sandbox_egress_requests_total{group,decision}`; domains stay in
   the pod log.
+- Each proxy serves at most 256 requests and tunnels at once and 100 new
+  requests a second. These bounds are for the whole proxy, shared by the
+  workspaces behind it; Smokescreen has no per-client limit.
 
-Squid with an allowlist and address ACLs was the alternative. It can enforce the
-same lists, but its private-address protection has to be written and kept
-correct as ACLs against resolved destinations, its default logs carry full
-URLs for plain HTTP, and its image is a C daemon with a distribution's
-packages. Smokescreen has the address checks built in and tested for this
-purpose, logs nothing beyond what this wrapper lets through, and ships as one
-static binary in an empty image.
+**Refusals are a plain 403** with one short reason in the body and in the
+`X-Sandbox-Blocked` header: `blocked by the family filter`,
+`blocked by the sandbox blocklist`, `private address` or
+`address literals are not allowed for this group`. `curl` and other HTTP
+clients show it. Chromium does not show a proxy's reply to a refused HTTPS
+tunnel; it reports `ERR_TUNNEL_CONNECTION_FAILED`. A name that does not exist
+gets a 502.
 
-**Proposed lists** (the owner approves them by merging):
+**The family filter** has two independent parts.
 
-| List | Domains |
-| --- | --- |
-| `family` (15) | Registries: `pypi.org`, `files.pythonhosted.org`, `registry.npmjs.org`, `raw.githubusercontent.com`, `codeload.github.com`. Documentation: `docs.python.org`, `packaging.python.org`, `pip.pypa.io`, `www.pygame.org`, `developer.mozilla.org`, `www.w3schools.com`, `docs.npmjs.com`, `nodejs.org`, `p5js.org`, `en.scratch-wiki.info` |
-| `parents` (51) | Everything on `family`, plus GitHub (`github.com`, `api.github.com`, release and gist content hosts, `docs.github.com`), Rust, Go and Maven registries and their documentation, the CDNs `cdn.jsdelivr.net`, `unpkg.com`, `cdnjs.cloudflare.com`, Google Fonts, `*.readthedocs.io`, framework documentation (Django, Flask, FastAPI, React, Vue, Vite, TypeScript, Tailwind, Microsoft Learn, Kubernetes), `stackoverflow.com` with `cdn.sstatic.net`, and `en.wikipedia.org` with `upload.wikimedia.org` |
+1. *Filtering DNS.* The family proxy resolves names only through the resolvers
+   in `family_dns`, by default Cloudflare for Families (`1.1.1.3`, `1.0.0.3`),
+   which blocks malware and adult content. Its NetworkPolicy allows port 53 to
+   those addresses and not to the cluster's DNS. Smokescreen does its own
+   resolving, so the workspace never asks a resolver. A blocked name comes back
+   as `0.0.0.0`, which the proxy refuses like any non-public address and
+   reports as the family filter. If the workstation's network is itself under a
+   UniFi content filter, the gateway may intercept these queries and answer
+   them itself; the result is still a filtered answer.
+2. *Maintained blocklists.* Three public lists are baked into the proxy image at
+   pinned commits and reread from their maintainers once a day:
 
-Deliberately not on the family list: `github.com` (any repository's content
-and a place to post), `scratch.mit.edu` (community features), Wikipedia, video,
-search and chat sites. The proxy allows whole domains; one section of a site,
-such as BBC Bitesize, cannot be allowed without the rest of that domain.
-Documentation pages that load scripts or fonts from other domains render
-partly. General web access for Parents is not included: Smokescreen has no site
-categories, and an open rule would be a tunnel to any public host. It remains
-an owner decision; the private-address denial would still apply.
+   | List | Source | Licence | Entries | Updated |
+   | --- | --- | --- | ---: | --- |
+   | `nsfw` | HaGeZi DNS Blocklists, NSFW | GPL-3.0 | 78,550 | Several times a day |
+   | `bypass` | HaGeZi DNS Blocklists, DoH/VPN/Tor/proxy bypass | GPL-3.0 | 16,525 | Several times a day |
+   | `gambling` | StevenBlack hosts, gambling extension | MIT | 6,744 | About weekly |
 
-**What egress adds to the threat model.** Code in a workspace can now fetch and
-run packages, including their install scripts, and can send data to any listed
-domain that accepts it. Package registries and raw content hosts are read-only
-for an anonymous client; GitHub, on the Parents list, accepts uploads from
-anyone holding a token. Do not put secrets in a workspace.
+   A listed domain blocks its subdomains. The proxy holds the lists as a set and
+   checks each label suffix of the requested host, so a request costs a few
+   map lookups whatever the list size. Smokescreen's own deny list is a slice
+   of globs scanned per request and was not used.
 
-Prompt-injected code and malicious pages can destroy or expose the current
-user's workspace and home through tool responses. They receive no family
-storage beyond that home, no service keys and no Kubernetes identity. Chromium
-runs headless with its inner sandbox disabled because this image uses the
+Alternatives considered for the adult-content list:
+
+| List | Entries | Size | Licence | Note |
+| --- | ---: | ---: | --- | --- |
+| HaGeZi NSFW (chosen) | 78,550 | 1.3 MB | GPL-3.0 | Domain-and-subdomain syntax; frequent updates |
+| OISD NSFW | 487,797 | 8.6 MB | GPL-3.0 | Hourly; six times the memory for the same purpose |
+| StevenBlack porn extension | 76,811 | 2.0 MB | MIT | Hosts format: exact hosts, not domains |
+| Block List Project porn | 953,393 | 18.5 MB | MIT | Last modified in July 2026 |
+
+HaGeZi's gambling list has 656,152 entries (11.6 MB); the StevenBlack gambling
+extension was chosen for its size. The DNS filter does not cover gambling.
+
+*How the lists stay current.* The pins are in
+[`infrastructure/ai-stack/egress/blocklists.json`](../infrastructure/ai-stack/egress/blocklists.json):
+for each list a commit-pinned address, its SHA-256, size, entry count and date,
+and the address the maintainer updates. The `egress` stage downloads the pinned
+copies, stops on any size or checksum difference, and bakes them into the
+image. The running family proxy then rereads each list from its maintainer 30
+seconds after start and every 24 hours. A new copy replaces the one in use only
+if it was fetched over HTTPS from a public address without a redirect, is under
+32 MiB, and holds between half and four times the baked number of entries.
+Otherwise the list in use stays, and
+`workstation_sandbox_egress_blocklist_refresh_failures_total` counts the
+failure. `..._blocklist_refreshed_timestamp_seconds` is 0 while a list is still
+the baked copy.
+
+The refresh runs inside the proxy rather than as a CronJob. A separate job would
+need its own pod, image and quota share, and a NetworkPolicy cannot name
+`raw.githubusercontent.com`, so the job would hold general HTTPS egress. The
+proxy already holds exactly that egress and nothing else, so the refresh adds
+no new route. The baked copies mean a proxy that cannot reach the list host
+still starts with a complete, recent list. Rebuild the image to move the baked
+copies; move the pins as `blocklists.json` describes.
+
+*What the family filter does not do.* It judges names, not pages. A site that is
+on neither list and not in the resolver's categories is reachable, and so is
+any content on a general site (search engines, video sites, forums, GitHub).
+New proxy and VPN sites appear faster than lists. The models' own content
+filtering for children is separate and unchanged.
+
+**UniFi content filtering** was assessed from Ubiquiti's documentation only. It
+is DNS-based: the gateway redirects DNS traffic from the networks or client
+devices a policy names and answers it from its filter. It could cover the
+children's sandbox traffic only by covering the workstation, because every
+pod's traffic leaves with the workstation's address. That would also filter
+the adults' workspaces, WebUI's web search and the host. To apply it to the
+children's proxy alone, that proxy would need its own identity on the network:
+a second interface on a filtered VLAN (Multus with a macvlan attachment), or a
+host source-NAT rule to a second address that UniFi treats as a separate
+client. Both add a network component to maintain for a result the proxy's own
+filter already gives, scoped exactly to the Family group. It is not
+recommended. If the same category engine is wanted, set `family_dns` to the
+resolvers of the filtering service of choice.
+
+**Threat model with open egress.** Code in a workspace can fetch and run
+anything public, including package install scripts, and can send anything it
+can read to any public host. What it can read is the user's own workspace and
+home. Prompt injection from a fetched page or package is therefore the main
+residual risk: it can copy out or destroy that user's files. It gains no
+credentials, because none are in a workspace: no service keys, no Kubernetes
+identity, no family storage beyond the home, and no route to the LAN, the
+node or the cluster. Do not put secrets in a workspace or a home. Chromium runs
+headless with its inner sandbox disabled because this image uses the
 pod/container security boundary; it is not a second isolation boundary.
 Kernel/container escapes remain a shared-host risk.
 
 ### Capacity by mode
 
-A namespace quota bounds the pool: two workspace pods (750m CPU / 2 GiB RAM /
-2 GiB ephemeral storage each), the controller (250m / 256 MiB / 256 MiB) and two
-proxies (100m / 64 MiB / 16 MiB each). Requests equal limits. The pool is
-**1.95 CPUs and 4,480 MiB**; the planner reserves all of it even when no
-workspace runs. Fractional CPU requests use the shared CPU pool.
+The pool is two workspace pods, the controller and two proxies, bounded by a
+namespace quota. Requests sit at measured use and limits carry the headroom,
+as for every workload here except the GPU pods, so the pods are Burstable:
+
+| Pod | Requests (CPU, memory) | Limits (CPU, memory) | Measured, scratch K3s, 14 November |
+| --- | --- | --- | --- |
+| Workspace (each of two) | 250m, 256 MiB | 2, 2 GiB | 45 to 53 MiB idle; 239 MiB peak running pip, npm and a headless Chromium page |
+| Controller | 100m, 192 MiB | 500m, 512 MiB | 135 MB |
+| Proxy (each of two) | 50m, 64 MiB | 250m, 128 MiB | Family 36 to 38 MiB with its lists; Parents 11 MiB |
+| **Pool** | **0.7 CPUs, 832 MiB** | **5 CPUs, 4,864 MiB** | |
+
+Ephemeral storage is requested at its limit (2 GiB per workspace). The planner
+holds the pool's requests even when no workspace runs. Under node memory
+pressure Kubernetes evicts Burstable pods that exceed their requests before
+Guaranteed ones, so a busy workspace goes before SGLang or a picture
+generator. That is the intended priority: a mapped user's home is on the NAS
+and only the running session is lost. The measurement is one short tool run; a
+long Chromium session or a build will use more than its request, within the
+2 GiB limit.
 
 `service plan` counts what K3s admits on: resource **requests**. It reports the
 limits beside them, and a plan whose limits sum past the node has the status
@@ -333,43 +429,31 @@ Measured on 14 November in family mode: 37.9 of 42 CPUs and 49.9 of 51.3 GiB
 requested. The planner now gives the same figures, less Alertmanager's 0.1 CPU
 and 128 MiB.
 
-Remaining capacity at 42 CPUs and 51,333 MiB allocatable, with the cluster's
-own pods counted:
+Remaining by requests at 42 CPUs and 51,333 MiB allocatable, with the cluster's
+own pods counted, and how far the limits sum past the node:
 
-| Mode and composition | Without the pool | With the pool |
-| --- | --- | --- |
-| Coder (large), assistant | 21.5 CPUs, 26,308 MiB | 19.6 CPUs, 21,828 MiB |
-| Coder (large), assistant with memory | 20.0 CPUs, 21,828 MiB | 18.1 CPUs, 17,348 MiB |
-| Family (shared), assistant | 5.5 CPUs, 5,828 MiB | 3.6 CPUs, 1,348 MiB |
-| Family (shared), assistant with memory (what runs today) | 4.0 CPUs, 1,348 MiB | **Does not fit: 3,132 MiB short** |
+| Mode and composition | Without the pool | With the pool | Limits past the node, with the pool |
+| --- | --- | --- | --- |
+| Coder (large), assistant | 21.5 CPUs, 26,308 MiB | 20.8 CPUs, 25,476 MiB | None |
+| Coder (large), assistant with memory | 20.0 CPUs, 21,828 MiB | 19.3 CPUs, 20,996 MiB | None |
+| Family (shared), assistant | 5.5 CPUs, 5,828 MiB | 4.8 CPUs, 4,996 MiB | 2 CPUs, 8,059 MiB |
+| Family (shared), assistant with memory (what runs today) | 4.0 CPUs, 1,348 MiB | 3.3 CPUs, 516 MiB | 9 CPUs, 17,275 MiB |
 
-**Family mode: the pool does not fit.** Family mode with the memory services has
-1.3 GiB of unrequested memory. The pool needs 4.4 GiB. A single workspace with
-the controller and proxies needs 2.4 GiB and does not fit either. A workspace
-that requested 1 GiB and could burst to 2 GiB would be admitted with nothing to
-spare, which is not a margin. The render therefore still refuses the sandbox in
-shared mode, and `workstationctl mode family` renders without it and says so,
-so the switch keeps working with `MODE_SANDBOX_CONFIG` set. No workload budget
-was lowered.
+**Family mode: the pool fits on requests.** With the pool, family mode keeps
+3.3 CPUs and 516 MiB unrequested. The render accepts `--sandbox-config` in
+shared mode, and `workstationctl mode family` passes `MODE_SANDBOX_CONFIG` as
+coder mode does. No other workload's budget changed. The margin is thin and
+rests on overcommit: without the pool family mode's limits already sum 12.4 GiB
+and 4 CPUs past the node, and its requests sit 4.6 GiB inside the 6,656 MiB
+telemetry reserve. Both are visible in `capacity.json`
+(`limits`, `remaining_mib_after_telemetry_reserve`). If two workspaces work
+hard while both picture generators are busy, the workspaces are throttled and,
+if memory runs short, evicted first.
 
-For the pool to run in family mode, at least 3.2 GiB of memory requests have to
-move. The candidates, each an owner decision:
-
-- Run family mode without the memory services (4,480 MiB requested). The pool
-  then fits with 1.3 GiB left.
-- Request less for the two picture generators. They request 22 GiB while idle;
-  their requests are sized as Guaranteed GPU pods, not from measured use.
-- Return part of the 12 GiB host, K3s and eviction reservation to pods.
-- Add RAM.
-
-Family mode's limits already sum 12.4 GiB and 4 CPUs past the node, and its
-requests sit 4.6 GiB inside the 6,656 MiB telemetry reserve. Both are how the
-mode runs today and are now visible in `capacity.json`
-(`limits`, `remaining_mib_after_telemetry_reserve`).
-
-Switching from coder to family mode while workspaces are running counts their
-requests against the session admission. Wait for the 15-minute idle teardown,
-or the switch may be refused.
+Switching modes while workspaces run counts their requests (256 MiB each)
+against the session admission. During a rollout of the controller or a proxy,
+the quota can refuse a new workspace for the few seconds the old pod takes to
+stop; the next request succeeds.
 
 ### Images and metrics
 
@@ -379,15 +463,20 @@ lists. `AI_STACK_PUSH=1` then uses the existing signing, SBOM attestation and
 signature verification path. Supply the resulting digests to the render; tags
 alone are refused.
 
-The egress smoke test starts the proxy with no network and sends it requests
-for names pinned to LAN, cluster, loopback and public addresses. It then checks
-that the proxy's whole output holds only group, domain and decision.
+The egress stage runs the proxy's unit tests, then a smoke test for each group
+with no network at all. For the Family group a stand-in resolver answers
+`0.0.0.0` for one name; the test requires the family-filter refusal for that
+name and for names on the baked lists, the private-address refusal for names
+that resolve to LAN, cluster and loopback addresses, and an open path for
+everything else. It then checks that the proxy's whole output holds only group,
+domain and decision.
 
 Open Terminal is MIT; Terminals has the Open WebUI Enterprise licence with a
 personal, non-commercial-use exception. This image is for the owner's family
 installation; organizational deployment needs a separate licence review.
-Playwright is Apache 2.0; Smokescreen is MIT. Chromium and OS/Python/Node/Go
-dependencies retain their own licences. The images carry the upstream licence
+Playwright is Apache 2.0; Smokescreen is MIT. The baked HaGeZi lists are GPL-3.0
+and the StevenBlack list is MIT; their headers stay in the files. Chromium and
+OS/Python/Node/Go dependencies retain their own licences. The images carry the upstream licence
 texts and the pipeline produces SBOMs.
 
 Alloy scrapes `workstation_sandbox_executions_total{group="Admin|Parents|Family"}`
@@ -406,20 +495,22 @@ output, tokens or user IDs are emitted to the telemetry path.
    `versions.lock`. Keep the scan, SBOM, signature verification and
    `image.digest`.
 3. Write `sandbox.json`: both digests, the group UUIDs, `family_enabled`,
-   `group_resolution`, two free service addresses, the API endpoint and the
-   homes mapping path.
-4. Render the assistant in large mode with `--sandbox-config`, and run
+   `group_resolution`, two free service addresses, the API endpoint, the
+   homes mapping path and, if not Cloudflare for Families, `family_dns`.
+4. Render the assistant in coder and family mode with `--sandbox-config`, and run
    `service plan` with fresh node resource and telemetry evidence and
    `--node-pods`. Inspect `workloads.yaml` and `sandbox.yaml`.
 5. Apply the sandbox bundle through the owner's normal deployment process, then
    the homes render. Scale the two proxies and the controller to one replica.
-   Set `MODE_SANDBOX_CONFIG` to preserve the config in coder-mode renders. The
-   mode command does not apply the separate namespace bundle.
+   Set `MODE_SANDBOX_CONFIG` to preserve the config in coder-mode and
+   family-mode renders. The mode command does not apply the separate namespace
+   bundle.
 6. Roll out the rendered WebUI configuration. Select **Private coding workspace**
    in a native-tool-capable chat. Ask it to write a small HTML game, install a
    package, serve the game on loopback, run Playwright, inspect the screenshot
    and describe the result. Check Admin, Parents and Family from separate
-   accounts, and that a file in a mapped home survives a teardown.
+   accounts, that a child's account is refused an adult site, and that a file
+   in a mapped home survives a teardown.
 7. Run the network probe in a live workspace of each group (below).
 
 For rollback, omit `--sandbox-config` (and unset `MODE_SANDBOX_CONFIG`), roll out
@@ -433,24 +524,29 @@ volumes are retained even if a claim is deleted.
 runs inside a workspace. It tries direct connections that must fail, asks a
 resolver that must not answer, and sends CONNECT requests through the proxy.
 It exits 1 on any surprise. On the live cluster, with a workspace pod of a
-Family account running, substitute the proxy address from `sandbox.json`:
+Family account running, substitute the proxy addresses from `sandbox.json`:
 
 ```sh
 kubectl -n assistant-sandbox exec -i POD -- python -I - '{
   "closed": {"node API": ["192.168.30.11", 6443], "node kubelet": ["192.168.30.11", 10250],
              "kubernetes service": ["10.43.0.1", 443], "DNS service": ["10.43.0.10", 53],
-             "NAS": ["192.168.30.10", 2049], "LAN": ["192.168.1.40", 22],
-             "Internet": ["1.1.1.1", 443], "parents proxy": ["10.43.0.202", 4750]},
+             "family resolver": ["1.1.1.3", 53], "NAS": ["192.168.30.10", 2049],
+             "LAN": ["192.168.1.40", 22], "Internet": ["1.1.1.1", 443],
+             "parents proxy": ["10.43.0.202", 4750]},
   "open": {"own proxy": ["10.43.0.201", 4750]},
   "dns": "10.43.0.10",
-  "allowed": ["pypi.org", "docs.python.org"],
-  "denied": ["github.com", "example.com", "192.168.1.40:22", "10.43.0.1",
-             "kubernetes.default.svc.cluster.local"]}' < tests/workstation/probe_sandbox_network.py
+  "allowed": ["pypi.org", "docs.python.org", "github.com"],
+  "denied": ["nudity.testcategory.com", "192.168.1.40.nip.io:22", "192.168.1.40:22",
+             "10.43.0.1", "1.1.1.1"]}' < tests/workstation/probe_sandbox_network.py
 ```
 
-Add a second user's workspace pod address under `closed` to check cross-user
-denial. For a Parents workspace swap the two proxy addresses and move
-`github.com` to `allowed`.
+`nudity.testcategory.com` is Cloudflare's test name for its adult category and
+is on none of the lists, so it checks the DNS filter alone. Add a name from the
+`nsfw` list to check the lists. `192.168.1.40.nip.io` is a public name that
+resolves to that LAN address. Add a second user's workspace pod address under
+`closed` to check cross-user denial. For a Parents workspace swap the two proxy
+addresses, move `1.1.1.1` and `nudity.testcategory.com` to `allowed`, and keep
+the private names and addresses under `denied`.
 
 ### 2026-11-14 evidence
 
@@ -458,24 +554,36 @@ denial. For a Parents workspace swap the two proxy addresses and move
 virtual machine on the workstation with user-mode networking. Rootless Podman
 could not host K3s: the user session has no delegated `cpuset` controller. The
 rendered bundle was applied unchanged except for image references (local tags
-in place of digests) and four `sandbox.test` names added to the family list,
-which a CoreDNS stub resolved to the LAN, the node, a ClusterIP and the VM's
-gateway. Workspace pods were built by hand from the rendered policies.
+in place of digests). Workspace pods were built by hand from the rendered
+policies. Names that resolve to private addresses were public `nip.io` and
+`localtest.me` names, and for the Parents proxy also names from a CoreDNS stub.
 
 | Check | Result |
 | --- | --- |
-| From each workspace, direct: node API, kubelet and SSH; `kubernetes` ClusterIP; DNS service and CoreDNS pod (UDP and TCP); LAN host; VM gateway; `1.1.1.1`; controller pod and service; other user's workspace; an unrestricted pod; the other list's proxy; its own proxy's metrics port | All closed (17 targets per workspace). Name resolution fails |
+| From each workspace, direct: node API, kubelet and SSH; `kubernetes` ClusterIP; DNS service and CoreDNS pod (UDP and TCP); the family resolver; LAN host; VM gateway; `1.1.1.1`; controller pod and service; other user's workspace; an unrestricted pod; the other group's proxy; its own proxy's metrics port | All closed (18 targets per workspace). Name resolution fails |
 | The same node, ClusterIP, DNS, LAN and Internet targets from a pod with no policy | All open, so the denials are the policies' |
-| Family workspace through its proxy | `pypi.org`, `files.pythonhosted.org`, `registry.npmjs.org`, `docs.python.org`, `developer.mozilla.org`: tunnel. `github.com`, `en.wikipedia.org`, `example.com`: refused |
-| Parents workspace through its proxy | `pypi.org`, `github.com`, `en.wikipedia.org`, `docs.readthedocs.io`: tunnel. `example.com`: refused |
-| Listed names resolving to the LAN, the node, a ClusterIP and the gateway; private address literals; cluster service names; `localhost`; `169.254.169.254` | All refused |
-| A listed domain on port 22 | Refused (the proxy's NetworkPolicy) |
-| A workspace pod with no list label | No route to either proxy or anything else |
-| `pip download`, `npm view`, `curl` and Playwright Chromium in the Family workspace | Work for listed sites; `github.com` and LAN targets blocked |
+| Parents workspace through its proxy | `registry.terraform.io`, `releases.hashicorp.com`, `galaxy.ansible.com`, `repo.maven.apache.org`, `plugins.gradle.org`, `crates.io`, `kotlinlang.org`, `github.com`, `example.com`, a public address literal: tunnel. Terraform registry, Maven Central, Ansible Galaxy and the crates index answered 200 to `curl` |
+| Family workspace through its proxy | `pypi.org`, `registry.npmjs.org`, `docs.python.org`, `github.com`, `en.wikipedia.org`, `scratch.mit.edu`, `www.bbc.co.uk`: tunnel |
+| Family: a site on the `nsfw` list and its `www` subdomain; a VPN service on the `bypass` list; a site on the `gambling` list | Refused, 403 `blocked by the family filter` |
+| Family: `nudity.testcategory.com` and `malware.testcategory.com`, on no list, filtered only by the resolver | Refused, 403 `blocked by the family filter`. The Parents proxy tunnels the first |
+| Family: public and private address literals | Refused, 403 `address literals are not allowed for this group` |
+| Both groups: public names resolving to the LAN, the node, a ClusterIP, the gateway, loopback and `169.254.169.254`; private literals (Parents) | Refused, 403 `private address` |
+| Both groups: cluster service names | Refused (Parents 403; Family 502, its resolvers do not know them) |
+| A public domain on port 22 | Refused (the proxy's NetworkPolicy) |
+| What the client sees | `curl`: `CONNECT tunnel failed, response 403`, the `X-Sandbox-Blocked` header, and for plain HTTP the one-line body. Chromium: `ERR_TUNNEL_CONNECTION_FAILED` for HTTPS; it did not render the body of a refused plain-HTTP page |
+| `pip download`, `npm view`, Playwright Chromium in the Family workspace | Work |
+| The family lists' daily refresh, read from a pod labelled as Alloy | All three reread from their maintainers 30 seconds after start; no failures |
+| Pods | All Burstable with the rendered requests and limits; no restarts |
 | Home on a claim, `/tmp` on `emptyDir`, pod deleted and recreated | Home file kept, owned 1000:1000; scratch file gone |
 | A third workspace while two run | Refused by the quota |
-| The real controller at one replica under restricted Pod Security | Ready, no restarts; unauthenticated and forged-policy requests get 403; its service account cannot create claims |
+| The real controller at one replica under restricted Pod Security | Ready, no restarts; reaches both workspaces and nothing else new |
 | Proxy logs after all of the above | Only `{group, domain, decision}` lines |
+
+In total 51 of 51 checks were as expected in each workspace. An earlier run of
+the same cluster with the first design also checked a workspace pod with no
+policy label (no route at all), forged-policy requests to the controller (403)
+and that its service account cannot create claims; those parts of the render
+did not change.
 
 The home in this test was a local volume, not the NAS: the NFS mount, the
 dataset quota and squashed ownership are verified by the storage work, not
@@ -486,15 +594,15 @@ firewall; run the probe above on the live cluster after applying.
 signed and pushed. The final sandbox image passed a probe of the actual
 upstream Kubernetes pod builder and idle reaper against a fake API: separate
 user pod names, the mapped user's claim at `/home/user`, a separate scratch
-volume, the egress label and proxy variables, preserved security and resources,
-and idle deletion. Real controller database migrations and seeding of all four
-fixture policies also passed. Trivy passed the existing policy with no
-exceptions for both images. The sandbox image has 7 critical findings without
-available fixes, 313 high, 674 medium, 971 low and 29 unknown. The egress image
-has no critical findings and 8 high, all with fixes available: four in the Go
-1.26.7 standard library and four in modules Smokescreen v0.1.0 vendors (`logrus`,
-`golang.org/x/net`, `golang.org/x/text`). Passing the policy does not mean an
-image is vulnerability-free.
+volume, the egress label and proxy variables, the rendered requests and limits
+kept beside upstream's own limit fields, preserved security settings, and idle
+deletion. Real controller database migrations and seeding of all four fixture
+policies also passed. Trivy passed the existing policy with no exceptions for
+both images. The sandbox image has 7 critical findings without available
+fixes, 313 high, 674 medium, 971 low and 29 unknown. The egress image has no
+findings: it is built with Go 1.26.11 from a Smokescreen commit that vendors
+the fixed `logrus`, `golang.org/x/net` and `golang.org/x/text`. Passing the
+policy does not mean an image is vulnerability-free.
 
 The earlier native-tool smoke still stands: `/execute` wrote and served **Star
 catcher**, Playwright 1.65.2 clicked three stars and observed the win state, and
@@ -505,9 +613,11 @@ conversation.
 **Still unverified:** a workspace created by the controller for a real WebUI
 session, including the gate's group and policy choice against a live WebUI;
 cross-account behaviour in WebUI; NAS-backed homes in a workspace; the network
-probe on the live node; controller restart and reconciliation with live
-workspaces; and a complete model-driven chat that installs a package and
-builds a game.
+probe on the live node; the family resolvers as reached from the live network
+(a UniFi content filter there may answer in their place); controller restart
+and reconciliation with live workspaces; workspace memory under a long
+Chromium session or a build; and a complete model-driven chat that installs a
+package and builds a game.
 
 ## Select and render
 

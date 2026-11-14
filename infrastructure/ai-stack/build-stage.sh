@@ -113,13 +113,15 @@ dra_key=$(key_of "$(read_lock DRA_IMAGE_REPOSITORY)" "$DRA_DRIVER_COMMIT" "$DRA_
   "$(content "${dra_files[@]}")")
 dra_run=$root/builds/dra-$dra_key
 # The workspace egress proxy (assistant sandbox): Smokescreen at its pinned commit plus
-# egress/main.go, built offline in the DRA stage's Go image into a scratch image. The key
-# covers the commit, the Go image and every stage file, including the smoke test.
-export EGRESS_PROXY_REPOSITORY EGRESS_PROXY_COMMIT
+# egress/main.go, built offline in its own pinned Go image into a scratch image, with the
+# family group's blocklists fetched at their pinned revisions. The key covers the commit,
+# the Go image and every stage file, including the list record and the smoke test.
+export EGRESS_PROXY_REPOSITORY EGRESS_PROXY_COMMIT EGRESS_GO_IMAGE
 EGRESS_PROXY_REPOSITORY=$(read_lock EGRESS_PROXY_REPOSITORY)
 EGRESS_PROXY_COMMIT=$(commit EGRESS_PROXY_COMMIT)
-egress_files=("$here"/egress/{main.go,build.sh,Containerfile,smoke.py,smoke-acl.yaml})
-egress_key=$(key_of "$(read_lock EGRESS_IMAGE_REPOSITORY)" "$EGRESS_PROXY_COMMIT" "$DRA_GO_IMAGE" "$(content "${egress_files[@]}")")
+EGRESS_GO_IMAGE=$(digest_image EGRESS_GO_IMAGE)
+egress_files=("$here"/egress/{main.go,main_test.go,build.sh,Containerfile,blocklists.json,fetch-lists.py,smoke.py,smoke-blocklist.txt})
+egress_key=$(key_of "$(read_lock EGRESS_IMAGE_REPOSITORY)" "$EGRESS_PROXY_COMMIT" "$EGRESS_GO_IMAGE" "$(content "${egress_files[@]}")")
 egress_run=$root/builds/egress-$egress_key
 patches=$root/patches/$SGLANG_PATCHSET_SHA256
 need() { [[ -s $1/out/RECEIPT.json ]] || stop "build the $2 stage first ($1)"; }
@@ -245,7 +247,7 @@ if [[ $stage == egress ]]; then
   track /dev/null
   if [[ ! -s $egress_run/out/RECEIPT.json ]]; then
     # The source is exactly the pinned commit, fetched by id and checked before it is built.
-    rm -rf -- "$egress_run/git" "$egress_run/src"
+    rm -rf -- "$egress_run/git" "$egress_run/src" "$egress_run/out/blocklists"
     mkdir -p "$egress_run/git" "$egress_run/src" "$egress_run/out"
     git -C "$egress_run/git" init -q
     git -C "$egress_run/git" fetch -q --depth 1 "$EGRESS_PROXY_REPOSITORY" "$EGRESS_PROXY_COMMIT"
@@ -253,34 +255,44 @@ if [[ $stage == egress ]]; then
     git -C "$egress_run/git" archive FETCH_HEAD | tar -x -C "$egress_run/src"
     rm -rf -- "$egress_run/git"
     mkdir "$egress_run/src/cmd/sandbox-egress"
-    cp -- "$here/egress/main.go" "$egress_run/src/cmd/sandbox-egress/main.go"
+    cp -- "$here"/egress/{main.go,main_test.go} "$egress_run/src/cmd/sandbox-egress/"
+    # The family blocklists at their pinned revisions; a size or checksum mismatch stops here.
+    python3 -I "$here/egress/fetch-lists.py" "$here/egress/blocklists.json" "$egress_run/out/blocklists"
     # Offline (vendored modules only) and bounded: the host serves live.
     podman run --rm --pull=missing --name "ai-stack-egress-$egress_key" --network none --cpus=4 --memory 4g --memory-swap 4g \
-      -e EGRESS_PROXY_REPOSITORY -e EGRESS_PROXY_COMMIT -e DRA_GO_IMAGE -e JOBS=4 \
+      -e EGRESS_PROXY_REPOSITORY -e EGRESS_PROXY_COMMIT -e EGRESS_GO_IMAGE -e JOBS=4 \
       -v "$egress_run/src:/work/src:ro" -v "$egress_run/out:/work/out" -v "$here/egress/build.sh:/build.sh:ro" \
-      "$DRA_GO_IMAGE" bash /build.sh 2>&1 | tee "$egress_run/build.log"
+      "$EGRESS_GO_IMAGE" bash /build.sh 2>&1 | tee "$egress_run/build.log"
     rm -rf -- "$egress_run/src"
   fi
   podman build --pull=never \
     --label org.opencontainers.image.revision="$EGRESS_PROXY_COMMIT" \
     --label org.opencontainers.image.source="${EGRESS_PROXY_REPOSITORY%.git}" \
     -f "$here/egress/Containerfile" -t "$tag" "$egress_run/out"
-  # Offline smoke with the workspace's own restrictions. The proxy has no network at all; a
-  # client in its network namespace sends requests for names pinned to LAN, cluster and
-  # public addresses, then the proxy's log is checked for anything but group, domain, decision.
+  # Offline smoke with the workspace's own restrictions, once per group. The proxy has no
+  # network at all; a client in its network namespace sends requests for names that
+  # resolve to LAN, cluster and public addresses and for listed names, then the proxy's
+  # whole output is checked for anything but group, domain and decision.
   proxy=ai-stack-egress-smoke-$egress_key
-  podman rm -f "$proxy" >/dev/null 2>&1 || true
-  podman run -d --pull=never --name "$proxy" --network none --read-only --cap-drop=ALL \
-    --security-opt=no-new-privileges --cpus=0.1 --memory=64m --memory-swap=64m --pids-limit=64 \
-    --add-host public.sandbox.test:203.0.113.9 --add-host a.wild.sandbox.test:203.0.113.10 \
-    --add-host lan.sandbox.test:192.168.1.10 --add-host cluster.sandbox.test:10.43.0.1 \
-    -v "$here/egress/smoke-acl.yaml:/config/acl.yaml:ro" "$tag" --group family \
-    --deny-ranges 192.168.0.0/16,10.42.0.0/16,10.43.0.0/16 >/dev/null
+  client=$(digest_image RUNTIME_BASE_IMAGE)
   smoke=0
-  podman run --rm --pull=missing --network "container:$proxy" --read-only --user 65534:65534 --cap-drop=ALL \
-    -v "$here/egress/smoke.py:/smoke.py:ro" "$(digest_image RUNTIME_BASE_IMAGE)" python -I /smoke.py requests || smoke=1
-  podman logs "$proxy" 2>&1 | python3 -I "$here/egress/smoke.py" logs || smoke=1
-  podman rm -f "$proxy" >/dev/null
+  egress_smoke() { # group, expected log lines, proxy arguments...
+    local group=$1 lines=$2
+    shift 2
+    podman rm -f "$proxy" >/dev/null 2>&1 || true
+    podman run -d --pull=never --name "$proxy" --network none --read-only --cap-drop=ALL \
+      --security-opt=no-new-privileges --cpus=0.1 --memory=128m --memory-swap=128m --pids-limit=64 \
+      --add-host public.sandbox.test:203.0.113.9 --add-host lan.sandbox.test:192.168.1.10 \
+      --add-host cluster.sandbox.test:10.43.0.1 \
+      -v "$here/egress/smoke-blocklist.txt:/config/blocked.txt:ro" "$tag" --group "$group" \
+      --blocklist /config/blocked.txt --deny-ranges 192.168.0.0/16,10.42.0.0/16,10.43.0.0/16 --refresh 0 "$@" >/dev/null
+    podman run --rm --pull=missing --network "container:$proxy" --read-only --user 65534:65534 --cap-drop=ALL \
+      -v "$here/egress/smoke.py:/smoke.py:ro" "$client" python -I /smoke.py "$group" || smoke=1
+    podman logs "$proxy" 2>&1 | python3 -I "$here/egress/smoke.py" logs "$lines" || smoke=1
+    podman rm -f "$proxy" >/dev/null
+  }
+  egress_smoke family 14 --maintained /blocklists --resolvers 127.0.0.1:5353 --deny-literals
+  egress_smoke parents 12
   [[ $smoke == 0 ]] || stop 'egress proxy smoke test failed'
   printf 'IMAGE=%s\n' "$tag"
   if [[ ${AI_STACK_PUSH:-0} == 1 ]]; then

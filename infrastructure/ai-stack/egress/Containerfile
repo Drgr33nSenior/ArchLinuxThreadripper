@@ -1,9 +1,13 @@
 # The workspace egress proxy image, from the egress stage's outputs (build context: its
-# out/). One static binary and nothing else: no shell, package manager or libc, so the
-# image has no operating-system packages to patch. The proxy only tunnels and forwards;
-# it terminates no TLS and so carries no CA bundle. Runs as an unprivileged numeric user.
+# out/). One static binary and the family group's blocklists as fetched at their pinned
+# revisions: no shell, package manager or libc, so the image has no operating-system
+# packages to patch. The proxy only tunnels and forwards; it terminates no TLS. Its one
+# TLS client, the list refresh, needs the CA bundle copied from the Go build image.
+# Runs as an unprivileged numeric user.
 FROM scratch
 COPY bin/sandbox-egress /sandbox-egress
+COPY ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY blocklists/ /blocklists/
 COPY LICENSE.txt RECEIPT.json buildinfo.txt /usr/share/doc/sandbox-egress/
 USER 65532:65532
 ENTRYPOINT ["/sandbox-egress"]

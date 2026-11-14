@@ -51,10 +51,14 @@ TERMINALS_COMMIT=4c7a747634d7a521ecc82f6f09dab204a3ded60e
 SANDBOX_IMAGE_REPOSITORY=registry.lan.thespry.family/local/assistant-sandbox
 PLAYWRIGHT_VERSION=1.65.2
 # Workspace egress proxy (assistant sandbox), built by the egress stage: Stripe Smokescreen
-# (MIT) at the commit of release v0.1.0 plus egress/main.go, with the dra stage's Go image.
-# Pinned by review; refresh.sh leaves it unchanged.
+# (MIT) plus egress/main.go. The commit is upstream main of 2026-11-11, the last before
+# upstream's logging rewrite: 44 commits after release v0.1.0, it vendors the fixed
+# logrus, x/net and x/text. The Go image is this stage's own, a patch release with the
+# standard-library fixes. Both pinned by review; refresh.sh leaves them unchanged. The
+# family blocklists are pinned in egress/blocklists.json.
 EGRESS_PROXY_REPOSITORY=https://github.com/stripe/smokescreen.git
-EGRESS_PROXY_COMMIT=609eb8931420453daf5893509be0b25b21bd9edb
+EGRESS_PROXY_COMMIT=bb9ed1bbe75b59821f881dd0c1411c79dd7abdbe
+EGRESS_GO_IMAGE=docker.io/library/golang:1.26.11-trixie@sha256:fa340cb59ebeb1d53ac1cccfc334201d938fe5f3458003cccb767096d8e032b8
 EGRESS_IMAGE_REPOSITORY=registry.lan.thespry.family/local/sandbox-egress
 WEBUI_IMAGE_REPOSITORY=registry.lan.thespry.family/local/open-webui
 # AMD GPU DRA driver (the GPU operator's draDriver), built by the dra stage from upstream main.

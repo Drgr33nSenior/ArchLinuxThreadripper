@@ -108,33 +108,54 @@ bash -n "$dir/dra/smoke.sh" || fail 'dra smoke does not parse'
 python3 -I -c 'import json, sys; assert json.load(open(sys.argv[1])) == []' "$dir/dra/scan-allowlist.json" || fail 'dra allowlist is not empty'
 
 # The workspace egress proxy is a pipeline stage: Smokescreen at a full commit plus this
-# repository's main.go, built offline from vendored modules, smoke-tested with no network
-# before the shared scan/sign/push path.
+# repository's main.go, built offline from vendored modules in its own pinned Go image,
+# with the family blocklists fetched at pinned commits and checked, smoke-tested with no
+# network before the shared scan/sign/push path.
 grep -Eq '^EGRESS_PROXY_REPOSITORY=https://github\.com/stripe/smokescreen\.git$' "$lock" || fail 'egress proxy repository'
 grep -Eq '^EGRESS_PROXY_COMMIT=[a-f0-9]{40}$' "$lock" || fail 'egress proxy commit is not a full commit'
+grep -Eq '^EGRESS_GO_IMAGE=docker\.io/library/golang:[0-9.]+-trixie@sha256:[a-f0-9]{64}$' "$lock" || fail 'egress Go image is not pinned by digest'
 grep -Eq '^EGRESS_IMAGE_REPOSITORY=registry\.lan\.thespry\.family/local/sandbox-egress$' "$lock" || fail 'egress image repository'
 # shellcheck disable=SC2016 # literal text in build-stage.sh
-grep -Fq 'egress_key=$(key_of "$(read_lock EGRESS_IMAGE_REPOSITORY)" "$EGRESS_PROXY_COMMIT" "$DRA_GO_IMAGE" "$(content "${egress_files[@]}")")' "$dir/build-stage.sh" ||
+grep -Fq 'egress_key=$(key_of "$(read_lock EGRESS_IMAGE_REPOSITORY)" "$EGRESS_PROXY_COMMIT" "$EGRESS_GO_IMAGE" "$(content "${egress_files[@]}")")' "$dir/build-stage.sh" ||
   fail 'egress key does not cover the commit, the Go image and the stage files'
 # shellcheck disable=SC2016 # literal text in build-stage.sh
-grep -Fq 'egress_files=("$here"/egress/{main.go,build.sh,Containerfile,smoke.py,smoke-acl.yaml})' "$dir/build-stage.sh" || fail 'egress key does not cover the smoke test'
+grep -Fq 'egress_files=("$here"/egress/{main.go,main_test.go,build.sh,Containerfile,blocklists.json,fetch-lists.py,smoke.py,smoke-blocklist.txt})' "$dir/build-stage.sh" ||
+  fail 'egress key does not cover the list record, the tests and the smoke test'
 # shellcheck disable=SC2016 # literal text in build-stage.sh
 grep -Fq '[[ $(git -C "$egress_run/git" rev-parse FETCH_HEAD) == "$EGRESS_PROXY_COMMIT" ]]' "$dir/build-stage.sh" || fail 'egress source is not checked against the pin'
+# shellcheck disable=SC2016 # literal text in build-stage.sh
+grep -Fq 'python3 -I "$here/egress/fetch-lists.py" "$here/egress/blocklists.json" "$egress_run/out/blocklists"' "$dir/build-stage.sh" ||
+  fail 'egress blocklists are not fetched through the checked record'
 # shellcheck disable=SC2016 # literal text in build-stage.sh
 grep -Fq -- '--name "ai-stack-egress-$egress_key" --network none' "$dir/build-stage.sh" || fail 'egress proxy is not built offline'
 # shellcheck disable=SC2016 # literal text in egress/build.sh
 grep -Fq 'export GOTOOLCHAIN=local GOPROXY=off GOFLAGS="-mod=vendor -trimpath -buildvcs=false -p=$JOBS"' "$dir/egress/build.sh" ||
   fail 'egress build may download modules or a toolchain, or embed build paths'
+grep -Fxq 'go test ./cmd/sandbox-egress' "$dir/egress/build.sh" || fail 'egress build does not run its unit tests'
 # shellcheck disable=SC2016 # literal text in build-stage.sh
 grep -Fq -- '--name "$proxy" --network none --read-only --cap-drop=ALL' "$dir/build-stage.sh" || fail 'egress smoke proxy is not offline, read-only and unprivileged'
+grep -Fq 'egress_smoke family 14 --maintained /blocklists --resolvers 127.0.0.1:5353 --deny-literals' "$dir/build-stage.sh" || fail 'egress family smoke does not use the baked lists and a filtering resolver'
+grep -Fq 'egress_smoke parents 12' "$dir/build-stage.sh" || fail 'egress parents smoke is missing'
 # shellcheck disable=SC2016 # literal text in build-stage.sh
 grep -Fq 'publish "$tag" "$egress_run" "$here/egress/scan-allowlist.json"' "$dir/build-stage.sh" || fail 'egress does not use the publish path'
 grep -Eq '^for stage in .* egress( [a-z ]+)?; do$' "$dir/build-all.sh" || fail 'build-all does not build egress'
 grep -Fxq 'FROM scratch' "$dir/egress/Containerfile" || fail 'egress image is not a single static binary'
 grep -Fxq 'USER 65532:65532' "$dir/egress/Containerfile" || fail 'egress image does not run as an unprivileged user'
 bash -n "$dir/egress/build.sh" || fail 'egress build does not parse'
-python3 -I -c 'import ast, sys; ast.parse(open(sys.argv[1]).read())' "$dir/egress/smoke.py" || fail 'egress smoke does not parse'
+for script in smoke.py fetch-lists.py; do
+  python3 -I -c 'import ast, sys; ast.parse(open(sys.argv[1]).read())' "$dir/egress/$script" || fail "egress $script does not parse"
+done
 python3 -I -c 'import json, sys; assert json.load(open(sys.argv[1])) == []' "$dir/egress/scan-allowlist.json" || fail 'egress allowlist is not empty'
+# A list that is not pinned to a commit stops before any download.
+unpinned=$(mktemp -d)
+python3 -I -c 'import json, sys
+record = json.load(open(sys.argv[1]))
+record["lists"][0]["url"] = record["lists"][0]["refresh_url"]
+json.dump(record, open(sys.argv[2], "w"))' "$dir/egress/blocklists.json" "$unpinned/blocklists.json"
+if python3 -I "$dir/egress/fetch-lists.py" "$unpinned/blocklists.json" "$unpinned/out" >/dev/null 2>&1; then
+  fail 'egress list fetch accepted an address that is not pinned to a commit'
+fi
+rm -rf -- "$unpinned"
 
 # The patch-series hash is order-independent of the filesystem and content-sensitive.
 work=$(mktemp -d)

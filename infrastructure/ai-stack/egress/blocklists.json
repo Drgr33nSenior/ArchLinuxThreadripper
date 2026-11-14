@@ -1,0 +1,17 @@
+{
+  "_comment": "Maintained public blocklists for the family group's egress proxy. The egress stage downloads each `url` (pinned to a commit), checks its size and SHA-256, and bakes it into the image; the running proxy rereads `refresh_url` daily. To move the pins: set the new commit in `url`, download, and record `sha256`, `bytes`, `entries` and `retrieved`.",
+  "lists": [
+    {"name": "nsfw", "file": "nsfw.txt", "licence": "GPL-3.0 (HaGeZi DNS Blocklists)",
+     "url": "https://raw.githubusercontent.com/hagezi/dns-blocklists/c5b86b28c193e4bfbd79c36d652e626f61d143fb/wildcard/nsfw-onlydomains.txt",
+     "refresh_url": "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/nsfw-onlydomains.txt",
+     "sha256": "2a46f025de13d445f5416a9924ce63391dcf114c39cad037aa8a29f93e236bdf", "bytes": 1270525, "entries": 78550, "retrieved": "2026-11-14"},
+    {"name": "bypass", "file": "bypass.txt", "licence": "GPL-3.0 (HaGeZi DNS Blocklists)",
+     "url": "https://raw.githubusercontent.com/hagezi/dns-blocklists/c5b86b28c193e4bfbd79c36d652e626f61d143fb/wildcard/doh-vpn-proxy-bypass-onlydomains.txt",
+     "refresh_url": "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/doh-vpn-proxy-bypass-onlydomains.txt",
+     "sha256": "43ec9eb6194f002f80bc1992f9437b4daa1f3610804d1b52044201920cb245bb", "bytes": 294781, "entries": 16525, "retrieved": "2026-11-14"},
+    {"name": "gambling", "file": "gambling.txt", "licence": "MIT (StevenBlack/hosts gambling extension)",
+     "url": "https://raw.githubusercontent.com/StevenBlack/hosts/35c74714ad86b36806b3f40f3c36abf8b2063cb5/alternates/gambling-only/hosts",
+     "refresh_url": "https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/gambling-only/hosts",
+     "sha256": "7d7cd2ed20ef123ace99b4c110b86878408308e6e659bc0437b4bfb4bd44fb91", "bytes": 149253, "entries": 6744, "retrieved": "2026-11-14"}
+  ]
+}

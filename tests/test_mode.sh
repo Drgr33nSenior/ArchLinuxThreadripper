@@ -106,16 +106,11 @@ ws_mode coder --execute 2>/dev/null >/dev/null
 grep -q -- '--mode large' "$work/render.log"
 [[ "$(tail -n 1 "$work/switch.log")" == "ai $work/hardware.json $work/state --execute $(latest_render)/apply.json" ]]
 
-# The workspace pool is rendered for coder only; family still renders and switches with it set.
+# The workspace pool config reaches the render in both rendered modes.
 MODE_SANDBOX_CONFIG=$work/sandbox.json ws_mode coder 2>/dev/null >/dev/null
 tail -n 1 "$work/render.log" | grep -q -- "--mode large .*--sandbox-config $work/sandbox.json"
-MODE_SANDBOX_CONFIG=$work/sandbox.json ws_mode family >"$work/family-sandbox.log" 2>&1
-tail -n 1 "$work/render.log" | grep -q -- '--mode shared'
-if tail -n 1 "$work/render.log" | grep -q -- '--sandbox-config'; then
-  printf 'family mode rendered the sandbox pool\n' >&2
-  exit 1
-fi
-grep -q 'coding workspaces are off in this mode' "$work/family-sandbox.log"
+MODE_SANDBOX_CONFIG=$work/sandbox.json ws_mode family 2>/dev/null >/dev/null
+tail -n 1 "$work/render.log" | grep -q -- "--mode shared .*--sandbox-config $work/sandbox.json"
 
 # gaming and maintenance switch the session without rendering, even with no site file.
 renders=$(wc -l <"$work/render.log")

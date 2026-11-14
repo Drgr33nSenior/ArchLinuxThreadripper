@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Runs inside the pinned Go image (DRA_GO_IMAGE) with no network. Builds the workspace egress
+# Runs inside the pinned Go image (EGRESS_GO_IMAGE) with no network. Builds the workspace egress
 # proxy: Smokescreen at EGRESS_PROXY_COMMIT with this stage's main.go added as
 # cmd/sandbox-egress, from Smokescreen's vendored Go modules only, as one static binary.
+# Its unit tests run first.
 set -euo pipefail
-: "${EGRESS_PROXY_REPOSITORY:?}" "${EGRESS_PROXY_COMMIT:?}" "${DRA_GO_IMAGE:?}" "${JOBS:?}"
+: "${EGRESS_PROXY_REPOSITORY:?}" "${EGRESS_PROXY_COMMIT:?}" "${EGRESS_GO_IMAGE:?}" "${JOBS:?}"
 src=/work/src
 out=/work/out
 # Offline and repeatable: no toolchain or module downloads, no VCS stamping, no build paths.
@@ -14,8 +15,11 @@ rm -rf -- "${out:?}/bin"
 mkdir -p "$out/bin"
 cd "$src"
 go vet ./cmd/sandbox-egress
+go test ./cmd/sandbox-egress
 go build -ldflags='-s -w' -o "$out/bin/sandbox-egress" ./cmd/sandbox-egress
 cp -- "$src/LICENSE.txt" "$out/LICENSE.txt"
+# The list refresh verifies its https peer; the scratch image has no bundle of its own.
+cp -- /etc/ssl/certs/ca-certificates.crt "$out/ca-certificates.crt"
 go version -m "$out/bin/sandbox-egress" >"$out/buildinfo.txt"
 sha() { sha256sum "$1" | cut -d' ' -f1; }
 cat >"$out/RECEIPT.json" <<JSON
@@ -24,7 +28,7 @@ cat >"$out/RECEIPT.json" <<JSON
   "stage": "egress",
   "egress_proxy_repository": "$EGRESS_PROXY_REPOSITORY",
   "egress_proxy_commit": "$EGRESS_PROXY_COMMIT",
-  "go_image": "$DRA_GO_IMAGE",
+  "go_image": "$EGRESS_GO_IMAGE",
   "go_version": "$have",
   "build": "go build ./cmd/sandbox-egress, GOFLAGS=$GOFLAGS, CGO_ENABLED=0, GOTOOLCHAIN=local, no network",
   "go_sum_sha256": "$(sha "$src/go.sum")",

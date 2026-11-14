@@ -38,7 +38,9 @@ async def probe(policies):
                 assert pod["metadata"]["labels"]["app.kubernetes.io/name"] == "assistant-workspace"
                 container = spec["containers"][0]
                 assert container["command"] == ["python", "/opt/sandbox/terminal.py"]
-                assert container["resources"]["requests"] == container["resources"]["limits"]
+                # Burstable: the rendered requests survive upstream's own limit fields.
+                assert container["resources"] == policy["podTemplate"]["spec"]["containers"][0]["resources"], container["resources"]
+                assert container["resources"]["requests"]["memory"] != container["resources"]["limits"]["memory"]
                 assert container["resources"]["limits"]["ephemeral-storage"] == "2Gi"
                 assert container["securityContext"]["readOnlyRootFilesystem"]
                 assert container["securityContext"]["capabilities"]["drop"] == ["ALL"]
