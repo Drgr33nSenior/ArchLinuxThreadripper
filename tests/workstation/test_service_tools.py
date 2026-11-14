@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 import httpx
 import yaml
@@ -285,7 +286,8 @@ class ToolsTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_timed_out_picture_is_cancelled_and_its_marker_survives_restart(self):
         self.slow = True
-        response = await self.client.post("/webui/images/generations", headers=self.headers, json=self.image)
+        response = await asyncio.wait_for(  # a regression fails here instead of hanging the suite
+            self.client.post("/webui/images/generations", headers=self.headers, json=self.image), timeout=10)
         self.assertEqual(503, response.status_code)
         [(_, _)] = self.jobs()
         prompt_id = next(iter(self.queued))
@@ -300,6 +302,27 @@ class ToolsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("image_backend_needs_operator_check", response.json()["error"]["code"])
         self.assertNotIn("retry-after", response.headers)
         self.assertEqual(1, len(self.jobs()))
+
+    async def test_the_picture_deadline_holds_when_a_disconnect_check_swallows_the_cancellation(self):
+        # Starlette's is_disconnected() runs inside an anyio CancelScope, which can absorb the
+        # deadline's CancelledError. Here it does so once (the test's own wait_for still gets through,
+        # so a regression fails in 10 s): the deadline must still end the wait.
+        swallowed = []
+        async def swallowing(_request):
+            try:
+                await asyncio.sleep(0.1)
+            except asyncio.CancelledError:
+                if swallowed:
+                    raise
+                swallowed.append(True)
+            return False
+        self.slow = True
+        self.tools.image_timeout = 0.05
+        with mock.patch("starlette.requests.Request.is_disconnected", swallowing):
+            response = await asyncio.wait_for(
+                self.client.post("/webui/images/generations", headers=self.headers, json=self.image), timeout=10)
+        self.assertEqual(503, response.status_code)
+        self.assertEqual("image_backend_unavailable", response.json()["error"]["code"])
 
     async def test_two_slots_run_two_images_at_once_and_refuse_a_third(self):
         tools = ServiceTools(self.upstream, "http://webui", ("http://comfy1", "http://comfy0"), "http://gateway",

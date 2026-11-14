@@ -753,11 +753,15 @@ class ServiceTools:
             if not isinstance(prompt_id, str) or not re.fullmatch(r"[A-Za-z0-9-]{8,64}", prompt_id):
                 prompt_id = None
                 raise Refusal(502, "image_generation_failed")
-            async with asyncio.timeout(self.image_timeout):
+            async with asyncio.timeout(self.image_timeout) as deadline:
                 while True:
                     await asyncio.sleep(self.poll_seconds)
                     if await request.is_disconnected():
                         raise Refusal(499, "image_request_cancelled")
+                    # Starlette's is_disconnected() polls inside an anyio CancelScope that can swallow
+                    # the deadline's cancellation when it lands there, leaving this loop to poll forever.
+                    if deadline.expired():
+                        raise TimeoutError
                     entry = (await self.upstream_json("GET", comfy + "/history/" + prompt_id, timeout=10)).get(prompt_id)
                     status = (entry or {}).get("status", {})
                     if status.get("completed") is not None:
