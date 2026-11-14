@@ -353,7 +353,9 @@ class AssistantTests(unittest.TestCase):
             # Native MCP with the signed-in user's own token; no shared credential.
             self.assertEqual(("mcp", "http://service-tools:8000/mcp", "session", ""),
                              (server["type"], server["url"], server["auth_type"], server["key"]))
-            self.assertNotIn("headers", server)
+            # Only the chat id, for chat-folder project memory; service-tools resolves it with
+            # the user's own token. No other header and no cookies.
+            self.assertEqual({"X-OpenWebUI-Chat-Id": "{{CHAT_ID}}"}, server["headers"])
             self.assertFalse(server.get("forward_cookies", False))
             self.assertTrue(server["config"]["enable"])
             self.assertEqual([{"principal_type": "user", "principal_id": "*", "permission": "read"}],

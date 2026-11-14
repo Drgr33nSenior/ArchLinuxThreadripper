@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 import json
 import re
 from pathlib import Path
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -25,6 +26,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "apps/base/shared-api"), str(ROOT / "infrastructure/graphiti"), str(ROOT / "lib/workstation")]
 from service_tools import ServiceTools
 import memory_service
+import project_scope
 import service_backup
 
 
@@ -44,6 +46,15 @@ class ToolTests(unittest.IsolatedAsyncioTestCase):
         # Knowledge collections each caller can read (the WebUI ACL fixture).
         readable = {"Bearer alice-token": [{"id": "kb-shared", "name": "Shared"}, {"id": "kb-alice", "name": "Alice"}],
                     "Bearer bob-token": [{"id": "kb-shared", "name": "Shared"}]}
+        # Chats and folders each caller can read (Open WebUI's own chat and folder ACL), with
+        # the chat's folder. f-shared is Alice's folder shared with Bob; Bob lost f-revoked.
+        chats = {"Bearer alice-token": {"chat-book1": "f-book1", "chat-book2": "f-book2", "chat-plain": None,
+                                        "chat-shared": "f-shared"},
+                 "Bearer bob-token": {"chat-bob": "f-bob", "chat-bob-shared": "f-shared", "chat-bob-revoked": "f-revoked"}}
+        folders = {"Bearer alice-token": {"f-book1": "Book One", "f-book2": "Book Two", "f-shared": "Shared book"},
+                   "Bearer bob-token": {"f-bob": "Maths", "f-shared": "Shared book"}}
+        self.webui_reads = []
+        self.memory_reply = lambda path, body: httpx.Response(200, json={"facts": [], "no_memory": True})
 
         async def upstream(request):
             if request.url.path == "/api/v1/users/user/status":
@@ -52,9 +63,24 @@ class ToolTests(unittest.IsolatedAsyncioTestCase):
             if request.url.path == "/api/v1/knowledge/":
                 items = readable.get(request.headers.get("authorization"), [])
                 return httpx.Response(200, json={"items": items, "total": len(items)})
+            token = request.headers.get("authorization")
+            if request.url.path.startswith("/api/v1/chats/"):
+                self.webui_reads.append(request.url.path)
+                chat = request.url.path.rsplit("/", 1)[1]
+                if chat not in chats.get(token, {}):
+                    return httpx.Response(401, json={"detail": "not found"})  # as the pinned router answers
+                return httpx.Response(200, json={"id": chat, "title": "t", "chat": {"history": {}},
+                                                 "folder_id": chats[token][chat]})
+            if request.url.path.startswith("/api/v1/folders/"):
+                self.webui_reads.append(request.url.path)
+                folder = request.url.path.rsplit("/", 1)[1]
+                if folder not in folders.get(token, {}):
+                    return httpx.Response(404, json={"detail": "not found"})
+                return httpx.Response(200, json={"id": folder, "name": folders[token][folder], "data": {}})
             if request.url.host == "memory":
-                self.memory_calls.append((request.url.path, json.loads(request.content), dict(request.headers)))
-                return httpx.Response(200, json={"facts": [], "no_memory": True})
+                body = json.loads(request.content)
+                self.memory_calls.append((request.url.path, body, dict(request.headers)))
+                return self.memory_reply(request.url.path, body)
             raise AssertionError("unexpected upstream " + str(request.url))
         self.upstream = httpx.AsyncClient(transport=httpx.MockTransport(upstream))
         self.key = key
@@ -70,8 +96,11 @@ class ToolTests(unittest.IsolatedAsyncioTestCase):
                                memory_key_file=self.key, memory_write=write)
         return httpx.AsyncClient(transport=httpx.ASGITransport(app=service.app), base_url="http://tools")
 
-    async def call(self, client, token, method, params=None):
-        return await client.post("/mcp", headers={"Authorization": "Bearer " + token},
+    async def call(self, client, token, method, params=None, chat=None):
+        headers = {"Authorization": "Bearer " + token}
+        if chat is not None:
+            headers["X-OpenWebUI-Chat-Id"] = chat  # what Open WebUI sends for the chat being answered
+        return await client.post("/mcp", headers=headers,
                                  json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}})
 
     async def names(self, client):
@@ -84,8 +113,9 @@ class ToolTests(unittest.IsolatedAsyncioTestCase):
             response = await self.call(client, "alice-token", "tools/call", {"name": "recall_memory", "arguments": {"query": "x"}})
             self.assertEqual(404, response.status_code)
         async with self.tools(memory="http://memory:8000") as client:
-            # Read-only memory tools only: recall and source inspection.
-            self.assertEqual(["retrieve_project_passage", "read_project_source", "recall_memory", "inspect_memory_source"], await self.names(client))
+            # Read-only memory tools only: recall, source inspection and the project-only switch.
+            self.assertEqual(["retrieve_project_passage", "read_project_source", "recall_memory", "inspect_memory_source",
+                              "set_project_memory_mode"], await self.names(client))
             response = await self.call(client, "alice-token", "tools/call", {"name": "remember", "arguments": {"text": "x"}})
             self.assertEqual(404, response.status_code)
         async with self.tools(memory="http://memory:8000", write=True) as client:
@@ -113,9 +143,159 @@ class ToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("Bearer " + "k" * 40, headers["authorization"])  # service key, never the user token
         self.assertEqual(2 + 1, len(self.memory_calls))
 
-    async def call_value(self, client, token, name, arguments):
-        response = await self.call(client, token, "tools/call", {"name": name, "arguments": arguments})
+    async def call_value(self, client, token, name, arguments, chat=None):
+        response = await self.call(client, token, "tools/call", {"name": name, "arguments": arguments}, chat=chat)
         return response, (json.loads(response.json()["result"]["content"][0]["text"]) if response.status_code == 200 else None)
+
+    def groups(self, since=0):
+        return [call[1]["group"] for call in self.memory_calls[since:]]
+
+    async def test_chat_folder_is_the_project_and_keeps_books_apart(self):
+        book1 = project_scope.folder_memory_group("alice", "f-book1")
+        book2 = project_scope.folder_memory_group("alice", "f-book2")
+        alice = ServiceTools.memory_group("alice")
+        self.assertRegex(book1, r"^p_[a-f0-9]{32}$")  # the memory service's existing group format
+        self.assertEqual(4, len({book1, book2, alice, ServiceTools.memory_group("alice", "f-book1")}))
+        async with self.tools(memory="http://memory:8000", write=True) as client:
+            _, value = await self.call_value(client, "alice-token", "remember", {"text": "Mira has green eyes"}, chat="chat-book1")
+            self.assertEqual(("/remember", book1), (self.memory_calls[-1][0], self.memory_calls[-1][1]["group"]))
+            self.assertNotIn("scope", self.memory_calls[-1][1])
+            self.assertEqual("project", value["memory"])
+            self.assertEqual({"kind": "folder", "folder": {"id": "f-book1", "name": "Book One"}, "mode": "project_and_user"},
+                             value["scope"])
+            # Default recall: this project's memory, then the user's general memory; never another book's.
+            count = len(self.memory_calls)
+            _, value = await self.call_value(client, "alice-token", "recall_memory", {"query": "eyes"}, chat="chat-book2")
+            self.assertEqual([book2, alice], self.groups(count))
+            self.assertEqual("f-book2", value["scope"]["folder"]["id"])
+            # The chat and its folder are read with the caller's own credential.
+            self.assertEqual(["/api/v1/chats/chat-book2", "/api/v1/folders/f-book2"], self.webui_reads[-2:])
+            # Chats without a folder, temporary and channel chats, and no header keep user-wide memory.
+            for chat in ("chat-plain", "local:abc", "temporary:abc", "channel:abc", "", None):
+                count = len(self.memory_calls)
+                _, value = await self.call_value(client, "alice-token", "recall_memory", {"query": "x"}, chat=chat)
+                self.assertEqual(({"kind": "user"}, [alice]), (value["scope"], self.groups(count)), chat)
+            # The knowledge-collection scope is unchanged outside a folder.
+            _, value = await self.call_value(client, "alice-token", "recall_memory", {"query": "x", "project": "kb-shared"},
+                                             chat="chat-plain")
+            self.assertEqual("project", value["scope"]["kind"])
+            # Inside a folder an explicit project is refused, as a tool result the model can act on.
+            count = len(self.memory_calls)
+            response, value = await self.call_value(client, "alice-token", "remember", {"text": "x", "project": "kb-shared"},
+                                                    chat="chat-book1")
+            self.assertTrue(response.json()["result"]["isError"])
+            self.assertEqual("project_set_by_chat_folder", value["error"])
+            self.assertEqual(count, len(self.memory_calls))
+
+    async def test_a_chat_id_never_reaches_another_users_memory(self):
+        async with self.tools(memory="http://memory:8000", write=True) as client:
+            count = len(self.memory_calls)
+            # Alice's chat id sent with Bob's credential: Open WebUI does not show Bob that chat.
+            for name, arguments in (("recall_memory", {"query": "x"}), ("remember", {"text": "x"}),
+                                    ("forget_memory", {"episode_uuid": "11111111-1111-4111-8111-000000000000"}),
+                                    ("inspect_memory_source", {"episode_uuid": "11111111-1111-4111-8111-000000000000"}),
+                                    ("set_project_memory_mode", {"mode": "project_only"})):
+                response, _ = await self.call_value(client, "bob-token", name, arguments, chat="chat-book1")
+                self.assertEqual((403, "chat_not_authorized"), (response.status_code, response.json()["error"]), name)
+            # A readable chat in a folder the caller can no longer read grants nothing.
+            response, _ = await self.call_value(client, "bob-token", "recall_memory", {"query": "x"}, chat="chat-bob-revoked")
+            self.assertEqual((403, "project_not_authorized"), (response.status_code, response.json()["error"]))
+            for bad in ("../chat", "chat 1", "x" * 161):
+                response, _ = await self.call_value(client, "alice-token", "recall_memory", {"query": "x"}, chat=bad)
+                self.assertEqual((400, "invalid_chat_id"), (response.status_code, response.json()["error"]), bad)
+            self.assertEqual(count, len(self.memory_calls))
+            response, _ = await self.call_value(client, "admin-token", "recall_memory", {"query": "x"}, chat="chat-book1")
+            self.assertEqual(403, response.status_code)
+            # A folder shared between users still gives each user their own memory.
+            await self.call_value(client, "alice-token", "recall_memory", {"query": "x"}, chat="chat-shared")
+            await self.call_value(client, "bob-token", "recall_memory", {"query": "x"}, chat="chat-bob-shared")
+            alice_shared, alice_user, bob_shared, bob_user = self.groups(count)
+            self.assertEqual((alice_shared, bob_shared), (project_scope.folder_memory_group("alice", "f-shared"),
+                                                          project_scope.folder_memory_group("bob", "f-shared")))
+            self.assertNotEqual(alice_shared, bob_shared)
+            self.assertEqual((alice_user, bob_user), (ServiceTools.memory_group("alice"), ServiceTools.memory_group("bob")))
+
+    async def test_project_only_switch_is_per_user_and_folder(self):
+        book1 = project_scope.folder_memory_group("alice", "f-book1")
+        async with self.tools(memory="http://memory:8000", write=True) as client:
+            response, value = await self.call_value(client, "alice-token", "set_project_memory_mode",
+                                                    {"mode": "project_only"}, chat="chat-plain")
+            self.assertEqual((True, "no_project_folder"), (response.json()["result"]["isError"], value["error"]))
+            for bad in ({"mode": "everything"}, {"mode": ["project_only"]}, {}, {"mode": "project_only", "x": 1}):
+                response, _ = await self.call_value(client, "alice-token", "set_project_memory_mode", bad, chat="chat-book1")
+                self.assertEqual(400, response.status_code, bad)
+            _, value = await self.call_value(client, "alice-token", "set_project_memory_mode", {"mode": "project_only"},
+                                             chat="chat-book1")
+            self.assertEqual(("project_only", "project_and_user"), (value["scope"]["mode"], value["previous_mode"]))
+            self.assertEqual([], self.memory_calls)  # a setting, not a memory write
+            # Project-only: recall, inspection and deletion use only this project's memory.
+            _, value = await self.call_value(client, "alice-token", "recall_memory", {"query": "x"}, chat="chat-book1")
+            self.assertEqual(([book1], "project_only"), (self.groups(), value["scope"]["mode"]))
+            count = len(self.memory_calls)
+            self.memory_reply = lambda path, body: httpx.Response(404, json={"error": "episode_not_found"})
+            response, _ = await self.call_value(client, "alice-token", "inspect_memory_source",
+                                                {"episode_uuid": "11111111-1111-4111-8111-000000000000"}, chat="chat-book1")
+            self.assertEqual((404, [book1]), (response.status_code, self.groups(count)))
+            response, value = await self.call_value(client, "alice-token", "remember", {"text": "x", "scope": "user"},
+                                                    chat="chat-book1")
+            self.assertEqual("project_only_memory", value["error"])
+            # Other folders and other users keep the default; the setting survives a restart.
+            count = len(self.memory_calls)
+            self.memory_reply = lambda path, body: httpx.Response(200, json={"facts": [], "no_memory": True})
+            await self.call_value(client, "alice-token", "recall_memory", {"query": "x"}, chat="chat-book2")
+            self.assertEqual(2, len(self.groups(count)))
+        async with self.tools(memory="http://memory:8000", write=True) as client:
+            _, value = await self.call_value(client, "alice-token", "recall_memory", {"query": "x"}, chat="chat-book1")
+            self.assertEqual("project_only", value["scope"]["mode"])
+            await self.call_value(client, "alice-token", "set_project_memory_mode", {"mode": "project_only"}, chat="chat-shared")
+            _, value = await self.call_value(client, "bob-token", "recall_memory", {"query": "x"}, chat="chat-bob-shared")
+            self.assertEqual("project_and_user", value["scope"]["mode"])
+            _, value = await self.call_value(client, "alice-token", "set_project_memory_mode", {"mode": "project_and_user"},
+                                             chat="chat-book1")
+            self.assertEqual(("project_and_user", "project_only"), (value["scope"]["mode"], value["previous_mode"]))
+            count = len(self.memory_calls)
+            await self.call_value(client, "alice-token", "recall_memory", {"query": "x"}, chat="chat-book1")
+            self.assertEqual([book1, ServiceTools.memory_group("alice")], self.groups(count))
+        # Rows hold a derived owner key, not the WebUI user id, and only project-only folders.
+        rows = sqlite3.connect(self.root / "state" / "project-memory.sqlite3").execute(
+            "SELECT owner, folder FROM project_only").fetchall()
+        self.assertEqual([(project_scope.MemoryModes.owner("alice"), "f-shared")], rows)
+        self.assertNotIn("alice", rows[0][0])
+
+    async def test_folder_recall_labels_facts_and_lookups_fall_back_to_user_memory(self):
+        book1 = project_scope.folder_memory_group("alice", "f-book1")
+        alice = ServiceTools.memory_group("alice")
+
+        def reply(path, body):
+            if path == "/recall":
+                return httpx.Response(200, json={"facts": [{"uuid": body["group"], "fact": "f"}], "no_memory": False,
+                                                 "notice": "evidence"})
+            if path in {"/episode", "/forget"} and body["group"] == book1:
+                return httpx.Response(404, json={"error": "episode_not_found"})
+            return httpx.Response(200, json={"deleted_episode": body.get("episode_uuid")})
+        self.memory_reply = reply
+        async with self.tools(memory="http://memory:8000", write=True) as client:
+            _, value = await self.call_value(client, "alice-token", "recall_memory", {"query": "x"}, chat="chat-book1")
+            self.assertEqual([(book1, "project"), (alice, "user")], [(f["uuid"], f["memory"]) for f in value["facts"]])
+            self.assertEqual((False, "evidence"), (value["no_memory"], value["notice"]))
+            count = len(self.memory_calls)
+            _, value = await self.call_value(client, "alice-token", "forget_memory",
+                                             {"episode_uuid": "11111111-1111-4111-8111-000000000000"}, chat="chat-book1")
+            self.assertEqual(([book1, alice], "user"), (self.groups(count), value["memory"]))
+            count = len(self.memory_calls)
+            _, value = await self.call_value(client, "alice-token", "remember", {"text": "I prefer British spelling",
+                                                                                "scope": "user"}, chat="chat-book1")
+            self.assertEqual(([alice], "user"), (self.groups(count), value["memory"]))
+            response, value = await self.call_value(client, "alice-token", "remember", {"text": "x", "scope": "user"},
+                                                    chat="chat-plain")
+            self.assertEqual("scope_needs_project_folder", value["error"])
+            response, _ = await self.call_value(client, "alice-token", "remember", {"text": "x", "scope": "both"},
+                                                chat="chat-book1")
+            self.assertEqual(400, response.status_code)
+            # scope belongs to remember only.
+            response, _ = await self.call_value(client, "alice-token", "recall_memory", {"query": "x", "scope": "user"},
+                                                chat="chat-book1")
+            self.assertEqual(400, response.status_code)
 
     async def test_project_scope_is_authorised_per_user_and_keeps_legacy_user_scope(self):
         async with self.tools(memory="http://memory:8000", write=True) as client:
@@ -144,6 +324,47 @@ class ToolTests(unittest.IsolatedAsyncioTestCase):
             _, value = await self.call_value(client, "alice-token", "inspect_memory_source",
                                              {"episode_uuid": "11111111-1111-4111-8111-000000000000"})
             self.assertEqual(("/episode", ServiceTools.memory_group("alice")), (self.memory_calls[-1][0], self.memory_calls[-1][1]["group"]))
+
+
+class ProjectScopeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_chat_folder_lookup_is_bounded_and_checks_answers(self):
+        calls = []
+
+        def fetcher(chat, folder):
+            async def fetch(method, url, headers=None, max_bytes=None):
+                calls.append((url, max_bytes))
+                return chat if "/chats/" in url else folder
+            return fetch
+        good_chat, good_folder = {"id": "c1", "folder_id": "f1"}, {"id": "f1", "name": "N" * 200}
+        self.assertEqual(("f1", "N" * 120), await project_scope.chat_folder(fetcher(good_chat, good_folder), "http://w", {}, "c1"))
+        # The chat body holds the whole history, so its read has a larger, explicit bound.
+        self.assertEqual([("http://w/api/v1/chats/c1", project_scope.MAX_CHAT_BYTES), ("http://w/api/v1/folders/f1", None)], calls)
+        for chat, folder in (({"id": "other", "folder_id": "f1"}, good_folder), ({"id": "c1", "folder_id": "../f"}, good_folder),
+                             ({"id": "c1", "folder_id": 7}, good_folder), ([], good_folder), (good_chat, {"id": "f2"})):
+            with self.assertRaises(project_scope.Refusal) as caught:
+                await project_scope.chat_folder(fetcher(chat, folder), "http://w", {}, "c1")
+            self.assertEqual((502, "chat_lookup_invalid"), (caught.exception.status, caught.exception.code))
+        self.assertIsNone(await project_scope.chat_folder(fetcher({"id": "c1", "folder_id": None}, None), "http://w", {}, "c1"))
+
+    def test_mode_store_is_bounded_and_refuses_a_symlink(self):
+        with tempfile.TemporaryDirectory() as directory:
+            modes = project_scope.MemoryModes(directory)
+            self.assertEqual("project_and_user", modes.get("alice", "f1"))
+            for index in range(project_scope.MAX_PROJECT_ONLY_FOLDERS):
+                modes.set("alice", "f" + str(index), "project_only")
+            with self.assertRaises(project_scope.Refusal) as caught:
+                modes.set("alice", "extra", "project_only")
+            self.assertEqual((413, "memory_mode_limit_reached"), (caught.exception.status, caught.exception.code))
+            self.assertEqual("project_only", modes.set("alice", "f1", "project_only"))  # already set: not a new row
+            self.assertEqual("project_only", modes.set("alice", "f1", "project_and_user"))
+            self.assertEqual("project_and_user", modes.get("alice", "f1"))
+            self.assertEqual("project_and_user", modes.get("bob", "f2"))
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / "elsewhere").touch()
+            (Path(directory) / "project-memory.sqlite3").symlink_to(Path(directory) / "elsewhere")
+            with self.assertRaises(project_scope.Refusal) as caught:
+                project_scope.MemoryModes(directory).get("alice", "f1")
+            self.assertEqual(503, caught.exception.status)
 
 
 class FakeEdge:

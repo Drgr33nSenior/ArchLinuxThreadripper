@@ -76,10 +76,16 @@ spec:
             # user's toggle, the confirmation and the sources shown under the answer). The
             # server's read_web_page stays: it alone can continue past a page's first
             # section. Coding clients keep both MCP web tools.
+            # Project memory: Open WebUI fills {{CHAT_ID}} with the chat being answered.
+            # service-tools reads that chat and its folder with the user's own token, so the
+            # header only selects among chats the caller can read (docs/MEMORY.md#chat-folder-projects).
+            # ENABLE_FORWARD_USER_INFO_HEADERS sends the same header today; naming it here keeps
+            # project memory working if that switch is turned off.
             - name: TOOL_SERVER_CONNECTIONS
               value: >-
                 [{"type":"mcp","url":"http://service-tools:8000/mcp","path":"","auth_type":"session",
-                "key":"","config":{"enable":true,"function_name_filter_list":"!search_web",
+                "key":"","headers":{"X-OpenWebUI-Chat-Id":"{{CHAT_ID}}"},
+                "config":{"enable":true,"function_name_filter_list":"!search_web",
                 "access_grants":[{"principal_type":"user",
                 "principal_id":"*","permission":"read"}]},"info":{"id":"workstation",
                 "name":"Workstation tools","description":"Project passages, task handoffs, memory,
