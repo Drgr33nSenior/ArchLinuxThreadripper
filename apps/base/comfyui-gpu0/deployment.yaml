@@ -77,6 +77,13 @@ spec:
             - --fp8_e4m3fn-text-enc
             - --reserve-vram
             - '1.5'
+            # DynamicVRAM (on by default here) sizes itself from free VRAM and ignores --reserve-vram:
+            # a Wan clip peaked at 32,240 of 32,624 MiB. --vram-headroom 2 keeps 2 GB free (measured
+            # 2026-11-14, same seed: peak 30,174 MiB, 83.0 s against 81.5-83.4 s, chat unchanged,
+            # frames 37.8 dB PSNR). DynamicVRAM stays on: --disable-dynamic-vram holds the experts in
+            # RAM and was OOM-killed at 11.35 GB.
+            - --vram-headroom
+            - '2'
             # Wan 2.2 video (service-tools generate_video): stream the 14B experts from the local
             # NVMe each step instead of holding them in RAM (measured 2026-11-12: a 5 s 832x480
             # clip reads ~35-45 GB at up to 22 GB/s; sampling stays compute-bound).
