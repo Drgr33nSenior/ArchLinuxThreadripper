@@ -75,6 +75,9 @@ spec:
             # Qwen-Image-2512 bf16 1328^2 2026-11-14 (test pod with these limits and flags): anon peak
             # 7.0 GiB; 88 s cold and 72-74 s warm with gpu-0 rendering at the same time (50 s in an
             # 8-core test pod alone); 2.2 GB of the card free at peak.
+            # 8 CPUs (same test, 14 Nov): one picture 69 s cold, 64 s warm; two at once 74-75 s, as with 4.
+            # Shared mode raises it to 8 (apps/overlays/assistant-shared); split mode keeps 4 so its
+            # one-GPU composition stays inside the conservative 42-CPU capacity plan.
             requests: {cpu: '4', memory: 12Gi}
             limits: {cpu: '4', memory: 12Gi}
             claims: [{name: gpu-1}]

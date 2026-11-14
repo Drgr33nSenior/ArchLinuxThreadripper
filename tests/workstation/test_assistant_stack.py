@@ -337,6 +337,12 @@ class AssistantTests(unittest.TestCase):
         self.assertEqual(swarm["securityContext"], comfy["securityContext"])
         c, s = comfy["containers"][0], swarm["containers"][0]
         self.assertEqual(s["image"], c["image"])
+        # 8 CPUs per picture backend in shared mode (Qwen-Image 64 s warm instead of 74 s); the
+        # split composition keeps SwarmUI at its measured 4.
+        for container, memory in ((s, "12Gi"), (c, "10Gi")):
+            self.assertEqual({"cpu": "8", "memory": memory}, container["resources"]["limits"])
+        split_swarm = named(self.split, "Deployment", "swarmui")["spec"]["template"]["spec"]["containers"][0]
+        self.assertEqual({"cpu": "4", "memory": "12Gi"}, split_swarm["resources"]["limits"])
         self.assertEqual(c["resources"]["requests"], {k: v for k, v in c["resources"]["limits"].items()})
         self.assertEqual([{"name": "gpu-0"}], c["resources"]["claims"])
         # the same picture stack mount and file names as SwarmUI's self-started ComfyUI
