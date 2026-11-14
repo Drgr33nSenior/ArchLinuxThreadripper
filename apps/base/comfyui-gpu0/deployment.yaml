@@ -121,8 +121,11 @@ spec:
             # Qwen-Image-2512 bf16 1328^2 2026-11-14 (test pod with these limits and flags, cold page
             # cache): anon peak 6.2 GiB; 86 s cold, 74 s warm, 72-77 s with gpu-1 rendering at the same
             # time; 2.3 GB of the card free at peak; chat median 62 tok/s during two pictures.
-            requests: {cpu: '4', memory: 10Gi}
-            limits: {cpu: '4', memory: 10Gi}
+            # 8 CPUs (same test, 14 Nov): one picture 68 s cold, 65 s warm (4 CPUs: 86/74 s); two at once
+            # unchanged at 74-75 s (the shared NVMe stream limits them); chat 59-64 tok/s, VRAM as above.
+            # Gaming mode stops this pod, so its 12-CPU pod never shares the node's 42 with these 8.
+            requests: {cpu: '8', memory: 10Gi}
+            limits: {cpu: '8', memory: 10Gi}
             claims: [{name: gpu-0}]
           securityContext:
             allowPrivilegeEscalation: false

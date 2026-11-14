@@ -40,6 +40,9 @@ patches:
   # (gpu-1) and 7.2 s (gpu-0) beside the UQS arm, and Wan 2.2 video on comfyui-gpu0 since
   # 2026-11-12 (docs/ASSISTANT.md, short videos). Marked here, not in apps/base, so the
   # split and older overlays keep their own pending status.
+  # 8 CPUs, as comfyui-gpu0: one Qwen-Image picture 64 s warm instead of 74 s (14 Nov,
+  # apps/base/swarmui/deployment.yaml). Gaming mode stops both, so they never share the node
+  # with the 12-CPU gaming pod.
   - target: {kind: Deployment, name: swarmui}
     patch: |-
       apiVersion: apps/v1
@@ -47,6 +50,14 @@ patches:
       metadata:
         name: swarmui
         annotations: {workstation.ai/qualification: qualified}
+      spec:
+        template:
+          spec:
+            containers:
+              - name: swarmui
+                resources:
+                  requests: {cpu: '8'}
+                  limits: {cpu: '8'}
   - target: {kind: Deployment, name: comfyui-gpu0}
     patch: |-
       apiVersion: apps/v1
