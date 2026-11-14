@@ -65,11 +65,47 @@ grep -Fq '[[ $(git -C "$webui_run/git" rev-parse FETCH_HEAD) == "$OPEN_WEBUI_FOR
 grep -Fq -- '--network none -v "$here/webui/smoke.py:/smoke.py:ro"' "$dir/build-stage.sh" || fail 'webui smoke is not offline'
 # shellcheck disable=SC2016 # literal text in build-stage.sh
 grep -Fq 'publish "$tag" "$webui_run" "$here/webui/scan-allowlist.json"' "$dir/build-stage.sh" || fail 'webui does not use the publish path'
-grep -Eq '^for stage in .* webui; do$' "$dir/build-all.sh" || fail 'build-all does not build webui'
+grep -Eq '^for stage in .* webui( [a-z ]+)?; do$' "$dir/build-all.sh" || fail 'build-all does not build webui'
 grep -Fq 'new[OPEN_WEBUI_FORK_COMMIT]' "$dir/refresh.sh" || fail 'refresh does not follow the fork branch'
 python3 -I -c 'import ast, sys; ast.parse(open(sys.argv[1]).read())' "$dir/webui/smoke.py" || fail 'webui smoke does not parse'
 python3 -I -c 'import json, sys; assert json.load(open(sys.argv[1])) == []' "$dir/webui/scan-allowlist.json" || fail 'webui allowlist is not empty'
 python3 -I -c 'import json, sys; assert json.load(open(sys.argv[1])) == []' "$dir/graphiti/scan-allowlist.json" || fail 'graphiti allowlist is not empty'
+# The AMD GPU DRA driver: upstream main at a full commit, built offline by upstream's own
+# `make cmds` in the golang release its env.mk names, on a runtime base with the same glibc;
+# smoke-tested offline as a non-root user and published through the same path.
+grep -Eq '^DRA_DRIVER_REPOSITORY=https://github\.com/ROCm/k8s-gpu-dra-driver\.git$' "$lock" || fail 'DRA driver repository'
+grep -Eq '^DRA_DRIVER_COMMIT=[a-f0-9]{40}$' "$lock" || fail 'DRA driver commit is not a full SHA'
+grep -Eq '^DRA_GO_IMAGE=docker\.io/library/golang:[0-9]+\.[0-9]+(\.[0-9]+)?-trixie@sha256:[a-f0-9]{64}$' "$lock" ||
+  fail 'DRA Go image is not a Debian trixie golang release pinned by digest'
+grep -Eq '^DRA_RUNTIME_BASE_TAG=docker\.io/library/debian:trixie-slim$' "$lock" || fail 'DRA runtime base must be the Go image Debian release'
+grep -Eq '^DRA_RUNTIME_BASE_IMAGE=docker\.io/library/debian@sha256:[a-f0-9]{64}$' "$lock" || fail 'DRA runtime base is not pinned by digest'
+grep -Eq '^DRA_IMAGE_REPOSITORY=registry\.lan\.thespry\.family/local/[a-z0-9-]+$' "$lock" || fail 'DRA image repository'
+# shellcheck disable=SC2016 # literal text in build-stage.sh
+grep -Fq 'dra_key=$(key_of "$(read_lock DRA_IMAGE_REPOSITORY)" "$DRA_DRIVER_COMMIT" "$DRA_GO_IMAGE" "$DRA_RUNTIME_BASE_IMAGE"' "$dir/build-stage.sh" ||
+  fail 'dra key does not cover the commit and both images'
+# shellcheck disable=SC2016 # literal text in build-stage.sh
+grep -Fq 'dra_files=("$here"/dra/{build.sh,Containerfile,smoke.sh})' "$dir/build-stage.sh" || fail 'dra key does not cover the stage files and smoke test'
+# shellcheck disable=SC2016 # literal text in build-stage.sh
+grep -Fq '[[ $(git -C "$dra_run/git" rev-parse FETCH_HEAD) == "$DRA_DRIVER_COMMIT" ]]' "$dir/build-stage.sh" || fail 'dra source is not checked against the pin'
+# shellcheck disable=SC2016 # literal text in build-stage.sh
+grep -Fq -- '--name "ai-stack-dra-$dra_key" --network none' "$dir/build-stage.sh" || fail 'dra binaries are not built offline'
+# shellcheck disable=SC2016 # literal text in dra/build.sh
+grep -Fq 'export GOTOOLCHAIN=local GOPROXY=off GOFLAGS="-mod=vendor -trimpath -buildvcs=false -p=$JOBS"' "$dir/dra/build.sh" ||
+  fail 'dra build may download modules or a toolchain, or embed build paths'
+# shellcheck disable=SC2016 # literal text in dra/build.sh
+grep -Fq 'make -C "$src" IMAGE_GIT_TAG= CHART_GIT_TAG= PREFIX="$out/bin" cmds' "$dir/dra/build.sh" || fail 'dra does not use upstream make cmds'
+# shellcheck disable=SC2016 # literal text in build-stage.sh
+grep -Fq -- '--network none --read-only --user 65534:65534' "$dir/build-stage.sh" || fail 'dra smoke is not offline, read-only and non-root'
+# shellcheck disable=SC2016 # literal text in build-stage.sh
+grep -Fq -- '-v "$here/dra/smoke.sh:/smoke.sh:ro" --entrypoint bash "$tag" /smoke.sh' "$dir/build-stage.sh" || fail 'dra image is not smoke tested'
+# shellcheck disable=SC2016 # literal text in build-stage.sh
+grep -Fq 'publish "$tag" "$dra_run" "$here/dra/scan-allowlist.json"' "$dir/build-stage.sh" || fail 'dra does not use the publish path'
+grep -Eq '^for stage in .* dra( [a-z ]+)?; do$' "$dir/build-all.sh" || fail 'build-all does not build dra'
+for key in DRA_DRIVER_COMMIT DRA_GO_IMAGE DRA_RUNTIME_BASE_IMAGE; do
+  grep -Fq "new[$key]" "$dir/refresh.sh" || fail "refresh does not move $key"
+done
+bash -n "$dir/dra/smoke.sh" || fail 'dra smoke does not parse'
+python3 -I -c 'import json, sys; assert json.load(open(sys.argv[1])) == []' "$dir/dra/scan-allowlist.json" || fail 'dra allowlist is not empty'
 
 # The patch-series hash is order-independent of the filesystem and content-sensitive.
 work=$(mktemp -d)
@@ -704,6 +740,14 @@ grep -q '^workstation_ai_stack_stage_last_result{stage="rocm"} 1$' "$metrics/ai-
 ! grep -v -E '^workstation_ai_stack_[a-z_]+(\{stage="(rocm|torch|sglang|image|comfyui|swarmui|creative)"\})? [0-9.]+$' "$metrics/ai-stack.prom" | grep -q . ||
   fail 'unexpected textfile line'
 python3 -I "$dir/stage-metrics.py" "$work/absent" rocm start 2>/dev/null || fail 'missing metrics directory failed the build'
+# Every stage build-stage.sh accepts is one stage-metrics.py records (its track() would fail).
+python3 -I - "$dir/build-stage.sh" "$dir/stage-metrics.py" <<'PY' || fail 'stage-metrics.py and build-stage.sh list different stages'
+import ast, re, sys
+stages = re.search(r"\[\[ \$stage =~ \^\(([a-z|]+)\)\$ \]\]", open(sys.argv[1]).read()).group(1).split("|")
+tree = ast.parse(open(sys.argv[2]).read())
+metrics = next(ast.literal_eval(n.value) for n in tree.body if isinstance(n, ast.Assign) and n.targets[0].id == "STAGES")
+assert sorted(stages) == sorted(metrics), (stages, metrics)
+PY
 # The driver's EXIT trap records the real exit status of a failing stage.
 bash -c 'here=$1; metrics_dir=$2; stage=sglang
   eval "$(sed -n "/^track() {/,/^}/p" "$here/build-stage.sh")"

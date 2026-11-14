@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # GPU allocation through DRA: the DeviceConfig enables exactly one allocator,
-# pins the DRA driver, and the pilot claims/probe stay well-formed.
+# pins the DRA driver (with a rollback release), and the pilot claims/probe stay well-formed.
 set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 ruby -ryaml - "$root" <<'RUBY'
@@ -15,11 +15,22 @@ dra = spec.dig('draDriver', 'enable') == true
 check(plugin ^ dra, 'enable exactly one of the device plugin and the DRA driver (the operator rejects both)')
 values = YAML.load_file("#{op}/values.yaml")
 check(values.dig('draDriver', 'deviceClass', 'create') == dra, 'the gpu.amd.com DeviceClass must exist exactly when DRA is enabled')
+# An upstream release must be v1.0.1+ (it publishes GPUs when the in-kernel amdgpu module
+# reports no version). A pipeline build (the dra stage) is tagged with its stage key.
+release = ->(ref) { ref.match(%r{\Adocker\.io/rocm/k8s-gpu-dra-driver:v(\d+)\.(\d+)\.(\d+)@sha256:[a-f0-9]{64}\z}) }
+release_ok = ->(m) { m && (m[1..3].map(&:to_i) <=> [1, 0, 1]) >= 0 }
 if dra
   image = spec.dig('draDriver', 'image').to_s
-  match = image.match(%r{\Adocker\.io/rocm/k8s-gpu-dra-driver:v(\d+)\.(\d+)\.(\d+)@sha256:[a-f0-9]{64}\z})
-  check(match, 'DRA driver image must be a pinned version and digest (operator default is :latest)')
-  check((match[1..3].map(&:to_i) <=> [1, 0, 1]) >= 0, 'DRA driver v1.0.1+ is required for an amdgpu module without a version')
+  lock = File.read("#{root}/infrastructure/ai-stack/stack.lock")
+  repository = lock[/^DRA_IMAGE_REPOSITORY=(\S+)$/, 1]
+  check(repository, 'stack.lock names no DRA_IMAGE_REPOSITORY')
+  pipeline = image.match?(%r{\A#{Regexp.escape(repository)}:[a-f0-9]{12}@sha256:[a-f0-9]{64}\z})
+  check(pipeline || release_ok.(release.(image)),
+        'DRA driver image must be the dra stage build or an upstream release v1.0.1+, pinned by digest (operator default is :latest)')
+  if pipeline
+    rollback = File.read("#{op}/deviceconfig.yaml")[/^ *# Rollback image: (\S+)$/, 1].to_s
+    check(release_ok.(release.(rollback)), 'a pipeline-built DRA driver needs a documented upstream release v1.0.1+ to roll back to')
+  end
 end
 claims = YAML.load_stream(File.read("#{op}/claims.yaml")).compact
 check(claims.map { |c| c.dig('metadata', 'name') } == %w[gpu-0 gpu-1], 'expected claims gpu-0 and gpu-1')
