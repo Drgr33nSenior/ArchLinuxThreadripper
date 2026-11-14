@@ -675,7 +675,9 @@ output, tokens or user IDs are emitted to the telemetry path.
    `service plan` with fresh node resource and telemetry evidence and
    `--node-pods`. Inspect `workloads.yaml` and `sandbox.yaml`.
 5. Apply the sandbox bundle through the owner's normal deployment process, then
-   the homes render. Scale the two proxies and the controller to one replica.
+   the homes render. Apply the bundle's `Namespace` first: until it exists, a
+   server-side dry run or `kubectl diff` of the rest of the bundle and of the
+   home claims fails. Scale the two proxies and the controller to one replica.
    Set `MODE_SANDBOX_CONFIG` to preserve the config in coder-mode and
    family-mode renders. The mode command does not apply the separate namespace
    bundle.
@@ -686,6 +688,10 @@ output, tokens or user IDs are emitted to the telemetry path.
    accounts, that a child's account is refused an adult site, and that a file
    in a mapped home survives a teardown.
 7. Run the network probe in a live workspace of each group (below).
+8. Re-render and apply telemetry from the same source. The controller and proxy
+   scrape targets and the kubelet collector's `assistant-sandbox` namespace
+   filter are part of the telemetry render; a telemetry render made before the
+   sandbox merged has neither, and the sandbox metrics above stay empty.
 
 For rollback, omit `--sandbox-config` (and unset `MODE_SANDBOX_CONFIG`), roll out
 the resulting WebUI config, and let the controller reap workspaces before
