@@ -45,7 +45,7 @@ Commands:
   service acceptance run <new-output.json> --boundary direct|gateway|webui-api --base-url URL --model ALIAS [--key-file F] [--case ID]
   service plan <resource-plan.json> <service-render> <telemetry-render> <new-output-directory> [--build-mib N --build-cpus N --vm-mib N --vm-cpus N]
   service credentials <new-directory-outside-checkout>
-  service provision|revoke|browser-bind <options; see docs/AI-SERVICE.md>
+  service provision|limits|revoke|browser-bind <options; see docs/AI-SERVICE.md>
   service notifications <telemetry-render> <new-output-directory> --receiver-cidr <IP/CIDR> --receiver-port <port>
   service-backup capture <policy.json> --execute [--baseline] [--local-first]
   service-backup replicate <policy.json> <capture-directory> --execute
@@ -216,7 +216,7 @@ main() {
       shift 2
       ws_resources_plan "$@"
       ;;
-    service:render | service:candidate-plan | service:plan | service:credentials | service:provision | service:revoke | service:browser-bind | service:notifications)
+    service:render | service:candidate-plan | service:plan | service:credentials | service:provision | service:limits | service:revoke | service:browser-bind | service:notifications)
       shift
       "$(ws_measure_python)" "$repo_root/lib/workstation/service.py" "$@"
       ;;

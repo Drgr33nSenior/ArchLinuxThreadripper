@@ -1471,6 +1471,13 @@ def admin_request(base, key, path, payload=None):
         return json.loads(data)
 
 
+# Upper bounds for a virtual key. Concurrency is what shares the GPU between people. Tokens per minute count
+# the whole re-sent conversation, cached or not: a coding agent at 40-80k context passes 131,072 in two or
+# three steps while SGLang serves most of it from cache, so the bound allows 2,000,000.
+KEY_LIMITS = {"rpm": 60, "tpm": 2000000, "concurrency": 2}
+LITELLM_LIMITS = {"rpm": "rpm_limit", "tpm": "tpm_limit", "concurrency": "max_parallel_requests"}
+
+
 def provision(args):
     key = protected(args.master_file)
     request = json.loads(Path(args.request).read_text())
@@ -1479,7 +1486,7 @@ def provision(args):
     require(re.fullmatch(r"[A-Za-z0-9_-]{1,60}", request["client"]), "invalid client name")
     require(isinstance(request["models"], list) and request["models"] and set(request["models"]) <= MODELS,
             "explicit supported model allowlist required")
-    for field, maximum in (("rpm", 60), ("tpm", 131072), ("concurrency", 2), ("days", 90)):
+    for field, maximum in (*KEY_LIMITS.items(), ("days", 90)):
         require(type(request[field]) is int and 1 <= request[field] <= maximum, "invalid bounded key policy")
     output = Path(args.output).resolve()
     require(not output.is_relative_to(ROOT), "credential output must be outside the checkout")
@@ -1500,6 +1507,22 @@ def provision(args):
     credential.chmod(0o600)
     (output / "policy.json").write_text(json.dumps(request, indent=2) + "\n")
     print("Credential saved in protected output; no credential values printed.")
+
+
+def limits(args):
+    """Change an existing key's limits in place, found by its alias; the key itself is never read or printed."""
+    key = protected(args.master_file)
+    require(re.fullmatch(r"[A-Za-z0-9_-]{1,60}", args.alias), "invalid key alias")
+    change = {name: getattr(args, name) for name in KEY_LIMITS if getattr(args, name) is not None}
+    require(change, "give at least one of --rpm, --tpm, --concurrency")
+    for name, value in change.items():
+        require(1 <= value <= KEY_LIMITS[name], f"{name} must be 1-{KEY_LIMITS[name]}")
+    result = admin_request(args.base_url, key, "/key/update",
+                           {"key_alias": args.alias, **{LITELLM_LIMITS[n]: v for n, v in change.items()}})
+    require(result.get("key_alias") in (None, args.alias), "gateway updated a different key")
+    for name, value in change.items():
+        require(result.get(LITELLM_LIMITS[name], value) == value, f"gateway did not apply {name}")
+    print(args.alias + ": " + ", ".join(f"{n} {v}" for n, v in change.items()))
 
 
 def credentials(args):
@@ -1603,6 +1626,11 @@ def main():
     p.add_argument("--existing-user", action="store_true")
     for name in ("base-url", "master-file", "request", "output"):
         p.add_argument("--" + name, required=True)
+    p = commands.add_parser("limits")
+    for name in ("base-url", "master-file", "alias"):
+        p.add_argument("--" + name, required=True)
+    for name in KEY_LIMITS:
+        p.add_argument("--" + name, type=int)
     p = commands.add_parser("revoke")
     p.add_argument("--mapping")
     for name in ("base-url", "master-file", "key-file"):
@@ -1623,6 +1651,7 @@ def main():
         elif args.action == "credentials": credentials(args)
         elif args.action == "notifications": notifications(args)
         elif args.action == "provision": provision(args)
+        elif args.action == "limits": limits(args)
         elif args.action == "revoke":
             credential = json.loads(protected(args.key_file))
             admin_request(args.base_url, protected(args.master_file), "/key/delete", {"keys": [credential["key"]]})
