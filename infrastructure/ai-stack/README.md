@@ -57,6 +57,7 @@ a refresh that only moves SGLang rebuilds only the SGLang stage and the image.
 | `gaming` | `registry.lan.thespry.family/local/steam-headless:<key>`: the [game-streaming image](../../docs/SUNSHINE.md) (`workstationctl sunshine image-build`, `arch-wayland`) built with Podman from a full checkout; the key covers every file the image copies; gated by the offline non-root smoke test `tests/test_sunshine_image.sh` |
 | `webui` | `registry.lan.thespry.family/local/open-webui:<key>`: Open WebUI from the workstation fork (`OPEN_WEBUI_FORK_*` in `stack.lock`: an upstream release plus provider-declared Model Controls, the [reasoning slider](../../docs/ASSISTANT.md#reasoning-effort), and the [per-group web search confirmation](../../docs/ASSISTANT.md#web-search-confirmation-per-group)), built with the fork's Dockerfile from the pinned commit; gated by an offline smoke test (`webui/smoke.py`) that drives the slider and the confirmation through Open WebUI's API against a fixture provider |
 | `dra` | `registry.lan.thespry.family/local/k8s-gpu-dra-driver:<key>`: the AMD GPU DRA driver the GPU operator runs (`draDriver.image` in [`deviceconfig.yaml`](../gpu-operator/deviceconfig.yaml)), from `DRA_DRIVER_COMMIT` on upstream `main`. `dra/build.sh` runs upstream's own `make cmds` in `DRA_GO_IMAGE` with no network (vendored modules, `GOTOOLCHAIN=local`, `-trimpath`) and writes `RECEIPT.json`; `dra/Containerfile` puts the binaries and the vendored AMD SMI libraries on `DRA_RUNTIME_BASE_IMAGE`. Gated by an offline, read-only, non-root smoke test (`dra/smoke.sh`): the binaries load, the flags the operator sets exist, and every driver feature gate defaults to off. The key covers the commit, both images and the stage files |
+| `egress` | `registry.lan.thespry.family/local/sandbox-egress:<key>`: the allowlisting egress proxy for assistant coding workspaces ([assistant guide](../../docs/ASSISTANT.md#network)). [Smokescreen](https://github.com/stripe/smokescreen) at `EGRESS_PROXY_COMMIT` (release v0.1.0, pinned by review) with `egress/main.go` added as `cmd/sandbox-egress`; `egress/build.sh` builds one static binary in `DRA_GO_IMAGE` with no network (vendored modules, `GOTOOLCHAIN=local`, `-trimpath`) and `egress/Containerfile` puts it in an empty image. Gated by an offline smoke test (`egress/smoke.py`): with no network at all, names pinned to LAN, cluster and loopback addresses are refused, unlisted names are refused, and the proxy's whole output is only group, domain and decision. The key covers the commit, the Go image and the stage files |
 
 Each stage also records its progress for monitoring: `stage-metrics.py` writes
 `/var/lib/workstation-ai-stack/ai-stack.prom`, which node-exporter reads. The
@@ -135,7 +136,7 @@ publisher account.
 
 ### Scanning and signing
 
-With `AI_STACK_PUSH=1` the `image`, `creative`, `graphiti`, `gaming`, `webui` and `dra` stages, after
+With `AI_STACK_PUSH=1` the `image`, `creative`, `graphiti`, `gaming`, `webui`, `dra`, `sandbox` and `egress` stages, after
 their smoke tests (GPU for the first two, offline for the others), run the same `publish`
 path (each with its own scan allowlist):
 

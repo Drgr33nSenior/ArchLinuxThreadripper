@@ -43,7 +43,7 @@ Commands:
   service candidate-plan <selected-pointer.json> <new-output-directory> --pointer-sha256 SHA256 [--package-root DIR] [--output-tokens N] [--deadline-seconds N] [--reserve-tokens N] [--runtime-image localhost/...@sha256:D]
   service acceptance plan <new-output.json> --model ALIAS [--tokenizer-dir DIR]
   service acceptance run <new-output.json> --boundary direct|gateway|webui-api --base-url URL --model ALIAS [--key-file F] [--case ID]
-  service plan <resource-plan.json> <service-render> <telemetry-render> <new-output-directory> [--build-mib N --build-cpus N --vm-mib N --vm-cpus N]
+  service plan <resource-plan.json> <service-render> <telemetry-render> <new-output-directory> [--build-mib N --build-cpus N --vm-mib N --vm-cpus N] [--node-pods <pods.json>]
   service credentials <new-directory-outside-checkout>
   service provision|revoke|browser-bind <options; see docs/AI-SERVICE.md>
   service notifications <telemetry-render> <new-output-directory> --receiver-cidr <IP/CIDR> --receiver-port <port>

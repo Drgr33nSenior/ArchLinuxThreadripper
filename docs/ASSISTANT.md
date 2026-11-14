@@ -106,8 +106,8 @@ document permissions remain authoritative. End-to-end search is not yet qualifie
 ## Private coding sandbox (candidate, off by default)
 
 `service render --sandbox-config /private/sandbox.json` adds native Open Terminal
-support in **large/coder mode only**. It writes a separate `sandbox.yaml`; its
-controller Deployment starts at zero replicas. Omitting the flag pins an empty
+support in **large/coder mode only**. It writes a separate `sandbox.yaml`; every
+Deployment in it starts at zero replicas. Omitting the flag pins an empty
 `TERMINAL_SERVER_CONNECTIONS` list, including when persistent WebUI settings exist.
 This candidate is not a qualified live service.
 
@@ -121,151 +121,393 @@ does not meet this deployment's isolation requirement. A separate Playwright MCP
 server is unnecessary: the native command tool can run the installed Playwright
 Chromium, and native file tools return its screenshots to the model.
 
-**Isolation and lifecycle.** The upstream orchestrator creates one pod per
-authenticated user. Chats for that user share a workspace. Each pod has its own
-2 GiB `emptyDir`, UID/GID 1000, a read-only image, no service-account token, no
-host mounts or GPU, dropped capabilities, no privilege escalation and
-RuntimeDefault seccomp. Temporary files use the workspace volume. Fifteen idle
-minutes stop and delete the pod; a two-hour maximum lifetime also ends active
-work. Files and background processes disappear at teardown. Download wanted
-files first. There is no shared PVC or automatic upload of family documents.
+### Who gets what
 
-The trusted controller has a service account restricted to pods, services and
-per-workspace API-key Secrets in `assistant-sandbox`. These credentials never
-enter a workspace. The workspace's own terminal key grants access only to that
-workspace. A small ASGI gate checks the caller's WebUI session, exact user ID and
-current groups before forwarding to the native orchestrator. It exposes no policy
-administration API. Static tool discovery starts no pod. WebSocket sessions
-reauthenticate by reconnecting after at most 60 seconds.
+| Account | Acts as | Egress list | Home |
+| --- | --- | --- | --- |
+| WebUI admin role (the admin account is in no group) | Admin | `parents` | Persistent if mapped, else disposable |
+| Member of Parents only | Parents | `parents` | Same |
+| Member of Family only (the children), with `family_enabled: true` | Family | `family` | Same |
+| Member of **both** Parents and Family (the owner's daily account) | Parents with `most-permissive`; Family with `most-restrictive` | Follows the group | Same |
+| Anyone else, or Family with `family_enabled: false` | No access | | |
 
-**Access.** WebUI's admin role and the exact Parents group are allowed. Family is
-off by default. The render sets native group read grants; the controller repeats
-the group check on each HTTP call. Family membership takes precedence over
-Parents membership, so adding a child to both does not bypass the switch.
-Set `family_enabled` to `true` in the source config, re-render and restart the
-controller and WebUI to enable children. Disabling access does not interrupt a
-command already running; idle and lifetime teardown remain the backstops.
-No model grants, gateway keys or cybersecurity-model permissions change.
+**Group resolution is explicit.** `sandbox.json` must state `family_enabled` and
+`group_resolution`; neither has a default. The proposed setting is
+`most-permissive` (Admin, then Parents, then Family). It matches how Open WebUI
+combines group permissions, which the web search confirmation setting already
+relies on. With it the owner's daily account, which is in both groups so that it
+sees the children's presets, gets the Parents list. `most-restrictive` restores
+the earlier rule that a Family membership wins; under it the owner's daily
+account would get the children's list.
 
-Example configuration (replace the example image digest and group IDs with
-owner-verified values; these are identifiers, not credentials):
+The homes mapping can name an account's group. An entry's `group` then replaces
+the rule for that account, but it only chooses among groups the account holds
+in WebUI at that moment. A mapping that names a group the account lacks denies
+access; it never grants a wider list. Map the admin account as `Admin`.
+
+Per-user isolation, resource limits and the idle and lifetime teardown are the
+same for every group. The models' content filtering for children is unchanged.
+Disabling access does not interrupt a command already running; teardown remains
+the backstop. No model grants, gateway keys or cybersecurity-model permissions
+change.
+
+### Configuration
+
+Replace the digests and group IDs with owner-verified values. These are
+identifiers, not credentials.
 
 ```json
 {
   "image": "registry.lan.thespry.family/local/assistant-sandbox@sha256:DIGEST_FROM_SIGNED_BUILD",
+  "egress_image": "registry.lan.thespry.family/local/sandbox-egress@sha256:DIGEST_FROM_SIGNED_BUILD",
   "parents_group_id": "PARENTS_GROUP_UUID",
   "family_group_id": "FAMILY_GROUP_UUID",
-  "family_enabled": false,
+  "family_enabled": true,
+  "group_resolution": "most-permissive",
+  "egress_service_ips": {"family": "10.43.0.201", "parents": "10.43.0.202"},
   "api_server_cidr": "192.168.30.11/32",
-  "api_server_port": 6443
+  "api_server_port": 6443,
+  "homes": "/home/OWNER/ai-stack/private/sandbox-users.json"
 }
 ```
 
-**Network and threat model.** The workspace namespace has default-deny policies.
-Only the controller can initiate connections to workspace port 8000. Workspaces
-have no egress rules, including DNS, cluster services, other workspaces, LAN and
-Internet. Chromium and local web servers communicate inside the same pod.
-The controller alone can reach WebUI, DNS and the exact configured API endpoint.
-There is no public Ingress, NodePort or browser-debugging listener.
+`egress_service_ips` are two unused addresses in the cluster's service range, one
+per egress list. Workspaces have no DNS, so they reach their proxy by address;
+the render fixes each proxy Service to its address. Choose them from the low end
+of the range, which Kubernetes keeps for fixed assignments
+(`kubectl get svc -A` shows the addresses in use). `homes` is optional.
 
-Prompt-injected code and malicious pages can destroy or expose the current user's
-workspace through tool responses. They receive no family storage, service keys
-or Kubernetes identity. Chromium runs headless with its inner sandbox disabled
-because this image uses the pod/container security boundary; it is not a second
-isolation boundary. Kernel/container escapes remain a shared-host risk. Do not
-upload secrets. NetworkPolicy cannot by itself guarantee denial of traffic to
-the hosting node on every CNI. Prove node-address, ClusterIP, DNS, LAN and
-cross-user denials in a scratch K3s deployment before live rollout; do not weaken
-seccomp or grant `NET_ADMIN` to obtain them.
+### Isolation and lifecycle
 
-Default Internet egress is **none**. A package-registry proxy would need exact
-PyPI/npm artifact and redirect allowlists, private-address and DNS-rebinding
-denials, and no generic CONNECT tunnel. It also introduces package-install
-scripts and an exfiltration channel. That is a separate owner decision, as is
-unrestricted public Internet access. The image already includes Python, Node,
-npm, git, curl, jq, ripgrep, shell/build tools, a Python static server and
-Playwright Chromium. Runtime package downloads fail under the default policy.
+The upstream orchestrator creates one pod per authenticated user. Chats for that
+user share a workspace. Each pod runs as UID/GID 1000 from a read-only image
+with no service-account token, host mounts or GPU, dropped capabilities, no
+privilege escalation and RuntimeDefault seccomp. Fifteen idle minutes stop and
+delete the pod; a two-hour maximum lifetime also ends active work. Background
+processes end with the pod.
 
-**Capacity.** A namespace quota bounds the pool to two workspace pods (each
-750m CPU / 2 GiB RAM / 2 GiB ephemeral storage) plus one controller (250m CPU /
-256 MiB RAM / 256 MiB ephemeral storage). Requests equal limits. Fractional CPU
-requests use the shared CPU pool and avoid
-the host CPU Manager's whole-core SMT alignment requirement. The planner
-reserves the whole 1.75 CPU / 4.25 GiB pool even when no workspace is running.
-The session switch's existing all-namespace pod accounting includes active
-sandbox pods. Kubernetes admission prevents a sleeping workspace from consuming
-unreserved CPU or RAM when other work has filled the node; it may remain pending.
+The trusted controller has a service account restricted to pods, services and
+per-workspace API-key Secrets in `assistant-sandbox`. It has no rights on
+volume claims. These credentials never enter a workspace. A workspace's own
+terminal key grants access only to that workspace. A small ASGI gate checks the
+caller's WebUI session, exact user ID and current groups before forwarding to
+the native orchestrator. WebUI always asks for the policy named `sandbox`; the
+gate replaces it with the account's own policy, so a caller cannot name another
+account's home or another group's list. It exposes no policy administration
+API. Static tool discovery starts no pod. WebSocket sessions reauthenticate by
+reconnecting after at most 60 seconds.
 
-At the tested 42 CPUs and 51,200 MiB allocatable RAM, large mode with the memory
-stack, full telemetry (6,656 MiB reserve), Alertmanager and the full pool leaves
-**1.75 CPUs and 3,584 MiB**. Builds and VMs require additional admission.
-Shared mode is refused: current source declares 43.5 application CPUs and
-55.5 GiB application RAM before telemetry or this pool. Its selected 14 GiB
-SGLang pod also inherits a 16 GiB memory-backed volume, which the planner refuses.
-This feature does not lower existing workload limits to make the test pass.
+### Files
 
-**Images and metrics.** The `sandbox` pipeline stage builds from the two pinned
-source commits, runs the offline native-tool/browser smoke and scans with the
-existing Trivy policy and an empty exception list. `AI_STACK_PUSH=1` then uses
-the existing signing, SBOM attestation and signature verification path. Supply
-the resulting digest to the render; tags alone are refused. Open Terminal is
-MIT; Terminals has the Open WebUI Enterprise licence with a personal,
-non-commercial-use exception. This image is for the owner's family installation;
-organizational deployment needs a separate licence review. Playwright is Apache
-2.0; Chromium and OS/Python/Node dependencies retain their own licences. The
-image carries the upstream licence texts and the pipeline produces an SBOM.
+Each workspace has two volumes:
+
+| Path | Volume | Lifetime |
+| --- | --- | --- |
+| `/home/user` | The account's claim `sandbox-home-<name>` when the account is in the homes mapping; otherwise a 2 GiB `emptyDir` | A claim outlives every workspace. An `emptyDir` is deleted at teardown |
+| `/tmp` (also `TMPDIR`, pip and npm caches) | A 2 GiB `emptyDir` | Deleted at teardown, always |
+
+The homes are NAS datasets, one per user, rendered and applied separately
+(see [sandbox homes](HOME-LAB.md#sandbox-homes-per-user-nas-volumes)). The mapping
+file lists `webui_user_id`, `name`, `group` and an optional `quota` per user;
+`lib/workstation/sandbox_homes.py` reads it. The NAS enforces the quota. The
+workspace pod mounts the claim through the node's NFS driver; the workspace's
+own network rules do not apply to that mount, and the workspace gains no route
+to the NAS. Apply the sandbox bundle first (namespace and quota), then the homes
+render. The quota allows 32 claims, the mapping's maximum, and the controller
+cannot create one.
+
+An account without a mapping entry still gets a workspace, with a disposable
+home, as before. Access is decided by group membership alone; refusing unmapped
+accounts would make a group change wait for a storage change. Tell users whose
+home is disposable to download wanted files before teardown.
+
+A persistent home also keeps whatever a prompt-injected command wrote there,
+including shell start-up files. A later workspace starts with those files.
+Treat a home as untrusted input, and delete the dataset's contents to reset it.
+
+### Network
+
+The namespace has default-deny policies. Only the controller can open
+connections to workspace port 8000. A workspace can open connections to one
+place: the egress proxy for its list, on port 4750. It has no DNS, no route to
+the node, cluster services, other workspaces, the other list's proxy, the LAN
+or the Internet. Chromium and local web servers communicate inside the pod
+(`NO_PROXY=localhost,127.0.0.1`). The controller alone can reach WebUI, DNS and
+the exact configured API endpoint. There is no public Ingress, NodePort or
+browser-debugging listener.
+
+**Egress proxy.** Each list has its own proxy Deployment, `sandbox-egress-family`
+and `sandbox-egress-parents`. Which list a workspace gets is decided by which
+proxy the NetworkPolicy lets its pod reach, from a label the gate's policy sets.
+Nothing the workspace sends can select another list. Workspaces receive
+`HTTP_PROXY`, `HTTPS_PROXY` and their lower-case forms.
+
+The proxy is [Smokescreen](https://github.com/stripe/smokescreen) (MIT) at
+release v0.1.0, built by the `egress` pipeline stage with
+`infrastructure/ai-stack/egress/main.go`:
+
+- It allows a request only when the host is on the group's list. The lists are
+  in [`infrastructure/service/sandbox-egress.json`](../infrastructure/service/sandbox-egress.json);
+  changing one is a reviewed repository change. There is no open or report-only
+  mode in the rendered ACL, and an unknown group gets an empty list.
+- After resolving an allowed name it refuses private, loopback, link-local,
+  carrier-NAT and IPv4-embedding addresses, and the ranges the render passes
+  explicitly (`192.168.0.0/16`, `10.0.0.0/8` which holds the pod and service
+  ranges, `172.16.0.0/12`, `169.254.0.0/16`, `100.64.0.0/10`, `127.0.0.0/8`).
+  It connects to the address it checked, so a name that changes its answer
+  cannot redirect the connection.
+- The proxy pods' own NetworkPolicy allows DNS and public addresses on TCP 80
+  and 443 only, with the same private ranges excepted. A listed name therefore
+  cannot be used to reach another port, and the address check does not rest on
+  the proxy alone.
+- It logs one line per request with the group, the domain and `allow` or
+  `deny`. It does not log paths, queries, headers, client addresses, sizes or
+  content, and it does not terminate TLS. Alloy scrapes
+  `workstation_sandbox_egress_requests_total{group,decision}`; domains stay in
+  the pod log.
+
+Squid with an allowlist and address ACLs was the alternative. It can enforce the
+same lists, but its private-address protection has to be written and kept
+correct as ACLs against resolved destinations, its default logs carry full
+URLs for plain HTTP, and its image is a C daemon with a distribution's
+packages. Smokescreen has the address checks built in and tested for this
+purpose, logs nothing beyond what this wrapper lets through, and ships as one
+static binary in an empty image.
+
+**Proposed lists** (the owner approves them by merging):
+
+| List | Domains |
+| --- | --- |
+| `family` (15) | Registries: `pypi.org`, `files.pythonhosted.org`, `registry.npmjs.org`, `raw.githubusercontent.com`, `codeload.github.com`. Documentation: `docs.python.org`, `packaging.python.org`, `pip.pypa.io`, `www.pygame.org`, `developer.mozilla.org`, `www.w3schools.com`, `docs.npmjs.com`, `nodejs.org`, `p5js.org`, `en.scratch-wiki.info` |
+| `parents` (51) | Everything on `family`, plus GitHub (`github.com`, `api.github.com`, release and gist content hosts, `docs.github.com`), Rust, Go and Maven registries and their documentation, the CDNs `cdn.jsdelivr.net`, `unpkg.com`, `cdnjs.cloudflare.com`, Google Fonts, `*.readthedocs.io`, framework documentation (Django, Flask, FastAPI, React, Vue, Vite, TypeScript, Tailwind, Microsoft Learn, Kubernetes), `stackoverflow.com` with `cdn.sstatic.net`, and `en.wikipedia.org` with `upload.wikimedia.org` |
+
+Deliberately not on the family list: `github.com` (any repository's content
+and a place to post), `scratch.mit.edu` (community features), Wikipedia, video,
+search and chat sites. The proxy allows whole domains; one section of a site,
+such as BBC Bitesize, cannot be allowed without the rest of that domain.
+Documentation pages that load scripts or fonts from other domains render
+partly. General web access for Parents is not included: Smokescreen has no site
+categories, and an open rule would be a tunnel to any public host. It remains
+an owner decision; the private-address denial would still apply.
+
+**What egress adds to the threat model.** Code in a workspace can now fetch and
+run packages, including their install scripts, and can send data to any listed
+domain that accepts it. Package registries and raw content hosts are read-only
+for an anonymous client; GitHub, on the Parents list, accepts uploads from
+anyone holding a token. Do not put secrets in a workspace.
+
+Prompt-injected code and malicious pages can destroy or expose the current
+user's workspace and home through tool responses. They receive no family
+storage beyond that home, no service keys and no Kubernetes identity. Chromium
+runs headless with its inner sandbox disabled because this image uses the
+pod/container security boundary; it is not a second isolation boundary.
+Kernel/container escapes remain a shared-host risk.
+
+### Capacity by mode
+
+A namespace quota bounds the pool: two workspace pods (750m CPU / 2 GiB RAM /
+2 GiB ephemeral storage each), the controller (250m / 256 MiB / 256 MiB) and two
+proxies (100m / 64 MiB / 16 MiB each). Requests equal limits. The pool is
+**1.95 CPUs and 4,480 MiB**; the planner reserves all of it even when no
+workspace runs. Fractional CPU requests use the shared CPU pool.
+
+`service plan` counts what K3s admits on: resource **requests**. It reports the
+limits beside them, and a plan whose limits sum past the node has the status
+`planned-limits-overcommitted`. Give it the node's pod list
+(`--node-pods`, from `kubectl get pods -A -o json`) to count the cluster's own
+pods, which the offline render cannot know.
+
+The earlier planner and the live session admission disagreed about family mode
+for these reasons:
+
+| Difference | Earlier planner | Live admission (`session.sh`) | Now |
+| --- | --- | --- | --- |
+| Service pods (WebUI, gateway, database, tools, memory) | Limits: 43.5 CPUs, 55.5 GiB for the applications | Requests: 36.1 CPUs, 45.5 GiB | Requests for fit; limits reported |
+| SGLang's 16 GiB memory-backed `/dev/shm` on a 14 GiB pod | Refused the plan outright | Not counted; it is charged inside the pod's 14 GiB | Counted inside the pod limit |
+| Telemetry | The whole observability source at its limits (10.75 CPUs) and the full reserve (6,656 MiB) | The telemetry pods that run (0.55 CPUs, 704 MiB requested) | Requests of the rendered telemetry pods; the reserve stays on the limit side |
+| Cluster services, GPU operator, NFS driver, host collectors | Not counted | 1.2 CPUs, 2.5 GiB requested | Counted with `--node-pods` |
+| Alertmanager (zero replicas) | Counted at its limit | Not running | Counted at its request |
+| Picture generators and the game | Counted only in the mode that runs them | Same | Unchanged |
+
+Measured on 14 November in family mode: 37.9 of 42 CPUs and 49.9 of 51.3 GiB
+requested. The planner now gives the same figures, less Alertmanager's 0.1 CPU
+and 128 MiB.
+
+Remaining capacity at 42 CPUs and 51,333 MiB allocatable, with the cluster's
+own pods counted:
+
+| Mode and composition | Without the pool | With the pool |
+| --- | --- | --- |
+| Coder (large), assistant | 21.5 CPUs, 26,308 MiB | 19.6 CPUs, 21,828 MiB |
+| Coder (large), assistant with memory | 20.0 CPUs, 21,828 MiB | 18.1 CPUs, 17,348 MiB |
+| Family (shared), assistant | 5.5 CPUs, 5,828 MiB | 3.6 CPUs, 1,348 MiB |
+| Family (shared), assistant with memory (what runs today) | 4.0 CPUs, 1,348 MiB | **Does not fit: 3,132 MiB short** |
+
+**Family mode: the pool does not fit.** Family mode with the memory services has
+1.3 GiB of unrequested memory. The pool needs 4.4 GiB. A single workspace with
+the controller and proxies needs 2.4 GiB and does not fit either. A workspace
+that requested 1 GiB and could burst to 2 GiB would be admitted with nothing to
+spare, which is not a margin. The render therefore still refuses the sandbox in
+shared mode, and `workstationctl mode family` renders without it and says so,
+so the switch keeps working with `MODE_SANDBOX_CONFIG` set. No workload budget
+was lowered.
+
+For the pool to run in family mode, at least 3.2 GiB of memory requests have to
+move. The candidates, each an owner decision:
+
+- Run family mode without the memory services (4,480 MiB requested). The pool
+  then fits with 1.3 GiB left.
+- Request less for the two picture generators. They request 22 GiB while idle;
+  their requests are sized as Guaranteed GPU pods, not from measured use.
+- Return part of the 12 GiB host, K3s and eviction reservation to pods.
+- Add RAM.
+
+Family mode's limits already sum 12.4 GiB and 4 CPUs past the node, and its
+requests sit 4.6 GiB inside the 6,656 MiB telemetry reserve. Both are how the
+mode runs today and are now visible in `capacity.json`
+(`limits`, `remaining_mib_after_telemetry_reserve`).
+
+Switching from coder to family mode while workspaces are running counts their
+requests against the session admission. Wait for the 15-minute idle teardown,
+or the switch may be refused.
+
+### Images and metrics
+
+The `sandbox` and `egress` pipeline stages build from pinned source commits, run
+offline smoke tests and scan with the existing Trivy policy and empty exception
+lists. `AI_STACK_PUSH=1` then uses the existing signing, SBOM attestation and
+signature verification path. Supply the resulting digests to the render; tags
+alone are refused.
+
+The egress smoke test starts the proxy with no network and sends it requests
+for names pinned to LAN, cluster, loopback and public addresses. It then checks
+that the proxy's whole output holds only group, domain and decision.
+
+Open Terminal is MIT; Terminals has the Open WebUI Enterprise licence with a
+personal, non-commercial-use exception. This image is for the owner's family
+installation; organizational deployment needs a separate licence review.
+Playwright is Apache 2.0; Smokescreen is MIT. Chromium and OS/Python/Node/Go
+dependencies retain their own licences. The images carry the upstream licence
+texts and the pipeline produces SBOMs.
 
 Alloy scrapes `workstation_sandbox_executions_total{group="Admin|Parents|Family"}`
 from the controller. It counts authorized native command attempts, including
 attempts that fail; counters reset on controller restart. The kubelet collector
 retains CPU, memory and throttling metrics for the sandbox namespace. Application
-and access logging are disabled: no code, output, tokens or user IDs are emitted
-to the telemetry path. Native command-result buffers remain transient files in
-that user's workspace so tool results can be read; they disappear with the pod.
+and access logging are disabled in the controller and workspaces: no code,
+output, tokens or user IDs are emitted to the telemetry path.
 
-**Owner rollout after merge and qualification:**
+### Owner rollout after merge and qualification
 
-1. Run `AI_STACK_PUSH=1 bash infrastructure/ai-stack/build-stage.sh sandbox` on
-   the build host. Keep the scan, SBOM, signature verification and `image.digest`.
-2. Set the signed digest, actual group UUIDs and API endpoint in `sandbox.json`.
-   Choose whether children may use it and whether disposable workspaces suffice.
-3. Render the assistant in large mode with `--sandbox-config`, and run
-   `service plan` with fresh node resource and telemetry evidence. Inspect both
-   `workloads.yaml` and `sandbox.yaml`. Run the scratch K3s denials, quota,
-   idle cleanup and cross-account tests before applying either to the live site.
-4. Apply the reviewed sandbox bundle through the owner's normal deployment
-   process, then start its controller. Set `MODE_SANDBOX_CONFIG` to preserve the
-   config in coder-mode renders. The flag deliberately refuses family/shared
-   mode until that composition is right-sized and verified. The mode command
-   does not apply the separate namespace bundle.
-5. Roll out the rendered WebUI configuration. Select **Private coding workspace**
-   in a native-tool-capable chat. Ask it to write a small HTML game, serve it on
-   loopback, run Playwright, inspect the screenshot and describe the result.
-   Verify Admin and Parents access and Family denial from separate accounts.
+1. Merge and apply the storage work first: the NAS datasets and the homes
+   mapping ([sandbox homes](HOME-LAB.md#sandbox-homes-per-user-nas-volumes)).
+2. Run `AI_STACK_PUSH=1 bash infrastructure/ai-stack/build-stage.sh sandbox` and
+   the same for `egress` on the build host, or accept the digests recorded in
+   `versions.lock`. Keep the scan, SBOM, signature verification and
+   `image.digest`.
+3. Write `sandbox.json`: both digests, the group UUIDs, `family_enabled`,
+   `group_resolution`, two free service addresses, the API endpoint and the
+   homes mapping path.
+4. Render the assistant in large mode with `--sandbox-config`, and run
+   `service plan` with fresh node resource and telemetry evidence and
+   `--node-pods`. Inspect `workloads.yaml` and `sandbox.yaml`.
+5. Apply the sandbox bundle through the owner's normal deployment process, then
+   the homes render. Scale the two proxies and the controller to one replica.
+   Set `MODE_SANDBOX_CONFIG` to preserve the config in coder-mode renders. The
+   mode command does not apply the separate namespace bundle.
+6. Roll out the rendered WebUI configuration. Select **Private coding workspace**
+   in a native-tool-capable chat. Ask it to write a small HTML game, install a
+   package, serve the game on loopback, run Playwright, inspect the screenshot
+   and describe the result. Check Admin, Parents and Family from separate
+   accounts, and that a file in a mapped home survives a teardown.
+7. Run the network probe in a live workspace of each group (below).
 
 For rollback, omit `--sandbox-config` (and unset `MODE_SANDBOX_CONFIG`), roll out
 the resulting WebUI config, and let the controller reap workspaces before
-stopping it. Deleting the namespace or stopping active workspaces loses their
-disposable files; retain wanted files first. No rollout or deletion is automatic.
+scaling it and the proxies to zero. Homes are untouched by a rollback; their
+volumes are retained even if a claim is deleted.
 
-**2026-11-14 scratch evidence.** Rootless Podman on the workstation built candidate
-`c37b81317714`, whose local manifest digest is recorded as
-`ASSISTANT_SANDBOX_CANDIDATE_IMAGE` in `versions.lock`. It has not been signed or
-published. The native `/execute` tool wrote and served **Star catcher**; Playwright
-1.65.2 clicked three stars, observed the win state and zero page errors, and the
-native file tool returned the PNG. The [captured screenshot](assets/sandbox-game-20261114.png)
-shows the disabled star button and “You win!”. This is an assistant-authored tool
-smoke, not a qualified SGLang/WebUI conversation. The final image also passed a
-probe of the actual upstream Kubernetes pod builder and idle reaper against a fake
-API: separate user pod names, preserved security/resources and idle deletion.
-Real controller database migrations, policy seeding and application startup also
-passed at 250m CPU / 256 MiB RAM, with cluster I/O replaced by a test double.
+### Network probe
 
-Trivy passed the existing policy with no exceptions: 7 critical findings without
-available fixes, 313 high, 674 medium, 971 low and 29 unknown. Passing that policy
-does not mean the image is vulnerability-free. Actual K3s network enforcement,
-quota saturation, controller restart/reconciliation, cross-account WebUI behavior,
-image signing/promotion and the complete model-driven chat remain unverified.
+[`tests/workstation/probe_sandbox_network.py`](../tests/workstation/probe_sandbox_network.py)
+runs inside a workspace. It tries direct connections that must fail, asks a
+resolver that must not answer, and sends CONNECT requests through the proxy.
+It exits 1 on any surprise. On the live cluster, with a workspace pod of a
+Family account running, substitute the proxy address from `sandbox.json`:
+
+```sh
+kubectl -n assistant-sandbox exec -i POD -- python -I - '{
+  "closed": {"node API": ["192.168.30.11", 6443], "node kubelet": ["192.168.30.11", 10250],
+             "kubernetes service": ["10.43.0.1", 443], "DNS service": ["10.43.0.10", 53],
+             "NAS": ["192.168.30.10", 2049], "LAN": ["192.168.1.40", 22],
+             "Internet": ["1.1.1.1", 443], "parents proxy": ["10.43.0.202", 4750]},
+  "open": {"own proxy": ["10.43.0.201", 4750]},
+  "dns": "10.43.0.10",
+  "allowed": ["pypi.org", "docs.python.org"],
+  "denied": ["github.com", "example.com", "192.168.1.40:22", "10.43.0.1",
+             "kubernetes.default.svc.cluster.local"]}' < tests/workstation/probe_sandbox_network.py
+```
+
+Add a second user's workspace pod address under `closed` to check cross-user
+denial. For a Parents workspace swap the two proxy addresses and move
+`github.com` to `allowed`.
+
+### 2026-11-14 evidence
+
+**Scratch cluster.** K3s v1.37.2+k3s1, the live release, in a throwaway QEMU
+virtual machine on the workstation with user-mode networking. Rootless Podman
+could not host K3s: the user session has no delegated `cpuset` controller. The
+rendered bundle was applied unchanged except for image references (local tags
+in place of digests) and four `sandbox.test` names added to the family list,
+which a CoreDNS stub resolved to the LAN, the node, a ClusterIP and the VM's
+gateway. Workspace pods were built by hand from the rendered policies.
+
+| Check | Result |
+| --- | --- |
+| From each workspace, direct: node API, kubelet and SSH; `kubernetes` ClusterIP; DNS service and CoreDNS pod (UDP and TCP); LAN host; VM gateway; `1.1.1.1`; controller pod and service; other user's workspace; an unrestricted pod; the other list's proxy; its own proxy's metrics port | All closed (17 targets per workspace). Name resolution fails |
+| The same node, ClusterIP, DNS, LAN and Internet targets from a pod with no policy | All open, so the denials are the policies' |
+| Family workspace through its proxy | `pypi.org`, `files.pythonhosted.org`, `registry.npmjs.org`, `docs.python.org`, `developer.mozilla.org`: tunnel. `github.com`, `en.wikipedia.org`, `example.com`: refused |
+| Parents workspace through its proxy | `pypi.org`, `github.com`, `en.wikipedia.org`, `docs.readthedocs.io`: tunnel. `example.com`: refused |
+| Listed names resolving to the LAN, the node, a ClusterIP and the gateway; private address literals; cluster service names; `localhost`; `169.254.169.254` | All refused |
+| A listed domain on port 22 | Refused (the proxy's NetworkPolicy) |
+| A workspace pod with no list label | No route to either proxy or anything else |
+| `pip download`, `npm view`, `curl` and Playwright Chromium in the Family workspace | Work for listed sites; `github.com` and LAN targets blocked |
+| Home on a claim, `/tmp` on `emptyDir`, pod deleted and recreated | Home file kept, owned 1000:1000; scratch file gone |
+| A third workspace while two run | Refused by the quota |
+| The real controller at one replica under restricted Pod Security | Ready, no restarts; unauthenticated and forged-policy requests get 403; its service account cannot create claims |
+| Proxy logs after all of the above | Only `{group, domain, decision}` lines |
+
+The home in this test was a local volume, not the NAS: the NFS mount, the
+dataset quota and squashed ownership are verified by the storage work, not
+here. The scratch node is a VM with K3s defaults, not the live host with its
+firewall; run the probe above on the live cluster after applying.
+
+**Images.** `versions.lock` records the two digests the pipeline built, scanned,
+signed and pushed. The final sandbox image passed a probe of the actual
+upstream Kubernetes pod builder and idle reaper against a fake API: separate
+user pod names, the mapped user's claim at `/home/user`, a separate scratch
+volume, the egress label and proxy variables, preserved security and resources,
+and idle deletion. Real controller database migrations and seeding of all four
+fixture policies also passed. Trivy passed the existing policy with no
+exceptions for both images. The sandbox image has 7 critical findings without
+available fixes, 313 high, 674 medium, 971 low and 29 unknown. The egress image
+has no critical findings and 8 high, all with fixes available: four in the Go
+1.26.7 standard library and four in modules Smokescreen v0.1.0 vendors (`logrus`,
+`golang.org/x/net`, `golang.org/x/text`). Passing the policy does not mean an
+image is vulnerability-free.
+
+The earlier native-tool smoke still stands: `/execute` wrote and served **Star
+catcher**, Playwright 1.65.2 clicked three stars and observed the win state, and
+the native file tool returned the PNG ([captured screenshot](assets/sandbox-game-20261114.png)).
+That was an assistant-authored tool smoke, not a qualified SGLang/WebUI
+conversation.
+
+**Still unverified:** a workspace created by the controller for a real WebUI
+session, including the gate's group and policy choice against a live WebUI;
+cross-account behaviour in WebUI; NAS-backed homes in a workspace; the network
+probe on the live node; controller restart and reconciliation with live
+workspaces; and a complete model-driven chat that installs a package and
+builds a game.
 
 ## Select and render
 

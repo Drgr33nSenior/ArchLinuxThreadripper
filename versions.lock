@@ -132,5 +132,7 @@ HERMES_AGENT_COMMIT=13fb5e1eceba51fc45a48b5d95a357e144d42689
 OPEN_TERMINAL_VERSION=0.17.9
 TERMINALS_VERSION=0.3.3
 PLAYWRIGHT_VERSION=1.65.2
-# Built and scanned locally; not signed or published. Promotion is owner-run.
-ASSISTANT_SANDBOX_CANDIDATE_IMAGE=registry.lan.thespry.family/local/assistant-sandbox@sha256:93ac1589a71e95cb75c828c29bd32173b878411b201557b1f7dc36e49601f038
+# Built, scanned, signed and pushed by the sandbox and egress pipeline stages on 2026-11-14.
+# Candidates: the owner supplies the digests to --sandbox-config after review.
+ASSISTANT_SANDBOX_CANDIDATE_IMAGE=registry.lan.thespry.family/local/assistant-sandbox@sha256:259c186c6dbc088d5c2da67f136095dca73243777804e5e1de69e8711f6b7a36
+SANDBOX_EGRESS_CANDIDATE_IMAGE=registry.lan.thespry.family/local/sandbox-egress@sha256:ec30805aa7a3993d7f679c06bd18d5bf9e7f5c28c793506c47119b19abf1a87e

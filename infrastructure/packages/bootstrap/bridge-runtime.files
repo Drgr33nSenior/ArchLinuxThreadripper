@@ -420,3 +420,10 @@ infrastructure/ai-stack/sandbox/control.py
 infrastructure/ai-stack/sandbox/terminal.py
 infrastructure/ai-stack/sandbox/smoke.py
 infrastructure/ai-stack/sandbox/scan-allowlist.json
+infrastructure/service/sandbox-egress.json
+infrastructure/ai-stack/egress/main.go
+infrastructure/ai-stack/egress/build.sh
+infrastructure/ai-stack/egress/Containerfile
+infrastructure/ai-stack/egress/smoke.py
+infrastructure/ai-stack/egress/smoke-acl.yaml
+infrastructure/ai-stack/egress/scan-allowlist.json

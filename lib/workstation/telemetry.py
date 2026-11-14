@@ -229,10 +229,21 @@ def pod_budget(obj):
         init.append(container["resources"]["limits"])
     memory = max([sum(quantity(c["memory"], True) for c in limits)] + [quantity(c["memory"], True) for c in init])
     cpu = max([sum(quantity(c["cpu"]) for c in limits)] + [quantity(c["cpu"]) for c in init])
-    shm = sum(quantity(v["emptyDir"]["sizeLimit"], True) for v in spec.get("volumes", [])
-              if v.get("emptyDir", {}).get("medium") == "Memory")
-    require(shm <= memory, "memory-backed volumes exceed pod limits")
+    # A memory-backed emptyDir is charged to the pod and sized by the kubelet at the smaller
+    # of its sizeLimit and the pod's memory limit, so it is inside the limit, never extra RAM.
+    shm = min(memory, sum(quantity(v["emptyDir"]["sizeLimit"], True) for v in spec.get("volumes", [])
+                          if v.get("emptyDir", {}).get("medium") == "Memory"))
     return {"memory_mib": math.ceil(memory), "cpu": cpu, "shared_memory_mib": math.ceil(shm)}
+
+
+def pod_requests(spec):
+    """What the scheduler admits a pod spec on: summed container requests, or the largest init container."""
+    def total(key, memory):
+        def request(container):
+            value = container.get("resources", {}).get("requests", {}).get(key)
+            return quantity(value, memory) if value is not None else 0
+        return max([sum(request(c) for c in spec["containers"])] + [request(c) for c in spec.get("initContainers", [])])
+    return {"memory_mib": math.ceil(total("memory", True)), "cpu": total("cpu", False)}
 
 
 def telemetry_policy(name, direction, port):

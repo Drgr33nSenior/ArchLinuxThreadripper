@@ -594,7 +594,9 @@ The workstation currently has 64 GB RAM. Recollect actual memory/topology;
 nominal 64 GiB less the existing 18 GiB reserves gives at most 46 GiB before
 firmware reserves.
 `service plan` adds gateway, database, tools and Alertmanager and counts builds
-and VMs explicitly. Existing limits and the telemetry reserve are retained.
+and VMs explicitly. It decides fit on resource requests, as K3s does, and reports
+the existing limits and the telemetry reserve beside them
+([AI service](AI-SERVICE.md)); neither is lowered.
 
 `service notifications` composes the verified telemetry render with the pinned
 Alertmanager, rules and exact receiver egress. The destination URL is a separate

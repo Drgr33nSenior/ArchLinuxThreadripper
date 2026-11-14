@@ -85,8 +85,16 @@ ws_mode() (
     ws_die 'cannot read the existing claims'
   ws_session_kubectl -n "$SESSION_NAMESPACE" get deployments -o json >"$render.live.json" ||
     ws_die 'cannot read the live Deployments'
+  # The coding workspace pool fits coder mode only (docs/ASSISTANT.md, capacity by mode).
+  # Family mode renders without it, so the switch still works and WebUI offers no workspace.
   local -a sandbox_args=()
-  [[ -z ${MODE_SANDBOX_CONFIG:-} ]] || sandbox_args=(--sandbox-config "$MODE_SANDBOX_CONFIG")
+  if [[ -n ${MODE_SANDBOX_CONFIG:-} ]]; then
+    if [[ "$render_mode" == large ]]; then
+      sandbox_args=(--sandbox-config "$MODE_SANDBOX_CONFIG")
+    else
+      ws_note 'coding workspaces are off in this mode: the pool does not fit beside the picture generators'
+    fi
+  fi
   "$(ws_measure_python)" "$(ws_repo_root)/lib/workstation/service.py" render "$MODE_SERVICE_SITE" "$render" \
     --mode "$render_mode" --experience "${MODE_SERVICE_EXPERIENCE:-assistant-memory}" \
     --existing-claims "$render.claims.json" \

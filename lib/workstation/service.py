@@ -48,7 +48,7 @@ def kube_yaml(document):
 def kube_yaml_all(documents):
     return yaml.dump_all(documents, Dumper=KubeDumper, sort_keys=False)
 
-from telemetry import gpu_claims, kustomize, load_objects, new_directory, pod_budget, pod_spec, sha, verify
+from telemetry import gpu_claims, kustomize, load_objects, new_directory, pod_budget, pod_requests, pod_spec, sha, verify
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -1287,9 +1287,13 @@ def render(args):
     overlay = {"large": experience, "split": experience + "-split", "shared": experience + "-shared"}[args.mode]
     objects = kustomize(ROOT / "apps/overlays" / overlay)
     sandbox_config = sandbox.read_config(args.sandbox_config) if getattr(args, "sandbox_config", None) else None
+    # Shared mode: with the memory experience the node's memory requests leave no room for
+    # the pool (docs/ASSISTANT.md, capacity by mode), so the render stops rather than
+    # produce a composition the scheduler would leave pending.
     require(not sandbox_config or (args.mode == "large" and
             getattr(args, "serving_profile", None) and experience.startswith("assistant")),
-            "sandbox requires an assistant serving contract in large mode; shared capacity is not qualified")
+            "sandbox requires an assistant serving contract in large mode; "
+            "the pool does not fit shared mode's memory requests")
     sandbox_objects = sandbox.render(sandbox_config, ROOT) if sandbox_config else []
     contract = None
     if getattr(args, "serving_profile", None):
@@ -1384,7 +1388,11 @@ def render(args):
     (output / "evidence.json").write_text(json.dumps({"status": "source-rendered-not-deployed", "mode": args.mode,
         "experience": experience,
         "sandbox": {"enabled": bool(sandbox_config), "qualified": False,
-                    "egress": "none", "workspace_retention": "until idle teardown"},
+                    "egress": "allowlisting proxy per group; no direct route",
+                    "family_enabled": bool(sandbox_config and sandbox_config["family_enabled"]),
+                    "group_resolution": sandbox_config["group_resolution"] if sandbox_config else None,
+                    "persistent_homes": len(sandbox_config["users"]) if sandbox_config else 0,
+                    "workspace_retention": "mapped users: home persists, scratch until teardown; others: until teardown"},
         "existing_claims": existing,
         "serving_contract": ({"contract": contract["contract"], "status": contract["status"],
                               "missing_inputs": contract["missing_inputs"], "checks": contract_checks}
@@ -1398,7 +1406,42 @@ def render(args):
     print("Rendered service source; replicas remain zero:", output)
 
 
-def capacity(resources, workloads, telemetry, telemetry_stack, mode, build_mib=0, build_cpus=0, vm_mib=0, vm_cpus=0):
+def platform_requests(node_pods, planned_namespaces):
+    """Requests of the node's other pods, from `kubectl get pods -A -o json`.
+
+    Everything outside the namespaces this plan renders: the cluster's own services, the
+    GPU operator, storage drivers, host collectors. The offline render cannot know them;
+    the live session admission counts them. Unknown quantities fail closed.
+    """
+    require(isinstance(node_pods, dict) and node_pods.get("kind") in {"PodList", "List"},
+            "supply kubectl get pods -A -o json")
+    factors = {"cpu": {"": 1, "m": .001},
+               "memory": {"": 1, "k": 1e3, "M": 1e6, "G": 1e9, "Ki": 1024, "Mi": 1048576, "Gi": 1073741824}}
+    def request(container, key):
+        value = str(container.get("resources", {}).get("requests", {}).get(key, "0"))
+        match = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)([a-zA-Z]*)", value)
+        require(match is not None and match[2] in factors[key], "unhandled platform pod quantity")
+        return float(match[1]) * factors[key][match[2]]
+    total = {"cpu": 0.0, "memory": 0.0}
+    for pod in node_pods["items"]:
+        if pod["metadata"]["namespace"] in planned_namespaces or pod.get("status", {}).get("phase") in {"Succeeded", "Failed"}:
+            continue
+        for key in total:
+            total[key] += max([sum(request(c, key) for c in pod["spec"]["containers"])] +
+                              [request(c, key) for c in pod["spec"].get("initContainers", [])])
+    return {"cpu": round(total["cpu"], 3), "memory_mib": -(-int(total["memory"]) // 1048576)}
+
+
+def capacity(resources, workloads, telemetry, telemetry_stack, mode, build_mib=0, build_cpus=0, vm_mib=0, vm_cpus=0,
+             node_pods=None):
+    """Whether a mode's composition fits the node, counted the way K3s admits pods.
+
+    `fits` and the remaining figures use resource *requests*: the scheduler, and the live
+    session admission in session.sh, admit on requests. Limits are reported beside them:
+    the burst ceilings a pod may reach but is not promised. The limits may sum past the
+    node (requests sit at measured use and limits carry headroom); that excess is shown,
+    not hidden, and does not block.
+    """
     require(resources.get("schema_version") == 1 and resources.get("status") == "offline-plan-not-applied", "use resources plan output")
     require(all(type(n) is int and n >= 0 for n in (build_mib, build_cpus, vm_mib, vm_cpus)), "budgets must be nonnegative integers")
     names = {"sglang", "open-webui", "litellm", "gateway-postgres", "service-tools"}
@@ -1410,31 +1453,55 @@ def capacity(resources, workloads, telemetry, telemetry_stack, mode, build_mib=0
     # Opt-in memory workloads count against the same budget when rendered.
     names |= {"neo4j", "memory-embedding", "graphiti-memory"} & selected.keys()
     require(names <= selected.keys(), "service composition incomplete")
-    rows = [{"name": name, **pod_budget(selected[name])} for name in sorted(names)]
-    rows += sandbox.capacity_rows(workloads)
-    reserve = telemetry["reserve_mib"]
-    telemetry_cpu = sum(pod_budget(o)["cpu"] for o in telemetry_stack if pod_spec(o))
-    # Alertmanager is an optional extension to the existing telemetry composition.
-    # Its current declared limits are counted from its canonical manifest.
+    def row(name, obj):
+        request, limit = pod_requests(pod_spec(obj)), pod_budget(obj)
+        return {"name": name, **request, "limit_cpu": limit["cpu"], "limit_mib": limit["memory_mib"],
+                "shared_memory_mib": limit["shared_memory_mib"]}
+    def fixed(name, cpu, memory):
+        return {"name": name, "cpu": cpu, "memory_mib": memory, "limit_cpu": cpu, "limit_mib": memory}
+    rows = [row(name, selected[name]) for name in sorted(names)]
+    rows += [fixed(pool["name"], pool["cpu"], pool["memory_mib"]) for pool in sandbox.capacity_rows(workloads)]
+    stack = [o for o in telemetry_stack if pod_spec(o)]
+    # Alertmanager is an optional extension to the existing telemetry composition,
+    # counted from its canonical manifest whether or not it is running.
     alerts = load_objects((ROOT / "infrastructure/service/alertmanager.yaml").read_text())
-    alert_budget = next(pod_budget(o) for o in alerts if o["kind"] == "Deployment")
-    rows += [{"name": "alertmanager", **alert_budget},
-             {"name": "telemetry", "memory_mib": reserve, "cpu": telemetry_cpu},
-             {"name": "builds", "memory_mib": build_mib, "cpu": build_cpus},
-             {"name": "optional-vms", "memory_mib": vm_mib, "cpu": vm_cpus}]
+    rows += [row("alertmanager", next(o for o in alerts if o["kind"] == "Deployment")),
+             # Requests of the rendered telemetry pods. The limit side is the owner's declared
+             # telemetry reserve, which also covers the host collectors.
+             {"name": "telemetry", "cpu": sum(pod_requests(pod_spec(o))["cpu"] for o in stack),
+              "memory_mib": sum(pod_requests(pod_spec(o))["memory_mib"] for o in stack),
+              "limit_cpu": sum(pod_budget(o)["cpu"] for o in stack), "limit_mib": telemetry["reserve_mib"]},
+             fixed("builds", build_cpus, build_mib), fixed("optional-vms", vm_cpus, vm_mib)]
+    limitations = ["Capacity is not current available RAM or qualification.",
+                   "Fit is by scheduler requests; limits are burst ceilings and may sum past the node.",
+                   "Builds/VMs need explicit budgets; running unrelated work remains additional demand.",
+                   "Image mode never changes the requested model identity."]
+    if node_pods is None:
+        limitations.append("Platform pods (cluster services, GPU operator, host collectors) are not counted; "
+                           "supply --node-pods to match live session admission.")
+    else:
+        planned = {o["metadata"].get("namespace") for o in list(workloads) + stack + alerts} - {None}
+        rows.append({"name": "platform", **platform_requests(node_pods, planned), "limit_cpu": 0, "limit_mib": 0})
     # Shared claims: SGLang (gpu-0, gpu-1) and the picture ComfyUIs need two cards, not three.
     gpu = len(set().union(*(gpu_claims(selected[name]) for name in names)))
-    memory = resources["memory"]["allocatable_mib"] - sum(r["memory_mib"] for r in rows)
-    cpu = resources["allocatable_logical_cpus"] - sum(r["cpu"] for r in rows)
+    allocatable_mib, allocatable_cpu = resources["memory"]["allocatable_mib"], resources["allocatable_logical_cpus"]
+    memory = allocatable_mib - sum(r["memory_mib"] for r in rows)
+    cpu = allocatable_cpu - sum(r["cpu"] for r in rows)
+    limit_mib, limit_cpu = sum(r["limit_mib"] for r in rows), sum(r["limit_cpu"] for r in rows)
     fits = memory >= 0 and cpu >= 0 and gpu <= resources["gpu_count"]
-    return {"status": "planned-not-qualified" if fits else "blocked-capacity", "fits": fits,
+    over_cpu, over_mib = round(max(0, limit_cpu - allocatable_cpu), 3), max(0, limit_mib - allocatable_mib)
+    # Admitted but with limits past the node is its own status: overcommit is stated, never silent.
+    status = "blocked-capacity" if not fits else "planned-limits-overcommitted" if over_cpu or over_mib else "planned-not-qualified"
+    telemetry_row = next(r for r in rows if r["name"] == "telemetry")
+    return {"status": status, "fits": fits,
             "mode": mode, "rows": rows, "remaining_mib": memory, "remaining_cpus": round(cpu, 3),
+            # What would remain if the whole telemetry reserve were held back rather than
+            # only what the telemetry pods request. Negative: workloads sit inside the reserve.
+            "remaining_mib_after_telemetry_reserve": memory - max(0, telemetry["reserve_mib"] - telemetry_row["memory_mib"]),
+            "limits": {"cpu": round(limit_cpu, 3), "memory_mib": limit_mib,
+                       "over_node_cpus": over_cpu, "over_node_mib": over_mib},
             "required_gpus": gpu, "observed_total_mib": resources["memory"]["total_mib"],
-            "observed_dimms": resources["memory"].get("dimms"),
-            "limitations": ["Capacity is not current available RAM or qualification.",
-                            "CPU limits are conservatively summed; no silent overcommit.",
-                            "Builds/VMs need explicit budgets; running unrelated work remains additional demand.",
-                            "Image mode never changes the requested model identity."]}
+            "observed_dimms": resources["memory"].get("dimms"), "limitations": limitations}
 
 
 def plan(args):
@@ -1447,7 +1514,8 @@ def plan(args):
         (load_objects((Path(args.rendered) / "sandbox.yaml").read_text())
          if (Path(args.rendered) / "sandbox.yaml").exists() else []), telemetry,
         load_objects((Path(args.telemetry) / "stack.yaml").read_text()), evidence["mode"],
-        args.build_mib, args.build_cpus, args.vm_mib, args.vm_cpus)
+        args.build_mib, args.build_cpus, args.vm_mib, args.vm_cpus,
+        json.loads(Path(args.node_pods).read_text()) if args.node_pods else None)
     output = new_directory(args.output)
     (output / "capacity.json").write_text(json.dumps(result, indent=2) + "\n")
     print(result["status"], output / "capacity.json")
@@ -1598,6 +1666,7 @@ def main():
         p.add_argument(name)
     for name in ("build-mib", "build-cpus", "vm-mib", "vm-cpus"):
         p.add_argument("--" + name, type=int, default=0)
+    p.add_argument("--node-pods", help="kubectl get pods -A -o json; counts the node's other pods as live admission does")
     p = commands.add_parser("credentials"); p.add_argument("output")
     p = commands.add_parser("provision")
     p.add_argument("--existing-user", action="store_true")

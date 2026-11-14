@@ -22,7 +22,7 @@ RUN mv /root/.cache/ms-playwright /opt/playwright \
 COPY --chmod=0644 control.py terminal.py smoke.py /opt/sandbox/
 RUN OPEN_TERMINAL_API_KEY=build-fixture-not-a-credential python -c \
     'import json; from open_terminal.main import app; open("/opt/sandbox/openapi.json", "w").write(json.dumps(app.openapi()))'
-ENV HOME=/home/user USER=user TMPDIR=/home/user/tmp PYTHONDONTWRITEBYTECODE=1
+ENV HOME=/home/user USER=user TMPDIR=/tmp PYTHONDONTWRITEBYTECODE=1
 USER 1000:1000
 WORKDIR /home/user
 ENTRYPOINT ["/usr/bin/tini", "--"]

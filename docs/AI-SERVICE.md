@@ -110,13 +110,22 @@ MemTotal up to installed capacity or infer channels from DIMM count. The planner
 keeps the 12 GiB host, 4 GiB K3s and 2 GiB eviction reservations: nominal 64 GiB
 leaves at most 46 GiB before firmware reservations. Keep current application limits.
 
-`service plan` conservatively sums current limits for inference, WebUI/RAG,
-gateway, PostgreSQL, tools, Alertmanager and the verified telemetry composition.
-Pass separate `--build-mib/--build-cpus` and `--vm-mib/--vm-cpus` budgets when those
-will run. Defaults of zero mean those workloads are excluded, not unlimited.
-With the current limits, split mode exceeds even the metrics profile's 42-CPU
-allocatable budget (43.25 logical CPU limits). **Do not activate it on the basis
-of nominal capacity.** Measure and qualify a deliberate limit/profile adjustment first.
+`service plan` sums the resource **requests** of inference, WebUI/RAG, gateway,
+PostgreSQL, tools, Alertmanager and the verified telemetry composition, because
+K3s and the live session admission admit pods on requests. It reports the limits
+beside them. A plan that fits by requests while its limits sum past the node has
+the status `planned-limits-overcommitted`: the pods are admitted, and their burst
+ceilings are not all available at once. `remaining_mib_after_telemetry_reserve`
+shows what would remain with the whole telemetry reserve held back.
+Pass `--node-pods <kubectl get pods -A -o json>` to count the cluster's own pods
+(K3s services, the GPU operator, storage drivers, host collectors), which the
+offline render cannot know. Pass separate `--build-mib/--build-cpus` and
+`--vm-mib/--vm-cpus` budgets when those will run. Defaults of zero mean those
+workloads are excluded, not unlimited. The assistant guide shows the
+[figures by mode](ASSISTANT.md#capacity-by-mode).
+Split mode's limits exceed the 42-CPU allocatable budget. **Do not activate it on
+the basis of nominal capacity.** Measure and qualify a deliberate limit/profile
+adjustment first.
 Revisit ingestion concurrency and build parallelism independently under pressure.
 
 Current planning limits, before any build/VM allowance:

@@ -895,9 +895,18 @@ class ResourceTests(unittest.TestCase):
         split = service.capacity(resources, self.split, {"reserve_mib": 6144}, self.telemetry, "split")
         self.assertTrue(split["fits"])
         self.assertGreaterEqual(split["remaining_cpus"], 0)
-        # ... and the same plan on a smaller node is still reported over budget.
-        smaller = {**resources, "allocatable_logical_cpus": 36}
-        over = service.capacity(smaller, self.split, {"reserve_mib": 6144}, self.telemetry, "split")
+        # Fit is by scheduler requests (29.05 CPUs here). On a 36-CPU node the plan is still
+        # admitted, and the 39.5 CPUs of limits are reported as 3.5 past the node ...
+        smaller = service.capacity({**resources, "allocatable_logical_cpus": 36}, self.split, {"reserve_mib": 6144},
+                                   self.telemetry, "split")
+        self.assertTrue(smaller["fits"])
+        self.assertEqual(("planned-limits-overcommitted", "planned-not-qualified"), (smaller["status"], split["status"]))
+        self.assertEqual((6.95, 39.5, 3.5), (smaller["remaining_cpus"], smaller["limits"]["cpu"],
+                                             smaller["limits"]["over_node_cpus"]))
+        self.assertEqual(0, split["limits"]["over_node_cpus"])
+        # ... and a node smaller than the requests is reported over budget.
+        over = service.capacity({**resources, "allocatable_logical_cpus": 28}, self.split, {"reserve_mib": 6144},
+                                self.telemetry, "split")
         self.assertFalse(over["fits"])
         self.assertLess(over["remaining_cpus"], 0)
 

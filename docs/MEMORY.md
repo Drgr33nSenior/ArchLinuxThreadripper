@@ -209,9 +209,10 @@ To enable it on the installed workstation:
    AI_STACK_PUSH=1 bash infrastructure/ai-stack/build-stage.sh graphiti
    ```
 2. Render with `service render <site.json> <new-dir> --experience assistant-memory`.
-   Run `service plan` with fresh resources. Memory adds about 9 GiB of declared
-   limits. These are estimates, not measurements, and `service plan` counts
-   limits, so measure real use on the running host before adjusting them.
+   Run `service plan` with fresh resources. Memory adds about 4.4 GiB of
+   requests and 9 GiB of declared limits. `service plan` decides fit on requests
+   and reports limits; measure real use on the running host before adjusting
+   either.
 3. Create the `memory-service` Secret from the files `service credentials`
    writes: `service-key` from `memory-service-key` and `neo4j-auth` from
    `memory-neo4j-auth`. Add `llm-key` from a `service provision` key for client

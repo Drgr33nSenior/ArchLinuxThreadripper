@@ -1,11 +1,9 @@
 """Start native Open Terminal without host integration or application content logs."""
 import logging
 import os
-from pathlib import Path
 
 
 def main():
-    Path("/home/user/tmp").mkdir(exist_ok=True)
     os.chdir("/home/user")
     logging.disable(logging.CRITICAL)
     import uvicorn
