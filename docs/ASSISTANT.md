@@ -347,7 +347,7 @@ the host config sets
 
 `maintenance`, `split` and `ai` stop the second generator with everything else.
 
-#### Elastic chat cache (trial, off by default)
+#### Elastic chat cache (shared mode default since 14 November)
 
 With serving patches 0031-0033, SGLang can back an extra "tail" of KV cache in the memory the
 ComfyUIs are not using. The tail only holds more cached conversations, so returning to an older
@@ -364,11 +364,14 @@ chat skips re-reading it; the context a conversation may use stays at the arm's 
   (`POST /free`), waits until each holds less than 1.5 GiB, then asks SGLang to grow the tail. The
   first picture after a quiet spell reloads its models from NVMe; a run of pictures does not.
 
-`KV_TAIL_ENABLED=true` on service-tools turns it on; it needs an SGLang arm that sets
-`SGLANG_GFX1201_ELASTIC_KV_BASE_TOKENS`. SGLang without the tail answers `disabled`, which
-lets media run as before. State is in `/health` (`kv_tail`) and in the
-`workstation_assistant_kv_tail_*` metrics. Rollback: unset the variable and render the
-`UQSB` arm.
+Shared mode renders arm `UQSE` (UQSB plus the tail), which sets
+`SGLANG_GFX1201_ELASTIC_KV_BASE_TOKENS` and, through the render, `KV_TAIL_ENABLED=true` on
+service-tools. A grow without a size takes the largest tail that fits both cards (384,127 tokens on
+14 November). SGLang refuses the tail at startup unless a same-address remap self-test passes,
+which needs the amdgpu TLB-fence fix. B2 GPU results are in the serving repository's
+`docs/ELASTIC-KV-TAIL-20261114.md`. State is in `/health` (`kv_tail`), SGLang's `GET /kv_tail`
+and the `workstation_assistant_kv_tail_*` metrics. Rollback: render shared mode with `--arm UQSB`
+on its own image; nothing else changes.
 
 #### Short videos (shared mode)
 

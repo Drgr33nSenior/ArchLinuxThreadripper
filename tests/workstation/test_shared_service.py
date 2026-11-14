@@ -1477,11 +1477,13 @@ class ServingContractTests(unittest.TestCase):
         # 0028-0030): shared mode gets 100,768 tokens per conversation in UQS's bytes, large
         # mode keeps the model's 262,112 with a larger pool. A mode switch keeps the live image,
         # so a contract is active only on the image its arm was qualified on.
-        new = "registry.lan.thespry.family/local/sglang-gfx1201@sha256:38fc4d8a6318be676ca46ae18355fadeab5af6d4b8a2915b1d8ea83be9282ce1"
+        # Since 2026-11-14 shared mode defaults to UQSE (UQSB plus the elastic KV tail, its own image).
+        new = {"shared": "registry.lan.thespry.family/local/sglang-gfx1201@sha256:b4a906754da14db05e868f8cfa81cd6db9fef4056e269c562dfcf908f1a868ca",
+               "large": "registry.lan.thespry.family/local/sglang-gfx1201@sha256:38fc4d8a6318be676ca46ae18355fadeab5af6d4b8a2915b1d8ea83be9282ce1"}
         old = "registry.lan.thespry.family/local/sglang-gfx1201@sha256:9fc1a58ca06ae493a2e76ebab3d325245b740e98552b7db3214ef543e01e1c9c"
-        for mode, arm, context, pool in (("shared", "UQSB", 100768, 201600), ("large", "UQLB", 262112, 674688)):
+        for mode, arm, context, pool in (("shared", "UQSE", 100768, 645558), ("large", "UQLB", 262112, 674688)):
             with self.subTest(mode):
-                contract = service.serving_contract(self.PROFILE, runtime_image=new, mode=mode)
+                contract = service.serving_contract(self.PROFILE, runtime_image=new[mode], mode=mode)
                 self.assertEqual((f"qwen3.8-27b-mxfp4-tp2.{arm}", "active"), (contract["contract"], contract["status"]))
                 self.assertEqual((context, pool), (contract["budgets"]["context_length"], contract["budgets"]["max_total_tokens"]))
                 self.assertIn("--speculative-draft-kv-bundling", contract["_render"]["argv"])
@@ -1515,7 +1517,7 @@ class ServingContractTests(unittest.TestCase):
         self.assertNotIn("KV_TAIL_ENABLED", tools["UQSB"])
         contract = service.serving_contract(self.PROFILE, arm="UQSE", mode="shared")
         self.assertEqual(100768, contract["budgets"]["context_length"])
-        self.assertEqual("UQSB", service.shared_default_arm(json.loads(Path(self.PROFILE).read_text())))
+        self.assertEqual("UQSE", service.shared_default_arm(json.loads(Path(self.PROFILE).read_text())))
 
     def test_shared_render_serves_uqs_with_both_image_generators(self):
         site = self.root / "site.json"

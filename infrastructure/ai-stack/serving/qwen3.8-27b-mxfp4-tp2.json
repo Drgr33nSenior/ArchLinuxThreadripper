@@ -84,6 +84,26 @@
       "limits": "Qualified for shared mode: 81,888 tokens per conversation, two conversations in a 163,840-token FP8 pool. The quality menu leaves the same cases NOT RUN as arm Y. Re-qualify after any image, patch-series or arm change."
     },
     {
+      "arm": "UQSE",
+      "date": "2026-11-14",
+      "decision": "owner",
+      "image": "registry.lan.thespry.family/local/sglang-gfx1201@sha256:b4a906754da14db05e868f8cfa81cd6db9fef4056e269c562dfcf908f1a868ca",
+      "stack_lock_patchset": "d9af3651b8857720c996ec27c4341437c1ef80a78cc49cf0eb14536a8565f9cd",
+      "evidence": "B2 GPU window 2026-11-14 on both R9700s (Linux 7.3.4 with the amdgpu TLB-fence fix), live shared mode, image sha256:f1ddf1f0 (series 9506987f) and this image (series d9af3651, sizeless grow): startup same-address remap self-test passed on both ranks (32 rounds, 0.02 s); base 201,600 tokens (3.12 GiB), tail reserved 412,285 tokens (6.25 GiB), margin 40 slots; decode 86.3 tok/s unbacked, 87.9 with tail slots in use, 87.0 on this image (UQSB 86). Grow 330,000 tokens = 5.0 GiB/card in 72 ms (13-22 ms after); this image's sizeless grow chose 384,127 tokens. Shrinks with live migration 0.06-0.11 s (worst case 170,112 tokens migrated in 19 ms), idle shrink ~1.0 s (sysfs-confirmed release, kernel deferred free). Exact outputs across shrinks during decode (count 1-300), chunked prefill (40,792-token document recalled) and batch 2->1 (counts 1-120 and 1-300); base KV recalled from cache after migration and 70 grow/shrink cycles; 4 pictures and 1 Wan clip through service-tools' hand-over (shrink 0.07-1.03 s, no OOM); 0 amdgpu faults or resets, 0 restarts. Chat during a Wan clip dips to ~12-13 tok/s with or without the tail (clip-bound). Logs: ~/ai-stack/b2-20261114T155616Z, ~/ai-stack/b3-*. Not run: the bench Job quality menu (kernels unchanged from UQSB; tail is allocation only).",
+      "host_resources": {
+        "requests": {
+          "cpu": "16",
+          "memory": "14Gi"
+        },
+        "limits": {
+          "cpu": "16",
+          "memory": "14Gi"
+        },
+        "evidence": "UQSB's measured envelope (host_resources_from); the tail is GPU memory only. B2 ran at 16 CPU / 14 GiB with no host OOM."
+      },
+      "limits": "Qualified for shared mode on this image: 100,768 tokens per conversation; up to 412,285 extra cached tokens while the generators are idle. Requires the amdgpu TLB-fence fix (the self-test refuses the tail without it). Re-qualify after any image, patch-series or arm change."
+    },
+    {
       "arm": "UQLB",
       "date": "2026-11-13",
       "decision": "owner",
@@ -628,7 +648,7 @@
                   {"name": "SGLANG_GFX1201_FP8_KV_DEQUANT", "value": "1", "confidence": "L", "reason": "UQ2 (patches 0026 + 0027): read the fp8 target and draft KV caches as bf16 in the extend, grouped decode and verify kernels, keeping q and p in bf16, and let the verify kernel take fp8 caches; 0027 decodes with v_cvt_f32_fp8 (bitwise equal to the Triton cast). Kernel check on the R9700 (16 layers, DRAM-fed, against the bf16 cache on its serving tile): verify 0.96-1.04x at 8k-123k, grouped decode 0.80x at 47k, extend 1.15-1.18x per 2048-token chunk; kernel error within the bf16 cache's. Serving quality unmeasured.", "source": "serving repository serving/patches/sglang-main/0026-gfx1201-fp8-kv-dequant.patch, 0027-gfx1201-fp8-kv-hw-decode.patch; serving PR #30"}],
           "reason": "Shared mode (chat + pictures): UQ with the KV pool capped at 163,840 tokens and 81,888 per conversation, so two full conversations still fit. Sized to leave about 9 GiB free per card after startup for ComfyUI: SDXL 1024^2 with fp8 UNet and text encoders peaks at 6.6 GiB above idle (PR #90), --reserve-vram 1.5 covers SGLang's 0.6-0.8 GiB growth after startup (PR #96), plus margin. Arithmetic: Y leaves 1.81 GiB free per card at 262,144 BF16 tokens; FP8 target + draft KV (21 KiB/token/card against 42) frees 5.25 GiB, and 98,304 fewer tokens free 2.0 GiB more, about 9.1 GiB in all. TP2 sizes both ranks alike, so card 1 gets the same gap (room for a second ComfyUI). Accept after a bench shows the free memory, speed and quality.",
           "source": "UQ arm; owner decision 2026-11-11 (~160k shared context); SDXL measurements PR #90; SGLang growth measurement PR #96"},
-    "UQSB": {"default": false, "shared_default": true,
+    "UQSB": {"default": false, "shared_default": false,
           "drop": ["--disable-custom-all-reduce", "--speculative-draft-kv-cache-dtype", "--kv-cache-dtype", "--max-total-tokens", "--context-length"],
           "args": [{"flag": "--mamba-radix-cache-strategy", "value": ["no_buffer"]},
                    {"flag": "--disable-overlap-schedule", "value": []},
@@ -656,7 +676,7 @@
                   {"name": "SGLANG_GFX1201_FP8_KV_DEQUANT", "value": "1", "confidence": "L", "reason": "UQ2 (patches 0026 + 0027): read the fp8 target and draft KV caches as bf16 in the extend, grouped decode and verify kernels, keeping q and p in bf16, and let the verify kernel take fp8 caches; 0027 decodes with v_cvt_f32_fp8 (bitwise equal to the Triton cast). Kernel check on the R9700 (16 layers, DRAM-fed, against the bf16 cache on its serving tile): verify 0.96-1.04x at 8k-123k, grouped decode 0.80x at 47k, extend 1.15-1.18x per 2048-token chunk; kernel error within the bf16 cache's. Serving quality unmeasured.", "source": "serving repository serving/patches/sglang-main/0026-gfx1201-fp8-kv-dequant.patch, 0027-gfx1201-fp8-kv-hw-decode.patch; serving PR #30"}],
           "reason": "Shared mode (chat + pictures + video): UQS with DFlash draft KV bundling. The all-sliding-window draft keeps only one 2,047-token window per Mamba checkpoint plus what the two running requests hold (43,008 tokens, 0.21 GB per card) instead of one slot per target token (163,840), and the freed memory goes to the target pool: 201,600 tokens, 100,768 per conversation, two full conversations, in the same bytes as UQS (16 + 5 KiB per token per card). Free VRAM per card after startup is unchanged (8.36 GB against 8.35), so the image generators keep their room.",
           "source": "Upstream SGLang PRs 47057 and 47058, ported as serving patches 0028-0030 (Spry.ai-rdna4-serving PR #37); qualified 2026-11-13; owner decision 2026-11-13"},
-    "UQSE": {"default": false, "shared_default": false, "host_resources_from": "UQSB",
+    "UQSE": {"default": false, "shared_default": true, "host_resources_from": "UQSB",
           "drop": ["--disable-custom-all-reduce", "--speculative-draft-kv-cache-dtype", "--kv-cache-dtype", "--max-total-tokens", "--context-length"],
           "args": [{"flag": "--mamba-radix-cache-strategy", "value": ["no_buffer"]},
                    {"flag": "--disable-overlap-schedule", "value": []},
@@ -684,7 +704,7 @@
                   {"name": "SGLANG_GFX1201_FP8_KV_DEQUANT", "value": "1", "confidence": "L", "reason": "UQ2 (patches 0026 + 0027): read the fp8 target and draft KV caches as bf16 in the extend, grouped decode and verify kernels, keeping q and p in bf16, and let the verify kernel take fp8 caches; 0027 decodes with v_cvt_f32_fp8 (bitwise equal to the Triton cast). Kernel check on the R9700 (16 layers, DRAM-fed, against the bf16 cache on its serving tile): verify 0.96-1.04x at 8k-123k, grouped decode 0.80x at 47k, extend 1.15-1.18x per 2048-token chunk; kernel error within the bf16 cache's. Serving quality unmeasured.", "source": "serving repository serving/patches/sglang-main/0026-gfx1201-fp8-kv-dequant.patch, 0027-gfx1201-fp8-kv-hw-decode.patch; serving PR #30"},
                   {"name": "SGLANG_GFX1201_ELASTIC_KV_BASE_TOKENS", "value": "201600", "confidence": "L", "reason": "Elastic KV tail (serving patches 0031-0033): the first 201,600 target-pool tokens (UQSB's pool) stay mapped; the rest of the 645,558-token reservation (UQLB's pool) is a tail SGLang maps over HIP virtual memory only while service-tools has the picture and video ComfyUIs unloaded, as extra prefix-cache room. Before each picture or clip SGLang migrates live KV out of the tail and unmaps it, answering only once both cards show the memory free. Unqualified until the B2 GPU window.", "source": "serving repository docs/ELASTIC-KV-TAIL-20261114.md; plans/elastic-kv-20261113"},
                   {"name": "SGLANG_GFX1201_ELASTIC_KV_BASE_CONTEXT", "value": "100768", "confidence": "L", "reason": "Per-conversation context stays UQSB's 100,768 whatever the tail holds (owner decision 2026-11-14: the tail is cache room only), so chat never depends on memory the generators take back. With 2 running requests the startup capacity check leaves a 40-slot margin in the base.", "source": "serving repository docs/ELASTIC-KV-TAIL-20261114.md"}],
-          "reason": "UQSB plus an elastic KV tail: the same base pool, context and speed while the generators are in use; after 10 minutes without pictures or video, with their models unloaded, SGLang borrows their memory for up to 444,000 more cached tokens. Candidate only: qualified in the B2 window before it can become shared_default.",
+          "reason": "UQSB plus an elastic KV tail: the same base pool, context and speed while the generators are in use; after 10 minutes without pictures or video, with their models unloaded, SGLang borrows their memory for up to 444,000 more cached tokens. Qualified in the B2 window on 2026-11-14 and the shared default since; UQSB stays for rollback.",
           "source": "plans/elastic-kv-20261113/IMPLEMENTATION-PROMPT.md Track B; owner decisions 2026-11-14"},
     "UQL": {"default": false,
           "drop": ["--disable-custom-all-reduce", "--speculative-draft-kv-cache-dtype", "--kv-cache-dtype", "--max-total-tokens", "--context-length"],

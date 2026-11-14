@@ -467,11 +467,11 @@ for e in profile["args"]:
 for e in profile["env"]:
     assert e["reason"] and e["source"] and e["confidence"] in ("H", "M", "L"), e
 assert sum(1 for arm in profile["arms"].values() if arm["default"]) == 1
-# Shared mode's own default (UQSB); the general default is UQLB for the large mode.
-assert [n for n, a in profile["arms"].items() if a.get("shared_default")] == ["UQSB"]
+# Shared mode's own default (UQSE: UQSB plus the elastic KV tail, 2026-11-14); the general default is UQLB.
+assert [n for n, a in profile["arms"].items() if a.get("shared_default")] == ["UQSE"]
 # One qualification record per qualified arm, each pinned to the image it was measured on.
 records = profile["qualification"] if isinstance(profile["qualification"], list) else [profile["qualification"]]
-assert sorted(r["arm"] for r in records) == ["UQL", "UQLB", "UQS", "UQSB", "Y"] and len({r["arm"] for r in records}) == len(records)
+assert sorted(r["arm"] for r in records) == ["UQL", "UQLB", "UQS", "UQSB", "UQSE", "Y"] and len({r["arm"] for r in records}) == len(records)
 for r in records:
     assert r["arm"] in profile["arms"] and re.fullmatch(r"registry\.lan\.thespry\.family/local/sglang-gfx1201@sha256:[a-f0-9]{64}", r["image"]), r["arm"]
     assert r["evidence"] and r["host_resources"]["requests"] == r["host_resources"]["limits"], r["arm"]
@@ -632,6 +632,10 @@ assert (flag("UQSB", "--max-total-tokens"), flag("UQSB", "--context-length")) ==
 assert flag("UQLB", "--context-length") == flag("UQL", "--context-length") == "262112"
 assert 2 * (int(flag("UQSB", "--context-length")) + 32) <= int(flag("UQSB", "--max-total-tokens"))
 assert not profile["arms"]["UQSB"]["default"] and not profile["arms"]["UQLB"].get("shared_default")
+# UQSE keeps UQSB's base pool and context; only the reservation and the tail switch differ.
+assert (flag("UQSE", "--max-total-tokens"), flag("UQSE", "--context-length")) == ("645558", "100768")
+assert {e["name"]: e["value"] for e in profile["arms"]["UQSE"]["env"]}["SGLANG_GFX1201_ELASTIC_KV_BASE_TOKENS"] == flag("UQSB", "--max-total-tokens")
+assert profile["arms"]["UQSE"]["host_resources_from"] == "UQSB"
 for arm in profile["arms"]:
     items = json.loads((work / f"job-{arm}.json").read_text())["items"]
     config, job, claims = items
