@@ -121,7 +121,7 @@ class RenderTests(unittest.TestCase):
                           "limits", result["limits"])
         pool = next(r for r in result["rows"] if r["name"] == "assistant-sandbox-pool")
         # Held by the scheduler: requests. What the pool may burst to: limits.
-        self.assertEqual((0.7, 832, 5.0, 4864), (pool["cpu"], pool["memory_mib"], pool["limit_cpu"], pool["limit_mib"]))
+        self.assertEqual((0.7, 832, 5.0, 8960), (pool["cpu"], pool["memory_mib"], pool["limit_cpu"], pool["limit_mib"]))
         platform = next(r for r in result["rows"] if r["name"] == "platform")
         self.assertEqual((1.235, 2561), (platform["cpu"], platform["memory_mib"]))
         # Family mode as it runs today (memory on): admitted, as the live session admission
@@ -133,11 +133,11 @@ class RenderTests(unittest.TestCase):
         self.assertEqual((True, 4.815, 4996), table["shared", "assistant", True])
         self.assertEqual((True, 19.315, 20996), table["large", "assistant-memory", True])
         self.assertEqual((True, 20.815, 25476), table["large", "assistant", True])
-        # Its limits (5 CPUs, 4,864 MiB) are overcommit, and are reported as such.
+        # Its limits (5 CPUs, 8,960 MiB) are overcommit, and are reported as such.
         with_pool = service.capacity(NODE, composition("shared", "assistant-memory") + self.objects, {"reserve_mib": 6656},
                                      live_telemetry, "shared", node_pods=NODE_PODS)
-        self.assertEqual(("planned-limits-overcommitted", {"cpu": 51.0, "memory_mib": 68608, "over_node_cpus": 9.0,
-                                                           "over_node_mib": 17275}), (with_pool["status"], with_pool["limits"]))
+        self.assertEqual(("planned-limits-overcommitted", {"cpu": 51.0, "memory_mib": 72704, "over_node_cpus": 9.0,
+                                                           "over_node_mib": 21371}), (with_pool["status"], with_pool["limits"]))
         # Limits are reported, not hidden: family mode's burst ceilings sum past the node.
         shared = service.capacity(NODE, composition("shared", "assistant-memory"), {"reserve_mib": 6656},
                                   live_telemetry, "shared", node_pods=NODE_PODS)
@@ -179,8 +179,8 @@ class RenderTests(unittest.TestCase):
             container = spec["containers"][0]
             # Burstable: requested at measured use, limited with headroom; storage stays bounded.
             self.assertEqual({"requests": {"cpu": "250m", "memory": "256Mi", "ephemeral-storage": "2Gi"},
-                              "limits": {"cpu": "2", "memory": "2Gi", "ephemeral-storage": "2Gi"}}, container["resources"])
-            self.assertEqual(("2", "2Gi"), (policy["cpu_limit"], policy["memory_limit"]))
+                              "limits": {"cpu": "2", "memory": "4Gi", "ephemeral-storage": "2Gi"}}, container["resources"])
+            self.assertEqual(("2", "4Gi"), (policy["cpu_limit"], policy["memory_limit"]))
             volumes = {v["name"]: v for v in spec["volumes"]}
             self.assertEqual({"/home/user": "home", "/tmp": "scratch"},
                              {m["mountPath"]: m["name"] for m in container["volumeMounts"]})
@@ -199,7 +199,7 @@ class RenderTests(unittest.TestCase):
         self.assertEqual(["pods", "services", "secrets"], role["rules"][0]["resources"])
         quota = self.named("ResourceQuota", "sandbox-pool")["spec"]["hard"]
         self.assertEqual({"pods": "5", "requests.cpu": "700m", "requests.memory": "832Mi", "requests.ephemeral-storage": "4384Mi",
-                          "limits.cpu": "5000m", "limits.memory": "4864Mi", "limits.ephemeral-storage": "4384Mi",
+                          "limits.cpu": "5000m", "limits.memory": "8960Mi", "limits.ephemeral-storage": "4384Mi",
                           "services": "5", "secrets": "2", "persistentvolumeclaims": "32"}, quota)
         for deployment in (o for o in self.objects if o["kind"] == "Deployment"):
             resources = deployment["spec"]["template"]["spec"]["containers"][0]["resources"]

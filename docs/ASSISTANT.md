@@ -132,7 +132,7 @@ Chromium, and native file tools return its screenshots to the model.
 | Anyone else, or Family with `family_enabled: false` | No access | | |
 
 **Group resolution is explicit.** `sandbox.json` must state `family_enabled` and
-`group_resolution`; neither has a default. The proposed setting is
+`group_resolution`; neither has a default. The owner's setting is
 `most-permissive` (Admin, then Parents, then Family). It matches how Open WebUI
 combines group permissions, which the web search confirmation setting already
 relies on. With it the owner's daily account, which is in both groups so that it
@@ -393,10 +393,10 @@ as for every workload here except the GPU pods, so the pods are Burstable:
 
 | Pod | Requests (CPU, memory) | Limits (CPU, memory) | Measured, scratch K3s, 14 November |
 | --- | --- | --- | --- |
-| Workspace (each of two) | 250m, 256 MiB | 2, 2 GiB | 45 to 53 MiB idle; 239 MiB peak running pip, npm and a headless Chromium page |
+| Workspace (each of two) | 250m, 256 MiB | 2, 4 GiB | 45 to 53 MiB idle; 239 MiB peak running pip, npm and a headless Chromium page |
 | Controller | 100m, 192 MiB | 500m, 512 MiB | 135 MB |
 | Proxy (each of two) | 50m, 64 MiB | 250m, 128 MiB | Family 36 to 38 MiB with its lists; Parents 11 MiB |
-| **Pool** | **0.7 CPUs, 832 MiB** | **5 CPUs, 4,864 MiB** | |
+| **Pool** | **0.7 CPUs, 832 MiB** | **5 CPUs, 8,960 MiB** | |
 
 Ephemeral storage is requested at its limit (2 GiB per workspace). The planner
 holds the pool's requests even when no workspace runs. Under node memory
@@ -405,7 +405,8 @@ Guaranteed ones, so a busy workspace goes before SGLang or a picture
 generator. That is the intended priority: a mapped user's home is on the NAS
 and only the running session is lost. The measurement is one short tool run; a
 long Chromium session or a build will use more than its request, within the
-2 GiB limit.
+4 GiB limit. The owner set that limit: there are at most six accounts and two
+workspace slots, and the memory above the request is overcommitted, not held.
 
 `service plan` counts what K3s admits on: resource **requests**. It reports the
 limits beside them, and a plan whose limits sum past the node has the status
@@ -435,9 +436,9 @@ own pods counted, and how far the limits sum past the node:
 | Mode and composition | Without the pool | With the pool | Limits past the node, with the pool |
 | --- | --- | --- | --- |
 | Coder (large), assistant | 21.5 CPUs, 26,308 MiB | 20.8 CPUs, 25,476 MiB | None |
-| Coder (large), assistant with memory | 20.0 CPUs, 21,828 MiB | 19.3 CPUs, 20,996 MiB | None |
-| Family (shared), assistant | 5.5 CPUs, 5,828 MiB | 4.8 CPUs, 4,996 MiB | 2 CPUs, 8,059 MiB |
-| Family (shared), assistant with memory (what runs today) | 4.0 CPUs, 1,348 MiB | 3.3 CPUs, 516 MiB | 9 CPUs, 17,275 MiB |
+| Coder (large), assistant with memory | 20.0 CPUs, 21,828 MiB | 19.3 CPUs, 20,996 MiB | 891 MiB |
+| Family (shared), assistant | 5.5 CPUs, 5,828 MiB | 4.8 CPUs, 4,996 MiB | 2 CPUs, 12,155 MiB |
+| Family (shared), assistant with memory (what runs today) | 4.0 CPUs, 1,348 MiB | 3.3 CPUs, 516 MiB | 9 CPUs, 21,371 MiB |
 
 **Family mode: the pool fits on requests.** With the pool, family mode keeps
 3.3 CPUs and 516 MiB unrequested. The render accepts `--sandbox-config` in
