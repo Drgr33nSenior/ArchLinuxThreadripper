@@ -23,13 +23,18 @@ spec:
     devicePluginArguments:
       resource_naming_strategy: single
     kubeletSocketPath: /var/lib/kubelet/device-plugins
-  # v1.0.1 is required: it publishes GPUs when the in-kernel amdgpu module
-  # reports no version (this host). The operator's default is :latest; pinned.
-  # Upstream documents Instinct GPUs; Radeon gfx1201 is qualified by the pilot
-  # in infrastructure/gpu-operator/dra-pilot.
+  # Built by the AI-stack dra stage from upstream main at DRA_DRIVER_COMMIT in
+  # infrastructure/ai-stack/stack.lock (8bf83533ad07, 2026-10-08), signed in the
+  # lab registry; the tag is the stage key. The operator's default is :latest.
+  # Any upstream release must be v1.0.1+: earlier ones publish no GPUs when the
+  # in-kernel amdgpu module reports no version (this host). Upstream documents
+  # Instinct GPUs; Radeon gfx1201 is qualified by the pilot in
+  # infrastructure/gpu-operator/dra-pilot. Switch-over and rollback are in
+  # dra-pilot/README.md. Rollback: set image to the release below and apply.
+  # Rollback image: docker.io/rocm/k8s-gpu-dra-driver:v1.0.1@sha256:f173c8e78bc819e2b8adc15192afefaf69a11307d49fca5382bda82885975830
   draDriver:
     enable: true
-    image: docker.io/rocm/k8s-gpu-dra-driver:v1.0.1@sha256:f173c8e78bc819e2b8adc15192afefaf69a11307d49fca5382bda82885975830
+    image: registry.lan.thespry.family/local/k8s-gpu-dra-driver:f5736ef4bcff@sha256:6d753b59291bc2b10ea2c06b2c6445464036ce446183763589019963768d660a
   # AMD device metrics exporter: power, temperatures, clocks, activity and VRAM
   # for each R9700, readable while the card is runtime-suspended. Its PCIe
   # fields are MI2xx/MI3xx-only (PCIE_SPEED read 2 GT/s on a 32 GT/s link), so

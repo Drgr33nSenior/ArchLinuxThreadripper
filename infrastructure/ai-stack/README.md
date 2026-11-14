@@ -6,10 +6,11 @@ repeatable routine rather than a hand-assembled runtime.
 
 | Input | Pinned by |
 | --- | --- |
-| ROCm (TheRock), PyTorch, TorchVision, SGLang | Full commit in [`stack.lock`](stack.lock), refreshed from `main` |
+| ROCm (TheRock), PyTorch, TorchVision, SGLang, AMD GPU DRA driver | Full commit in [`stack.lock`](stack.lock), refreshed from `main` |
 | Triton | The commit the pinned PyTorch names in `.ci/docker/ci_commit_pins/triton.txt` |
 | Build container | TheRock CI's image digest at the pinned TheRock commit |
-| Runtime base | `python:3.14-slim-trixie`, resolved to a digest |
+| Runtime base | `python:3.14-slim-trixie`, resolved to a digest; the DRA driver uses `debian:trixie-slim` |
+| DRA driver Go image | The `golang:<version>-trixie` release named by the driver's `env.mk` at the pinned commit, resolved to a digest |
 | SGLang patch series | Content hash of the serving repository's `serving/patches/sglang-main` |
 | Models | Repository revision plus every file's published hash, in [`models/`](models) |
 
@@ -18,11 +19,13 @@ flowchart LR
   lock["stack.lock<br/>pinned commits"] --> rocm["rocm"] --> torch["torch"] --> sgl["sglang<br/>+ patch series"] --> img["image<br/>sglang-gfx1201"]
   torch --> comfy["comfyui"] --> swarm["swarmui"] --> creative["creative<br/>creative-gfx1201"]
   lock --> graphiti["graphiti<br/>graphiti-memory"]
+  lock --> dra["dra<br/>k8s-gpu-dra-driver"]
   vlock["versions.lock<br/>Sunshine, Arch"] --> gaming["gaming<br/>steam-headless"]
   img --> sign["scan, sign,<br/>push"]
   creative --> sign
   graphiti --> sign
   gaming --> sign
+  dra --> sign
   cat["models/*.json"] --> fetch["render-fetch Job"] --> nas[("NAS<br/>ai-models")]
   profile["serving profile<br/>(arms)"] --> render["service render<br/>--mode"]
   sign --> render
@@ -53,6 +56,7 @@ a refresh that only moves SGLang rebuilds only the SGLang stage and the image.
 | `graphiti` | `registry.lan.thespry.family/local/graphiti-memory:<key>`: the [memory service](../../docs/MEMORY.md) from `infrastructure/graphiti` and its hashed lock; CPU only, independent of the ROCm stages, with an offline import smoke test (`graphiti/smoke.py`) |
 | `gaming` | `registry.lan.thespry.family/local/steam-headless:<key>`: the [game-streaming image](../../docs/SUNSHINE.md) (`workstationctl sunshine image-build`, `arch-wayland`) built with Podman from a full checkout; the key covers every file the image copies; gated by the offline non-root smoke test `tests/test_sunshine_image.sh` |
 | `webui` | `registry.lan.thespry.family/local/open-webui:<key>`: Open WebUI from the workstation fork (`OPEN_WEBUI_FORK_*` in `stack.lock`: an upstream release plus provider-declared Model Controls, the [reasoning slider](../../docs/ASSISTANT.md#reasoning-effort)), built with the fork's Dockerfile from the pinned commit; gated by an offline smoke test (`webui/smoke.py`) that drives the slider through Open WebUI's API against a fixture provider |
+| `dra` | `registry.lan.thespry.family/local/k8s-gpu-dra-driver:<key>`: the AMD GPU DRA driver the GPU operator runs (`draDriver.image` in [`deviceconfig.yaml`](../gpu-operator/deviceconfig.yaml)), from `DRA_DRIVER_COMMIT` on upstream `main`. `dra/build.sh` runs upstream's own `make cmds` in `DRA_GO_IMAGE` with no network (vendored modules, `GOTOOLCHAIN=local`, `-trimpath`) and writes `RECEIPT.json`; `dra/Containerfile` puts the binaries and the vendored AMD SMI libraries on `DRA_RUNTIME_BASE_IMAGE`. Gated by an offline, read-only, non-root smoke test (`dra/smoke.sh`): the binaries load, the flags the operator sets exist, and every driver feature gate defaults to off. The key covers the commit, both images and the stage files |
 
 Each stage also records its progress for monitoring: `stage-metrics.py` writes
 `/var/lib/workstation-ai-stack/ai-stack.prom`, which node-exporter reads. The
@@ -131,8 +135,8 @@ publisher account.
 
 ### Scanning and signing
 
-With `AI_STACK_PUSH=1` the `image`, `creative`, `graphiti` and `gaming` stages, after their smoke
-tests (GPU for the first two, offline for `graphiti` and `gaming`), run the same `publish`
+With `AI_STACK_PUSH=1` the `image`, `creative`, `graphiti`, `gaming`, `webui` and `dra` stages, after
+their smoke tests (GPU for the first two, offline for the others), run the same `publish`
 path (each with its own scan allowlist):
 
 1. Scans the image with Trivy (`TRIVY_IMAGE` in `stack.lock`) and writes, under

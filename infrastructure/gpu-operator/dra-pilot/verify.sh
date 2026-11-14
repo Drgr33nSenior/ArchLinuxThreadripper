@@ -2,6 +2,7 @@
 # Read-only DRA pilot checks. Prints PASS/FAIL per check; changes nothing.
 # Usage: verify.sh [--probe]   (--probe also reads the dra-probe pod's log)
 set -uo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 ns=ai-home-lab
 fail=0
 pass() { printf 'PASS  %s\n' "$1"; }
@@ -10,13 +11,19 @@ bad() {
   fail=1
 }
 if kubectl -n kube-amd-gpu get daemonsets -o name | grep -q dra-driver; then pass 'DRA driver DaemonSet exists'; else bad 'DRA driver DaemonSet missing'; fi
+image=$(kubectl -n kube-amd-gpu get daemonsets -o json | jq -r '.items[] | select(.metadata.name | test("dra-driver")) | .spec.template.spec.containers[0].image')
+printf 'INFO  DRA driver image %s\n' "${image:-absent}"
 if ! kubectl -n kube-amd-gpu get daemonsets -o name | grep -q device-plugin; then pass 'device plugin DaemonSet removed'; else bad 'device plugin DaemonSet still present'; fi
 if kubectl get deviceclass gpu.amd.com >/dev/null 2>&1; then pass 'DeviceClass gpu.amd.com exists'; else bad 'DeviceClass gpu.amd.com missing'; fi
 slices=$(kubectl get resourceslices -o json)
 devices=$(jq '[.items[] | select(.spec.driver == "gpu.amd.com") | .spec.devices[]] | length' <<<"$slices")
 if [[ $devices == 2 ]]; then pass "ResourceSlices publish 2 GPUs"; else bad "ResourceSlices publish $devices GPUs (expected 2)"; fi
 jq -r '.items[] | select(.spec.driver == "gpu.amd.com") | .spec.devices[] |
-  "      \(.name)  pciBusID=\(.attributes["resource.kubernetes.io/pciBusID"].string // "?")  deviceID=\(.attributes.deviceID.string // "?")  driverVersion=\(.attributes.driverVersion.version // "absent")"' <<<"$slices"
+  "      \(.name)  pciBusID=\(.attributes["resource.kubernetes.io/pciBusID"].string // "?")  deviceID=\(.attributes.deviceID.string // "?")  driverVersion=\(.attributes.driverVersion.version // "absent")  memory=\(.capacity.memory.value // "?")"' <<<"$slices"
+# The claims select cards by PCI address, so those exact addresses must be published.
+want=$(grep -o 'pciBusID == "[^"]*"' "$here/../claims.yaml" | cut -d'"' -f2 | sort | paste -sd' ' -)
+have=$(jq -r '[.items[] | select(.spec.driver == "gpu.amd.com") | .spec.devices[].attributes["resource.kubernetes.io/pciBusID"].string] | sort | join(" ")' <<<"$slices")
+if [[ -n $want && $have == "$want" ]]; then pass "published PCI addresses match the claims ($want)"; else bad "published PCI addresses '$have' differ from the claims' '$want'"; fi
 for c in gpu-0 gpu-1; do
   if kubectl -n $ns get resourceclaim $c >/dev/null 2>&1; then
     state=$(kubectl -n $ns get resourceclaim $c -o json | jq -r '(.status.allocation.devices.results // []) | map(.device) | join(",")')

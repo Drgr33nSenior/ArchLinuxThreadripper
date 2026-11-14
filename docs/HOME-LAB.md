@@ -413,9 +413,11 @@ The values disable KMM installation **and watching**, default DeviceConfig
 creation and automatic remediation, and render the DRA `gpu.amd.com`
 DeviceClass. Apply the separate DeviceConfig only after its CRD exists. It
 disables driver management, blacklisting, driver upgrades and partition
-management. It allocates GPUs through the DRA driver (pinned
-`k8s-gpu-dra-driver` v1.0.1) instead of the traditional device plugin, and keeps
-the node labeller. The DRA pilot and its rollback are in
+management. It allocates GPUs through the DRA driver instead of the traditional
+device plugin, and keeps the node labeller. The driver image is built from a pinned
+upstream `main` commit by the AI-stack [`dra` stage](../infrastructure/ai-stack/README.md#stages)
+and pinned by digest; upstream release v1.0.1 is the documented rollback in the
+DeviceConfig. The DRA pilot is in
 [gpu-operator/dra-pilot](../infrastructure/gpu-operator/dra-pilot/README.md). NFD is enabled. The operator/device-plugin images are
 digest-pinned. [The values](../infrastructure/gpu-operator/values.yaml) also pin
 the bundled NFD version to its Linux/amd64 manifest. This bare-metal profile is
@@ -436,9 +438,10 @@ not GPU partitioning or a scheduling resource by itself.
 
 After a reboot, a pod on the standalone claims can fail with `CDI device injection
 failed: unresolvable CDI devices k8s.gpu.amd.com/gpu=<claim-uid>-gpu-N-NNN`. The
-driver (v1.0.1) writes one CDI spec per prepared claim into `/var/run/cdi`, a tmpfs,
-but its prepared-claim checkpoint survives the reboot, so it reports the claims as
-prepared without rewriting the specs (seen 2026-11-11). Release and re-prepare them:
+driver writes one CDI spec per prepared claim into `/var/run/cdi`, a tmpfs, but its
+prepared-claim checkpoint survives the reboot, so it reports the claims as prepared
+without rewriting the specs (seen 2026-11-11 with v1.0.1; the source of the pinned
+`main` commit behaves the same). Release and re-prepare them:
 scale the consumers to zero, check that both claims show no consumer, then scale
 back up:
 
