@@ -16,7 +16,7 @@ fixtures; it predates the live deployment.
 | Browser search | WebUI external search → `/webui/search` → selected provider | Trusted application key and mapped WebUI user; only explicit search terms leave |
 | Browser page reading | WebUI external loader → `/webui/fetch` → selected provider | Application key; at most three public URLs; no local document access |
 | Qwen Code | HTTPS `/mcp` → `search_web` or `read_web_page` | Caller's restricted WebUI API key; normal client tool approval |
-| Browser tool server | WebUI "Workstation tools" MCP server → `/mcp` → `search_web` or `read_web_page` (with `offset`) | Signed-in user's own WebUI session token; see [MEMORY.md](MEMORY.md#open-webui-tool-server) |
+| Browser tool server | WebUI "Workstation tools" MCP server → `/mcp` → `read_web_page` (with `offset`); its `search_web` is hidden from chats, which search through the browser search row above | Signed-in user's own WebUI session token; see [MEMORY.md](MEMORY.md#open-webui-tool-server) |
 | Project knowledge | Existing `/mcp` → `retrieve_project_passage` → WebUI retrieval | Current document ACLs and file checks; the existing Chroma store |
 
 The native WebUI external loader does not forward user headers in pinned 0.12.5,

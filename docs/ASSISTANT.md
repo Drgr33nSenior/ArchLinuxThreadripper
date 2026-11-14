@@ -14,7 +14,7 @@ It runs in **shared mode** today. [Service modes](MODES.md) explains the alterna
 
 | Feature | How to use it | Who |
 | --- | --- | --- |
-| Chat | Chat with `Qwen3.8-27B-MXFP4` (thinks briefly). To change how long it thinks: the **Reasoning effort** slider in the message box (Off, Low, Medium, Max) | Everyone with an account |
+| Chat | Chat with `Qwen3.8-27B-MXFP4`. To change how long it thinks: the **Reasoning effort** slider in the message box (Off, Low, Medium, Max; it starts at Medium) | Everyone with an account |
 | Pictures | Ask for a picture, or use the image button; Qwen-Image makes a 1328×1328 picture in about 65 s (75 s if two are rendering) | Accounts with picture permission (Admin and Parents) |
 | Short videos | Ask for a short video; a 5-second clip appears in the chat after about 80 s | Accounts with picture permission and the normal `user` role (the Parents' daily accounts); shared mode only |
 | Voice input | The microphone button; speech is transcribed on the workstation | Everyone |
@@ -305,7 +305,8 @@ re-applies them from the environment:
 - the default user permissions;
 - the tool server, web search and page loader;
 - model defaults and prompt suggestions;
-- the reviewed RAG profile.
+- the reviewed RAG profile;
+- the [tool-use system prompt](#tool-use-system-prompt) on the default model's record.
 
 About 56 of Open WebUI's roughly 450 settings are owned this way. Change those in
 source (`assistant.env`, `webui.yaml`, `rag.env`), not in the Admin Panel: an
@@ -318,8 +319,57 @@ The render (`lib/workstation/service.py`) names every variable it gives Open Web
 `WEBUI_PINNED_ENV`, names only. The script reads the installed Open WebUI's `config.py`
 to find which settings those variables feed. Its first log line lists them. Group
 permissions, model records and access grants were always stored in the database
-and are unaffected. With persistent config on, the database also holds the
+and are unaffected, except for the one `params.system` field described next. With persistent config on, the database also holds the
 connection keys, so treat `webui.db` backups as secrets.
+
+### Tool-use system prompt
+
+[`apps/components/assistant/system-prompt.md`](../apps/components/assistant/system-prompt.md)
+tells the model how to use the tools it has: look up anything current, versioned, niche or
+uncertain and cite it; check memory, project passages and attachments before asking; run or
+test what it builds where a tool allows, and say what it could not verify. It names no model
+and no tool, and it grants nothing: filters and permissions are unchanged. It costs about
+217 prompt tokens on every request (measured with the served tokenizer on 14 November 2026).
+
+Open WebUI 0.13.3 has no global system prompt. A `system` entry in `DEFAULT_MODEL_PARAMS`
+is dropped before the request is built; only the `params.system` of a stored model record is
+applied on the server. `pin-config.py` therefore writes the file to the record of each model
+in `DEFAULT_MODELS` at every start, changing that one field only. Its log line reports
+`updated`, `unchanged` or `no model record` per model. A missing record is never created,
+because creating one decides who may use the model: create it in **Admin Panel → Settings →
+Models** and restart Open WebUI. A failure to write the prompt is logged and does not stop
+the start.
+
+| Request | What the model receives |
+| --- | --- |
+| Browser chat, no personal system prompt | The prompt, then anything Open WebUI adds for enabled features (code interpreter notes, tool-server instructions) |
+| Browser chat with a system prompt from Settings or Chat Controls, or a folder prompt | The prompt first, then the person's own text. Theirs is kept whole and comes later, so it wins where the two disagree |
+| API or IDE client through Open WebUI (`/api/chat/completions`, `/openai/chat/completions`) | The prompt first, then the client's own system message. The client's tools pass through unchanged |
+| Titles, tags and follow-up suggestions | The prompt too (Open WebUI applies a model's prompt to its background tasks); they offer no tools |
+| Coding clients that call the gateway directly (Qwen Code) | Not affected: they do not pass through Open WebUI |
+
+Change the text in source. An edit in the Admin Panel lasts until the next start, like the
+other owned settings. `{{CURRENT_DATE}}` is filled in by Open WebUI for each request.
+
+### One web search in a chat
+
+A chat offers the model one web search: Open WebUI's own `search_web`, which calls
+service-tools (`/webui/search`) and so shares the provider, budget and metrics with every
+other client. The tool server's `search_web` is hidden from Open WebUI by
+`function_name_filter_list` in `TOOL_SERVER_CONNECTIONS`; before, the model saw both and
+used either. Coding clients that connect to the MCP endpoint themselves still get it. The
+built-in search is the one kept because it is the one the interface controls: the web search
+toggle, the per-group `Web Search` permission, the confirmation prompt and the sources listed
+under an answer all belong to it, and it also works for the admin account, which the tool
+server refuses.
+
+Two page readers remain on purpose. Open WebUI's `fetch_url` returns the first section of a
+page (6,000 characters); the tool server's `read_web_page` is the only way to continue a
+long page, so it is not hidden. To hide it as well, add `!read_web_page` to the filter.
+
+The confirmation prompt (`ENABLE_WEB_SEARCH_CONFIRMATION`) is one setting for everyone. Open
+WebUI 0.13.3 sends the same flag to every browser and has no per-group or per-role form of
+it, so it stays on for all accounts.
 
 ### Theme
 
@@ -410,9 +460,9 @@ as before.
 ### Reasoning effort
 
 There is one chat model; a **Reasoning effort** slider in the message box chooses how long it
-thinks: **Off**, **Low** (the default), **Medium**, **Max**. The slider comes from the model
+thinks: **Off**, **Low**, **Medium** (where it starts), **Max**. The slider comes from the model
 itself: the gateway declares the levels it accepts in its model list (`supportedReasoningEfforts`
-with display labels, and `defaultReasoningEffort` from the serving contract), and our Open WebUI
+with display labels, and `defaultReasoningEffort`), and our Open WebUI
 build (the `webui` [AI-stack stage](../infrastructure/ai-stack/README.md), from the fork
 `Drgr33nSenior/open-webui`) turns that declaration into Model Controls. An admin who defines
 Model Controls for the model in Workspace → Models replaces the declared slider. The older
@@ -420,10 +470,19 @@ Model Controls for the model in Workspace → Models replaces the declared slide
 
 | Value | Request |
 | --- | --- |
-| *(unset)* or `low` | the contract default: thinking at `low` effort, output capped at 12,288 tokens |
+| *(unset)* or `low` | the contract's request default: thinking at `low` effort, output capped at 12,288 tokens |
 | `medium` | thinking at `medium` effort, same cap |
 | `high` or `xhigh` | thinking at `xhigh`, no output cap: runs until done, the context is full, or a [time limit](#time-limits) (silent 5 minutes, or 60 minutes overall) |
 | `none` | no thinking (`enable_thinking: false`) |
+
+Two defaults are kept apart. The level the gateway *declares* (`declared_reasoning_effort` in
+`gateway-policy.json`, from `CHAT_REASONING_EFFORT` in `lib/workstation/service.py`) is
+`medium`: Open WebUI starts the slider there and sends it with every chat in which nobody
+moved the slider, including API clients that use `/api/chat/completions` without naming an
+effort. The level the gateway *applies* to a request that names none is still the contract's
+`low`: Open WebUI's titles, tags and follow-up suggestions, its `/openai` proxy route and
+coding clients that call the gateway directly. A person who has already moved the slider
+keeps their choice.
 
 Any other value is refused with `invalid_reasoning_effort`. Chat Controls and Params are
 enabled for every user (`USER_PERMISSIONS_CHAT_CONTROLS`/`_PARAMS`, pinned in
@@ -664,7 +723,7 @@ The selected arm was throughput-measured with a sampled profile (temperature
 
 | Layer | Behaviour at the pinned versions |
 | --- | --- |
-| Open WebUI 0.13.3 (fork) | Copies `DEFAULT_MODEL_PARAMS` (sampling only: no effort or thinking switch, which would contradict the slider's Off) to the top level of each request; the reasoning slider adds `reasoning_effort`; sends `max_tokens`; drops prior reasoning on the next turn |
+| Open WebUI 0.13.3 (fork) | Copies `DEFAULT_MODEL_PARAMS` (sampling only: no effort or thinking switch, which would contradict the slider's Off) to the top level of each request; the reasoning slider adds `reasoning_effort` (the declared default, `medium`, when untouched); background tasks send none; sends `max_tokens`; drops prior reasoning on the next turn |
 | Gateway boundary | Accepts `reasoning_effort` `low`, `medium`, `high` and `xhigh`; sends `high` as `xhigh`, the nearest level the template accepts. Turns `none` (an IDE's *Thinking off*) into `enable_thinking: false` with no effort, and refuses it with `enable_thinking: true`. Accepts `chat_template_kwargs` with only a boolean `enable_thinking`; refuses other fields |
 | LiteLLM 1.109.1 | `drop_params: false`; forwards `reasoning_effort` and `max_completion_tokens` unchanged; passes `top_k` and `chat_template_kwargs` through `extra_body` |
 | SGLang 0.5.21 (op234, historical) | Passes `reasoning_effort` and `chat_template_kwargs` to the template |
@@ -711,6 +770,27 @@ unreachable endpoint gives `NOT RUN`. The report contains the following:
   abstention, truncation and time to a usable answer.
 - Request and response hashes, finish reasons, token counts and the elapsed
   time for each attempt.
+
+A second, smaller menu checks tool-use behaviour
+([assistant-behaviour.json](../infrastructure/sglang/assistant-behaviour.json)): questions
+about current or versioned facts should produce a web search call, a request to build
+something should end in a verification attempt or a plain statement of what was not
+verified, questions about remembered or project facts should produce a retrieval call, and
+two stable questions should be answered without any tool. Each case is one request with a
+fixed tool list; no tool runs. The tool-use system prompt is sent unless
+`--no-system-prompt` selects the comparison arm.
+
+```sh
+./bin/workstationctl service acceptance behaviour /private/behaviour-prompt.json \
+  --boundary direct --base-url http://SGLANG:30000 --model Qwen3.8-27B-MXFP4
+./bin/workstationctl service acceptance behaviour /private/behaviour-bare.json \
+  --boundary direct --base-url http://SGLANG:30000 --model Qwen3.8-27B-MXFP4 --no-system-prompt
+```
+
+Through `webui-api` Open WebUI adds the pinned prompt itself, so use `--no-system-prompt`
+there. The report gives a pass rate and a tool-call rate per case. The verification case
+uses a text pattern to recognise "could not verify" statements and records the matched
+words for a person to check.
 
 Code and configuration answers pass only when the task's real tests or
 validators pass inside the network-free Linux sandbox. That sandbox uses the

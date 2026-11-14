@@ -9,6 +9,12 @@ endpoint, a missing tokenizer or an unavailable sandbox is recorded as NOT RUN.
 The runner sends only the synthetic menu prompts. Tool calls are answered
 with the menu's synthetic results; no real tool runs. Model code runs only in
 the network-free Linux sandbox from coding_eval.
+
+``behaviour`` runs the separate tool-use menu (infrastructure/sglang/assistant-behaviour.json):
+one request per case with a fixed tool list, graded on whether the model reached for a
+tool, answered directly, or said what it could not verify. No tool runs. The tool-use
+system prompt Open WebUI pins (apps/components/assistant/system-prompt.md) is sent as the
+system message unless --no-system-prompt selects the comparison arm.
 """
 import argparse
 import datetime
@@ -29,6 +35,9 @@ from coding_eval import canonical, digest, execute_python, json_equal, parse_obj
 ROOT = Path(__file__).resolve().parents[2]
 MENU = ROOT / "infrastructure/sglang/assistant-quality.json"
 TASKS = ROOT / "infrastructure/sglang/assistant-tasks"
+BEHAVIOUR = ROOT / "infrastructure/sglang/assistant-behaviour.json"
+SYSTEM_PROMPT = ROOT / "apps/components/assistant/system-prompt.md"
+BEHAVIOUR_KINDS = ("tool", "no-tool", "verify-or-disclose")
 BOUNDARIES = ("fixture", "direct", "gateway", "webui-api")
 NOT_RUN = "NOT RUN"
 MAX_BODY = 8 << 20
@@ -341,6 +350,133 @@ def report(menu, records, boundary, settings):
                             "Throughput and model self-scores are not acceptance outcomes."]}
 
 
+def load_behaviour(path=BEHAVIOUR):
+    menu = json.loads(Path(path).read_text())
+    names = {tool["function"]["name"] for tool in menu.get("tools", [])}
+    cases = menu.get("cases")
+    if menu.get("schema") != 1 or not names or not isinstance(cases, list) or not cases:
+        raise ValueError("unsupported assistant behaviour menu")
+    if len({case["id"] for case in cases}) != len(cases):
+        raise ValueError("duplicate case id")
+    for case in cases:
+        expect = case["expect"]
+        if (expect["kind"] not in BEHAVIOUR_KINDS or not isinstance(case.get("prompt"), str)
+                or not set(expect.get("any_of", [])) <= names
+                or (expect["kind"] != "no-tool" and not expect.get("any_of"))):
+            raise ValueError("invalid behaviour case: " + case["id"])
+        if expect["kind"] == "verify-or-disclose":
+            re.compile(expect["disclosure"])
+    return menu
+
+
+def system_prompt(today=None):
+    """The pinned prompt as Open WebUI sends it: its date variable filled in."""
+    today = today or datetime.date.today().isoformat()
+    return SYSTEM_PROMPT.read_text().strip().replace("{{CURRENT_DATE}}", today)
+
+
+def behaviour_grade(expect, names, final):
+    """(passed, matched disclosure text). Tool names and visible text only; never an LLM judge."""
+    called = bool(set(names) & set(expect.get("any_of", [])))
+    if expect["kind"] == "tool":
+        return called, None
+    if expect["kind"] == "no-tool":
+        return not names and bool(final.strip()), None
+    match = re.search(expect["disclosure"], final, re.I)
+    return called or bool(match), match[0][:200] if match else None
+
+
+def behaviour_attempt(http, path, menu, case, model, system):
+    execution = menu["execution"]
+    messages = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": case["prompt"]}]
+    body = {"model": model, "messages": messages, "tools": menu["tools"], "stream": False,
+            "max_tokens": case.get("max_tokens", execution["max_tokens"]), **execution["request"]}
+    started = time.monotonic()
+    status, raw = http.post(path, body)
+    record = {"request_sha256": digest(canonical(body)), "http_status": status, "response_sha256": digest(raw),
+              "elapsed_seconds": round(time.monotonic() - started, 3)}
+    if status != 200 or len(raw) > MAX_BODY:
+        return {**record, "grade": "failed", "failure": f"http-{status}"}
+    value = json.loads(raw)
+    choice = value["choices"][0]
+    message = choice.get("message") or {}
+    # Text beside a tool call is common ("Let me check ...") and is not an error here.
+    names = [call["function"]["name"] for call in message.get("tool_calls") or []]
+    final = message.get("content") or ""
+    usage = value.get("usage") or {}
+    passed, disclosure = behaviour_grade(case["expect"], names, final)
+    record.update({"finish_reason": choice.get("finish_reason"), "tools_called": names,
+                   "prompt_tokens": usage.get("prompt_tokens"), "completion_tokens": usage.get("completion_tokens"),
+                   "final_chars": len(final), "grade": "passed" if passed else "failed"})
+    if disclosure:
+        record["disclosure"] = disclosure
+    if not passed and choice.get("finish_reason") == "length":
+        record["failure"] = "truncated"
+    return record
+
+
+def behaviour_run(menu, boundary, base, key, model, timeout, system, repetitions=None, cases=None):
+    if boundary not in BOUNDARIES:
+        raise ValueError("unknown boundary")
+    path = "/api/chat/completions" if boundary == "webui-api" else "/v1/chat/completions"
+    http = Http(base, key, timeout)
+    records, reachable = [], None
+    for case in menu["cases"]:
+        if cases and case["id"] not in cases:
+            continue
+        for repetition in range(repetitions or menu["execution"]["repetitions"]):
+            row = {"case": case["id"], "repetition": repetition}
+            if reachable is False:
+                records.append({**row, "grade": NOT_RUN, "reason": "endpoint unreachable"})
+                continue
+            try:
+                records.append({**row, **behaviour_attempt(http, path, menu, case, model, system)})
+                reachable = True
+            except (urllib.error.URLError, OSError) as error:
+                if reachable is None:
+                    reachable = False
+                    records.append({**row, "grade": NOT_RUN, "reason": "endpoint unreachable: " + type(error).__name__})
+                else:
+                    records.append({**row, "grade": "failed", "failure": "transport-" + type(error).__name__})
+            except (ValueError, KeyError, IndexError, TypeError, AttributeError) as error:
+                records.append({**row, "grade": "failed", "failure": "protocol: " + type(error).__name__})
+    return records
+
+
+def behaviour_report(menu, records, boundary, settings):
+    """Per-case rates. Controls pass by answering without a tool, so they guard against over-use."""
+    def rate(rows, predicate):
+        return None if not rows else round(sum(map(predicate, rows)) / len(rows), 4)
+    executed = [row for row in records if row["grade"] != NOT_RUN]
+    answered = [row for row in executed if "tools_called" in row]
+    by_case = {}
+    for case in menu["cases"]:
+        rows = [row for row in executed if row["case"] == case["id"]]
+        if not rows:
+            continue
+        seen = [row for row in rows if "tools_called" in row]
+        by_case[case["id"]] = {
+            "category": case["category"], "expect": case["expect"]["kind"], "attempts": len(rows),
+            "passed": sum(row["grade"] == "passed" for row in rows),
+            "pass_rate": rate(rows, lambda r: r["grade"] == "passed"),
+            "tool_call_rate": rate(seen, lambda r: bool(r["tools_called"])),
+            "tools_called": sorted({name for row in seen for name in row["tools_called"]})}
+    prompts = [row["prompt_tokens"] for row in answered if type(row.get("prompt_tokens")) is int]
+    return {"schema": 1, "kind": "assistant-behaviour-report", "menu_version": menu["version"],
+            "menu_sha256": digest(BEHAVIOUR.read_bytes()), "boundary": boundary,
+            "status": NOT_RUN if not executed else "complete" if len(executed) == len(records) else "partial",
+            "settings": settings, "created_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "attempts": len(records), "executed_attempts": len(executed),
+            "metrics": {"pass_rate": rate(executed, lambda r: r["grade"] == "passed"),
+                        "tool_call_rate_when_expected": rate(
+                            [r for r in answered if by_case[r["case"]]["expect"] != "no-tool"], lambda r: bool(r["tools_called"])),
+                        "tool_call_rate_on_controls": rate(
+                            [r for r in answered if by_case[r["case"]]["expect"] == "no-tool"], lambda r: bool(r["tools_called"])),
+                        "median_prompt_tokens": statistics.median(prompts) if prompts else None,
+                        "median_elapsed_seconds": statistics.median(r["elapsed_seconds"] for r in answered) if answered else None},
+            "cases": by_case, "records": records, "limitations": menu["execution"]["limitations"]}
+
+
 def write_new(path, value):
     path = Path(path)
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -363,7 +499,30 @@ def main():
     p.add_argument("--key-file"); p.add_argument("--output-tokens", type=int, default=4096)
     p.add_argument("--timeout", type=int, default=180); p.add_argument("--repetitions", type=int)
     p.add_argument("--case", action="append")
+    p = commands.add_parser("behaviour", help="run the tool-use behaviour menu against one boundary")
+    p.add_argument("output"); p.add_argument("--boundary", choices=BOUNDARIES, required=True)
+    p.add_argument("--base-url", required=True); p.add_argument("--model", required=True)
+    p.add_argument("--key-file"); p.add_argument("--timeout", type=int, default=300)
+    p.add_argument("--repetitions", type=int); p.add_argument("--case", action="append")
+    p.add_argument("--no-system-prompt", action="store_true",
+                   help="comparison arm, or webui-api (Open WebUI adds the pinned prompt itself)")
     args = parser.parse_args()
+    if args.action == "behaviour":
+        if not 1 <= args.timeout <= 3600 or (args.repetitions is not None and not 1 <= args.repetitions <= 20):
+            raise SystemExit("invalid timeout or repetitions")
+        menu = load_behaviour()
+        system = None if args.no_system_prompt else system_prompt()
+        settings = {"model": args.model, "timeout": args.timeout, "base_url_sha256": digest(args.base_url.encode()),
+                    "request": menu["execution"]["request"], "system_prompt": system is not None,
+                    "system_prompt_sha256": digest(system.encode()) if system else None}
+        records = behaviour_run(menu, args.boundary, args.base_url, credential(args.key_file), args.model,
+                                args.timeout, system, args.repetitions, args.case)
+        result = behaviour_report(menu, records, args.boundary, settings)
+        write_new(args.output, result)
+        print(result["status"], json.dumps(result["metrics"]))
+        for name, row in result["cases"].items():
+            print(f"{name}: {row['passed']}/{row['attempts']} passed, tool calls {row['tool_call_rate']}, {row['tools_called']}")
+        return 0
     menu = load_menu()
     if args.action == "plan":
         plans = requests(menu, args.model, args.output_tokens)

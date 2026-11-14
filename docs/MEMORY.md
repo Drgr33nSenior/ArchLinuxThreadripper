@@ -288,7 +288,9 @@ checks that token through `/api/v1/users/user/status` as it checks a coding
 client's API key. (Open WebUI 0.12 refuses API keys on `/api/v1/auths/`.) There is no shared credential. The public read grant only lists the server
 in every user's tool menu; each call is authorised for the calling user.
 The existing `open-webui` → `service-tools:8000` NetworkPolicy already allows
-the flow.
+the flow. The connection's `function_name_filter_list` hides the server's `search_web`
+from Open WebUI chats, which use Open WebUI's own web search instead
+([one web search](ASSISTANT.md#one-web-search-in-a-chat)).
 
 To use it, select "Workstation tools" in a chat's tool menu, or attach it to a
 model in the admin model settings. The connection is owned by the deployment

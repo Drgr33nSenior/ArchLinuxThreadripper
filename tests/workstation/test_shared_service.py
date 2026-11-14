@@ -91,6 +91,19 @@ class BoundaryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(int(dict(messages[0]["headers"])[b"content-length"]), len(body))
         with mock.patch.object(boundary, "DEFAULT_REASONING_EFFORT", "high"):
             self.assertEqual("xhigh", boundary.reasoning_declaration()["defaultReasoningEffort"])
+        # The declared default (the slider's start) is separate from the effort applied to a
+        # request that names none: chats start at medium, titles and tags stay at low.
+        with mock.patch.object(boundary, "DEFAULT_REASONING_EFFORT", "low"), \
+                mock.patch.object(boundary, "DECLARED_REASONING_EFFORT", "medium"):
+            self.assertEqual("medium", boundary.reasoning_declaration()["defaultReasoningEffort"])
+            await request(self.gateway, "/v1/chat/completions", dict(self.chat))
+            self.assertEqual("low", self.seen[-1][1]["reasoning_effort"])
+            # Off still arrives as the thinking switch, never as an effort.
+            await request(self.gateway, "/v1/chat/completions", {**self.chat, "reasoning_effort": "none"})
+            self.assertEqual({"enable_thinking": False}, self.seen[-1][1]["chat_template_kwargs"])
+            self.assertEqual("low", self.seen[-1][1]["reasoning_effort"])
+        with mock.patch.object(boundary, "DECLARED_REASONING_EFFORT", "medium"):
+            self.assertEqual("medium", boundary.reasoning_declaration()["defaultReasoningEffort"])
         with mock.patch.object(boundary, "TEMPLATE_KWARGS", {}):
             self.assertNotIn("none", [o["reasoningEffort"] for o in boundary.reasoning_declaration()["supportedReasoningEfforts"]])
 
@@ -1455,6 +1468,9 @@ class ServingContractTests(unittest.TestCase):
         self.assertFalse({"reasoning_effort", "custom_params"} & set(webui_params))
         self.assertEqual((contract["reasoning"]["request_defaults"] or {}).get("reasoning_effort"),
                          policy.get("default_reasoning_effort"))
+        # The slider starts at medium only when the contract has verified request defaults.
+        self.assertEqual("medium" if contract["reasoning"]["request_defaults"] else None,
+                         policy.get("declared_reasoning_effort"))
         tools = {e["name"]: e.get("value") for e in named("Deployment", "service-tools")["spec"]["template"]["spec"]["containers"][0]["env"]}
         self.assertEqual((contract["contract"], "incomplete"), (tools["SERVING_CONTRACT"], tools["SERVING_CONTRACT_STATUS"]))
         self.assertFalse(any(o["kind"] == "ConfigMap" and "MODEL_REVISION" in o.get("data", {}) for o in objects))
@@ -1575,7 +1591,8 @@ class ServingContractTests(unittest.TestCase):
 class GatewayPolicyTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         saved = (dict(boundary.CHAT_MODELS), dict(boundary.REASONING_EFFORTS), dict(boundary.TEMPLATE_KWARGS),
-                 boundary.ADMISSION_LIMIT, set(boundary.IMAGE_MODELS), boundary.DEFAULT_REASONING_EFFORT)
+                 boundary.ADMISSION_LIMIT, set(boundary.IMAGE_MODELS), boundary.DEFAULT_REASONING_EFFORT,
+                 boundary.DECLARED_REASONING_EFFORT)
         def restore():
             for target, value in zip((boundary.CHAT_MODELS, boundary.REASONING_EFFORTS, boundary.TEMPLATE_KWARGS), saved):
                 target.clear()
@@ -1584,6 +1601,7 @@ class GatewayPolicyTests(unittest.IsolatedAsyncioTestCase):
             boundary.IMAGE_MODELS.clear()
             boundary.IMAGE_MODELS.update(saved[4])
             boundary.DEFAULT_REASONING_EFFORT = saved[5]
+            boundary.DECLARED_REASONING_EFFORT = saved[6]
         self.addCleanup(restore)
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
@@ -1595,6 +1613,9 @@ class GatewayPolicyTests(unittest.IsolatedAsyncioTestCase):
         self.path.write_text(json.dumps(service.gateway_policy(contract, rendered)))
         self.assertEqual(contract["deadlines"]["gateway_seconds"], boundary.apply_policy(self.path))
         self.assertEqual(contract["reasoning"]["request_defaults"]["reasoning_effort"], boundary.DEFAULT_REASONING_EFFORT)
+        # Chats start at medium (declared in the model list); requests naming no effort get low.
+        self.assertEqual(("low", "medium"), (boundary.DEFAULT_REASONING_EFFORT, boundary.DECLARED_REASONING_EFFORT))
+        self.assertEqual("medium", boundary.reasoning_declaration()["defaultReasoningEffort"])
         self.assertNotIn("Qwen3.8-27B-FP8", boundary.CHAT_MODELS)
         self.assertEqual((contract["budgets"]["context_length"], 4096), boundary.CHAT_MODELS["Qwen3.8-27B-MXFP4"])
         self.assertEqual("xhigh", boundary.REASONING_EFFORTS["high"])
@@ -1605,7 +1626,7 @@ class GatewayPolicyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("unknown_model", json.loads(result[-1]["body"])["error"]["code"])
         for change in ({"template_kwargs": ["chat_template"]}, {"admission_limit": 0},
                        {"chat_models": {"m": [4096, 4096]}}, {"request_timeout": 5},
-                       {"default_reasoning_effort": "extreme"}):
+                       {"default_reasoning_effort": "extreme"}, {"declared_reasoning_effort": "extreme"}):
             self.path.write_text(json.dumps({**service.gateway_policy(contract, rendered), **change}))
             with self.subTest(change=change), self.assertRaises(ValueError):
                 boundary.apply_policy(self.path)

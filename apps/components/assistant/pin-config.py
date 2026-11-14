@@ -10,6 +10,14 @@ until the next deployment, and a rotated key or changed default reaches Open Web
 WEBUI_PINNED_ENV lists the names (never values) of the environment variables the deployment
 sets; lib/workstation/service.py renders it. Which settings those variables feed is read from
 the installed Open WebUI's own config.py, so the mapping follows Open WebUI upgrades.
+
+The tool-use system prompt (system-prompt.md beside this script) is owned the same way. Open
+WebUI has no global system prompt: a `system` entry in DEFAULT_MODEL_PARAMS is dropped before
+the request is built, and only a stored model record's `params.system` is applied on the
+server to every request for that model (browser chats, API clients, background tasks). So the
+prompt is written to the records of the models named in DEFAULT_MODELS. Only that one field of
+an existing record changes; a missing record is reported, never created, because creating one
+would decide who may use the model.
 Prints one JSON line: counts and setting names, no values.
 """
 import ast
@@ -17,8 +25,11 @@ import asyncio
 import json
 import os
 import sys
+import time
+from pathlib import Path
 
 APP = "/app/backend"
+SYSTEM_PROMPT = Path(__file__).with_name("system-prompt.md")
 
 
 def setting_sources(source):
@@ -77,6 +88,54 @@ def setting_sources(source):
     return sources
 
 
+def system_prompt_change(params, prompt):
+    """The record's params with the deployment's prompt, or None when it is already there."""
+    params = dict(params or {})
+    if (params.get("system") or "") == prompt:
+        return None
+    return {**params, "system": prompt}
+
+
+async def pin_system_prompt(model_ids, prompt):
+    """Write the prompt to each named model record that exists. Returns a result per model id."""
+    from open_webui.internal.db import get_async_db
+    from open_webui.models.models import Model
+
+    results = {}
+    async with get_async_db() as session:
+        for model_id in model_ids:
+            record = await session.get(Model, model_id)
+            if record is None:
+                results[model_id] = "no model record"
+                continue
+            params = system_prompt_change(record.params, prompt)
+            if params is None:
+                results[model_id] = "unchanged"
+                continue
+            record.params, record.updated_at = params, int(time.time())
+            results[model_id] = "updated"
+        await session.commit()
+    return results
+
+
+def system_prompt_report():
+    """Pin the prompt and describe the outcome; a failure is reported, never fatal.
+
+    The prompt is guidance for the model, not a permission, so Open WebUI still starts
+    when it cannot be written (unlike the settings above, which fail closed)."""
+    try:
+        prompt = SYSTEM_PROMPT.read_text().strip()
+    except OSError:
+        return {"error": "system-prompt.md missing"}
+    model_ids = [m.strip() for m in os.environ.get("DEFAULT_MODELS", "").split(",") if m.strip()]
+    if not prompt or not model_ids:
+        return {"skipped": "no prompt text" if not prompt else "DEFAULT_MODELS names no model"}
+    try:
+        return {"characters": len(prompt), "models": asyncio.run(pin_system_prompt(model_ids, prompt))}
+    except Exception as error:  # noqa: BLE001 - any database or schema fault is reported, not raised
+        return {"error": type(error).__name__}
+
+
 def main():
     if os.environ.get("ENABLE_PERSISTENT_CONFIG", "true").lower() != "true":
         print(json.dumps({"pinned": 0, "reason": "persistent config off: the environment is used directly"}))
@@ -97,7 +156,8 @@ def main():
     asyncio.run(Config.upsert({key: config.DEFAULT_CONFIG[key] for key in keys}))
     used = set().union(*(sources[key] for key in keys)) & names if keys else set()
     print(json.dumps({"pinned": len(keys), "settings": keys,
-                      "env_only": sorted(names - used)}))  # read by Open WebUI directly, never stored
+                      "env_only": sorted(names - used),  # read by Open WebUI directly, never stored
+                      "system_prompt": system_prompt_report()}))
     return 0
 
 

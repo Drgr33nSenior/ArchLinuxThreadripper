@@ -247,6 +247,7 @@ infrastructure/service/alertmanager.yaml
 infrastructure/service/alerts.yaml
 infrastructure/service/traefik.yaml
 lib/workstation/service.py
+infrastructure/sglang/assistant-behaviour.json
 infrastructure/sglang/assistant-quality.json
 lib/workstation/assistant_api.py
 lib/workstation/assistant_acceptance.py
@@ -289,6 +290,7 @@ apps/components/assistant/kustomization.yaml
 apps/components/assistant/assistant.env
 apps/components/assistant/webui.yaml
 apps/components/assistant/pin-config.py
+apps/components/assistant/system-prompt.md
 apps/components/assistant/theme/custom.css
 apps/components/assistant/theme/site.webmanifest
 apps/components/assistant/theme/favicon.svg
