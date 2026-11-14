@@ -26,7 +26,7 @@ source of truth; this table is a summary.
 | Video | Wan 2.2 T2V A14B, 5-second 832×480 clips in about 80 s, made from the chat |
 | Serving stack | SGLang main (0.5.23 + 957) with the [gfx1201 patch series](https://github.com/Drgr33nSenior/Spry.ai-rdna4-serving/tree/main/serving/patches/sglang-main), PyTorch 2.16 nightly for ROCm 10.3.0-dev (HIP 7.18); see [stack.lock](infrastructure/ai-stack/stack.lock) |
 | Apps | Open WebUI 0.13.3, ComfyUI 0.45.0, LiteLLM 1.109.1 behind our gateway |
-| Platform | Arch Linux, kernel 7.3.3, K3s v1.36.6, AMD GPU operator v1.5.1 with the ROCm DRA driver v1.0.1; GPUs capped at 235 W |
+| Platform | Arch Linux, kernel 7.3.4, K3s v1.36.6, AMD GPU operator v1.5.1 with the ROCm DRA driver v1.0.1; GPUs capped at 235 W |
 | Serving profile | [qwen3.8-27b-mxfp4-tp2.json](infrastructure/ai-stack/serving/qwen3.8-27b-mxfp4-tp2.json): `qualified`; arms UQSB (shared) and UQLB (large), with UQS, UQL and Y kept as fallbacks |
 
 ## How it fits together

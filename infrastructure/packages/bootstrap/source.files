@@ -181,6 +181,7 @@ templates/sunshine/measurement.example.json
 templates/workstation/codex-config.toml
 templates/workstation/linux-git.config
 templates/workstation/linux-git-packaging.patch
+templates/workstation/linux-git-patches/0001-drm-amdgpu-fix-TLB-invalidation-fence-handling-v4.patch
 templates/workstation/packages-desktop.pacman
 templates/workstation/packages-intel.pacman
 templates/workstation/packages.pacman
