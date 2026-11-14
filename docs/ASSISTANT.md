@@ -610,15 +610,15 @@ own pods counted, and how far the limits sum past the node:
 | --- | --- | --- | --- |
 | Coder (large), assistant | 21.5 CPUs, 26,308 MiB | 20.8 CPUs, 25,476 MiB | None |
 | Coder (large), assistant with memory | 20.0 CPUs, 21,828 MiB | 19.3 CPUs, 20,996 MiB | 891 MiB |
-| Family (shared), assistant | 5.5 CPUs, 5,828 MiB | 4.8 CPUs, 4,996 MiB | 2 CPUs, 12,155 MiB |
-| Family (shared), assistant with memory (what runs today) | 4.0 CPUs, 1,348 MiB | 3.3 CPUs, 516 MiB | 9 CPUs, 21,371 MiB |
+| Family (shared), assistant | 5.5 CPUs, 8,900 MiB | 4.8 CPUs, 8,068 MiB | 2 CPUs, 9,083 MiB |
+| Family (shared), assistant with memory (what runs today) | 4.0 CPUs, 4,420 MiB | 3.3 CPUs, 3,588 MiB | 9 CPUs, 18,299 MiB |
 
 **Family mode: the pool fits on requests.** With the pool, family mode keeps
-3.3 CPUs and 516 MiB unrequested. The render accepts `--sandbox-config` in
+3.3 CPUs and 3,588 MiB unrequested (comfyui-gpu1 at its measured 9 GiB since 14 Nov; it was 516 MiB at 12 GiB). The render accepts `--sandbox-config` in
 shared mode, and `workstationctl mode family` passes `MODE_SANDBOX_CONFIG` as
-coder mode does. No other workload's budget changed. The margin is thin and
-rests on overcommit: without the pool family mode's limits already sum 12.4 GiB
-and 4 CPUs past the node, and its requests sit 4.6 GiB inside the 6,656 MiB
+coder mode does. No other workload's budget changed. The margin
+rests on overcommit: without the pool family mode's limits already sum 9.1 GiB
+and 4 CPUs past the node, and its requests sit 1.5 GiB inside the 6,656 MiB
 telemetry reserve. Both are visible in `capacity.json`
 (`limits`, `remaining_mib_after_telemetry_reserve`). If two workspaces work
 hard while both picture generators are busy, the workspaces are throttled and,

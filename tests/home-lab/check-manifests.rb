@@ -207,7 +207,7 @@ require_check(single_sglang['containers'][0].dig('resources', 'limits') == {'cpu
 guaranteed_pod(single_sglang)
 picture = named(single, 'Deployment', 'comfyui-gpu1').dig('spec', 'template', 'spec')
 # CPU right-sized from the live shared-mode measurement (2026-11-11, peak 2.3 cores).
-require_check(picture['containers'][0].dig('resources', 'limits') == {'cpu' => '4', 'memory' => '12Gi'} && gpu_claims(picture) == %w[gpu-1], 'Picture ComfyUI resource envelope changed')
+require_check(picture['containers'][0].dig('resources', 'limits') == {'cpu' => '4', 'memory' => '9Gi'} && gpu_claims(picture) == %w[gpu-1], 'Picture ComfyUI resource envelope changed')
 require_check(picture['initContainers'][0].dig('resources', 'limits') == {'cpu' => '2', 'memory' => '64Mi'}, 'Picture ComfyUI init resource envelope changed')
 guaranteed_pod(picture)
 compat = documents(directory, 'rdna4-compat')
