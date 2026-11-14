@@ -40,11 +40,12 @@ CREATIVE_IMAGE_REPOSITORY=registry.lan.thespry.family/local/creative-gfx1201
 GRAPHITI_IMAGE_REPOSITORY=registry.lan.thespry.family/local/graphiti-memory
 GAMING_IMAGE_REPOSITORY=registry.lan.thespry.family/local/steam-headless
 # Open WebUI from the workstation fork, built by the webui stage: an upstream release plus
-# provider-declared Model Controls (the reasoning slider), offered upstream. refresh.sh moves
+# provider-declared Model Controls (the reasoning slider), offered upstream, and a group
+# permission that lifts the web search confirmation. refresh.sh moves
 # the commit to the branch head; rebasing the branch onto a new upstream release is reviewed by hand.
 OPEN_WEBUI_FORK_REPOSITORY=https://github.com/Drgr33nSenior/open-webui.git
 OPEN_WEBUI_FORK_BRANCH=workstation/reasoning-controls
-OPEN_WEBUI_FORK_COMMIT=21bc3e3da87d25e988b412710bafcefd4b4261db
+OPEN_WEBUI_FORK_COMMIT=2cd8ab0d79f95cbf6c869e8699a5475038e73e68
 OPEN_TERMINAL_COMMIT=d0301c5d633a176631cd36a4adf7fcc26bb38402
 TERMINALS_COMMIT=4c7a747634d7a521ecc82f6f09dab204a3ded60e
 SANDBOX_IMAGE_REPOSITORY=registry.lan.thespry.family/local/assistant-sandbox

@@ -306,7 +306,9 @@ re-applies them from the environment:
 - the tool server, web search and page loader;
 - model defaults and prompt suggestions;
 - the reviewed RAG profile;
-- the [tool-use system prompt](#tool-use-system-prompt) on the default model's record.
+- the [tool-use system prompt](#tool-use-system-prompt) and the
+  [built-in tool categories](#built-in-tools-in-a-chat) on the default model's record;
+- which groups [search the web without the confirmation](#web-search-confirmation-per-group).
 
 About 56 of Open WebUI's roughly 450 settings are owned this way. Change those in
 source (`assistant.env`, `webui.yaml`, `rag.env`), not in the Admin Panel: an
@@ -319,8 +321,10 @@ The render (`lib/workstation/service.py`) names every variable it gives Open Web
 `WEBUI_PINNED_ENV`, names only. The script reads the installed Open WebUI's `config.py`
 to find which settings those variables feed. Its first log line lists them. Group
 permissions, model records and access grants were always stored in the database
-and are unaffected, except for the one `params.system` field described next. With persistent config on, the database also holds the
-connection keys, so treat `webui.db` backups as secrets.
+and are unaffected, except for three fields described in the next sections: a model
+record's `params.system` and `meta.builtinTools`, and one group permission
+(`features.web_search_without_confirmation`). With persistent config on, the database
+also holds the connection keys, so treat `webui.db` backups as secrets.
 
 ### Tool-use system prompt
 
@@ -367,9 +371,77 @@ Two page readers remain on purpose. Open WebUI's `fetch_url` returns the first s
 page (6,000 characters); the tool server's `read_web_page` is the only way to continue a
 long page, so it is not hidden. To hide it as well, add `!read_web_page` to the filter.
 
-The confirmation prompt (`ENABLE_WEB_SEARCH_CONFIRMATION`) is one setting for everyone. Open
-WebUI 0.13.3 sends the same flag to every browser and has no per-group or per-role form of
-it, so it stays on for all accounts.
+### Web search confirmation per group
+
+Before a web search runs, the chat page asks the person to confirm
+(`ENABLE_WEB_SEARCH_CONFIRMATION=true`). Upstream Open WebUI 0.13.3 sends that setting to
+every browser alike. The workstation fork adds a group permission,
+`features.web_search_without_confirmation` (**Web Search Without Confirmation** under
+**Admin Panel → Users → Groups → a group → Permissions**), that lifts it:
+
+| Account | Confirmation |
+| --- | --- |
+| Member of a group on the list (Parents) | Not asked, also when the account is in Family as well: the most permissive group wins, as for every Open WebUI permission |
+| Member of Family only (the children), or of no group | Asked. This is the default: the permission is off unless a group grants it |
+| Admin | Not asked. Open WebUI exempts admins from every feature permission |
+
+The list is `WEB_SEARCH_WITHOUT_CONFIRMATION_GROUPS` in
+[`assistant.env`](../apps/components/assistant/assistant.env), group names separated by
+commas. At every start `pin-config.py` grants the permission to those groups and removes it
+from every other group, so the list is the whole truth and a grant made in the Admin Panel
+lasts until the next start. Its log line reports `granted`, `unchanged`, `removed` or
+`no group` per group. An empty list means everybody but the admin confirms. This is a
+permission, so a failure to write it stops the start, unlike the prompt and the tool
+categories. Never put the children's group on the list.
+
+The server works out the answer for the signed-in account and sends it with the page
+configuration (`/api/config`), so a change reaches a browser on its next page load. The
+confirmation itself remains a dialog in the browser, as upstream: it is a prompt to think,
+not an access control. What a group may do is still decided by its **Web Search**
+permission and enforced on the server.
+
+### Built-in tools in a chat
+
+Every tool a chat offers is described to the model in the prompt, on every turn. Open WebUI
+adds its own tools by category, and a model record can switch categories off
+(`meta.builtinTools`; **Admin Panel → Settings → Models → the model → Builtin Tools**).
+`MODEL_BUILTIN_TOOLS_OFF` in `assistant.env` lists the categories the default model's chats
+do not carry. `pin-config.py` writes exactly that list to the record at every start, next to
+the prompt, and reports `updated`, `unchanged` or `no model record`, plus any name the
+installed Open WebUI no longer knows (`unknown`).
+
+| Category | Tools | State | Why |
+| --- | --- | --- | --- |
+| `web_search`, `image_generation`, `code_interpreter` | `search_web`, `fetch_url`, `generate_image`, `execute_code` | on | Used daily |
+| `knowledge`, `files` | Knowledge-base search and reading (eight tools); attached-file tools when a chat has files | on | Project collections and uploads |
+| `time`, `user_input`, `chats`, `tasks` | Timestamps, `ask_user`, past-chat search, task lists | on | Small and used |
+| `memory` | Open WebUI's own memory tools | on, not offered | Offered only with the Memory toggle; family memory is the tool server's (`recall_memory`, `remember`) |
+| `notes` | `search_notes`, `view_note`, `write_note`, `replace_note_content` | **off** | One note exists; the model also reached for `write_note` when asked to build a page |
+| `calendar` | Four event tools | **off** | No calendar events |
+| `automations` | Five automation tools (Parents and the admin only) | **off** | No automations |
+| `skills`, `tools` | `create_skill`, `create_tool` | **off** | No skills or tools were ever created |
+| `channels`, `notifications` | Channel search, `notify` | **off** | Channels and webhooks are disabled anyway; off here so enabling the feature does not add tools unnoticed |
+
+The tool server's tools (project passages, handoffs, memory, video, long pages) are not
+built-in tools and are unaffected. Switching a category off removes tools from chats only:
+Notes, the calendar and automations still work in the interface, and the note editor's own
+assistant keeps its note tools. To bring a category back, remove it from the list and
+deploy.
+
+Measured on the served model on 14 November 2026 (the same request with and without the
+tool list), the definitions cost:
+
+| Account | Before | After |
+| --- | --- | --- |
+| Child (Family) | 37 tools, 7,660 tokens | 28 tools, 5,540 tokens |
+| Parent (Parents and Family) | 42 tools, 8,638 tokens | 28 tools, 5,540 tokens |
+| Admin | 43 tools, 8,826 tokens | 28 tools, 5,540 tokens |
+
+Of the 5,540 that remain, the tool server's eleven tools take about 2,580 and the eight
+knowledge tools about 1,510. Open WebUI's tool search (`ENABLE_TOOL_SEARCH`) would defer
+nine more definitions behind a `search_tools` and `call_tool` pair and bring the total to
+about 3,990 tokens. It is left off: the model would need two extra steps to reach knowledge
+retrieval and `ask_user`, and that path has not been tested with the served model.
 
 ### Theme
 
@@ -803,10 +875,11 @@ failed-test-to-fix cycle, interrupt and resume, and context compaction.
 ## Pinned inputs and gates
 
 The new experience pins Open WebUI **0.13.3** from the workstation fork
-(`Drgr33nSenior/open-webui`, commit `21bc3e3da87d25e988b412710bafcefd4b4261db`: upstream
-`b0e6098e9409` plus provider-declared Model Controls and four dependency fixes), built,
+(`Drgr33nSenior/open-webui`, commit `2cd8ab0d79f95cbf6c869e8699a5475038e73e68`: upstream
+`b0e6098e9409` plus provider-declared Model Controls, four dependency fixes and the
+[per-group web search confirmation](#web-search-confirmation-per-group)), built,
 scanned and signed by the `webui` AI-stack stage as
-`registry.lan.thespry.family/local/open-webui:2f743ea641c7@sha256:ec62ad7e6610614f48846889a0ebf7fa1586043f3d40bef1e0441d2e10ed7560`.
+`registry.lan.thespry.family/local/open-webui:0d02ef9cdebe@sha256:e53f34d99004ffa3d33938b8f88f70824ba471cb13de23cd53dcf6aa65a7e462`.
 The legacy `service` experience retains its previous selection. The older RAG
 functional gate is evidence for its recorded image, not qualification of 0.13.3.
 Run a fresh UI/account, upload/ACL, retrieval, web-search/tool and image-return
