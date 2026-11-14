@@ -1,0 +1,41 @@
+{
+  "schema": 1,
+  "alias": "qwen-image-2512",
+  "status": "selected",
+  "notes": "Selected 2026-11-14 (owner decision after a same-seed bake-off of SDXL and five Qwen-Image candidates, test-results/qwen-image-bakeoff-20261114): Qwen-Image-2512 at full bf16 precision with lightx2v's Qwen-Image-2512-Lightning 8-step LoRA (V1.0, bf16), 8 steps at CFG 1, the Qwen2.5-VL 7B fp8-scaled text encoder and the Qwen-Image VAE, from Comfy-Org's repack. Run by both picture backends (SwarmUI's ComfyUI on gpu-1 and comfyui-gpu0) with the fixed workflow apps/base/shared-api/qwen-image-workflow.json. Staged onto the local NVMe creative-models volume (Image/), not the NAS ai-models volume: ComfyUI --fast-disk streams the 41 GB model from disk. Stage with infrastructure/ai-stack/models/stage-video.py. Licences: Qwen-Image-2512 (card metadata), the Comfy-Org repack and the lightx2v LoRA are Apache 2.0. Qwen-Image-2.1 was not considered for use: its Qwen Research License limits use to research or evaluation.",
+  "kind": "comfyui-file-set",
+  "files": [
+    {
+      "repository": "Comfy-Org/Qwen-Image",
+      "revision": "1f12b17be14c89b026c51a91d67c32f84bb047bc",
+      "path": "split_files/diffusion_models/qwen_image_2512_bf16.safetensors",
+      "dir": "diffusion_models",
+      "size": 40861031488,
+      "sha256": "cbf55390fff27dbc785046d7007b04e0c5dd7421e7ef128f2831eacb53a8e075"
+    },
+    {
+      "repository": "lightx2v/Qwen-Image-2512-Lightning",
+      "revision": "4609161e308ce82018a42c2a0c9b107e865bb751",
+      "path": "Qwen-Image-2512-Lightning-8steps-V1.0-bf16.safetensors",
+      "dir": "loras",
+      "size": 849608296,
+      "sha256": "b48fb1a8edd939354579c1cf0b403c92f28879b32dddbaaa91b9d424bfc72081"
+    },
+    {
+      "repository": "Comfy-Org/Qwen-Image",
+      "revision": "1f12b17be14c89b026c51a91d67c32f84bb047bc",
+      "path": "split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+      "dir": "text_encoders",
+      "size": 9384670680,
+      "sha256": "cb5636d852a0ea6a9075ab1bef496c0db7aef13c02350571e388aea959c5c0b4"
+    },
+    {
+      "repository": "Comfy-Org/Qwen-Image",
+      "revision": "1f12b17be14c89b026c51a91d67c32f84bb047bc",
+      "path": "split_files/vae/qwen_image_vae.safetensors",
+      "dir": "vae",
+      "size": 253806246,
+      "sha256": "a70580f0213e67967ee9c95f05bb400e8fb08307e017a924bf3441223e023d1f"
+    }
+  ]
+}

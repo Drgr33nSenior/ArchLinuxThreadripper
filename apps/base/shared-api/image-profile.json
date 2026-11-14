@@ -1,13 +1,40 @@
 {
-  "schema": 1,
-  "id": "workstation-sdxl",
-  "model_repository": "stabilityai/stable-diffusion-xl-base-1.0",
-  "model_revision": "462165984030d82259a11f4367a4eed129e94a7b",
-  "model_sha256": "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b",
-  "swarm_model": "OfficialStableDiffusion/sd_xl_base_1.0",
-  "workflow": "sdxl-workflow.json",
-  "sizes": ["512x512", "1024x1024", "1152x896", "896x1152", "1216x832", "832x1216", "1344x768", "768x1344"],
-  "steps": 20,
-  "cfg_scale": 7.0,
-  "serving_models": ["Qwen3.5-9B", "Qwen3.8-27B-MXFP4"]
+  "schema": 2,
+  "id": "workstation-qwen-image",
+  "catalog": "qwen-image-2512",
+  "swarm_model": "QwenImage/qwen_image_2512_bf16",
+  "workflow": "qwen-image-workflow.json",
+  "files": {
+    "diffusion_model": {
+      "name": "qwen_image_2512_bf16.safetensors",
+      "sha256": "cbf55390fff27dbc785046d7007b04e0c5dd7421e7ef128f2831eacb53a8e075"
+    },
+    "lora": {
+      "name": "Qwen-Image-2512-Lightning-8steps-V1.0-bf16.safetensors",
+      "sha256": "b48fb1a8edd939354579c1cf0b403c92f28879b32dddbaaa91b9d424bfc72081"
+    },
+    "text_encoder": {
+      "name": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+      "sha256": "cb5636d852a0ea6a9075ab1bef496c0db7aef13c02350571e388aea959c5c0b4"
+    },
+    "vae": {
+      "name": "qwen_image_vae.safetensors",
+      "sha256": "a70580f0213e67967ee9c95f05bb400e8fb08307e017a924bf3441223e023d1f"
+    }
+  },
+  "sizes": [
+    "1328x1328",
+    "1664x928",
+    "928x1664",
+    "1472x1104",
+    "1104x1472",
+    "1584x1056",
+    "1056x1584"
+  ],
+  "steps": 8,
+  "cfg_scale": 1.0,
+  "serving_models": [
+    "Qwen3.5-9B",
+    "Qwen3.8-27B-MXFP4"
+  ]
 }

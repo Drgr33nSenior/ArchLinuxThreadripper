@@ -1,11 +1,11 @@
 # The model and custom-node layout SwarmUI's self-starting backend writes to
-# /SwarmUI/Data/comfy-auto-model.yaml, so SwarmUI's workflows and model names
-# (OfficialStableDiffusion/sd_xl_base_1.0.safetensors) work unchanged when SwarmUI
+# /SwarmUI/Data/comfy-auto-model.yaml, so SwarmUI's nodes work unchanged when SwarmUI
 # drives this ComfyUI as a remote comfyui_api backend.
 swarmui:
     base_path: /SwarmUI/Models
     is_default: true
     checkpoints: Stable-Diffusion
+    diffusion_models: diffusion_models
     vae: VAE
     loras: |
         Lora
@@ -24,6 +24,15 @@ swarmui_nodes:
 # service-tools' fixed workflow (apps/base/shared-api/wan-t2v-workflow.json).
 wan:
     base_path: /video
+    diffusion_models: diffusion_models
+    loras: loras
+    text_encoders: text_encoders
+    vae: vae
+# The Qwen-Image-2512 picture stack on the same volume (Image/), used by service-tools' fixed
+# picture workflow (apps/base/shared-api/qwen-image-workflow.json). The same section is SwarmUI's
+# apps/base/swarmui/image-model-paths.yaml, so file names match on either picture backend.
+qwen_image:
+    base_path: /image
     diffusion_models: diffusion_models
     loras: loras
     text_encoders: text_encoders

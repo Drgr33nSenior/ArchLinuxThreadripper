@@ -158,14 +158,15 @@ class BackupTests(unittest.TestCase):
 
     def test_creative_capture_skips_restageable_weights_and_keeps_state(self):
         source = self.root / "creative"
-        for path in ("Models/sdxl.safetensors", "Video/diffusion_models/wan.safetensors", "Data/swarm.json"):
+        for path in ("Models/sdxl.safetensors", "Video/diffusion_models/wan.safetensors",
+                     "Image/diffusion_models/qwen.safetensors", "Data/swarm.json"):
             (source / path).parent.mkdir(parents=True, exist_ok=True)
             (source / path).write_text("x")
         backup.archive(source, self.root / "creative.tar", backup.CREATIVE_WEIGHTS)
         with tarfile.open(self.root / "creative.tar") as tar:
             names = tar.getnames()
         self.assertIn("./Data/swarm.json", names)
-        self.assertFalse([n for n in names if n.startswith(("./Models", "./Video"))])
+        self.assertFalse([n for n in names if n.startswith(("./Models", "./Video", "./Image"))])
 
     def test_correct_mount_and_physical_independence(self):
         with self.local_context(), patch.object(backup, "run", self.storage_run):

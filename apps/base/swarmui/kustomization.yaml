@@ -4,3 +4,5 @@ resources: [deployment.yaml, service.yaml, pvc.yaml]
 configMapGenerator:
   - name: swarmui-backend
     files: [Backends.fds]
+  - name: swarmui-image-paths
+    files: [image-model-paths.yaml]

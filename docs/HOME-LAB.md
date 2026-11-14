@@ -650,7 +650,7 @@ The initial backend seed selects `comfyui_selfstart`, disables automatic updates
 starts ComfyUI with fp8 UNet and text encoders and `--reserve-vram 1.5` (see the
 sharing note in section 4), and leaves existing PVC configuration untouched: a
 `Backends.fds` already on the state volume keeps its own arguments. The selected checkpoints
-are SDXL base 1.0 for pictures and Wan 2.2 T2V A14B for video ([MODELS.md](MODELS.md)); stage
+are Qwen-Image-2512 for pictures and Wan 2.2 T2V A14B for video ([MODELS.md](MODELS.md)); stage
 them before starting, because the network policy prevents runtime downloads.
 Its Service remains internal until application authentication and a private
 ingress rule are reviewed. Limit children's accounts and extension installation

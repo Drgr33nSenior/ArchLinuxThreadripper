@@ -10,7 +10,7 @@ change, never a moving `latest`.
 | --- | --- | --- | --- | --- |
 | Chat and coding | `amd/Qwen3.8-27B-Quark-AWQ-MXFP4`, served as `Qwen3.8-27B-MXFP4` | `5233554c…` | SGLang on both GPUs | [`qwen3.8-27b-mxfp4.json`](../infrastructure/ai-stack/models/qwen3.8-27b-mxfp4.json) |
 | Speculative draft | `incoai/Qwen3.8-27B-DFlash2` | `015e7956…` | Inside SGLang, beside the chat model | Same entry |
-| Pictures | `stabilityai/stable-diffusion-xl-base-1.0` (single-file checkpoint) | `46216598…` | ComfyUI on both GPUs, read from the NAS | [`sdxl-base-1.0.json`](../infrastructure/ai-stack/models/sdxl-base-1.0.json) |
+| Pictures | Qwen-Image-2512 (bf16), lightx2v 2512 Lightning 8-step LoRA, Qwen2.5-VL 7B fp8-scaled text encoder, Qwen-Image VAE | `1f12b17b…` (Comfy-Org repack), `4609161e…` (LoRA) | ComfyUI on both GPUs, streamed from the local NVMe | [`qwen-image-2512.json`](../infrastructure/ai-stack/models/qwen-image-2512.json) |
 | Video | Wan 2.2 T2V A14B: two 14B experts (FP8), lightx2v 4-step LoRAs (`1217`), umt5-xxl text encoder, Wan 2.1 VAE | `ee6f4a40…` (Comfy-Org repack), `57adea58…` (LoRAs) | ComfyUI on GPU 0, shared mode only | [`wan2.2-t2v-a14b.json`](../infrastructure/ai-stack/models/wan2.2-t2v-a14b.json) |
 | Document and memory embeddings | `Qwen/Qwen3-Embedding-0.6B` | Hash-checked on staging | CPU (Open WebUI, and Text Embeddings Inference for memory) | [RAG](RAG.md) |
 | Search reranking | `cross-encoder/ms-marco-MiniLM-L6-v2` | Hash-checked on staging | CPU | [RAG](RAG.md) |
@@ -21,15 +21,16 @@ and 262,112 in large mode ([service modes](MODES.md)). Its serving settings live
 [serving profile](../infrastructure/ai-stack/serving/qwen3.8-27b-mxfp4-tp2.json), which is
 `qualified`; the catalogue holds only identity and file hashes.
 
-Licences: Qwen3.8 and the DFlash2 draft follow their model cards; SDXL base 1.0 uses the
-CreativeML Open RAIL++-M licence (fetched with the weights); Wan 2.2, umt5 and the lightx2v
+Licences: Qwen3.8 and the DFlash2 draft follow their model cards; Qwen-Image-2512, its Comfy-Org
+repack and the lightx2v Lightning LoRA are Apache 2.0 (Qwen-Image-2.1 was not used: its Qwen Research
+License allows research or evaluation only); Wan 2.2, umt5 and the lightx2v
 LoRAs are Apache 2.0.
 
 ### Where the weights live
 
-- **Chat model, draft and SDXL:** the NAS `ai-models` volume, staged by a `render-fetch.py`
-  Job into `/models/<owner>/<name>/<revision>/` with `VERIFIED.json` written last. Both
-  ComfyUIs mount the SDXL checkpoint read-only from there. See
+- **Chat model and draft:** the NAS `ai-models` volume, staged by a `render-fetch.py`
+  Job into `/models/<owner>/<name>/<revision>/` with `VERIFIED.json` written last. The
+  superseded SDXL checkpoint (`sdxl-base-1.0.json`) also stays there; nothing mounts it. See
   [AI stack models](../infrastructure/ai-stack/README.md#models).
   The NAS is the archive of every revision. **SGLang reads a local NVMe copy** of exactly
   the model and draft its serving contract names, from the `sglang-model-cache` claim
@@ -45,6 +46,9 @@ LoRAs are Apache 2.0.
 - **Wan 2.2:** the local-NVMe `creative-models` volume (`Video/`), staged with
   `stage-video.py` (about 36.8 GB) because ComfyUI streams it from disk on every step; see
   [short videos](ASSISTANT.md#short-videos-shared-mode).
+- **Qwen-Image-2512:** the same volume (`Image/`), staged with `stage-video.py` (about 51.4 GB)
+  for the same reason: both picture ComfyUIs stream the 41 GB bf16 model from disk. See
+  [pinned inputs](ASSISTANT.md#pinned-inputs-and-gates).
 - **Embeddings, reranker and Whisper:** the `webui-rag-qwen3-models` volume, staged by the
   `rag` commands.
 

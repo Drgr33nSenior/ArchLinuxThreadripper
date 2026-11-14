@@ -8,7 +8,7 @@
         AutoUpdate: false
         UpdateManagedNodes: false
         FrontendVersion: None
-        ExtraArgs: --output-directory /SwarmUI/Output/comfy --temp-directory /tmp/comfy-temp --input-directory /SwarmUI/Data/comfy-input --user-directory /SwarmUI/Data/comfy-user --fp8_e4m3fn-unet --fp8_e4m3fn-text-enc --reserve-vram 1.5
+        ExtraArgs: --output-directory /SwarmUI/Output/comfy --temp-directory /tmp/comfy-temp --input-directory /SwarmUI/Data/comfy-input --user-directory /SwarmUI/Data/comfy-user --extra-model-paths-config /config/image-model-paths.yaml --reserve-vram 1.5 --vram-headroom 2 --fast-disk --use-ck-attention
         OverQueue: 0
 1:
     type: comfyui_api

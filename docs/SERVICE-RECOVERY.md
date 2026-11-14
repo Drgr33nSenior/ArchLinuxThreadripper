@@ -33,7 +33,8 @@ The protected capture includes:
   claims or unmanaged writers are refused instead of silently omitted.
 - Model revision lock, actual staged inference file inventories, the RAG
   `SHA256SUMS`, pinned creative asset checksum, and per-PVC UID/PV/source-path journal.
-  Creative model weights (SDXL under `Models/`, the Wan 2.2 video stack under `Video/`),
+  Creative model weights (SDXL under `Models/`, the Wan 2.2 video stack under `Video/`, the
+  Qwen-Image-2512 picture stack under `Image/`),
   SGLang weights/caches and the RAG model PVC are excluded.
   Restage them at the pinned identities before usable retrieval/inference tests.
 

@@ -19,6 +19,7 @@ apps/base/steam-headless/pvc.yaml
 apps/base/steam-headless/resourceclaim.yaml
 apps/base/steam-headless/service.yaml
 apps/base/swarmui/Backends.fds
+apps/base/swarmui/image-model-paths.yaml
 apps/base/swarmui/deployment.yaml
 apps/base/swarmui/kustomization.yaml
 apps/base/swarmui/pvc.yaml

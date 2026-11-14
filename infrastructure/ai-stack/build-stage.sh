@@ -305,6 +305,7 @@ if [[ $stage == creative ]]; then
   podman run --rm --pull=never --network none --user 0:0 --tmpfs /tmp --device /dev/kfd --device /dev/dri \
     --group-add keep-groups --security-opt label=disable -e HOME=/tmp \
     -v "$here/creative/smoke.py:/smoke.py:ro" -v "$here/creative/Backends.fds:/smoke/Backends.fds:ro" \
+    -v "$here/../../apps/base/swarmui/image-model-paths.yaml:/config/image-model-paths.yaml:ro" \
     --entrypoint /SwarmUI/dlbackend/ComfyUI/venv/bin/python "$tag" /smoke.py /smoke/Backends.fds
   printf 'IMAGE=%s\n' "$tag"
   [[ ${AI_STACK_PUSH:-0} != 1 ]] || publish "$tag" "$creative_run" "$here/creative/scan-allowlist.json"

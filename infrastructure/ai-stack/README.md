@@ -221,7 +221,8 @@ files the runtime never reads.
 | Entry | Used by |
 | --- | --- |
 | `qwen3.8-27b-mxfp4.json` | SGLang, via `serving/qwen3.8-27b-mxfp4-tp2.json` (model plus DFlash2 draft) |
-| `sdxl-base-1.0.json` | The creative image's ComfyUI, via `apps/base/shared-api/image-profile.json` (single-file checkpoint only; a test keeps the two hashes equal) |
+| `qwen-image-2512.json` | Both picture ComfyUIs, via `apps/base/shared-api/image-profile.json` (a test keeps the four file names and hashes equal). Staged with `stage-video.py` onto the local-NVMe `creative-models` volume (`Image/`) |
+| `sdxl-base-1.0.json` | Superseded by `qwen-image-2512.json` on 2026-11-14; kept for the creative image's smoke and measurement tooling |
 | `wan2.2-t2v-a14b.json` | `comfyui-gpu0` for chat video (`generate_video`). Staged with `stage-video.py` onto the local-NVMe `creative-models` volume, not the NAS: see [short videos](../../docs/ASSISTANT.md#short-videos-shared-mode) |
 
 To stage it on the NAS:

@@ -15,7 +15,7 @@ It runs in **shared mode** today. [Service modes](MODES.md) explains the alterna
 | Feature | How to use it | Who |
 | --- | --- | --- |
 | Chat | Chat with `Qwen3.8-27B-MXFP4` (thinks briefly). To change how long it thinks: the **Reasoning effort** slider in the message box (Off, Low, Medium, Max) | Everyone with an account |
-| Pictures | Ask for a picture, or use the image button; SDXL makes it in about 7 s | Accounts with picture permission (Admin and Parents) |
+| Pictures | Ask for a picture, or use the image button; Qwen-Image makes a 1328×1328 picture in about 75 s | Accounts with picture permission (Admin and Parents) |
 | Short videos | Ask for a short video; a 5-second clip appears in the chat after about 80 s | Accounts with picture permission and the normal `user` role (the Parents' daily accounts); shared mode only |
 | Voice input | The microphone button; speech is transcribed on the workstation | Everyone |
 | Web search | Automatic when a question needs current public information (Exa) | Everyone |
@@ -87,7 +87,7 @@ If any check fails, the model gets a short error it can explain, such as `video_
 | Documents | Open WebUI → CPU Qwen embedding model → embedded Chroma | Preserve document permissions; answer/citation quality remains unqualified |
 | Web research | Open WebUI/Qwen Code → shared Exa adapter | Auto search and public-page extraction; one durable request ceiling; Tavily optional |
 | Memory | Browser and coding clients → service-tools memory tools → Graphiti on Neo4j | Live in the `assistant-memory` experience; per-user memory groups; facts are stored only when someone asks |
-| Image creation | Open WebUI → service-tools image adapter → SwarmUI → ComfyUI on either GPU | SDXL only; two pictures at once in shared mode (one per GPU), one in split mode |
+| Image creation | Open WebUI → service-tools image adapter → SwarmUI → ComfyUI on either GPU | Qwen-Image-2512 only; two pictures at once in shared mode (one per GPU), one in split mode |
 | Short videos | Open WebUI → service-tools `generate_video` (MCP) → `comfyui-gpu0` | Wan 2.2 T2V A14B; shared mode only; one clip at a time; picture permission |
 | Voice input | Browser microphone → Open WebUI → local faster-whisper | CPU transcription on the workstation; audio never leaves it |
 | Creative controls | Operator → SwarmUI; ComfyUI remains its embedded backend | No new public ComfyUI port or unauthenticated creative Ingress |
@@ -119,7 +119,7 @@ and existing claim metadata; do not apply example DNS or invent a new identity.
 The live service is rendered with `--serving-profile` (see the [serving contract](#serving-contract)
 and the shared-mode command in [service modes](MODES.md#switch-modes)).
 The two commands above, without a profile, are the older compositions: `large` with the
-Qwen3.8-27B-FP8 image and no pictures, and `split` with Qwen3.5-9B on one GPU and SDXL on
+Qwen3.8-27B-FP8 image and no pictures, and `split` with Qwen3.5-9B on one GPU and pictures on
 the other. Neither silently swaps the chat model to make room for a picture.
 
 Both renders keep application replicas at zero. Use `service plan` with fresh
@@ -539,8 +539,8 @@ functional gate is evidence for its recorded image, not qualification of 0.13.3.
 Run a fresh UI/account, upload/ACL, retrieval, web-search/tool and image-return
 gate before use.
 
-`apps/base/shared-api/image-profile.json` records the existing SDXL revision,
-weight hash, workflow, dimensions and sampling settings. The adapter loads and
+`apps/base/shared-api/image-profile.json` records the Qwen-Image-2512 picture files (name and
+SHA-256 of the model, LoRA, text encoder and VAE), the workflow, sizes and sampling settings. The adapter loads and
 checks the operator-owned workflow at startup, copies it for each request and
 records its hash in health/in-flight evidence. Clients cannot choose a workflow,
 checkpoint, URL or unqualified model. Declared hashes do not prove installed
@@ -574,10 +574,10 @@ reports none running (`image_active`, `video_active` on `/health`; up to
 fails before stopping any workload; as with a chat drain that does not finish, the
 gateway stays closed until the switch is run again.
 
-Requested sizes snap to SDXL's native sizes: an exact `512x512`, or the nearest aspect
-of 1024x1024, 1152x896, 1216x832 or 1344x768 (and their portrait forms). Open WebUI's
+Requested sizes snap to Qwen-Image's trained aspect buckets: 1328x1328 (the default), or the
+nearest of 1664x928, 1472x1104 and 1584x1056 (and their portrait forms). Open WebUI's
 `generate_image` tool lets the model choose any `WIDTHxHEIGHT`; refusing those made it
-retry in a loop. None of the sizes has more pixels than the measured 1024x1024.
+retry in a loop. None of the sizes has more pixels than the measured 1328x1328.
 
 ## Speech and later model experiments
 
