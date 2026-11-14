@@ -333,6 +333,9 @@ class AssistantTests(unittest.TestCase):
             self.assertIn(flag, swarm_args)
             self.assertIn(flag, c["args"])
         self.assertEqual(swarm_args[swarm_args.index("--reserve-vram") + 1], c["args"][c["args"].index("--reserve-vram") + 1])
+        # the video backend caps DynamicVRAM (it ignores --reserve-vram): 2 GB free at a clip's peak
+        self.assertEqual("2", c["args"][c["args"].index("--vram-headroom") + 1])
+        self.assertNotIn("--disable-dynamic-vram", c["args"])
         # every directory ComfyUI is pointed at on the emptyDir exists before it starts
         init = named(shared, "Deployment", "comfyui-gpu0")["spec"]["template"]["spec"]["initContainers"][0]
         self.assertIn({"name": "work", "mountPath": "/work"}, init["volumeMounts"])
