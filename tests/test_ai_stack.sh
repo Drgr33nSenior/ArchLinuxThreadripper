@@ -279,18 +279,21 @@ assert render(image, "--serving", sys.argv[2], "--tool", "nonsense").returncode 
 PY
   fail 'kernel_check.py must render a one-card, digest-pinned UQ2 kernel check'
 rm -r "$serving_fake"
-# The image model's catalog entry and the browser image profile pin the same
-# revision and checkpoint hash.
-python3 -I - "$dir/models/sdxl-base-1.0.json" "$root/apps/base/shared-api/image-profile.json" <<'PY' ||
-import json, sys
+# The picture model's catalog entry and the browser image profile pin the same
+# four files (name and SHA-256), each from a pinned revision.
+python3 -I - "$dir/models/qwen-image-2512.json" "$root/apps/base/shared-api/image-profile.json" <<'PY' ||
+import json, re, sys
 entry, profile = (json.load(open(p)) for p in sys.argv[1:3])
-model = entry["model"]
-assert model["repository"] == profile["model_repository"] and model["revision"] == profile["model_revision"]
-checkpoints = [f for f in model["files"] if f["path"].endswith(".safetensors")]
-assert len(checkpoints) == 1 and checkpoints[0]["sha256"] == profile["model_sha256"], checkpoints
+assert entry["kind"] == "comfyui-file-set" and entry["status"] == "selected" and profile["catalog"] == entry["alias"]
+dirs = {"diffusion_model": "diffusion_models", "lora": "loras", "text_encoder": "text_encoders", "vae": "vae"}
+assert sorted(f["dir"] for f in entry["files"]) == sorted(dirs.values())
+for key, folder in dirs.items():
+    item = next(f for f in entry["files"] if f["dir"] == folder)
+    assert re.fullmatch(r"[a-f0-9]{40}", item["revision"]), item
+    assert profile["files"][key] == {"name": item["path"].rsplit("/", 1)[-1], "sha256": item["sha256"]}, key
 assert "draft" not in entry
 PY
-  fail 'sdxl-base-1.0 catalog entry and apps/base/shared-api/image-profile.json disagree'
+  fail 'qwen-image-2512 catalog entry and apps/base/shared-api/image-profile.json disagree'
 
 # fetch.py accepts files that already verify (git blob and SHA-256) without
 # any network access, marks the revision complete, and refuses unsafe paths.

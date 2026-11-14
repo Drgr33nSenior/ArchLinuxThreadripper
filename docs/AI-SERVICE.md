@@ -417,9 +417,10 @@ SwarmUI on the same ROCm and PyTorch as SGLang; see
 [image generation stages](../infrastructure/ai-stack/README.md#image-generation-stages)).
 The rest of this section describes the earlier standalone creative package:
 `infrastructure/creative/runtime.json` pins Swarm, Comfy, ROCm/.NET build images,
-SDXL model identity/checksum and bundled custom-node source. The checked-in
-`sdxl-workflow.json` fixes node types and parameters; only prompt, bounded size and
-seed are substituted by the adapter. The sole custom output node is
+the qualification-time SDXL identity/checksum and bundled custom-node source. Pictures
+now use Qwen-Image-2512 (`infrastructure/ai-stack/models/qwen-image-2512.json`): the
+checked-in `qwen-image-workflow.json` fixes node types and parameters; only prompt, bounded
+size and seed are substituted by the adapter. The sole custom output node is
 `SwarmSaveImageWS` from the same Swarm source revision. Swarm supplies model paths
 through its `Data/comfy-auto-model.yaml`. Stage the checkpoint at the exact path
 in the contract. Keep `Models` read-only after staging where the packaged backend
@@ -479,10 +480,11 @@ key. That attempt is preserved; no licence or audit check was disabled. The smok
 used only a fixed prompt and generated PNG. Resolve this dependency before
 deployment. Do not promote the smoke digest or lower security to boot it.
 
-The adapter permits one image per request at an SDXL size (512×512 or the nearest of
-1024×1024, 1152×896, 1216×832 and 1344×768, and their portrait forms), a 2,000-character
+The adapter permits one image per request at a Qwen-Image size (1328×1328 or the nearest of
+1664×928, 1472×1104 and 1584×1056, and their portrait forms), a 2,000-character
 prompt, no workflow macros, and an 8 MiB PNG result. It runs one picture at a time, or two
-in shared mode. Generation is bounded to 120 seconds. Cancellation
+in shared mode. Generation is bounded to 240 seconds (measured 72–88 s, two at once included)
+and the whole request to 270, inside Open WebUI's 300-second client timeout. Cancellation
 interrupts only the adapter's Swarm session. Any submitted generation without a
 successful terminal result retains a durable unresolved marker: interruption
 acknowledgement and zero Swarm counters do not prove GPU completion. Restart

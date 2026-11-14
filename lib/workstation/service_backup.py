@@ -36,8 +36,9 @@ TELEMETRY = Path("/var/lib/workstation-telemetry")
 HOST_INCLUDE = Path("/etc/restic/workstation.include")
 HOST_EXCLUDE = Path("/etc/restic/workstation.exclude")
 # Re-stageable weights in the creative-models claim: SDXL under Models/, the pinned Wan 2.2
-# video stack (about 37 GB, infrastructure/ai-stack/models/wan2.2-t2v-a14b.json) under Video/.
-CREATIVE_WEIGHTS = ("./Models", "./Video")
+# video stack (about 37 GB, infrastructure/ai-stack/models/wan2.2-t2v-a14b.json) under Video/ and
+# the Qwen-Image-2512 picture stack (about 51 GB, .../models/qwen-image-2512.json) under Image/.
+CREATIVE_WEIGHTS = ("./Models", "./Video", "./Image")
 REPOSITORY_ENTRY_LIMIT = 1000000
 MODEL_LOCKS = {"Qwen3.8-27B-FP8": "SGLANG_DUAL", "Qwen3.5-9B": "SGLANG_SINGLE"}
 

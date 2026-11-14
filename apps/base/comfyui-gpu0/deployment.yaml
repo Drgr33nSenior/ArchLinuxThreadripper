@@ -56,8 +56,7 @@ spec:
           # directly instead of self-started by SwarmUI.
           image: registry.lan.thespry.family/local/creative-gfx1201@sha256:47a22cd2d6a0e95686d7f4f899944bc2b2bd7258a704b4ae16259af87bd324c2
           command: [/SwarmUI/dlbackend/ComfyUI/venv/bin/python, /SwarmUI/dlbackend/ComfyUI/main.py]
-          # Measured SDXL settings (PR #90) and the shared-card reserve (PR #96), as SwarmUI's
-          # own backend in Backends.fds.
+          # The same picture settings as SwarmUI's own backend in Backends.fds, plus the video flags.
           args:
             - --listen
             - 0.0.0.0
@@ -73,8 +72,9 @@ spec:
             - /work/input
             - --user-directory
             - /work/user
-            - --fp8_e4m3fn-unet
-            - --fp8_e4m3fn-text-enc
+            # No --fp8_e4m3fn-unet/-text-enc: they would downcast the bf16 Qwen-Image model to plain
+            # fp8 (its Lightning LoRA is trained on bf16). The Wan and Qwen text-encoder files are
+            # already fp8-scaled and load as stored.
             - --reserve-vram
             - '1.5'
             # DynamicVRAM (on by default here) sizes itself from free VRAM and ignores --reserve-vram:
@@ -84,9 +84,10 @@ spec:
             # RAM and was OOM-killed at 11.35 GB.
             - --vram-headroom
             - '2'
-            # Wan 2.2 video (service-tools generate_video): stream the 14B experts from the local
-            # NVMe each step instead of holding them in RAM (measured 2026-11-12: a 5 s 832x480
-            # clip reads ~35-45 GB at up to 22 GB/s; sampling stays compute-bound).
+            # Wan 2.2 video (service-tools generate_video) and Qwen-Image pictures: stream the 14B
+            # experts and the 20B picture model from the local NVMe each step instead of holding
+            # them in RAM (measured 2026-11-12: a 5 s 832x480 clip reads ~35-45 GB at up to 22 GB/s;
+            # sampling stays compute-bound).
             - --fast-disk
             # Comfy Kitchen's attention: a 5 s Wan clip 92 -> 71-76 s on gfx1201 (2026-11-12). It is
             # not bit-identical to SDPA (same-seed PSNR 14-17 dB video, 25.8 dB SDXL) but side by
@@ -117,6 +118,9 @@ spec:
             # CPU measured live 2026-11-11 in shared mode (chat + both image generators,
             # cold and warm SDXL 1024^2, simultaneous pairs, 1 s cgroup samples): peak 2.3 cores,
             # p95 1.6 per image pod. 4 whole cores keeps Guaranteed QoS with headroom.
+            # Qwen-Image-2512 bf16 1328^2 2026-11-14 (test pod with these limits and flags, cold page
+            # cache): anon peak 6.2 GiB; 86 s cold, 74 s warm, 72-77 s with gpu-1 rendering at the same
+            # time; 2.3 GB of the card free at peak; chat median 62 tok/s during two pictures.
             requests: {cpu: '4', memory: 10Gi}
             limits: {cpu: '4', memory: 10Gi}
             claims: [{name: gpu-0}]
@@ -134,13 +138,16 @@ spec:
             - {name: config, mountPath: /config, readOnly: true}
             - {name: work, mountPath: /work}
             - {name: state, mountPath: /miopen, subPath: Data/miopen-gpu0}
-            # SDXL at the catalogue revision, read-only, at SwarmUI's model path.
-            # The Wan 2.2 T2V A14B stack (catalog wan2.2-t2v-a14b), staged on the local-NVMe
-            # creative-models volume by infrastructure/ai-stack/models/stage-video.py.
+            # The Wan 2.2 T2V A14B stack (catalog wan2.2-t2v-a14b) and the Qwen-Image-2512 picture
+            # stack (catalog qwen-image-2512), staged on the local-NVMe creative-models volume by
+            # infrastructure/ai-stack/models/stage-video.py.
             - {name: state, mountPath: /video, subPath: Video, readOnly: true}
-            - name: models
-              mountPath: /SwarmUI/Models/Stable-Diffusion/OfficialStableDiffusion
-              subPath: stabilityai/stable-diffusion-xl-base-1.0/462165984030d82259a11f4367a4eed129e94a7b
+            - {name: state, mountPath: /image, subPath: Image, readOnly: true}
+            # As in SwarmUI's pod, so SwarmUI finds Swarm model QwenImage/qwen_image_2512_bf16 on this
+            # backend too (it routes a request only to a backend that lists the model).
+            - name: state
+              mountPath: /SwarmUI/Models/diffusion_models/QwenImage
+              subPath: Image/diffusion_models
               readOnly: true
       volumes:
         - name: config
@@ -149,5 +156,3 @@ spec:
           emptyDir: {sizeLimit: 8Gi}
         - name: state
           persistentVolumeClaim: {claimName: creative-models}
-        - name: models
-          persistentVolumeClaim: {claimName: ai-models, readOnly: true}

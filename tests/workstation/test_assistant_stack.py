@@ -8,6 +8,8 @@ from types import SimpleNamespace
 import unittest
 import unittest.mock
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "apps/base/shared-api"), str(ROOT / "lib/workstation")]
 import service
@@ -135,7 +137,7 @@ class AssistantTests(unittest.TestCase):
             self.assertEqual("true", env["ENABLE_FORWARD_USER_INFO_HEADERS"])
             self.assertEqual("http://litellm:4000/webui/v1", env["OPENAI_API_BASE_URL"])
             self.assertEqual("http://service-tools:8000/webui", env["IMAGES_OPENAI_API_BASE_URL"])
-            self.assertEqual("workstation-sdxl", env["IMAGE_GENERATION_MODEL"])
+            self.assertEqual("workstation-qwen-image", env["IMAGE_GENERATION_MODEL"])
             self.assertEqual("false", env["ENABLE_IMAGE_EDIT"])
             self.assertEqual("", env["AUDIO_TTS_ENGINE"])
             self.assertEqual("", env["AUDIO_TTS_OPENAI_API_BASE_URL"])
@@ -252,48 +254,62 @@ class AssistantTests(unittest.TestCase):
 
     def test_declared_image_identity_matches_creative_staging_and_effective_ui(self):
         profile, workflow, workflow_sha = load_image_profile(ROOT / "apps/base/shared-api")
-        model = json.loads((ROOT / "infrastructure/creative/runtime.json").read_text())["model"]
-        self.assertEqual(model["repository"], profile["model_repository"])
-        self.assertEqual(model["revision"], profile["model_revision"])
-        self.assertEqual(model["sha256"], profile["model_sha256"])
-        self.assertEqual(model["file"], Path(workflow["1"]["inputs"]["ckpt_name"]).name)
+        entry = json.loads((ROOT / "infrastructure/ai-stack/models/qwen-image-2512.json").read_text())
+        staged = {f["path"].rsplit("/", 1)[-1]: f["sha256"] for f in entry["files"]}
+        self.assertEqual(staged, {f["name"]: f["sha256"] for f in profile["files"].values()})
+        loaded = (workflow["1"]["inputs"]["unet_name"], workflow["2"]["inputs"]["lora_name"],
+                  workflow["3"]["inputs"]["clip_name"], workflow["4"]["inputs"]["vae_name"])
+        self.assertEqual(sorted(staged), sorted(loaded))
         self.assertEqual(64, len(workflow_sha))
         app, env = environment(self.split)
         self.assertEqual(profile["id"], env["IMAGE_GENERATION_MODEL"])
+        self.assertEqual(profile["sizes"][0], env["IMAGE_SIZE"])
         cm = next(o for o in self.split if o["kind"] == "ConfigMap" and
                   o["metadata"]["name"].startswith("gateway-runtime-"))
         self.assertEqual(profile, json.loads(cm["data"]["image-profile.json"]))
         self.assertEqual(workflow, json.loads(cm["data"][profile["workflow"]]))
 
-    def test_swarmui_mounts_the_catalogue_sdxl_revision_read_only(self):
-        profile, _, _ = load_image_profile(ROOT / "apps/base/shared-api")
-        entry = json.loads((ROOT / "infrastructure/ai-stack/models/sdxl-base-1.0.json").read_text())["model"]
+    def test_swarmui_mounts_the_qwen_image_stack_read_only(self):
         pod = named(self.split, "Deployment", "swarmui")["spec"]["template"]["spec"]
         container = pod["containers"][0]
         self.assertRegex(container["image"], r"^registry\.lan\.thespry\.family/local/creative-gfx1201@sha256:[a-f0-9]{64}$")
         self.assertEqual([987, 983], pod["securityContext"]["supplementalGroups"])
+        # the picture stack from the local-NVMe creative volume, not the NAS ai-models volume
+        self.assertIn({"name": "state", "mountPath": "/image", "subPath": "Image", "readOnly": True}, container["volumeMounts"])
+        self.assertIn({"name": "image-paths", "mountPath": "/config", "readOnly": True}, container["volumeMounts"])
+        self.assertNotIn("models", [v["name"] for v in pod["volumes"]])
+        # Swarm model QwenImage/<file> for SwarmUI's registry, read-only below a writable folder
+        profile, _, _ = load_image_profile(ROOT / "apps/base/shared-api")
         folder, name = profile["swarm_model"].split("/")
-        mount = next(m for m in container["volumeMounts"] if m["name"] == "models")
-        self.assertEqual({"name": "models", "mountPath": f"/SwarmUI/Models/Stable-Diffusion/{folder}",
-                          "subPath": f"{entry['repository']}/{entry['revision']}", "readOnly": True}, mount)
-        self.assertIn(f"{name}.safetensors", [f["path"] for f in entry["files"]])
-        volume = next(v for v in pod["volumes"] if v["name"] == "models")
-        self.assertEqual({"claimName": "ai-models", "readOnly": True}, volume["persistentVolumeClaim"])
+        self.assertEqual(name + ".safetensors", profile["files"]["diffusion_model"]["name"])
+        self.assertIn({"name": "state", "mountPath": f"/SwarmUI/Models/diffusion_models/{folder}",
+                       "subPath": "Image/diffusion_models", "readOnly": True}, container["volumeMounts"])
+        self.assertIn(f"/state/Models/diffusion_models/{folder}", pod["initContainers"][0]["args"][0].split())
+        config = next(v for v in pod["volumes"] if v["name"] == "image-paths")["configMap"]["name"]
+        self.assertTrue(config.startswith("swarmui-image-paths"), config)
+        paths = yaml.safe_load((ROOT / "apps/base/swarmui/image-model-paths.yaml").read_text())
+        self.assertEqual({"qwen_image": {"base_path": "/image", "diffusion_models": "diffusion_models", "loras": "loras",
+                                         "text_encoders": "text_encoders", "vae": "vae"}}, paths)
         env = {e["name"]: e["value"] for e in container["env"]}
         self.assertEqual("1", env["COMFYUI_ENABLE_MIOPEN"])
+        self.assertEqual("0:0-47", env["HSA_CU_MASK"])
         for key in ("MIOPEN_USER_DB_PATH", "MIOPEN_CUSTOM_CACHE_DIR"):
             # Persistent (Data is on the state volume) and created by the seed container.
             self.assertTrue(env[key].startswith("/SwarmUI/Data/"), key)
             self.assertIn(env[key].replace("/SwarmUI/", "/state/", 1), pod["initContainers"][0]["args"][0])
 
     def test_comfyui_starts_with_the_measured_shared_card_flags(self):
-        # fp8 UNet + text encoders: 6.6 GiB peak at 1024² (14.7 GiB at defaults). --reserve-vram keeps
-        # ComfyUI out of the ~0.6-0.8 GiB SGLang grows into after startup on a shared card.
+        # Qwen-Image streamed from the NVMe (--fast-disk) with 2 GB of DynamicVRAM headroom; no fp8
+        # downcast of the bf16 model. --reserve-vram keeps ComfyUI out of what SGLang grows into.
         seed = (ROOT / "apps/base/swarmui/Backends.fds").read_text()
         args = next(line for line in seed.splitlines() if "ExtraArgs:" in line).split("ExtraArgs:", 1)[1].split()
-        for flag in ("--fp8_e4m3fn-unet", "--fp8_e4m3fn-text-enc"):
+        for flag in ("--fp8_e4m3fn-unet", "--fp8_e4m3fn-text-enc", "--disable-dynamic-vram"):
+            self.assertNotIn(flag, args)
+        for flag in ("--fast-disk", "--use-ck-attention"):
             self.assertIn(flag, args)
         self.assertEqual("1.5", args[args.index("--reserve-vram") + 1])
+        self.assertEqual("2", args[args.index("--vram-headroom") + 1])
+        self.assertEqual("/config/image-model-paths.yaml", args[args.index("--extra-model-paths-config") + 1])
         self.assertNotIn("--cuda-device", args)  # DRA shows the pod only its claimed card, as ordinal zero
         self.assertEqual(seed, (ROOT / "infrastructure/ai-stack/creative/Backends.fds").read_text())
 
@@ -323,16 +339,31 @@ class AssistantTests(unittest.TestCase):
         self.assertEqual(s["image"], c["image"])
         self.assertEqual(c["resources"]["requests"], {k: v for k, v in c["resources"]["limits"].items()})
         self.assertEqual([{"name": "gpu-0"}], c["resources"]["claims"])
-        # the same SDXL mount and model path as SwarmUI's self-started ComfyUI
-        mount = lambda container: next(m for m in container["volumeMounts"] if m["name"] == "models")
-        self.assertEqual(mount(s), mount(c))
+        # the same picture stack mount and file names as SwarmUI's self-started ComfyUI
+        image = {"name": "state", "mountPath": "/image", "subPath": "Image", "readOnly": True}
+        self.assertIn(image, s["volumeMounts"])
+        self.assertIn(image, c["volumeMounts"])
+        # and the same Swarm model folder, so SwarmUI routes the picture model to either backend
+        registry = lambda container: [m for m in container["volumeMounts"] if m.get("subPath") == "Image/diffusion_models"]
+        self.assertEqual(registry(s), registry(c))
+        self.assertEqual(1, len(registry(c)))
+        self.assertNotIn("models", [v["name"] for v in comfy["volumes"]])
+        paths = yaml.safe_load((ROOT / "apps/base/comfyui-gpu0/comfy-model-paths.yaml").read_text())
+        self.assertEqual(yaml.safe_load((ROOT / "apps/base/swarmui/image-model-paths.yaml").read_text())["qwen_image"],
+                         paths["qwen_image"])
         # the same measured flags as SwarmUI's own backend
         seed = (ROOT / "apps/base/swarmui/Backends.fds").read_text()
         swarm_args = seed.split("ExtraArgs:", 1)[1].splitlines()[0].split()
         for flag in ("--fp8_e4m3fn-unet", "--fp8_e4m3fn-text-enc"):
+            self.assertNotIn(flag, swarm_args)
+            self.assertNotIn(flag, c["args"])
+        for flag in ("--fast-disk", "--use-ck-attention"):
             self.assertIn(flag, swarm_args)
             self.assertIn(flag, c["args"])
-        self.assertEqual(swarm_args[swarm_args.index("--reserve-vram") + 1], c["args"][c["args"].index("--reserve-vram") + 1])
+        for flag in ("--reserve-vram", "--vram-headroom"):
+            self.assertEqual(swarm_args[swarm_args.index(flag) + 1], c["args"][c["args"].index(flag) + 1], flag)
+        cu_mask = lambda container: next(e["value"] for e in container["env"] if e["name"] == "HSA_CU_MASK")
+        self.assertEqual(cu_mask(s), cu_mask(c))
         # the video backend caps DynamicVRAM (it ignores --reserve-vram): 2 GB free at a clip's peak
         self.assertEqual("2", c["args"][c["args"].index("--vram-headroom") + 1])
         self.assertNotIn("--disable-dynamic-vram", c["args"])
@@ -354,20 +385,24 @@ class AssistantTests(unittest.TestCase):
 
     def test_changed_workflow_or_unsupported_profile_refuses_startup(self):
         base = ROOT / "apps/base/shared-api"
-        for mutation in ("node", "route", "batch", "profile", "path", "serving-model", "no-serving-models"):
+        for mutation in ("node", "route", "batch", "profile", "path", "serving-model", "no-serving-models", "file", "steps",
+                         "swarm-model"):
             with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temp:
                 directory = Path(temp)
                 profile = json.loads((base / "image-profile.json").read_text())
-                workflow = json.loads((base / "sdxl-workflow.json").read_text())
-                if mutation == "node": workflow["7"]["class_type"] = "UnreviewedNode"
-                if mutation == "route": workflow["2"]["inputs"]["clip"] = ["1", 0]
-                if mutation == "batch": workflow["4"]["inputs"]["batch_size"] = 2
+                workflow = json.loads((base / "qwen-image-workflow.json").read_text())
+                if mutation == "node": workflow["11"]["class_type"] = "UnreviewedNode"
+                if mutation == "route": workflow["6"]["inputs"]["clip"] = ["1", 0]
+                if mutation == "batch": workflow["8"]["inputs"]["batch_size"] = 2
+                if mutation == "file": profile["files"]["lora"]["name"] = "unreviewed.safetensors"
+                if mutation == "steps": workflow["9"]["inputs"]["steps"] = 50
+                if mutation == "swarm-model": profile["swarm_model"] = "OfficialStableDiffusion/sd_xl_base_1.0"
                 if mutation == "profile": profile["id"] = "unqualified-model"
                 if mutation == "path": profile["workflow"] = "../untrusted.json"
                 if mutation == "serving-model": profile["serving_models"].append("unqualified-model")
                 if mutation == "no-serving-models": profile["serving_models"] = []
                 (directory / "image-profile.json").write_text(json.dumps(profile))
-                (directory / "sdxl-workflow.json").write_text(json.dumps(workflow))
+                (directory / "qwen-image-workflow.json").write_text(json.dumps(workflow))
                 with self.assertRaises(ValueError):
                     load_image_profile(directory)
 

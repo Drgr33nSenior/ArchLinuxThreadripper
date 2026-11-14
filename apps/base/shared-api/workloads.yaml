@@ -152,7 +152,8 @@ spec:
     metadata: {labels: {app.kubernetes.io/name: service-tools}}
     spec:
       automountServiceAccountToken: false
-      terminationGracePeriodSeconds: 165
+      # Lets an in-flight picture finish (service-tools' 270 s request bound) before the pod stops.
+      terminationGracePeriodSeconds: 285
       nodeSelector: {kubernetes.io/arch: amd64, kubernetes.io/os: linux}
       securityContext:
         runAsNonRoot: true

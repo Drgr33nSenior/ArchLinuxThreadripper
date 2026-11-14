@@ -36,7 +36,7 @@ from web_search import WebSearch
 
 ID = re.compile(r"[A-Za-z0-9_-]{1,160}\Z")
 MCP_VERSION = "2025-03-26"
-IMAGE_MODEL = "workstation-sdxl"
+IMAGE_MODEL = "workstation-qwen-image"
 MEMORY_TOOLS = {"recall_memory": "recall", "remember": "remember", "forget_memory": "forget",
                 "inspect_memory_source": "inspect"}
 
@@ -93,9 +93,11 @@ async def metered(family, labels, call, success=lambda value: "ok", failure=stor
     return value
 
 
-# SDXL's native sizes: 512x512 plus the ~1 megapixel aspect buckets. None has more pixels than
-# 1024x1024, so memory stays within what was measured for shared cards (2026-11-11).
-SDXL_SIZES = ["512x512", "1024x1024", "1152x896", "896x1152", "1216x832", "832x1216", "1344x768", "768x1344"]
+# Qwen-Image's trained aspect buckets (Comfy-Org template and Qwen-Image-2512 card), the square one
+# first as the default. None has more pixels than 1328x1328, the size whose VRAM and time were
+# measured on the shared cards (2026-11-14 bake-off).
+QWEN_SIZES = ["1328x1328", "1664x928", "928x1664", "1472x1104", "1104x1472", "1584x1056", "1056x1584"]
+QWEN_FILES = ("diffusion_model", "lora", "text_encoder", "vae")
 
 
 def snap_size(requested, sizes):
@@ -103,67 +105,80 @@ def snap_size(requested, sizes):
 
     Open WebUI's generate_image tool lets the model choose any size ("e.g. 1536x1024").
     Refusing those made the model retry in a loop, so keep its aspect ratio instead:
-    an exact allowed size is used as is; anything else gets the nearest ~1 MP bucket.
+    an exact allowed size is used as is; anything else gets the nearest aspect bucket,
+    and no size (or "auto") gets the first, square one.
     """
     if requested in (None, "", "auto"):
-        return "1024x1024"
+        return sizes[0]
     if requested in sizes:
         return requested
     match = re.fullmatch(r"([1-9][0-9]{1,4})x([1-9][0-9]{1,4})", str(requested))
     if not match:
         return None
     ratio = math.log(int(match.group(1)) / int(match.group(2)))
-    buckets = [s for s in sizes if s != "512x512"]
-    return min(buckets, key=lambda s: abs(ratio - math.log(int(s.split("x")[0]) / int(s.split("x")[1]))))
+    return min(sizes, key=lambda s: abs(ratio - math.log(int(s.split("x")[0]) / int(s.split("x")[1]))))
+
+
+def qwen_workflow(profile):
+    """The one picture workflow: Qwen-Image-2512 bf16 + Lightning 8-step LoRA, CFG 1.
+
+    Prompt, size and seed are blank here and set per request. Tiled decode (512 px tiles)
+    bounds the VAE peak so a picture can share a card with SGLang.
+    """
+    files = profile["files"]
+    return {
+        "1": {"class_type": "UNETLoader", "inputs": {"unet_name": files["diffusion_model"]["name"], "weight_dtype": "default"}},
+        "2": {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["1", 0], "lora_name": files["lora"]["name"], "strength_model": 1.0}},
+        "3": {"class_type": "CLIPLoader", "inputs": {"clip_name": files["text_encoder"]["name"], "type": "qwen_image", "device": "default"}},
+        "4": {"class_type": "VAELoader", "inputs": {"vae_name": files["vae"]["name"]}},
+        "5": {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": ["2", 0], "shift": 3.1}},
+        "6": {"class_type": "CLIPTextEncode", "inputs": {"text": "", "clip": ["3", 0]}},
+        "7": {"class_type": "CLIPTextEncode", "inputs": {"text": "", "clip": ["3", 0]}},
+        "8": {"class_type": "EmptySD3LatentImage", "inputs": {"width": 1328, "height": 1328, "batch_size": 1}},
+        "9": {"class_type": "KSampler", "inputs": {"model": ["5", 0], "positive": ["6", 0], "negative": ["7", 0],
+                                                   "latent_image": ["8", 0], "seed": 0, "steps": profile["steps"],
+                                                   "cfg": profile["cfg_scale"], "sampler_name": "euler", "scheduler": "simple",
+                                                   "denoise": 1.0}},
+        "10": {"class_type": "VAEDecodeTiled", "inputs": {"samples": ["9", 0], "vae": ["4", 0], "tile_size": 512, "overlap": 64,
+                                                          "temporal_size": 64, "temporal_overlap": 8}},
+        "11": {"class_type": "SwarmSaveImageWS", "inputs": {"images": ["10", 0]}},
+    }
 
 
 def load_image_profile(directory):
-    """Load the operator-owned SDXL workflow; clients cannot upload workflows.
+    """Load the operator-owned Qwen-Image workflow; clients cannot upload workflows.
 
-    Declared checkpoint hashes are provenance, not proof of installed weights.
-    The existing creative image/model staging gate still verifies those bytes.
+    Declared file hashes are provenance, not proof of installed weights. The catalog
+    (infrastructure/ai-stack/models/qwen-image-2512.json) and its staging check verify those bytes.
     """
     directory = Path(directory)
     profile = json.loads((directory / "image-profile.json").read_text())
-    expected = {"schema", "id", "model_repository", "model_revision", "model_sha256",
-                "swarm_model", "workflow", "sizes", "steps", "cfg_scale", "serving_models"}
+    expected = {"schema", "id", "catalog", "swarm_model", "workflow", "files", "sizes", "steps", "cfg_scale", "serving_models"}
     if not isinstance(profile, dict) or set(profile) != expected:
         raise ValueError("invalid image profile")
-    if (type(profile["schema"]) is not int or profile["schema"] != 1 or profile["id"] != IMAGE_MODEL
-            or profile["workflow"] != "sdxl-workflow.json"
+    files = profile["files"]
+    if (type(profile["schema"]) is not int or profile["schema"] != 2 or profile["id"] != IMAGE_MODEL
+            or profile["catalog"] != "qwen-image-2512" or profile["workflow"] != "qwen-image-workflow.json"
+            # SwarmUI requires a model it knows: the same file, as both picture pods mount it at
+            # Models/diffusion_models/QwenImage. The raw workflow loads it from /image either way.
+            or not isinstance(files, dict) or not isinstance(files.get("diffusion_model"), dict)
+            or profile["swarm_model"] != "QwenImage/" + str(files["diffusion_model"].get("name", "")).removesuffix(".safetensors")
             # the gateway's rendered policy decides which of these may serve images in a mode
             or not isinstance(profile["serving_models"], list) or not profile["serving_models"]
             or not set(profile["serving_models"]) <= {"Qwen3.5-9B", "Qwen3.8-27B-MXFP4"}
-            or profile["model_repository"] != "stabilityai/stable-diffusion-xl-base-1.0"
-            or not re.fullmatch(r"[a-f0-9]{40}", str(profile["model_revision"]))
-            or not re.fullmatch(r"[a-f0-9]{64}", str(profile["model_sha256"]))
-            or profile["swarm_model"] != "OfficialStableDiffusion/sd_xl_base_1.0"
-            or profile["sizes"] != SDXL_SIZES
-            or type(profile["steps"]) is not int or profile["steps"] != 20
-            or type(profile["cfg_scale"]) not in {int, float} or profile["cfg_scale"] != 7):
+            or not isinstance(files, dict) or set(files) != set(QWEN_FILES)
+            or any(not isinstance(files[k], dict) or set(files[k]) != {"name", "sha256"}
+                   or not re.fullmatch(r"[A-Za-z0-9._-]+\.safetensors", str(files[k]["name"]))
+                   or not re.fullmatch(r"[a-f0-9]{64}", str(files[k]["sha256"])) for k in QWEN_FILES)
+            or profile["sizes"] != QWEN_SIZES
+            or type(profile["steps"]) is not int or profile["steps"] != 8
+            or type(profile["cfg_scale"]) not in {int, float} or profile["cfg_scale"] != 1):
         raise ValueError("unsupported image profile")
     raw = (directory / profile["workflow"]).read_bytes()
-    workflow = json.loads(raw)
-    # This is deliberately the existing SDXL route, not a general workflow engine.
-    expected_nodes = {"1": "CheckpointLoaderSimple", "2": "CLIPTextEncode", "3": "CLIPTextEncode",
-                      "4": "EmptyLatentImage", "5": "KSampler", "6": "VAEDecodeTiled", "7": "SwarmSaveImageWS"}
-    if (not isinstance(workflow, dict) or set(workflow) != set(expected_nodes)
-            or any(not isinstance(workflow[n], dict) or workflow[n].get("class_type") != kind
-                   for n, kind in expected_nodes.items())
-            or workflow["1"].get("inputs") != {"ckpt_name": profile["swarm_model"] + ".safetensors"}
-            or workflow["4"].get("inputs") != {"width": 1024, "height": 1024, "batch_size": 1}
-            or workflow["2"].get("inputs") != {"text": "", "clip": ["1", 1]}
-            or workflow["3"].get("inputs") != {"text": "", "clip": ["1", 1]}
-            # Tiled decode (512 px tiles) keeps SDXL's 1024 peak at ~9.4 GiB instead of
-            # ~15 GiB on gfx1201 (measured 2026-11-11), so it can share a card with SGLang.
-            or workflow["6"].get("inputs") != {"samples": ["5", 0], "vae": ["1", 2], "tile_size": 512,
-                                               "overlap": 64, "temporal_size": 64, "temporal_overlap": 8}
-            or workflow["7"].get("inputs") != {"images": ["6", 0]}
-            or workflow["5"].get("inputs") != {"model": ["1", 0], "positive": ["2", 0],
-                "negative": ["3", 0], "latent_image": ["4", 0], "seed": 0, "steps": profile["steps"],
-                "cfg": profile["cfg_scale"], "sampler_name": "euler", "scheduler": "normal", "denoise": 1.0}):
-        raise ValueError("unsupported SDXL workflow")
-    return profile, workflow, hashlib.sha256(raw).hexdigest()
+    # This is deliberately one fixed route, not a general workflow engine.
+    if json.loads(raw) != qwen_workflow(profile):
+        raise ValueError("unsupported Qwen-Image workflow")
+    return profile, qwen_workflow(profile), hashlib.sha256(raw).hexdigest()
 
 
 # Image slots: one per SwarmUI backend. Shared mode runs two (SwarmUI's own ComfyUI on
@@ -172,7 +187,7 @@ MAX_IMAGE_SLOTS = 2
 
 
 class ServiceTools:
-    def __init__(self, client, webui, swarm, gateway, browser_file, state_dir, image_timeout=120, public_webui="", web_search=None,
+    def __init__(self, client, webui, swarm, gateway, browser_file, state_dir, image_timeout=240, public_webui="", web_search=None,
                  memory=None, memory_key_file="/run/memory/service-key", memory_write=False, handoffs=None, image_slots=1,
                  video_comfy=None):
         self.client = client
@@ -549,13 +564,16 @@ class ServiceTools:
                 os.close(directory_fd)
             width, height = map(int, size.split("x"))
             workflow = copy.deepcopy(self.image_workflow)
-            workflow["2"]["inputs"]["text"] = prompt
-            workflow["4"]["inputs"].update(width=width, height=height)
-            workflow["5"]["inputs"]["seed"] = secrets.randbits(63)
+            workflow["6"]["inputs"]["text"] = prompt
+            workflow["8"]["inputs"].update(width=width, height=height)
+            workflow["9"]["inputs"]["seed"] = secrets.randbits(63)
+            # Swarm refuses a request without a model it knows. "noloadmodels" stops it running
+            # its own model-load job first (it would build a non-raw workflow for that model):
+            # the backend is marked loaded and the raw workflow loads its own files.
             task = asyncio.create_task(self.upstream_json("POST", self.swarm + "/API/GenerateText2Image",
-                data={"session_id": session, "images": 1, "prompt": prompt,
-                      "model": profile["swarm_model"], "width": width,
-                      "height": height, "steps": profile["steps"], "cfgscale": profile["cfg_scale"], "seed": workflow["5"]["inputs"]["seed"],
+                data={"session_id": session, "images": 1, "prompt": prompt, "width": width,
+                      "model": profile["swarm_model"], "noloadmodels": True,
+                      "height": height, "steps": profile["steps"], "cfgscale": profile["cfg_scale"], "seed": workflow["9"]["inputs"]["seed"],
                       "comfyworkflowraw": json.dumps(workflow)}, timeout=self.image_timeout))
             try:
                 async with asyncio.timeout(self.image_timeout):
@@ -627,7 +645,10 @@ class ServiceTools:
             slot = min(set(range(self.image_slots)) - self.active)
             self.active.add(slot)
             try:
-                async with asyncio.timeout(165):
+                # Qwen-Image 1328² (14 Nov): 50-74 s warm, 86-88 s from a cold page cache, 74 s each with
+                # both cards at once. The 240 s picture budget plus session and cleanup stays inside this,
+                # and this inside Open WebUI's 300 s client timeout.
+                async with asyncio.timeout(270):
                     result = await self.generate(request, prompt, size, slot)
             finally:
                 self.active.discard(slot)

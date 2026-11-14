@@ -19,6 +19,7 @@ apps/base/steam-headless/pvc.yaml
 apps/base/steam-headless/resourceclaim.yaml
 apps/base/steam-headless/service.yaml
 apps/base/swarmui/Backends.fds
+apps/base/swarmui/image-model-paths.yaml
 apps/base/swarmui/deployment.yaml
 apps/base/swarmui/kustomization.yaml
 apps/base/swarmui/pvc.yaml
@@ -220,6 +221,7 @@ apps/base/shared-api/litellm.yaml
 apps/base/shared-api/migrate.py
 apps/base/shared-api/network-policy.yaml
 apps/base/shared-api/sdxl-workflow.json
+apps/base/shared-api/qwen-image-workflow.json
 apps/base/shared-api/assistant_metrics.py
 apps/base/shared-api/service_tools.py
 apps/base/shared-api/handoff.py

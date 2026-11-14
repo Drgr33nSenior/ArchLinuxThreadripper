@@ -43,14 +43,14 @@ flowchart TB
 | SGLang | Serves Qwen3.8-27B MXFP4 across both GPUs | [`apps/base/sglang`](../apps/base/sglang), [serving profile](../infrastructure/ai-stack/serving/qwen3.8-27b-mxfp4-tp2.json) |
 | service-tools | MCP tools (documents, memory, web search, handoffs, video) and the picture adapter; checks every call against the user | [`service_tools.py`](../apps/base/shared-api/service_tools.py) |
 | Memory | Graphiti with Neo4j and a local embedding model | [session memory](MEMORY.md) |
-| SwarmUI, ComfyUI | SDXL pictures on GPU 1; a second ComfyUI on GPU 0 also makes video | [`apps/base/swarmui`](../apps/base/swarmui), [`apps/base/comfyui-gpu0`](../apps/base/comfyui-gpu0) |
+| SwarmUI, ComfyUI | Qwen-Image pictures on GPU 1; a second ComfyUI on GPU 0 also makes video | [`apps/base/swarmui`](../apps/base/swarmui), [`apps/base/comfyui-gpu0`](../apps/base/comfyui-gpu0) |
 
 ### Where data lives
 
 | Volume | Stored on | Holds | Backed up |
 | --- | --- | --- | --- |
-| `ai-models` | NAS over NFS (10 GbE) | Chat model, draft and SDXL weights | No; restaged from the pinned catalogue |
-| `creative-models` | Local NVMe | Wan video weights (`Video/`), SwarmUI `Data/`, `Models/` and `Output/` | `Data/` and `Output/`; the weight trees `Models/` and `Video/` are restaged |
+| `ai-models` | NAS over NFS (10 GbE) | Chat model and draft weights | No; restaged from the pinned catalogue |
+| `creative-models` | Local NVMe | Wan video weights (`Video/`), Qwen-Image picture weights (`Image/`), SwarmUI `Data/`, `Models/` and `Output/` | `Data/` and `Output/`; the weight trees `Models/`, `Video/` and `Image/` are restaged |
 | `webui-rag-qwen3-data` | Local NVMe | Open WebUI database, uploads, knowledge index | Yes |
 | `webui-rag-qwen3-models` | Local NVMe | Embedding, reranker and speech models | No; restaged |
 | `gateway-postgres` | Local NVMe | Gateway keys, budgets and usage | Yes (database dump) |

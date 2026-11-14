@@ -42,8 +42,8 @@ spec:
             - name: IMAGES_OPENAI_API_KEY
               valueFrom:
                 secretKeyRef: {name: webui-gateway-connection, key: service-key}
-            - {name: IMAGE_GENERATION_MODEL, value: workstation-sdxl}
-            - {name: IMAGE_SIZE, value: 1024x1024}
+            - {name: IMAGE_GENERATION_MODEL, value: workstation-qwen-image}
+            - {name: IMAGE_SIZE, value: 1328x1328}
             - {name: ENABLE_IMAGE_EDIT, value: 'false'}
             - {name: ENABLE_COMMUNITY_SHARING, value: 'false'}
             - {name: ENABLE_EVALUATION_ARENA_MODELS, value: 'false'}

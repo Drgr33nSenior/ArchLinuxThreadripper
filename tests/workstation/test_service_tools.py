@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "apps/base/shared-api"))
 from assistant_metrics import METRICS
 from retrieval import Retrieval
-from service_tools import SDXL_SIZES, ServiceTools, snap_size
+from service_tools import QWEN_SIZES, ServiceTools, snap_size
 
 # A ws_rag_corpus-named source and the chunk Open WebUI's Markdown splitter stores
 # for it (indentation stripped, lines joined with two spaces and a newline).
@@ -103,7 +103,7 @@ class ToolsTests(unittest.IsolatedAsyncioTestCase):
             self.mapping, self.root / "state", image_timeout=0.2, public_webui="https://chat.test")
         self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=self.tools.app), base_url="http://tools")
         self.headers = {"Authorization": "Bearer " + "s" * 32, "X-OpenWebUI-User-Id": "alice"}
-        self.image = {"model": "workstation-sdxl", "prompt": "fixture landscape", "size": "512x512"}
+        self.image = {"model": "workstation-qwen-image", "prompt": "fixture landscape", "size": "1328x1328"}
 
     async def asyncTearDown(self):
         await self.client.aclose()
@@ -208,8 +208,12 @@ class ToolsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("b64_json", response.json()["data"][0])
         job = next(json.loads(r.content) for r in self.calls if r.url.path == "/API/GenerateText2Image")
         workflow = json.loads(job["comfyworkflowraw"])
-        self.assertEqual("fixture landscape", workflow["2"]["inputs"]["text"])
-        self.assertEqual(1, workflow["4"]["inputs"]["batch_size"])
+        self.assertEqual("fixture landscape", workflow["6"]["inputs"]["text"])
+        self.assertEqual(1, workflow["8"]["inputs"]["batch_size"])
+        # Swarm needs a model it knows, but must not run its own load job before the raw workflow
+        self.assertEqual(("QwenImage/qwen_image_2512_bf16", True), (job["model"], job["noloadmodels"]))
+        self.assertEqual((8, 1.0), (job["steps"], job["cfgscale"]))
+        self.assertEqual((8, 1.0), (workflow["9"]["inputs"]["steps"], workflow["9"]["inputs"]["cfg"]))
         self.assertFalse((self.root / "state/image-inflight.json").exists())
 
     async def test_swarm_filename_spaces_are_encoded_for_artifact_fetch(self):
@@ -220,17 +224,17 @@ class ToolsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(b"/View/local/raw/a%20red%20cabin.png", fetch.url.raw_path)
 
     async def test_distinct_image_requests_do_not_mutate_the_loaded_workflow(self):
-        for prompt, size in (("first landscape", "512x512"), ("second landscape", "1024x1024")):
+        for prompt, size in (("first landscape", "1664x928"), ("second landscape", "1328x1328")):
             response = await self.client.post("/webui/images/generations", headers=self.headers,
                 json={**self.image, "prompt": prompt, "size": size, "n": 1, "response_format": "b64_json"})
             self.assertEqual(200, response.status_code)
         jobs = [json.loads(r.content) for r in self.calls if r.url.path == "/API/GenerateText2Image"]
-        self.assertEqual([512, 1024], [json.loads(j["comfyworkflowraw"])["4"]["inputs"]["width"] for j in jobs])
+        self.assertEqual([1664, 1328], [json.loads(j["comfyworkflowraw"])["8"]["inputs"]["width"] for j in jobs])
         self.assertEqual(["first landscape", "second landscape"], [j["prompt"] for j in jobs])
-        self.assertEqual("", self.tools.image_workflow["2"]["inputs"]["text"])
-        self.assertEqual(0, self.tools.image_workflow["5"]["inputs"]["seed"])
+        self.assertEqual("", self.tools.image_workflow["6"]["inputs"]["text"])
+        self.assertEqual(0, self.tools.image_workflow["9"]["inputs"]["seed"])
         health = (await self.client.get("/health")).json()
-        self.assertEqual("workstation-sdxl", health["image_profile"])
+        self.assertEqual("workstation-qwen-image", health["image_profile"])
         self.assertEqual(64, len(health["workflow_sha256"]))
 
     async def test_unsupported_images_never_reach_swarm(self):
@@ -303,17 +307,17 @@ class ToolsTests(unittest.IsolatedAsyncioTestCase):
                 ServiceTools(self.upstream, "http://webui", "http://swarm", "http://gateway",
                              self.mapping, self.root / "state3", image_slots=slots)
 
-    def test_requested_sizes_snap_to_sdxl_native_sizes(self):
-        self.assertEqual(SDXL_SIZES, self.tools.image_profile["sizes"])
-        for requested, expected in ((None, "1024x1024"), ("", "1024x1024"), ("auto", "1024x1024"),
-                                    ("512x512", "512x512"), ("832x1216", "832x1216"),
-                                    ("1536x1024", "1216x832"), ("1024x1536", "832x1216"), ("1792x1024", "1344x768"),
-                                    ("2048x2048", "1024x1024"), ("640x480", "1152x896"), ("4000x1000", "1344x768")):
-            self.assertEqual(expected, snap_size(requested, SDXL_SIZES), requested)
+    def test_requested_sizes_snap_to_qwen_aspect_buckets(self):
+        self.assertEqual(QWEN_SIZES, self.tools.image_profile["sizes"])
+        for requested, expected in ((None, "1328x1328"), ("", "1328x1328"), ("auto", "1328x1328"),
+                                    ("1104x1472", "1104x1472"), ("1024x1024", "1328x1328"), ("512x512", "1328x1328"),
+                                    ("1536x1024", "1584x1056"), ("1024x1536", "1056x1584"), ("1792x1024", "1664x928"),
+                                    ("2048x2048", "1328x1328"), ("640x480", "1472x1104"), ("4000x1000", "1664x928")):
+            self.assertEqual(expected, snap_size(requested, QWEN_SIZES), requested)
         for requested in ("huge", "1024x0", "1024*1024", "-5x5", "1024x1024x3", 1024):
-            self.assertIsNone(snap_size(requested, SDXL_SIZES), requested)
-        # none has more pixels than the measured 1024x1024
-        self.assertTrue(all(int(w) * int(h) <= 1024 * 1024 for w, h in (x.split("x") for x in SDXL_SIZES)))
+            self.assertIsNone(snap_size(requested, QWEN_SIZES), requested)
+        # none has more pixels than the measured 1328x1328
+        self.assertTrue(all(int(w) * int(h) <= 1328 * 1328 for w, h in (x.split("x") for x in QWEN_SIZES)))
 
     async def test_a_landscape_request_is_generated_at_the_nearest_bucket(self):
         self.tools.image_timeout = 5  # sizing, not timing, is under test (the fixture's 0.2 s is for cancellation)
@@ -321,8 +325,8 @@ class ToolsTests(unittest.IsolatedAsyncioTestCase):
                                           json={**self.image, "size": "1536x1024"})
         self.assertEqual(200, response.status_code)
         job = next(json.loads(r.content) for r in self.calls if r.url.path == "/API/GenerateText2Image")
-        latent = json.loads(job["comfyworkflowraw"])["4"]["inputs"]
-        self.assertEqual((1216, 832, 1216, 832), (job["width"], job["height"], latent["width"], latent["height"]))
+        latent = json.loads(job["comfyworkflowraw"])["8"]["inputs"]
+        self.assertEqual((1584, 1056, 1584, 1056), (job["width"], job["height"], latent["width"], latent["height"]))
 
 
 if __name__ == "__main__":

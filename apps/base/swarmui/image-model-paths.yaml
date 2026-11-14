@@ -1,0 +1,10 @@
+# The Qwen-Image-2512 picture stack (catalog qwen-image-2512) on the local-NVMe creative-models
+# volume (Image/), mounted read-only at /image. SwarmUI's self-started ComfyUI reads this in
+# addition to its own /SwarmUI/Data/comfy-auto-model.yaml (Backends.fds ExtraArgs). The same section
+# is in apps/base/comfyui-gpu0/comfy-model-paths.yaml, so file names match on either picture backend.
+qwen_image:
+    base_path: /image
+    diffusion_models: diffusion_models
+    loras: loras
+    text_encoders: text_encoders
+    vae: vae
