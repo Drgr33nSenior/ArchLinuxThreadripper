@@ -261,6 +261,108 @@ class RunnerTests(unittest.TestCase):
 
 
 
+class BehaviourFixture(http.server.BaseHTTPRequestHandler):
+    """Stand-in model: reaches for tools only when a system message tells it to."""
+    seen = []
+
+    def log_message(self, *args):
+        pass
+
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        BehaviourFixture.seen.append(body)
+        guided = body["messages"][0]["role"] == "system"
+        text = body["messages"][-1]["content"]
+        tool = ("search_web" if any(word in text for word in ("Kubernetes", "headlines", "Python", "SGLang", "Raspberry")) else
+                "workstation_recall_memory" if "remember" in text or "birthday" in text else
+                "workstation_retrieve_project_passage" if "collection" in text else None)
+        message = {"content": "Here it is."}
+        if "HTML game" in text and guided:
+            message = {"content": "<html>...</html>\nI could not run it in a browser here, so the clicks are untested."}
+        elif tool and guided:
+            message = {"content": "Let me check.", "tool_calls": [
+                {"id": "c1", "type": "function", "function": {"name": tool, "arguments": "{}"}}]}
+        payload = json.dumps({"choices": [{"index": 0, "finish_reason": "tool_calls" if "tool_calls" in message else "stop",
+                                           "message": message}],
+                              "usage": {"prompt_tokens": 400 if guided else 200, "completion_tokens": 5}}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+
+class BehaviourTests(unittest.TestCase):
+    """Tool-use behaviour menu and runner. The fixture is not model evidence."""
+
+    def setUp(self):
+        self.menu = assistant_acceptance.load_behaviour()
+        BehaviourFixture.seen = []
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), BehaviourFixture)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
+        self.base = f"http://127.0.0.1:{self.server.server_address[1]}"
+
+    def run_arm(self, system):
+        records = assistant_acceptance.behaviour_run(self.menu, "fixture", self.base, None, "fixture-model", 10,
+                                                     system, repetitions=2)
+        return assistant_acceptance.behaviour_report(self.menu, records, "fixture", {})
+
+    def test_menu_covers_web_verification_retrieval_and_controls(self):
+        cases = {case["id"]: case for case in self.menu["cases"]}
+        self.assertEqual({"web", "verify", "retrieval", "control"}, {case["category"] for case in cases.values()})
+        self.assertEqual(["search_web", "fetch_url"], cases["current-version"]["expect"]["any_of"])
+        self.assertEqual("verify-or-disclose", cases["html-game-verify"]["expect"]["kind"])
+        self.assertEqual({"no-tool"}, {c["expect"]["kind"] for c in cases.values() if c["category"] == "control"})
+        # One web search, as a chat sees it after the tool server's search is filtered out.
+        names = [tool["function"]["name"] for tool in self.menu["tools"]]
+        self.assertEqual(1, sum(name.endswith("search_web") for name in names))
+        self.assertEqual({"reasoning_effort": "medium"}, self.menu["execution"]["request"])
+
+    def test_grading_uses_tool_names_and_visible_text_only(self):
+        grade = assistant_acceptance.behaviour_grade
+        self.assertEqual((True, None), grade({"kind": "tool", "any_of": ["search_web"]}, ["search_web"], "Let me check."))
+        self.assertEqual((False, None), grade({"kind": "tool", "any_of": ["search_web"]}, ["execute_code"], ""))
+        self.assertEqual((True, None), grade({"kind": "no-tool"}, [], "391"))
+        self.assertEqual((False, None), grade({"kind": "no-tool"}, ["search_web"], ""))
+        self.assertEqual((False, None), grade({"kind": "no-tool"}, [], " "))  # an empty answer is not a pass
+        verify = next(c for c in self.menu["cases"] if c["id"] == "html-game-verify")["expect"]
+        self.assertEqual((True, None), grade(verify, ["execute_code"], ""))
+        for text in ("I couldn't run it in a browser here.", "I can\u2019t open a browser, so the clicks are untested.",
+                     "This has not been tested in a real browser.", "I was unable to verify the game by running it."):
+            self.assertTrue(grade(verify, [], text)[0], text)
+        for text in ("Here is the game. Enjoy!", "Do not forget to check the score.", "It works perfectly."):
+            self.assertEqual((False, None), grade(verify, [], text), text)
+
+    def test_runner_reports_rates_for_the_prompt_and_comparison_arms(self):
+        prompt = assistant_acceptance.system_prompt("2026-11-14")
+        self.assertIn("Today is 2026-11-14.", prompt)
+        self.assertNotIn("{{", prompt)
+        guided, bare = self.run_arm(prompt), self.run_arm(None)
+        self.assertEqual(("complete", 1.0), (guided["status"], guided["metrics"]["pass_rate"]))
+        self.assertEqual(0.8, guided["metrics"]["tool_call_rate_when_expected"])  # the game discloses instead
+        self.assertEqual(0.0, guided["metrics"]["tool_call_rate_on_controls"])
+        self.assertEqual("could not run", guided["records"][10]["disclosure"])
+        # Without the prompt the stand-in never uses a tool: only the two controls pass.
+        self.assertEqual(round(2 / 12, 4), bare["metrics"]["pass_rate"])
+        self.assertEqual(0.0, bare["metrics"]["tool_call_rate_when_expected"])
+        self.assertEqual((400, 200), (guided["metrics"]["median_prompt_tokens"], bare["metrics"]["median_prompt_tokens"]))
+        first, last = BehaviourFixture.seen[0], BehaviourFixture.seen[-1]
+        self.assertEqual(["system", "user"], [m["role"] for m in first["messages"]])
+        self.assertEqual(["user"], [m["role"] for m in last["messages"]])
+        self.assertEqual(self.menu["tools"], first["tools"])
+        self.assertEqual(("medium", False, 6000), (first["reasoning_effort"], first["stream"],
+                                                  BehaviourFixture.seen[10]["max_tokens"]))
+
+    def test_unreachable_endpoint_is_not_run(self):
+        records = assistant_acceptance.behaviour_run(self.menu, "direct", "http://127.0.0.1:9", None, "m", 2, None,
+                                                     repetitions=1, cases=["current-version", "stable-arithmetic"])
+        result = assistant_acceptance.behaviour_report(self.menu, records, "direct", {})
+        self.assertEqual(("NOT RUN", 2), (result["status"], len(records)))
+        self.assertIsNone(result["metrics"]["pass_rate"])
+
+
 class JsonFenceTests(unittest.TestCase):
     """A JSON answer wrapped whole in one fence is graded on its content and reported as fenced."""
 

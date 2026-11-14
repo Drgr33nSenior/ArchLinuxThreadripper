@@ -71,13 +71,19 @@ spec:
             # No shared credential. The public read grant only shows the server
             # in the tool menu; every call is authorised per user downstream.
             # Existing open-webui -> service-tools:8000 policies cover the flow.
+            # One web search per chat: the filter hides the server's search_web here, so
+            # the model sees only Open WebUI's own search_web (the web search above: the
+            # user's toggle, the confirmation and the sources shown under the answer). The
+            # server's read_web_page stays: it alone can continue past a page's first
+            # section. Coding clients keep both MCP web tools.
             - name: TOOL_SERVER_CONNECTIONS
               value: >-
                 [{"type":"mcp","url":"http://service-tools:8000/mcp","path":"","auth_type":"session",
-                "key":"","config":{"enable":true,"access_grants":[{"principal_type":"user",
+                "key":"","config":{"enable":true,"function_name_filter_list":"!search_web",
+                "access_grants":[{"principal_type":"user",
                 "principal_id":"*","permission":"read"}]},"info":{"id":"workstation",
-                "name":"Workstation tools","description":"Project passages, task handoffs, memory and
-                public web pages, with your own permissions"}}]
+                "name":"Workstation tools","description":"Project passages, task handoffs, memory,
+                short videos and long web pages, with your own permissions"}}]
             - {name: ENABLE_IMAGE_PROMPT_GENERATION, value: 'false'}
             - {name: AUDIO_TTS_ENGINE, value: ''}
             - {name: AUDIO_STT_OPENAI_API_BASE_URL, value: ''}

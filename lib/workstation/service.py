@@ -377,7 +377,8 @@ def candidate_render(contract, output_tokens, deadline_seconds, reserve_tokens, 
         params.update({"reasoning_effort": defaults["reasoning_effort"],
                        "custom_params": {"chat_template_kwargs": defaults["chat_template_kwargs"]}})
     # Open WebUI gets the sampling defaults only. Its reasoning slider (provider-declared Model
-    # Controls) sends the effort, and the gateway applies the contract's default effort when none
+    # Controls) sends the effort, starting at the level the gateway declares
+    # (CHAT_REASONING_EFFORT), and the gateway applies the contract's default effort when none
     # is sent; the template thinks unless told not to. A thinking switch here would contradict
     # the slider's Off ("none" with enable_thinking true is refused).
     webui_params = {key: value for key, value in params.items() if key not in ("reasoning_effort", "custom_params")}
@@ -1019,17 +1020,27 @@ def contract_deployment(contract, objects):
     return deployment
 
 
+# Effort the gateway declares as the model's default, so Open WebUI's reasoning slider starts
+# there and sends it with every chat. Requests that name no effort (titles, tags, follow-ups,
+# coding clients) keep the contract's request default.
+CHAT_REASONING_EFFORT = "medium"
+
+
 def gateway_policy(contract, rendered, mode="large"):
     """Gateway allowlist read by boundary.apply_policy; the 9B split route is kept.
 
     Images stay with the one-GPU 9B split profile, plus the contract model in shared
     mode (both GPUs for chat, with the image generators in the headroom it leaves)."""
+    reasoning = contract["reasoning"]
+    # Declared only for a contract with verified request defaults that accepts the level.
+    declared = CHAT_REASONING_EFFORT if reasoning["request_defaults"] and CHAT_REASONING_EFFORT in reasoning["client_efforts"] else None
     image_models = ["Qwen3.5-9B"] + (list(rendered["gateway"]["chat_models"]) if mode == "shared" else [])
     return {"contract": contract["contract"], "status": contract["status"],
             "chat_models": {**rendered["gateway"]["chat_models"], "Qwen3.5-9B": [4096, 1024]},
             "image_models": image_models,
             "reasoning_efforts": contract["reasoning"]["client_efforts"],
             "default_reasoning_effort": (contract["reasoning"]["request_defaults"] or {}).get("reasoning_effort"),
+            **({"declared_reasoning_effort": declared} if declared else {}),
             "template_kwargs": contract["reasoning"]["client_template_kwargs"],
             "request_timeout": contract["deadlines"]["gateway_seconds"],
             **{key: rendered["gateway"][key] for key in ("first_token_timeout", "idle_timeout") if key in rendered["gateway"]},

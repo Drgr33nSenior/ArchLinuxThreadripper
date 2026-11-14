@@ -51,6 +51,11 @@ UNCAPPED_EFFORTS = {"xhigh"}
 # Effort for requests that name none (the contract's request default). Applied here, not as an
 # SGLang server default: the pinned SGLang lets a server-default effort override every request's.
 DEFAULT_REASONING_EFFORT = None
+# Effort the model list declares as the default (the reasoning slider's starting position).
+# A chat client that follows the declaration sends it with every chat; a request that names no
+# effort (Open WebUI's title, tag and follow-up tasks, coding clients) still gets
+# DEFAULT_REASONING_EFFORT. None: declare DEFAULT_REASONING_EFFORT.
+DECLARED_REASONING_EFFORT = None
 # Reasoning levels advertised in the model list, in increasing order, with the labels Open
 # WebUI shows on its reasoning slider (Model Controls declared by the provider).
 REASONING_ORDER = ("low", "medium", "high", "xhigh")
@@ -77,7 +82,7 @@ def apply_policy(path):
     models, budgets and reasoning values. The defaults are replaced, not merged:
     a model the contract omits is no longer admitted. Returns the deadline.
     """
-    global ADMISSION_LIMIT, DEFAULT_REASONING_EFFORT, FIRST_TOKEN_TIMEOUT, IDLE_TIMEOUT
+    global ADMISSION_LIMIT, DECLARED_REASONING_EFFORT, DEFAULT_REASONING_EFFORT, FIRST_TOKEN_TIMEOUT, IDLE_TIMEOUT
     policy = json.loads(Path(path).read_text())
     models = policy["chat_models"]
     efforts = policy["reasoning_efforts"]
@@ -96,7 +101,8 @@ def apply_policy(path):
                    for value in (first_token, idle))
             or type(admission) is not int or not 1 <= admission <= 16
             or not isinstance(image_models, list) or not set(image_models) <= set(models)
-            or policy.get("default_reasoning_effort") not in (None, *efforts)):
+            or policy.get("default_reasoning_effort") not in (None, *efforts)
+            or policy.get("declared_reasoning_effort") not in (None, *efforts)):
         raise ValueError("invalid gateway policy")
     CHAT_MODELS.clear()
     CHAT_MODELS.update({name: tuple(limits) for name, limits in models.items()})
@@ -108,6 +114,7 @@ def apply_policy(path):
     IMAGE_MODELS.update(image_models)
     ADMISSION_LIMIT = admission
     DEFAULT_REASONING_EFFORT = policy.get("default_reasoning_effort")
+    DECLARED_REASONING_EFFORT = policy.get("declared_reasoning_effort")
     FIRST_TOKEN_TIMEOUT, IDLE_TIMEOUT = first_token, idle
     return timeout
 
@@ -207,7 +214,8 @@ def reasoning_declaration():
         return {}
     declaration = {"supportedReasoningEfforts": [
         {"reasoningEffort": level, "label": REASONING_LABELS.get(level, level)} for level in levels]}
-    default = REASONING_EFFORTS.get(DEFAULT_REASONING_EFFORT) if DEFAULT_REASONING_EFFORT else None
+    declared = DECLARED_REASONING_EFFORT or DEFAULT_REASONING_EFFORT
+    default = REASONING_EFFORTS.get(declared) if declared else None
     if default in levels:
         declaration["defaultReasoningEffort"] = default
     return declaration

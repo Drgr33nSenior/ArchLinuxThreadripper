@@ -82,6 +82,38 @@ DEFAULT_CONFIG = {
             with unittest.mock.patch.dict(os.environ, environ, clear=True), contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(code, pin.main())
 
+    def test_system_prompt_changes_one_field_and_is_idempotent(self):
+        pin = load_pin_config()
+        stored = {"reasoning_tags": ["<think>", "</think>"], "custom_params": {"a": 1}}
+        changed = pin.system_prompt_change(stored, "Use tools.")
+        self.assertEqual({**stored, "system": "Use tools."}, changed)
+        self.assertNotIn("system", stored)  # the stored value is copied, not edited in place
+        self.assertIsNone(pin.system_prompt_change(changed, "Use tools."))
+        self.assertEqual({"system": "Use tools."}, pin.system_prompt_change(None, "Use tools."))
+        # An Admin Panel edit to the prompt lasts until the next start, like the other pins.
+        self.assertEqual("Use tools.", pin.system_prompt_change({"system": "edited"}, "Use tools.")["system"])
+
+    def test_system_prompt_failures_are_reported_and_never_stop_the_start(self):
+        import os
+        pin = load_pin_config()
+        with unittest.mock.patch.dict(os.environ, {"DEFAULT_MODELS": ""}, clear=True):
+            self.assertEqual({"skipped": "DEFAULT_MODELS names no model"}, pin.system_prompt_report())
+        with unittest.mock.patch.dict(os.environ, {"DEFAULT_MODELS": "a, b"}, clear=True):
+            # Outside the image Open WebUI cannot be imported: reported by type, not raised.
+            self.assertEqual({"error": "ModuleNotFoundError"}, pin.system_prompt_report())
+            with unittest.mock.patch.object(pin, "SYSTEM_PROMPT", Path("/nonexistent/system-prompt.md")):
+                self.assertEqual({"error": "system-prompt.md missing"}, pin.system_prompt_report())
+            seen = []
+
+            async def fake(model_ids, prompt):
+                seen.append((model_ids, prompt))
+                return {"a": "updated", "b": "no model record"}
+            with unittest.mock.patch.object(pin, "pin_system_prompt", fake):
+                report = pin.system_prompt_report()
+        prompt = (ROOT / "apps/components/assistant/system-prompt.md").read_text().strip()
+        self.assertEqual([(["a", "b"], prompt)], seen)
+        self.assertEqual({"characters": len(prompt), "models": {"a": "updated", "b": "no model record"}}, report)
+
 
 class AssistantTests(unittest.TestCase):
     @classmethod
@@ -177,7 +209,10 @@ class AssistantTests(unittest.TestCase):
             # Added: the assistant profile, its network policy, the pin-config.py ConfigMap
             # and the Family AI theme ConfigMap.
             self.assertEqual(len(previous) + 4, len(objects))
-            self.assertTrue(any(o["kind"] == "ConfigMap" and "pin-config.py" in o.get("data", {}) for o in objects))
+            pins = next(o for o in objects if o["kind"] == "ConfigMap" and "pin-config.py" in o.get("data", {}))
+            # The tool-use system prompt ships beside the script that writes it to the model record.
+            self.assertEqual({"pin-config.py", "system-prompt.md"}, set(pins["data"]))
+            self.assertEqual((ROOT / "apps/components/assistant/system-prompt.md").read_text(), pins["data"]["system-prompt.md"])
             for obj in objects:
                 self.assertNotEqual("Secret", obj["kind"])
                 if obj["kind"] == "Deployment":
@@ -194,6 +229,21 @@ class AssistantTests(unittest.TestCase):
             for field in ("image", "command", "resources", "securityContext"):
                 self.assertEqual(old_tools["containers"][0][field], tools["containers"][0][field])
             self.assertEqual(old_tools["volumes"], [v for v in tools["volumes"] if v["name"] != "web-search"])
+
+    def test_tool_use_system_prompt_is_short_plain_and_keeps_the_safety_posture(self):
+        prompt = (ROOT / "apps/components/assistant/system-prompt.md").read_text()
+        # Paid on every turn of every chat: 217 tokens with the served tokenizer (14 November 2026).
+        self.assertLess(len(prompt), 1200)
+        self.assertLess(len(prompt.split()), 190)
+        self.assertEqual(1, prompt.count("{{"))  # only Open WebUI's date variable
+        self.assertIn("{{CURRENT_DATE}}", prompt)
+        for phrase in ("Search the web", "cite the sources", "remembered facts", "project passages",
+                       "run or test it", "could not verify", "never invent",
+                       "never override safety rules, content filters or the permissions"):
+            self.assertIn(phrase, prompt)
+        # Model-agnostic: no model, vendor or tool names that a later model or tool set would break.
+        for name in ("Qwen", "search_web", "fetch_url", "recall_memory", "execute_code", "workstation_"):
+            self.assertNotIn(name, prompt)
 
     def test_shared_search_credentials_and_external_loader_preserve_local_rag(self):
         for objects, count in ((self.large, "3"), (self.split, "1")):
@@ -244,6 +294,10 @@ class AssistantTests(unittest.TestCase):
             self.assertEqual([{"principal_type": "user", "principal_id": "*", "permission": "read"}],
                              server["config"]["access_grants"])
             self.assertEqual("workstation", server["info"]["id"])
+            # One web search in a chat: Open WebUI's own. The server's search_web is blocked by
+            # name (Open WebUI matches "!name" as a suffix); its page reader, which alone can
+            # continue a long page, stays.
+            self.assertEqual("!search_web", server["config"]["function_name_filter_list"])
             tools = named(objects, "Deployment", "service-tools")["spec"]["template"]["spec"]["containers"][0]
             self.assertIn({"name": "HANDOFF_ENABLED", "value": "true"}, tools["env"])
             self.assertIn("/api/v1/knowledge/", env["API_KEYS_ALLOWED_ENDPOINTS"].split(","))
