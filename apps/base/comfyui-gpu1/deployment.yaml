@@ -102,8 +102,12 @@ spec:
             # 69 s cold, 64 s warm alone, 74-75 s two at once; 2.2 GB of the card free at peak.
             # 4 here for split mode's capacity plan; shared mode raises it to 8
             # (apps/overlays/assistant-shared).
-            requests: {cpu: '4', memory: 12Gi}
-            limits: {cpu: '4', memory: 12Gi}
+            # Memory A/B 2026-11-14 (fresh pods, a cold then a warm pair of Qwen-Image 1328^2 through the live
+            # endpoint, cgroup sampled every 0.5 s): at 12 GiB anon+shmem peaked 7.4 GiB and the rest of the
+            # limit filled with weight file cache (warm pair 79-80 s); at 9 GiB anon+shmem peaked 6.2 GiB and the
+            # pair took 61/58 s. The extra cache did not help (the 20 GB of weights never fit), so 9 GiB.
+            requests: {cpu: '4', memory: 9Gi}
+            limits: {cpu: '4', memory: 9Gi}
             claims: [{name: gpu-1}]
           securityContext:
             allowPrivilegeEscalation: false

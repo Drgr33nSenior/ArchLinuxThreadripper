@@ -478,11 +478,11 @@ class AssistantTests(unittest.TestCase):
         self.assertEqual(g["image"], c["image"])
         # 8 CPUs per picture backend in shared mode (Qwen-Image 64 s warm instead of 74 s); the
         # split composition keeps comfyui-gpu1 at its measured 4.
-        for container, memory in ((g, "12Gi"), (c, "10Gi")):
+        for container, memory in ((g, "9Gi"), (c, "10Gi")):
             self.assertEqual({"cpu": "8", "memory": memory}, container["resources"]["limits"])
             self.assertEqual(container["resources"]["requests"], {k: v for k, v in container["resources"]["limits"].items()})
         split_gpu1 = named(self.split, "Deployment", "comfyui-gpu1")["spec"]["template"]["spec"]["containers"][0]
-        self.assertEqual({"cpu": "4", "memory": "12Gi"}, split_gpu1["resources"]["limits"])
+        self.assertEqual({"cpu": "4", "memory": "9Gi"}, split_gpu1["resources"]["limits"])
         self.assertEqual([{"name": "gpu-0"}], c["resources"]["claims"])
         # the same picture stack mount and file names on both cards
         image = {"name": "state", "mountPath": "/image", "subPath": "Image", "readOnly": True}

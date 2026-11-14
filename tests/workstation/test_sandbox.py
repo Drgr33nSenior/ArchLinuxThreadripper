@@ -125,24 +125,25 @@ class RenderTests(unittest.TestCase):
         platform = next(r for r in result["rows"] if r["name"] == "platform")
         self.assertEqual((1.235, 2561), (platform["cpu"], platform["memory_mib"]))
         # Family mode as it runs today (memory on): admitted, as the live session admission
-        # found on 14 Nov (37.9 of 42 CPUs, 49.9 of 51.3 GiB requested), with 1.3 GiB left.
-        self.assertEqual((True, 4.015, 1348), table["shared", "assistant-memory", False])
-        # The pool requests 0.7 CPUs and 832 MiB at measured use: it is admitted there with 516 MiB
+        # found on 14 Nov (37.9 of 42 CPUs, 49.9 of 51.3 GiB requested, comfyui-gpu1 then at 12 GiB); with
+        # comfyui-gpu1 at its measured 9 GiB, 4.3 GiB are left.
+        self.assertEqual((True, 4.015, 4420), table["shared", "assistant-memory", False])
+        # The pool requests 0.7 CPUs and 832 MiB at measured use: it is admitted there with 3,588 MiB
         # unrequested. No other workload's budget changed.
-        self.assertEqual((True, 3.315, 516), table["shared", "assistant-memory", True])
-        self.assertEqual((True, 4.815, 4996), table["shared", "assistant", True])
+        self.assertEqual((True, 3.315, 3588), table["shared", "assistant-memory", True])
+        self.assertEqual((True, 4.815, 8068), table["shared", "assistant", True])
         self.assertEqual((True, 19.315, 20996), table["large", "assistant-memory", True])
         self.assertEqual((True, 20.815, 25476), table["large", "assistant", True])
         # Its limits (5 CPUs, 8,960 MiB) are overcommit, and are reported as such.
         with_pool = service.capacity(NODE, composition("shared", "assistant-memory") + self.objects, {"reserve_mib": 6656},
                                      live_telemetry, "shared", node_pods=NODE_PODS)
-        self.assertEqual(("planned-limits-overcommitted", {"cpu": 51.0, "memory_mib": 72704, "over_node_cpus": 9.0,
-                                                           "over_node_mib": 21371}), (with_pool["status"], with_pool["limits"]))
+        self.assertEqual(("planned-limits-overcommitted", {"cpu": 51.0, "memory_mib": 69632, "over_node_cpus": 9.0,
+                                                           "over_node_mib": 18299}), (with_pool["status"], with_pool["limits"]))
         # Limits are reported, not hidden: family mode's burst ceilings sum past the node.
         shared = service.capacity(NODE, composition("shared", "assistant-memory"), {"reserve_mib": 6656},
                                   live_telemetry, "shared", node_pods=NODE_PODS)
-        self.assertEqual({"cpu": 46.0, "memory_mib": 63744, "over_node_cpus": 4.0, "over_node_mib": 12411}, shared["limits"])
-        self.assertEqual(("planned-limits-overcommitted", -4604), (shared["status"], shared["remaining_mib_after_telemetry_reserve"]))
+        self.assertEqual({"cpu": 46.0, "memory_mib": 60672, "over_node_cpus": 4.0, "over_node_mib": 9339}, shared["limits"])
+        self.assertEqual(("planned-limits-overcommitted", -1532), (shared["status"], shared["remaining_mib_after_telemetry_reserve"]))
         sglang = next(r for r in shared["rows"] if r["name"] == "sglang")
         # The 16 GiB memory-backed /dev/shm sits inside the pod's 14 GiB, not beside it.
         self.assertEqual((14336, 14336, 14336), (sglang["memory_mib"], sglang["limit_mib"], sglang["shared_memory_mib"]))
