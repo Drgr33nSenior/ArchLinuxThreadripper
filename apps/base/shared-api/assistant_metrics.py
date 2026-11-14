@@ -45,7 +45,7 @@ FAMILIES = {
         {"op": ("save", "load", "list"), "client": CLIENTS, "outcome": OUTCOMES_STORE}),
     "workstation_assistant_memory_operations_total": (
         "counter", "Memory tool operations by outcome.",
-        {"op": ("recall", "remember", "forget", "inspect"), "client": CLIENTS, "outcome": OUTCOMES_STORE}),
+        {"op": ("recall", "remember", "forget", "inspect", "mode"), "client": CLIENTS, "outcome": OUTCOMES_STORE}),
     "workstation_assistant_video_requests_total": (
         "counter", "Video tool calls (generate_video) by outcome.",
         {"client": CLIENTS, "outcome": ("ok", "denied", "busy", "not_ready", "cancelled", "failed", "invalid", "unavailable")}),

@@ -17,7 +17,7 @@ and installation/recovery gates still apply.
 
 | Need | Selected direction | Current status |
 | --- | --- | --- |
-| Durable preferences, decisions and changing project facts | Graphiti on Neo4j Community, scoped by user or by user and authorised project | Opt-in `assistant-memory` profile packaged; Neo4j storage/restart test, model and client qualification pending |
+| Durable preferences, decisions and changing project facts | Graphiti on Neo4j Community, scoped by user, by user and authorised project, or by user and [chat folder](#chat-folder-projects) | Opt-in `assistant-memory` profile packaged; Neo4j storage/restart test, model and client qualification pending |
 | Current public web information | Existing Exa adapter | Source integration exists; full target acceptance remains separate |
 | Exact code, private documentation and book passages | Repository tools and local hybrid retrieval | Existing retrieval path; book conversion remains planned |
 | Active goal, constraints, last result and next steps | [Task handoff](#task-handoffs) per user, project and task | Implemented in service-tools for the `assistant` experiences; client qualification pending |
@@ -137,11 +137,14 @@ the [Open WebUI tool server](#open-webui-tool-server), to browser chats:
 | `inspect_memory_source` | Read: one episode's source description, times, a 2,000-character excerpt and the status of its facts | `MEMORY_ENABLED` |
 | `remember` | Write one explicit fact; a corrected statement makes the older fact historical | `MEMORY_WRITE_ENABLED` |
 | `forget_memory` | Delete one episode by its ID | `MEMORY_WRITE_ENABLED` |
+| `set_project_memory_mode` | Setting: make a [chat folder](#chat-folder-projects) project-only, or back to the default | `MEMORY_ENABLED` |
 
-Each tool takes an optional `project`. service-tools derives the memory group
+Each memory tool takes an optional `project`. service-tools derives the memory group
 from the caller's own authenticated identity and, when `project` is given, from
-a project the caller can read now (see [Project scope](#project-scope)). A tool
-argument never names a group, and administrator tokens are refused. The memory
+a project the caller can read now (see [Project scope](#project-scope)). In a
+browser chat inside a folder, the folder is the project instead
+([Chat-folder projects](#chat-folder-projects)). A tool argument never names a
+group, and administrator tokens are refused. The memory
 service passes the group to every search, drops any fact or source episode
 from another group, and checks an episode's group before showing or deleting
 it. NetworkPolicies allow only service-tools → graphiti-memory → Neo4j, the
@@ -165,7 +168,9 @@ is reported with `excerpt_complete: false`.
 ### Project scope
 
 A project is an Open WebUI knowledge collection that the caller can read: the
-collection ID that `retrieve_project_passage` takes. The only authority is
+collection ID that `retrieve_project_passage` takes. A browser chat inside a
+folder uses that folder as its project instead; see
+[Chat-folder projects](#chat-folder-projects). The only authority is
 Open WebUI's knowledge ACL (owner, user or group read grant, public read
 grant). service-tools reads `GET /api/v1/knowledge/` with the caller's own
 credential on every project-scoped call; pinned 0.13.3 applies the same owner
@@ -184,6 +189,7 @@ listing, not `/api/v1/knowledge/<id>/...` write routes.
 | --- | --- | --- |
 | User-wide (legacy) | `u_` + 32 hex of SHA-256(`workstation-memory:<user id>`) | `project` omitted |
 | User and project | `p_` + 32 hex of SHA-256(`workstation-memory-project:<user id>\0<project id>`) | `project` given and readable |
+| User and chat folder | The same `p_` formula with `folder:<folder id>` as the project id | Browser chat inside a folder the caller can read |
 
 The `u_` formula is unchanged, so memory written before project scope remains
 reachable by omitting `project`. No data was moved, repartitioned or deleted.
@@ -194,6 +200,89 @@ user-wide facts into a project would be a separate, non-destructive procedure:
 re-`remember` the selected facts with `project`, verify recall, then
 `forget_memory` the user-wide episodes individually. No such migration is
 implemented.
+
+### Chat-folder projects
+
+Open WebUI folders work like ChatGPT or Claude projects: chats in a folder share
+that folder's memory. Use one folder per book, or per school subject. A fact
+remembered in one book's chats is not recalled in another book's chats.
+
+**How the project is found.** The tool-server connection
+(`apps/components/assistant/webui.yaml`) sends the header
+`X-OpenWebUI-Chat-Id: {{CHAT_ID}}`; Open WebUI 0.13.3 fills it with the chat
+being answered on every MCP request. For each memory call, service-tools reads
+`GET /api/v1/chats/<id>` and then `GET /api/v1/folders/<folder id>` with the
+caller's own session token, and uses the folder only if both reads succeed. No
+tool argument names a folder, and no fork patch is needed.
+
+**Why it cannot be spoofed.**
+
+- The chat ID is only a lookup key. Open WebUI answers the two reads only for
+  a chat the caller can read and a folder the caller owns or has a read grant
+  on. Otherwise the call is refused (`chat_not_authorized`,
+  `project_not_authorized`) and nothing reaches the memory service.
+- The group is derived from the authenticated user ID and the folder ID, so
+  another user's folder ID can never select their memory. Two users of a
+  shared folder have separate groups, as for shared knowledge collections.
+- Open WebUI itself refuses a completion in another user's chat. The public
+  `/mcp` route's `client-boundary` middleware clears `X-OpenWebUI-*` headers,
+  so coding clients cannot send one; they keep the user-wide and `project`
+  scopes.
+
+**Scope rules.**
+
+| Chat | Recall | `remember` writes to | Inspect and forget look in |
+| --- | --- | --- | --- |
+| Inside a folder (default, `project_and_user`) | The folder's memory, then the user's general memory; each fact's `memory` field is `project` or `user` | The folder's memory; `scope: "user"` writes general memory | The folder's memory, then general memory |
+| Inside a project-only folder | The folder's memory only | The folder's memory; `scope: "user"` is refused | The folder's memory only |
+| No folder, a temporary chat, or no header | User-wide memory, unchanged | User-wide memory | User-wide memory |
+| No folder, with `project` | That knowledge collection's memory, unchanged | Same | Same |
+
+Every result has `scope`: `{"kind": "folder", "folder": {"id", "name"}, "mode"}`
+in a folder chat. A subfolder is its own project: memory is not shared with its
+parent. After a chat moves to another folder, its later calls use that folder's
+memory; facts already stored stay with the folder they were stored in.
+
+In a folder chat, an explicit `project` is refused with
+`project_set_by_chat_folder`. This stops a collection attached to two books from
+carrying facts between them. That refusal, `project_only_memory`,
+`no_project_folder` and `scope_needs_project_folder` are tool results with
+`isError: true` and a short note, so the model can correct the call.
+
+**Project-only switch.** Ask in a chat inside the folder, for example "keep this
+book's memory separate". The model calls `set_project_memory_mode` with
+`project_only` (or `project_and_user` to undo it). The switch is per user and per
+folder: it changes only the caller's own memory. It is stored by service-tools in
+`/state/project-memory.sqlite3` on the retained `service-tools-state` claim,
+which the backup already captures. Rows hold a derived owner key, not the
+Open WebUI user ID, and exist only for project-only folders (at most 200 per
+user). It is not stored in Open WebUI's folder data because a writer of a
+shared folder could then change another user's memory behaviour, and because
+service-tools would need to write to Open WebUI. A deleted folder leaves an
+unreachable row.
+
+**Limits.** A chat read returns the whole chat history, so it has its own 16 MiB
+response bound (other reads have 2 MiB). A longer chat is refused with
+`upstream_response_too_large`; start a new chat in the folder. Each memory call in a
+saved chat adds one chat read, plus one folder read for a folder chat. Default
+recall in a folder makes two memory-service searches.
+
+Existing memory is unchanged: user-wide facts stay in the `u_` group and are
+recalled in folder chats unless a folder is project-only. Nothing is moved.
+
+**Acceptance test for the owner** (after merge and rollout, with a daily account):
+
+1. Create folders "Book A" and "Book B". In a new chat in Book A, say "Remember
+   that Mira has green eyes." The result shows `scope.kind: folder`, Book A.
+2. In a new chat in Book B, ask "What colour are Mira's eyes?" The recall has
+   no Book A fact. In a new chat in Book A, the same question finds it.
+3. In a chat outside any folder, say "Remember that I prefer British spelling."
+   Ask about spelling in Book B: the fact is recalled with `memory: user`.
+4. In Book B, say "Keep this book's memory separate." Ask about spelling again:
+   no user fact. Say "Use my general memory in this book again" and repeat: it
+   is back.
+5. Sign in as another family member and repeat step 2 in their own "Book A".
+   Nothing from the first account is recalled.
 
 ### Enable memory
 
@@ -226,11 +315,21 @@ the copy.
 Deployments without memory are unaffected.
 
 Offline checks: `tests/workstation/test_memory.py` covers identity binding,
-project authorisation and the legacy user scope, tool switches, group-scoped
-recall, provenance, inspection and deletion, the HTTP service key, the rendered
-policies and pins, the lock and the backup claim. `tests/workstation/test_handoff.py`
-covers handoff scope, limits, verification status, conflicts and storage. These
-use fakes; they do not test extraction, recall quality or a live browser.
+project authorisation and the legacy user scope, chat-folder scope and the
+project-only switch, tool switches, group-scoped recall, provenance, inspection
+and deletion, the HTTP service key, the rendered policies and pins, the lock and
+the backup claim. `tests/workstation/test_handoff.py` covers handoff scope,
+limits, verification status, conflicts and storage. These use fakes; they do
+not test extraction, recall quality or a live browser.
+
+On 14 November 2026 a throwaway container of the pinned Open WebUI image
+(`open-webui:2367f24ee8f8`, scratch database, no network) ran this branch's
+service-tools with a scripted model and a recording memory fake. With
+`ENABLE_FORWARD_USER_INFO_HEADERS` both off and on, the connection header
+reached every MCP request. Folder chats, a new chat started in a folder, chats
+without a folder, the project-only switch and a second user's folder used the
+groups in the table above. Another user's chat ID was refused by Open WebUI and
+by service-tools. Model tool choice and recall quality were not tested.
 
 ## Task handoffs
 
@@ -302,9 +401,12 @@ Known gaps:
 
 - Administrator accounts are refused by service-tools, as on the coding path.
 - The forwarded session token is not limited by `API_KEYS_ALLOWED_ENDPOINTS`;
-  service-tools only calls the read routes listed above with it.
+  service-tools only calls the read routes listed above with it, plus
+  `GET /api/v1/chats/<id>` and `GET /api/v1/folders/<id>` for
+  [chat-folder projects](#chat-folder-projects).
 - Memory and retrieval refusals are HTTP errors. Pinned Open WebUI shows them as
-  a generic tool error, not the refusal code. Handoff refusals are tool results.
+  a generic tool error, not the refusal code. Handoff refusals and the
+  chat-folder scope refusals are tool results.
 - Nothing is synchronised. Browser chat history, Open WebUI's own per-user
   memory, Qwen Code auto-memory and knowledge collections stay separate stores;
   only calls to these tools reach the shared handoff and Graphiti stores.

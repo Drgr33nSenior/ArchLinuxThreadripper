@@ -19,7 +19,7 @@ It runs in **shared mode** today. [Service modes](MODES.md) explains the alterna
 | Short videos | Ask for a short video; a 5-second clip appears in the chat after about 80 s | Accounts with picture permission and the normal `user` role (the Parents' daily accounts); shared mode only |
 | Voice input | The microphone button; speech is transcribed on the workstation | Everyone |
 | Web search | Automatic when a question needs current public information (Exa) | Everyone |
-| Memory | Ask it to remember something; it recalls it in later chats | Every daily (non-admin) account, private to each person |
+| Memory | Ask it to remember something; it recalls it in later chats. Chats in a folder share that folder's memory, so one folder per book or school subject keeps them apart; ask to keep a folder's memory separate from everything else ([chat-folder projects](MEMORY.md#chat-folder-projects)) | Every daily (non-admin) account, private to each person |
 | Documents | Upload Markdown or text (up to 8 MiB) to a knowledge collection and ask about it | Everyone, per collection permissions |
 | Coding agents | Qwen Code and other IDE agents use the same model through an API key | Accounts given a key; see [coding clients](AGENT-HARNESSES.md) |
 
@@ -86,7 +86,7 @@ If any check fails, the model gets a short error it can explain, such as `video_
 | Conversation | Open WebUI → per-user gateway key → SGLang | Preserve the selected model identity and existing context limits |
 | Documents | Open WebUI → CPU Qwen embedding model → embedded Chroma | Preserve document permissions; answer/citation quality remains unqualified |
 | Web research | Open WebUI/Qwen Code → shared Exa adapter | Auto search and public-page extraction; one durable request ceiling; Tavily optional |
-| Memory | Browser and coding clients → service-tools memory tools → Graphiti on Neo4j | Live in the `assistant-memory` experience; per-user memory groups; facts are stored only when someone asks |
+| Memory | Browser and coding clients → service-tools memory tools → Graphiti on Neo4j | Live in the `assistant-memory` experience; per-user memory groups, per chat folder in the browser (the chat ID header, checked with the user's own token); facts are stored only when someone asks |
 | Image creation | Open WebUI → service-tools image adapter → ComfyUI on either GPU | Qwen-Image-2512 only; two pictures at once in shared mode (one per GPU), one in split mode |
 | Short videos | Open WebUI → service-tools `generate_video` (MCP) → `comfyui-gpu0` | Wan 2.2 T2V A14B; shared mode only; one clip at a time; picture permission |
 | Voice input | Browser microphone → Open WebUI → local faster-whisper | CPU transcription on the workstation; audio never leaves it |
@@ -776,7 +776,9 @@ installed Open WebUI no longer knows (`unknown`).
 | `channels`, `notifications` | Channel search, `notify` | **off** | Channels and webhooks are disabled anyway; off here so enabling the feature does not add tools unnoticed |
 
 The tool server's tools (project passages, handoffs, memory, video, long pages) are not
-built-in tools and are unaffected. Switching a category off removes tools from chats only:
+built-in tools and are unaffected. Chat-folder memory (14 November) added
+`set_project_memory_mode` and longer memory descriptions: about 940 characters, roughly
+230 tokens by a four-characters-per-token estimate, not measured on the served model. Switching a category off removes tools from chats only:
 Notes, the calendar and automations still work in the interface, and the note editor's own
 assistant keeps its note tools. To bring a category back, remove it from the list and
 deploy.
