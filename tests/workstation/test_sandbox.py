@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT / "lib/workstation"))
 import sandbox
 import sandbox_homes
 import service
+from telemetry import quantity
 
 module = importlib.util.spec_from_file_location("sandbox_control", ROOT / "infrastructure/ai-stack/sandbox/control.py")
 control = importlib.util.module_from_spec(module)
@@ -74,7 +75,7 @@ class RenderTests(unittest.TestCase):
     def named(self, kind, name):
         return next(o for o in self.objects if o["kind"] == kind and o["metadata"]["name"] == name)
 
-    def test_render_flag_off_and_on_and_shared_refused(self):
+    def test_render_flag_off_and_on_in_both_rendered_modes(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "site.json").write_text(json.dumps(SITE))
@@ -96,13 +97,17 @@ class RenderTests(unittest.TestCase):
                 self.assertEqual((enabled, enabled, 2 if enabled else 0),
                                  (evidence["enabled"], evidence["family_enabled"], evidence["persistent_homes"]))
                 if enabled:
+                    # Family (shared) mode renders the same pool; the older compositions still refuse it.
                     args.mode, args.output = "shared", root / "shared"
-                    with self.assertRaisesRegex(ValueError, "does not fit shared mode"):
+                    service.render(args)
+                    self.assertTrue((args.output / "sandbox.yaml").read_text())
+                    args.mode, args.output = "split", root / "split"
+                    with self.assertRaisesRegex(ValueError, "large or shared mode"):
                         service.render(args)
                     self.assertFalse(args.output.exists())
 
-    def test_capacity_by_mode_matches_live_admission_and_shared_memory_refuses_the_pool(self):
-        """The numbers behind the shared-mode decision (docs/ASSISTANT.md)."""
+    def test_capacity_by_mode_matches_live_admission_and_the_pool_fits_on_requests(self):
+        """The numbers behind the capacity table (docs/ASSISTANT.md)."""
         live_telemetry = [o for o in self.telemetry if o["metadata"]["name"] in {"alloy", "kube-state-metrics"}]
         table = {}
         for mode in ("large", "shared"):
@@ -115,18 +120,24 @@ class RenderTests(unittest.TestCase):
                     print("capacity", mode, experience, "with pool" if pool else "no pool", *table[mode, experience, pool],
                           "limits", result["limits"])
         pool = next(r for r in result["rows"] if r["name"] == "assistant-sandbox-pool")
-        self.assertEqual((1.95, 4480), (pool["cpu"], pool["memory_mib"]))
+        # Held by the scheduler: requests. What the pool may burst to: limits.
+        self.assertEqual((0.7, 832, 5.0, 4864), (pool["cpu"], pool["memory_mib"], pool["limit_cpu"], pool["limit_mib"]))
         platform = next(r for r in result["rows"] if r["name"] == "platform")
         self.assertEqual((1.235, 2561), (platform["cpu"], platform["memory_mib"]))
         # Family mode as it runs today (memory on): admitted, as the live session admission
         # found on 14 Nov (37.9 of 42 CPUs, 49.9 of 51.3 GiB requested), with 1.3 GiB left.
         self.assertEqual((True, 4.015, 1348), table["shared", "assistant-memory", False])
-        # The pool needs 4.4 GiB of requests: it does not fit there. Nothing is trimmed to make it.
-        self.assertEqual((False, 2.065, -3132), table["shared", "assistant-memory", True])
-        # Without the memory services it would, and coder mode has room either way.
-        self.assertEqual((True, 3.565, 1348), table["shared", "assistant", True])
-        self.assertEqual((True, 18.065, 17348), table["large", "assistant-memory", True])
-        self.assertEqual((True, 19.565, 21828), table["large", "assistant", True])
+        # The pool requests 0.7 CPUs and 832 MiB at measured use: it is admitted there with 516 MiB
+        # unrequested. No other workload's budget changed.
+        self.assertEqual((True, 3.315, 516), table["shared", "assistant-memory", True])
+        self.assertEqual((True, 4.815, 4996), table["shared", "assistant", True])
+        self.assertEqual((True, 19.315, 20996), table["large", "assistant-memory", True])
+        self.assertEqual((True, 20.815, 25476), table["large", "assistant", True])
+        # Its limits (5 CPUs, 4,864 MiB) are overcommit, and are reported as such.
+        with_pool = service.capacity(NODE, composition("shared", "assistant-memory") + self.objects, {"reserve_mib": 6656},
+                                     live_telemetry, "shared", node_pods=NODE_PODS)
+        self.assertEqual(("planned-limits-overcommitted", {"cpu": 51.0, "memory_mib": 68608, "over_node_cpus": 9.0,
+                                                           "over_node_mib": 17275}), (with_pool["status"], with_pool["limits"]))
         # Limits are reported, not hidden: family mode's burst ceilings sum past the node.
         shared = service.capacity(NODE, composition("shared", "assistant-memory"), {"reserve_mib": 6656},
                                   live_telemetry, "shared", node_pods=NODE_PODS)
@@ -166,7 +177,10 @@ class RenderTests(unittest.TestCase):
             self.assertEqual((1000, "OnRootMismatch"), (policy["pod_security_context"]["fsGroup"],
                                                         policy["pod_security_context"]["fsGroupChangePolicy"]))
             container = spec["containers"][0]
-            self.assertEqual(container["resources"]["requests"], container["resources"]["limits"])
+            # Burstable: requested at measured use, limited with headroom; storage stays bounded.
+            self.assertEqual({"requests": {"cpu": "250m", "memory": "256Mi", "ephemeral-storage": "2Gi"},
+                              "limits": {"cpu": "2", "memory": "2Gi", "ephemeral-storage": "2Gi"}}, container["resources"])
+            self.assertEqual(("2", "2Gi"), (policy["cpu_limit"], policy["memory_limit"]))
             volumes = {v["name"]: v for v in spec["volumes"]}
             self.assertEqual({"/home/user": "home", "/tmp": "scratch"},
                              {m["mountPath"]: m["name"] for m in container["volumeMounts"]})
@@ -184,46 +198,80 @@ class RenderTests(unittest.TestCase):
         # The controller mounts existing claims by name; it cannot create, read or delete one.
         self.assertEqual(["pods", "services", "secrets"], role["rules"][0]["resources"])
         quota = self.named("ResourceQuota", "sandbox-pool")["spec"]["hard"]
-        self.assertEqual(("5", "1950m", "4480Mi", "32"), (quota["pods"], quota["limits.cpu"], quota["limits.memory"],
-                                                         quota["persistentvolumeclaims"]))
+        self.assertEqual({"pods": "5", "requests.cpu": "700m", "requests.memory": "832Mi", "requests.ephemeral-storage": "4384Mi",
+                          "limits.cpu": "5000m", "limits.memory": "4864Mi", "limits.ephemeral-storage": "4384Mi",
+                          "services": "5", "secrets": "2", "persistentvolumeclaims": "32"}, quota)
+        for deployment in (o for o in self.objects if o["kind"] == "Deployment"):
+            resources = deployment["spec"]["template"]["spec"]["containers"][0]["resources"]
+            for key in ("cpu", "memory"):
+                self.assertLess(quantity(resources["requests"][key], key == "memory"),
+                                quantity(resources["limits"][key], key == "memory"))
+            self.assertEqual(resources["requests"]["ephemeral-storage"], resources["limits"]["ephemeral-storage"])
 
-    def test_each_group_gets_its_own_list_and_proxy_and_nothing_else(self):
-        lists = sandbox.egress_lists()
-        self.assertEqual({"Family": "family", "Parents": "parents", "Admin": "parents"}, lists["groups"])
-        family, parents = set(lists["lists"]["family"]), set(lists["lists"]["parents"])
-        self.assertLess(family, parents)
-        self.assertLessEqual({"pypi.org", "files.pythonhosted.org", "registry.npmjs.org", "docs.python.org",
-                              "developer.mozilla.org"}, family)
-        # General hosting, search, chat and video are not on the kids' list.
-        self.assertFalse({"github.com", "stackoverflow.com", "en.wikipedia.org", "scratch.mit.edu"} & family)
-        self.assertFalse(any(d.startswith("*") for d in family))
-        acl = service.yaml.safe_load(self.named("ConfigMap", "sandbox-egress")["data"]["acl.yaml"])
-        self.assertEqual({"family": sorted(family), "parents": sorted(parents)},
-                         {s["name"]: sorted(s["allowed_domains"]) for s in acl["services"]})
-        self.assertTrue(all(s["action"] == "enforce" for s in acl["services"]))
-        # A request with no known group falls to a default that allows nothing.
-        self.assertEqual({"name": "default", "project": "sandbox", "action": "enforce"}, acl["default"])
+    def test_each_group_gets_its_own_open_policy_and_the_family_one_is_filtered(self):
+        egress = sandbox.egress_policies()
+        self.assertEqual({"Family": "family", "Parents": "parents", "Admin": "parents"}, egress["groups"])
+        self.assertEqual({"parents": {"filter": "open", "blocked": []}, "family": {"filter": "family", "blocked": []}},
+                         egress["policies"])
+        # The owner's blocked domains reach each proxy as its own file; nothing is an allowlist.
+        files = self.named("ConfigMap", "sandbox-egress")["data"]
+        self.assertEqual({"family.txt": "", "parents.txt": ""}, files)
         policies = sandbox.policies(self.config)
-        for policy, egress in (("sandbox-family", "family"), ("home-kid", "family"),
-                               ("sandbox-parents", "parents"), ("home-alice", "parents")):
-            env, proxy = policies[policy]["env"], f'http://{CONFIG["egress_service_ips"][egress]}:4750'
+        for policy, name in (("sandbox-family", "family"), ("home-kid", "family"),
+                             ("sandbox-parents", "parents"), ("home-alice", "parents")):
+            env, proxy = policies[policy]["env"], f'http://{CONFIG["egress_service_ips"][name]}:4750'
             self.assertEqual({proxy}, {env[k] for k in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy")})
-            self.assertEqual(egress, policies[policy]["podTemplate"]["metadata"]["labels"][sandbox.EGRESS_LABEL])
+            self.assertEqual(name, policies[policy]["podTemplate"]["metadata"]["labels"][sandbox.EGRESS_LABEL])
             self.assertEqual("localhost,127.0.0.1", env["NO_PROXY"])
+        private = "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16,100.64.0.0/10,127.0.0.0/8"
+        expected = {
+            # Adults: open, minus the owner's list. Every policy keeps the private-range denial.
+            "parents": ["--group", "parents", "--blocklist", "/config/parents.txt", "--deny-ranges", private],
+            # Children: also the maintained lists in the image, the family resolvers, and no address literals.
+            "family": ["--group", "family", "--blocklist", "/config/family.txt", "--deny-ranges", private,
+                       "--maintained", "/blocklists", "--resolvers", "1.1.1.3:53,1.0.0.3:53", "--deny-literals"]}
         for name in ("family", "parents"):
             deployment = self.named("Deployment", "sandbox-egress-" + name)
             pod = deployment["spec"]["template"]["spec"]
             container = pod["containers"][0]
             self.assertEqual(CONFIG["egress_image"], container["image"])
-            self.assertEqual(["--group", name, "--acl", "/config/acl.yaml", "--deny-ranges",
-                              "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16,100.64.0.0/10,127.0.0.0/8"],
-                             container["args"])
+            self.assertEqual(expected[name], container["args"])
             self.assertFalse(pod["automountServiceAccountToken"])
             self.assertTrue(container["securityContext"]["readOnlyRootFilesystem"])
             self.assertEqual(["ALL"], container["securityContext"]["capabilities"]["drop"])
-            self.assertEqual(container["resources"]["requests"], container["resources"]["limits"])
+            self.assertEqual(sandbox.PROXY_RESOURCES, container["resources"])
             service_ = self.named("Service", "sandbox-egress-" + name)
             self.assertEqual(CONFIG["egress_service_ips"][name], service_["spec"]["clusterIP"])
+        # The owner's resolvers replace the default; the policy file cannot unfilter the children.
+        custom = sandbox.proxy_args({**self.config, "family_dns": ["9.9.9.11"]}, "family", egress["policies"]["family"])
+        self.assertIn("9.9.9.11:53", custom)
+        record = json.loads(sandbox.EGRESS_POLICIES.read_text())
+        for change in ({"policies": {**record["policies"], "family": {"filter": "open", "blocked": []}}},
+                       {"groups": {**record["groups"], "Family": "parents"}},
+                       {"policies": {**record["policies"], "parents": {"filter": "open", "blocked": ["*.example.com"]}}},
+                       {"policies": {**record["policies"], "parents": {"filter": "open", "blocked": ["192.168.1.1"]}}},
+                       {"policies": {**record["policies"], "parents": {"filter": "open", "allowed": ["example.com"], "blocked": []}}}):
+            with tempfile.TemporaryDirectory() as d, patch.object(sandbox, "EGRESS_POLICIES", Path(d) / "egress.json"):
+                sandbox.EGRESS_POLICIES.write_text(json.dumps({**record, **change}))
+                with self.assertRaises(ValueError, msg=change):
+                    sandbox.egress_policies()
+        with tempfile.TemporaryDirectory() as d, patch.object(sandbox, "EGRESS_POLICIES", Path(d) / "egress.json"):
+            sandbox.EGRESS_POLICIES.write_text(json.dumps({**record, "policies": {
+                "family": {"filter": "family", "blocked": ["kids-only.example"]},
+                "parents": {"filter": "open", "blocked": ["time-sink.example", "other.example"]}}}))
+            files = next(o for o in sandbox.render(self.config, ROOT) if o["metadata"]["name"] == "sandbox-egress"
+                         and o["kind"] == "ConfigMap")["data"]
+            self.assertEqual({"family.txt": "kids-only.example\n", "parents.txt": "time-sink.example\nother.example\n"}, files)
+
+    def test_pinned_family_blocklists_are_bounded_and_commit_pinned(self):
+        record = json.loads((ROOT / "infrastructure/ai-stack/egress/blocklists.json").read_text())["lists"]
+        self.assertEqual(["nsfw", "bypass", "gambling"], [item["name"] for item in record])
+        for item in record:
+            self.assertRegex(item["url"], r"^https://raw\.githubusercontent\.com/[^/]+/[^/]+/[a-f0-9]{40}/")
+            self.assertRegex(item["refresh_url"], r"^https://raw\.githubusercontent\.com/[^/]+/[^/]+/(main|master)/")
+            self.assertEqual(item["url"].split("/")[3:5], item["refresh_url"].split("/")[3:5])
+            self.assertRegex(item["sha256"], r"^[a-f0-9]{64}$")
+            self.assertTrue(0 < item["bytes"] <= 32 << 20 and item["entries"] > 1000 and item["licence"])
 
     def test_network_union_workspace_reaches_only_its_own_proxy(self):
         objects = self.objects + service.kustomize(ROOT / "apps/overlays/assistant-memory") + self.telemetry
@@ -248,13 +296,19 @@ class RenderTests(unittest.TestCase):
                              ingress[0]["from"])
             self.assertNotIn(other, json.dumps(ingress))
             egress = rules(sandbox.NAMESPACE, proxy, "Egress")
-            blocks = [p["ipBlock"] for rule in egress for p in rule["to"] if "ipBlock" in p]
+            web = [rule for rule in egress if rule["to"][0].get("ipBlock", {}).get("cidr") == "0.0.0.0/0"]
             # Public addresses on the web ports only: the LAN, the cluster and link-local are excepted.
-            self.assertEqual([{"cidr": "0.0.0.0/0", "except": list(sandbox.PRIVATE_CIDRS)}], blocks)
-            self.assertLessEqual({"192.168.0.0/16", "10.0.0.0/8", "169.254.0.0/16"}, set(blocks[0]["except"]))
-            web = next(rule for rule in egress if "ipBlock" in rule["to"][0])
-            self.assertEqual([80, 443], [port["port"] for port in web["ports"]])
-            self.assertEqual({53}, {port["port"] for rule in egress if rule is not web for port in rule["ports"]})
+            self.assertEqual([[{"ipBlock": {"cidr": "0.0.0.0/0", "except": list(sandbox.PRIVATE_CIDRS)}}]], [r["to"] for r in web])
+            self.assertLessEqual({"192.168.0.0/16", "10.0.0.0/8", "169.254.0.0/16"}, set(web[0]["to"][0]["ipBlock"]["except"]))
+            self.assertEqual([80, 443], [port["port"] for port in web[0]["ports"]])
+            dns = [rule for rule in egress if rule is not web[0]]
+            self.assertEqual({53}, {port["port"] for rule in dns for port in rule["ports"]})
+            if name == "family":
+                # The children's proxy can ask only the family resolvers, never the cluster's DNS.
+                self.assertEqual([[{"ipBlock": {"cidr": "1.1.1.3/32"}}, {"ipBlock": {"cidr": "1.0.0.3/32"}}]] * 2,
+                                 [rule["to"] for rule in dns])
+            else:
+                self.assertTrue(all(rule["to"][0]["podSelector"] == {"matchLabels": {"k8s-app": "kube-dns"}} for rule in dns))
         # A workspace pod that somehow lacks a list label keeps no egress at all.
         self.assertEqual([], rules(sandbox.NAMESPACE, {sandbox.LABEL: sandbox.WORKSPACE}, "Egress"))
         self.assertEqual([], rules(sandbox.NAMESPACE, {"anything": "else"}, "Egress"))
@@ -274,6 +328,7 @@ class RenderTests(unittest.TestCase):
                          gate["users"])
         self.assertFalse({"image", "egress_image", "api_server_cidr", "quota"} & set(json.dumps(gate).replace('"', " ").split()))
         self.assertEqual([], loaded(homes=False)["users"])
+        self.assertEqual(["1.1.1.3", "1.0.0.3"], self.config["family_dns"])
         # Every mapped account's claim is one the storage render produces, in this namespace.
         claims = {o["metadata"]["name"]: o for o in sandbox_homes.render(self.config["users"]) if o["kind"] == "PersistentVolumeClaim"}
         self.assertEqual({"sandbox-home-alice", "sandbox-home-kid"}, set(claims))
@@ -288,7 +343,9 @@ class RenderTests(unittest.TestCase):
                     {"family_enabled": "false"}, {"parents_group_id": "family-fixture"}, {"egress": "all"},
                     {"group_resolution": "family-wins"}, {"egress_service_ips": {"family": "10.43.0.201"}},
                     {"egress_service_ips": {"family": "10.43.0.201", "parents": "10.43.0.201"}},
-                    {"egress_service_ips": {"family": "10.43.0.201", "parents": "8.8.8.8"}}, {"homes": "homes.json"}))):
+                    {"egress_service_ips": {"family": "10.43.0.201", "parents": "8.8.8.8"}}, {"homes": "homes.json"},
+                    {"family_dns": []}, {"family_dns": ["10.43.0.10"]}, {"family_dns": ["192.168.1.1"]},
+                    {"family_dns": "1.1.1.3"}, {"family_dns": ["dns.example"]}))):
                 path.write_text(json.dumps(config))
                 with self.assertRaises(ValueError, msg=config):
                     sandbox.read_config(path)

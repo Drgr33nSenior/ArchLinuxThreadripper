@@ -1,0 +1,3 @@
+# Fixture for the offline image smoke test only; the served list is rendered by
+# lib/workstation/sandbox.py from infrastructure/service/sandbox-egress.json.
+owner-blocked.sandbox.test

@@ -425,5 +425,8 @@ infrastructure/ai-stack/egress/main.go
 infrastructure/ai-stack/egress/build.sh
 infrastructure/ai-stack/egress/Containerfile
 infrastructure/ai-stack/egress/smoke.py
-infrastructure/ai-stack/egress/smoke-acl.yaml
+infrastructure/ai-stack/egress/main_test.go
+infrastructure/ai-stack/egress/blocklists.json
+infrastructure/ai-stack/egress/fetch-lists.py
+infrastructure/ai-stack/egress/smoke-blocklist.txt
 infrastructure/ai-stack/egress/scan-allowlist.json

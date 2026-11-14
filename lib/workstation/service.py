@@ -1287,13 +1287,9 @@ def render(args):
     overlay = {"large": experience, "split": experience + "-split", "shared": experience + "-shared"}[args.mode]
     objects = kustomize(ROOT / "apps/overlays" / overlay)
     sandbox_config = sandbox.read_config(args.sandbox_config) if getattr(args, "sandbox_config", None) else None
-    # Shared mode: with the memory experience the node's memory requests leave no room for
-    # the pool (docs/ASSISTANT.md, capacity by mode), so the render stops rather than
-    # produce a composition the scheduler would leave pending.
-    require(not sandbox_config or (args.mode == "large" and
+    require(not sandbox_config or (args.mode in {"large", "shared"} and
             getattr(args, "serving_profile", None) and experience.startswith("assistant")),
-            "sandbox requires an assistant serving contract in large mode; "
-            "the pool does not fit shared mode's memory requests")
+            "sandbox requires an assistant serving contract in large or shared mode")
     sandbox_objects = sandbox.render(sandbox_config, ROOT) if sandbox_config else []
     contract = None
     if getattr(args, "serving_profile", None):
@@ -1388,7 +1384,7 @@ def render(args):
     (output / "evidence.json").write_text(json.dumps({"status": "source-rendered-not-deployed", "mode": args.mode,
         "experience": experience,
         "sandbox": {"enabled": bool(sandbox_config), "qualified": False,
-                    "egress": "allowlisting proxy per group; no direct route",
+                    "egress": "open through a per-group proxy with blocklists (family: filtered DNS and maintained lists); no direct route",
                     "family_enabled": bool(sandbox_config and sandbox_config["family_enabled"]),
                     "group_resolution": sandbox_config["group_resolution"] if sandbox_config else None,
                     "persistent_homes": len(sandbox_config["users"]) if sandbox_config else 0,
@@ -1460,7 +1456,7 @@ def capacity(resources, workloads, telemetry, telemetry_stack, mode, build_mib=0
     def fixed(name, cpu, memory):
         return {"name": name, "cpu": cpu, "memory_mib": memory, "limit_cpu": cpu, "limit_mib": memory}
     rows = [row(name, selected[name]) for name in sorted(names)]
-    rows += [fixed(pool["name"], pool["cpu"], pool["memory_mib"]) for pool in sandbox.capacity_rows(workloads)]
+    rows += sandbox.capacity_rows(workloads)
     stack = [o for o in telemetry_stack if pod_spec(o)]
     # Alertmanager is an optional extension to the existing telemetry composition,
     # counted from its canonical manifest whether or not it is running.
