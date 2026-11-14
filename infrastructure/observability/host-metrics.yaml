@@ -102,7 +102,7 @@ spec:
           args:
             - --resources=pods,nodes,deployments,persistentvolumeclaims
             - --namespaces=default,ai-home-lab,workstation-observability,workstation-observability-host,kube-amd-gpu,kube-system,kube-node-lease,kube-public
-            - --metric-allowlist=^kube_pod_container_resource_requests$,^kube_pod_container_resource_limits$,^kube_pod_container_status_restarts_total$,^kube_pod_container_status_last_terminated_reason$,^kube_pod_status_phase$,^kube_pod_status_ready$,^kube_node_status_allocatable$,^kube_node_status_capacity$,^kube_node_status_condition$,^kube_deployment_status_replicas_available$,^kube_persistentvolumeclaim_status_phase$,^kube_persistentvolumeclaim_resource_requests_storage_bytes$,^kube_deployment_spec_replicas$,^kube_pod_container_status_waiting_reason$,^kube_pod_status_unschedulable$,^kube_node_spec_unschedulable$
+            - --metric-allowlist=^kube_pod_container_resource_requests$,^kube_pod_container_resource_limits$,^kube_pod_container_status_restarts_total$,^kube_pod_container_status_last_terminated_reason$,^kube_pod_status_phase$,^kube_pod_status_ready$,^kube_node_status_allocatable$,^kube_node_status_capacity$,^kube_node_status_condition$,^kube_deployment_status_replicas_available$,^kube_persistentvolumeclaim_status_phase$,^kube_persistentvolumeclaim_resource_requests_storage_bytes$,^kube_deployment_spec_replicas$,^kube_pod_container_status_waiting_reason$,^kube_pod_status_unschedulable$,^kube_node_spec_unschedulable$,^kube_pod_resourceclaim_info$
           ports: [{name: metrics, containerPort: 8080}, {name: health, containerPort: 8081}]
           resources:
             requests: {cpu: 50m, memory: 192Mi}
