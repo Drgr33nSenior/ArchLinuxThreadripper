@@ -101,7 +101,8 @@ class RenderTests(unittest.TestCase):
         self.assertEqual(storage_class["provisioner"], self.objects[0]["spec"]["csi"]["driver"])
         # Homes are separate exports, outside the share the provisioner writes to.
         self.assertFalse(sandbox_homes.EXPORT_ROOT.startswith(storage_class["parameters"]["share"]))
-        security = sandbox.policy({"image": "fixture"})["container_security_context"]
+        security = sandbox.policy({"image": "fixture", "egress_service_ips": {"family": "10.43.0.201"}},
+                                  "family")["container_security_context"]
         self.assertEqual((sandbox_homes.OWNER,) * 2, (security["runAsUser"], security["runAsGroup"]))
 
     def test_outputs_carry_names_and_quotas_but_no_user_ids(self):

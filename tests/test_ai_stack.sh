@@ -107,6 +107,35 @@ done
 bash -n "$dir/dra/smoke.sh" || fail 'dra smoke does not parse'
 python3 -I -c 'import json, sys; assert json.load(open(sys.argv[1])) == []' "$dir/dra/scan-allowlist.json" || fail 'dra allowlist is not empty'
 
+# The workspace egress proxy is a pipeline stage: Smokescreen at a full commit plus this
+# repository's main.go, built offline from vendored modules, smoke-tested with no network
+# before the shared scan/sign/push path.
+grep -Eq '^EGRESS_PROXY_REPOSITORY=https://github\.com/stripe/smokescreen\.git$' "$lock" || fail 'egress proxy repository'
+grep -Eq '^EGRESS_PROXY_COMMIT=[a-f0-9]{40}$' "$lock" || fail 'egress proxy commit is not a full commit'
+grep -Eq '^EGRESS_IMAGE_REPOSITORY=registry\.lan\.thespry\.family/local/sandbox-egress$' "$lock" || fail 'egress image repository'
+# shellcheck disable=SC2016 # literal text in build-stage.sh
+grep -Fq 'egress_key=$(key_of "$(read_lock EGRESS_IMAGE_REPOSITORY)" "$EGRESS_PROXY_COMMIT" "$DRA_GO_IMAGE" "$(content "${egress_files[@]}")")' "$dir/build-stage.sh" ||
+  fail 'egress key does not cover the commit, the Go image and the stage files'
+# shellcheck disable=SC2016 # literal text in build-stage.sh
+grep -Fq 'egress_files=("$here"/egress/{main.go,build.sh,Containerfile,smoke.py,smoke-acl.yaml})' "$dir/build-stage.sh" || fail 'egress key does not cover the smoke test'
+# shellcheck disable=SC2016 # literal text in build-stage.sh
+grep -Fq '[[ $(git -C "$egress_run/git" rev-parse FETCH_HEAD) == "$EGRESS_PROXY_COMMIT" ]]' "$dir/build-stage.sh" || fail 'egress source is not checked against the pin'
+# shellcheck disable=SC2016 # literal text in build-stage.sh
+grep -Fq -- '--name "ai-stack-egress-$egress_key" --network none' "$dir/build-stage.sh" || fail 'egress proxy is not built offline'
+# shellcheck disable=SC2016 # literal text in egress/build.sh
+grep -Fq 'export GOTOOLCHAIN=local GOPROXY=off GOFLAGS="-mod=vendor -trimpath -buildvcs=false -p=$JOBS"' "$dir/egress/build.sh" ||
+  fail 'egress build may download modules or a toolchain, or embed build paths'
+# shellcheck disable=SC2016 # literal text in build-stage.sh
+grep -Fq -- '--name "$proxy" --network none --read-only --cap-drop=ALL' "$dir/build-stage.sh" || fail 'egress smoke proxy is not offline, read-only and unprivileged'
+# shellcheck disable=SC2016 # literal text in build-stage.sh
+grep -Fq 'publish "$tag" "$egress_run" "$here/egress/scan-allowlist.json"' "$dir/build-stage.sh" || fail 'egress does not use the publish path'
+grep -Eq '^for stage in .* egress( [a-z ]+)?; do$' "$dir/build-all.sh" || fail 'build-all does not build egress'
+grep -Fxq 'FROM scratch' "$dir/egress/Containerfile" || fail 'egress image is not a single static binary'
+grep -Fxq 'USER 65532:65532' "$dir/egress/Containerfile" || fail 'egress image does not run as an unprivileged user'
+bash -n "$dir/egress/build.sh" || fail 'egress build does not parse'
+python3 -I -c 'import ast, sys; ast.parse(open(sys.argv[1]).read())' "$dir/egress/smoke.py" || fail 'egress smoke does not parse'
+python3 -I -c 'import json, sys; assert json.load(open(sys.argv[1])) == []' "$dir/egress/scan-allowlist.json" || fail 'egress allowlist is not empty'
+
 # The patch-series hash is order-independent of the filesystem and content-sensitive.
 work=$(mktemp -d)
 trap 'rm -rf -- "$work"' EXIT

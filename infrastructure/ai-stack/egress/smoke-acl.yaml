@@ -1,0 +1,23 @@
+# Fixture for the offline image smoke test only; the served lists are rendered by
+# lib/workstation/sandbox.py. The .test names resolve through --add-host.
+---
+version: v1
+services:
+  - name: family
+    project: sandbox
+    action: enforce
+    allowed_domains:
+      - public.sandbox.test
+      - lan.sandbox.test
+      - cluster.sandbox.test
+      - localhost
+      - "*.wild.sandbox.test"
+  - name: parents
+    project: sandbox
+    action: enforce
+    allowed_domains:
+      - parents-only.sandbox.test
+default:
+  name: default
+  project: sandbox
+  action: enforce

@@ -14,17 +14,40 @@ import secrets
 import httpx
 
 
+ORDER = ("Admin", "Parents", "Family")  # most to least permissive
+
+
 def group_for(user, groups, config):
+    """The one reviewed group this account acts as, or None when it has no access.
+
+    Admin is the Open WebUI role; Parents and Family are exact group memberships, and
+    Family counts only while the owner's kids switch is on. An account in both groups
+    resolves by the configured rule (group_resolution), unless the owner's homes mapping
+    names its group. A mapping can only choose among the groups the account really holds:
+    naming one it lacks denies access rather than granting it.
+    """
     if user.get("role") == "admin":
-        return "Admin"
-    if user.get("role") != "user":
+        held = {"Admin"}
+    elif user.get("role") == "user":
+        ids = {g.get("id") for g in groups if isinstance(g, dict)}
+        held = {name for name, key, enabled in (("Parents", "parents_group_id", True),
+                                                ("Family", "family_group_id", config["family_enabled"]))
+                if enabled and config[key] in ids}
+    else:
         return None
-    ids = {g.get("id") for g in groups if isinstance(g, dict)}
-    # A Family membership wins over Parents so accidental dual membership cannot
-    # bypass the owner's kids switch.
-    if config["family_group_id"] in ids:
-        return "Family" if config.get("family_enabled", False) else None
-    return "Parents" if config["parents_group_id"] in ids else None
+    mapped = config["users"].get(user.get("id"))
+    if mapped:
+        return mapped["group"] if mapped["group"] in held else None
+    if not held:
+        return None
+    ranked = [name for name in ORDER if name in held]
+    return ranked[0] if config["group_resolution"] == "most-permissive" else ranked[-1]
+
+
+def policy_for(user_id, group, config):
+    """A mapped account's own policy (its persistent home); otherwise its group's list."""
+    mapped = config["users"].get(user_id)
+    return "home-" + mapped["name"] if mapped else "sandbox-" + config["egress"][group]
 
 
 class Gate:
@@ -48,7 +71,7 @@ class Gate:
             if not isinstance(user, dict) or user.get("id") != uid:
                 return None
             if user.get("role") == "admin":
-                return "Admin"
+                return group_for(user, [], self.config)
             groups = await client.get(base + "/api/v1/groups/", headers={"Authorization": auth})
             if groups.status_code != 200 or not isinstance(groups.json(), list):
                 return None
@@ -94,6 +117,12 @@ class Gate:
         if not group:
             return await reply(403, b'{"error":"sandbox_access_denied"}')
         scope = dict(scope)
+        # Open WebUI always asks for "sandbox". The gate, not the caller, picks the upstream
+        # policy: the account's own home, or its group's egress list. The identity headers
+        # were checked above, so the policy follows the authenticated account.
+        policy = policy_for(headers[b"x-user-id"].decode("latin1"), group, self.config)
+        scope["path"] = f"/p/{policy}/" + path[len("/p/sandbox/"):]
+        scope["raw_path"] = scope["path"].encode("ascii")
         # Force native per-user scope, never caller-chosen contexts or policies.
         scope["headers"] = [(k, v) for k, v in scope.get("headers", [])
                             if k.lower() not in {b"x-terminal-context-id", b"x-terminal-policy-id"}]
@@ -119,13 +148,14 @@ def main():
     from terminals.models.policy import Policy
     import uvicorn
     config = json.loads(Path("/config/config.json").read_text())
-    policy = json.loads(Path("/config/policy.json").read_text())
+    policies = json.loads(Path("/config/policies.json").read_text())
     original_lifespan = app.router.lifespan_context
     @asynccontextmanager
     async def lifespan(application):
         init_db()
         async with async_session() as session:
-            await session.merge(Policy(id="sandbox", data=policy))
+            for name, data in policies.items():
+                await session.merge(Policy(id=name, data=data))
             await session.commit()
         async with original_lifespan(application):
             # Upstream may attach request URLs or exception details to logs.

@@ -20,6 +20,9 @@ prometheus.scrape "workstation" {
     // Bounded-label assistant tool outcomes and the rendered serving contract.
     {"__address__" = "service-tools.ai-home-lab.svc:8000", "__metrics_path__" = "/metrics", "job" = "assistant-tools"},
     {"__address__" = "assistant-terminals.assistant-sandbox.svc:3000", "job" = "assistant-sandbox"},
+    // Workspace egress proxies: allow/deny counts per group only (domains stay in the proxy's log).
+    {"__address__" = "sandbox-egress-family.assistant-sandbox.svc:9810", "job" = "assistant-sandbox-egress"},
+    {"__address__" = "sandbox-egress-parents.assistant-sandbox.svc:9810", "job" = "assistant-sandbox-egress"},
     // TEI embedding service (Graphiti memory): queue, latency, throughput and errors.
     // Present only with the memory experience; it is not in WorkstationExporterDown.
     {"__address__" = "memory-embedding.ai-home-lab.svc:9000", "job" = "embedding"},
