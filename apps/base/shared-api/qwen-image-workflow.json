@@ -9,5 +9,5 @@
   "8": {"class_type": "EmptySD3LatentImage", "inputs": {"width": 1328, "height": 1328, "batch_size": 1}},
   "9": {"class_type": "KSampler", "inputs": {"model": ["5", 0], "positive": ["6", 0], "negative": ["7", 0], "latent_image": ["8", 0], "seed": 0, "steps": 8, "cfg": 1.0, "sampler_name": "euler", "scheduler": "simple", "denoise": 1.0}},
   "10": {"class_type": "VAEDecodeTiled", "inputs": {"samples": ["9", 0], "vae": ["4", 0], "tile_size": 512, "overlap": 64, "temporal_size": 64, "temporal_overlap": 8}},
-  "11": {"class_type": "SwarmSaveImageWS", "inputs": {"images": ["10", 0]}}
+  "11": {"class_type": "SaveImage", "inputs": {"images": ["10", 0], "filename_prefix": "picture"}}
 }

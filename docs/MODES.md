@@ -27,7 +27,7 @@ flowchart TB
   subgraph shared["Shared mode · default"]
     direction LR
     s0["<b>Card 0</b><br/>chat: half the model<br/>ComfyUI: pictures + video<br/>(48 of 64 compute units)"]
-    s1["<b>Card 1</b><br/>chat: half the model<br/>SwarmUI: pictures"]
+    s1["<b>Card 1</b><br/>chat: half the model<br/>ComfyUI: pictures<br/>(48 of 64 compute units)"]
     s0 <-->|"one model"| s1
   end
   subgraph large["Large mode"]
@@ -141,7 +141,7 @@ flowchart TD
   D --> E["Start SGLang first<br/>(it sizes its cache)"]
   E --> F{"Shared mode?"}
   F -->|no| R["Gateway ready:<br/>chat only"]
-  F -->|yes| G["Start SwarmUI (card 1),<br/>then ComfyUI (card 0)"]
+  F -->|yes| G["Start ComfyUI (card 1),<br/>then ComfyUI (card 0)"]
   G --> H{"All three ready?"}
   H -->|yes| I["Gateway admits pictures and video"]
   H -->|no| Y["Session marked failed;<br/>gateway closed"]

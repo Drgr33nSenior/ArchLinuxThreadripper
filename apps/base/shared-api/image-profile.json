@@ -2,7 +2,6 @@
   "schema": 2,
   "id": "workstation-qwen-image",
   "catalog": "qwen-image-2512",
-  "swarm_model": "QwenImage/qwen_image_2512_bf16",
   "workflow": "qwen-image-workflow.json",
   "files": {
     "diffusion_model": {

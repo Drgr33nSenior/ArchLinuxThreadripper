@@ -926,22 +926,27 @@ class ResourceTests(unittest.TestCase):
             return direction_allowed(source, target, port, "egress") and direction_allowed(target, source, port, "ingress")
         for source, target, port in (("open-webui", "litellm", 4000), ("litellm", "sglang", 30000),
             ("litellm", "gateway-postgres", 5432), ("service-tools", "open-webui", 8080),
-            ("open-webui", "service-tools", 8000), ("service-tools", "swarmui", 7801),
-            ("swarmui", "comfyui-gpu0", 7821),
-            # generate_video (video.py) submits the fixed Wan workflow to the second ComfyUI
-            ("service-tools", "comfyui-gpu0", 7821)):
+            ("open-webui", "service-tools", 8000),
+            # pictures: the fixed Qwen-Image workflow straight to each card's ComfyUI;
+            # generate_video (video.py) submits the fixed Wan workflow to gpu-0's
+            ("service-tools", "comfyui-gpu1", 7821), ("service-tools", "comfyui-gpu0", 7821)):
             self.assertTrue(allowed(pod(source), pod(target), port), (source, target))
         for target, port in (("open-webui", 8080), ("litellm", 4000), ("service-tools", 8000)):
             self.assertTrue(allowed(pod("traefik", "kube-system"), pod(target), port))
         for source in (pod("unrelated"), pod("unrelated", "unrelated-namespace")):
             for target, port in (("litellm", 4000), ("gateway-postgres", 5432), ("sglang", 30000),
-                                 ("open-webui", 8080), ("service-tools", 8000), ("swarmui", 7801)):
+                                 ("open-webui", 8080), ("service-tools", 8000), ("comfyui-gpu1", 7821),
+                                 ("comfyui-gpu0", 7821)):
                 self.assertFalse(allowed(source, pod(target), port), (source, target))
         self.assertFalse(allowed(pod("open-webui"), pod("sglang"), 30000))
         for source in ("open-webui", "litellm", "sglang"):
             self.assertFalse(allowed(pod(source), pod("comfyui-gpu0"), 7821), source)
-        self.assertFalse(allowed(pod("swarmui"), pod("sglang"), 30000))
-        self.assertFalse(allowed(pod("comfyui-gpu0"), pod("swarmui"), 7801))
+            self.assertFalse(allowed(pod(source), pod("comfyui-gpu1"), 7821), source)
+        # no lateral path between the ComfyUIs, or from them to the model or gateway
+        self.assertFalse(allowed(pod("comfyui-gpu1"), pod("comfyui-gpu0"), 7821))
+        self.assertFalse(allowed(pod("comfyui-gpu0"), pod("comfyui-gpu1"), 7821))
+        self.assertFalse(allowed(pod("comfyui-gpu1"), pod("sglang"), 30000))
+        self.assertFalse(allowed(pod("comfyui-gpu1"), pod("litellm"), 4000))
         self.assertFalse(allowed(pod("service-tools"), pod("gateway-postgres"), 5432))
 
     def test_site_renderer_keeps_secrets_out_and_refuses_public_network(self):
@@ -1462,10 +1467,10 @@ class ServingContractTests(unittest.TestCase):
                       if o["kind"] == "ConfigMap" and "gateway-policy.json" in o.get("data", {}))
         self.assertEqual(["Qwen3.5-9B", alias], policy["image_models"])
         deployments = {o["metadata"]["name"]: o for o in shared if o["kind"] == "Deployment"}
-        self.assertEqual({"swarmui", "comfyui-gpu0"} <= deployments.keys(), True)
+        self.assertEqual({"comfyui-gpu1", "comfyui-gpu0"} <= deployments.keys(), True)
         claims = {name: [c["resourceClaimName"] for c in deployments[name]["spec"]["template"]["spec"]["resourceClaims"]]
-                  for name in ("sglang", "swarmui", "comfyui-gpu0")}
-        self.assertEqual({"sglang": ["gpu-0", "gpu-1"], "swarmui": ["gpu-1"], "comfyui-gpu0": ["gpu-0"]}, claims)
+                  for name in ("sglang", "comfyui-gpu1", "comfyui-gpu0")}
+        self.assertEqual({"sglang": ["gpu-0", "gpu-1"], "comfyui-gpu1": ["gpu-1"], "comfyui-gpu0": ["gpu-0"]}, claims)
 
     def test_default_arms_bundle_the_draft_kv_and_are_active_only_on_their_image(self):
         # Since 2026-11-13 both modes default to DFlash draft KV bundling (serving patches
@@ -1493,7 +1498,7 @@ class ServingContractTests(unittest.TestCase):
         service.render(SimpleNamespace(output=output, **args))
         objects = service.load_objects((output / "workloads.yaml").read_text())
         deployments = {o["metadata"]["name"]: o for o in objects if o["kind"] == "Deployment"}
-        self.assertTrue({"sglang", "swarmui", "comfyui-gpu0"} <= deployments.keys())
+        self.assertTrue({"sglang", "comfyui-gpu1", "comfyui-gpu0"} <= deployments.keys())
         argv = deployments["sglang"]["spec"]["template"]["spec"]["containers"][0]["args"]
         self.assertEqual("163840", argv[argv.index("--max-total-tokens") + 1])
         memory = next(o for o in objects if o["kind"] == "ConfigMap" and "MEMORY_LLM_MODEL" in o.get("data", {}))

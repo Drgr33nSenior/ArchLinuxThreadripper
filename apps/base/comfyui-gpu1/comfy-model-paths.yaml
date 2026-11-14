@@ -1,0 +1,9 @@
+# The Qwen-Image-2512 picture stack on the local-NVMe creative-models volume (Image/), used by
+# service-tools' fixed picture workflow (apps/base/shared-api/qwen-image-workflow.json). The same
+# section is in apps/base/comfyui-gpu0/comfy-model-paths.yaml, so file names match on either card.
+qwen_image:
+    base_path: /image
+    diffusion_models: diffusion_models
+    loras: loras
+    text_encoders: text_encoders
+    vae: vae

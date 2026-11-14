@@ -21,8 +21,8 @@ and Qwen Code.
 | LiteLLM OSS 1.109.1 | API HTTPS `/v1/models`, `/v1/chat/completions` → internal SGLang | Per-client virtual keys; separate master, salt and host-control credentials | Scoped `litellm` PostgreSQL role/database; dump plus matching K3s Secrets |
 | SGLang | ClusterIP only; unchanged qualified model/runtime inputs | No ordinary user access to backend | Weights and caches rebuildable; model revisions retained |
 | service-tools (MCP) | HTTPS `/mcp` → retrieval, memory, web search, handoffs and video | Caller's own WebUI session or restricted API key; the `admin` role is refused | Reuses WebUI document ACLs; handoffs and picture markers on `service-tools-state`; memory in Neo4j |
-| Image adapter | WebUI native OpenAI image connector → internal adapter → SwarmUI API | Trusted browser application identity plus per-user image permission | Unresolved job marker on `service-tools-state`; WebUI stores returned image under caller |
-| SwarmUI / ComfyUI | SwarmUI's self-started ComfyUI on GPU 1, plus `comfyui-gpu0` (internal 7821) on GPU 0 in shared mode; Swarm on internal 7801 only | Operator owns workflows; no public Swarm or ComfyUI administration | `creative-models` `Data/` and `Output/` captured; SDXL is read from the NAS; `Models/` and the Wan `Video/` weights are restaged from the catalogue (see [service recovery](SERVICE-RECOVERY.md)) |
+| Image adapter | WebUI native OpenAI image connector → internal adapter → ComfyUI API on each GPU | Trusted browser application identity plus per-user image permission | Unresolved job marker on `service-tools-state`; WebUI stores returned image under caller |
+| ComfyUI | `comfyui-gpu1` on GPU 1, plus `comfyui-gpu0` on GPU 0 in shared mode; both internal on 7821, reachable only from service-tools | Operator owns workflows; no public ComfyUI administration | `creative-models` `Data/` and `Output/` captured; SDXL is read from the NAS; `Models/` and the Wan `Video/` weights are restaged from the catalogue (see [service recovery](SERVICE-RECOVERY.md)) |
 | Session / Bridge | Root host CLI, canonical flock, existing identity/qualification gates | Dedicated Kubernetes identity and root-owned control-key file | Durable transition journal; no inference key grants administrative access |
 | Alertmanager | Prometheus → internal Alertmanager → chosen webhook | URL in Secret file; exact IP/port egress | Retained notification state; reconstruct configuration from source/Secrets |
 | Independent observer | Another device checks HTTPS status | Separate receiver credential and CA trust | Detects whole-workstation failure; bounded owner maintenance window |
@@ -374,7 +374,7 @@ context, node and new output paths; placeholders are not site values.
    that Pod. Verify all four valuable PVs are Retain. Take a full `service` capture
    and complete the isolated restore drill before admitting family traffic.
 8. Install the gateway control file root:root 0600. Set
-   `SESSION_SERVICE_ENABLED=true`, `SESSION_IMAGE_DEPLOYMENT=swarmui` and
+   `SESSION_SERVICE_ENABLED=true`, `SESSION_IMAGE_DEPLOYMENT=comfyui-gpu1` and
    `SESSION_SERVICE_CONTROL_FILE` in the reviewed host config. For shared mode
    (docs/ASSISTANT.md), also set `SESSION_IMAGE2_DEPLOYMENT=comfyui-gpu0`. Keep the existing
    canonical session policy, Kubernetes identity and lock. Requalify the selected
@@ -406,11 +406,12 @@ context, node and new output paths; placeholders are not site values.
 
 ## Image package and lifecycle
 
-The narrow adapter uses WebUI's native OpenAI image connector because SwarmUI owns
-the ComfyUI lifecycle and outputs. Swarm's API is not a ComfyUI endpoint. In shared mode
-Swarm drives two ComfyUI backends, its own on GPU 1 and `comfyui-gpu0` on GPU 0, so two
-pictures can run at once. Public consumers cannot upload workflows or reach Swarm's or
-ComfyUI's administration APIs.
+The narrow adapter uses WebUI's native OpenAI image connector and sends one fixed workflow
+straight to ComfyUI's API: slot 0 to `comfyui-gpu1` (GPU 1), slot 1 to `comfyui-gpu0` (GPU 0)
+in shared mode, so two pictures can run at once. It reads the result back through ComfyUI's
+`/view`. SwarmUI is not in this path: its API runs its own model-load job before a raw
+workflow and, for Qwen-Image, tried to download files the network policy blocks (found
+2026-11-14). Public consumers cannot upload workflows or reach ComfyUI's administration API.
 
 The deployed picture image is the AI stack's `creative-gfx1201` build (ComfyUI 0.45 and
 SwarmUI on the same ROCm and PyTorch as SGLang; see
@@ -420,9 +421,9 @@ The rest of this section describes the earlier standalone creative package:
 the qualification-time SDXL identity/checksum and bundled custom-node source. Pictures
 now use Qwen-Image-2512 (`infrastructure/ai-stack/models/qwen-image-2512.json`): the
 checked-in `qwen-image-workflow.json` fixes node types and parameters; only prompt, bounded
-size and seed are substituted by the adapter. The sole custom output node is
-`SwarmSaveImageWS` from the same Swarm source revision. Swarm supplies model paths
-through its `Data/comfy-auto-model.yaml`. Stage the checkpoint at the exact path
+size and seed are substituted by the adapter. It uses stock nodes only (the picture ComfyUI
+on GPU 1 runs with `--disable-all-custom-nodes`) and saves with `SaveImage`. Each ComfyUI
+reads the picture files from `Image/` through its `comfy-model-paths.yaml`. Stage the checkpoint at the exact path
 in the contract. Keep `Models` read-only after staging where the packaged backend
 permits it; `Data` and `Output` must remain persistent and writable.
 The packaged launcher creates Comfy's user/input/output directories there and
@@ -485,11 +486,12 @@ The adapter permits one image per request at a Qwen-Image size (1328×1328 or th
 prompt, no workflow macros, and an 8 MiB PNG result. It runs one picture at a time, or two
 in shared mode. Generation is bounded to 240 seconds (measured 72–88 s, two at once included)
 and the whole request to 270, inside Open WebUI's 300-second client timeout. Cancellation
-interrupts only the adapter's Swarm session. Any submitted generation without a
-successful terminal result retains a durable unresolved marker: interruption
-acknowledgement and zero Swarm counters do not prove GPU completion. Restart
+removes only the adapter's own prompt from that ComfyUI's queue, or interrupts it by
+`prompt_id` if it is running, so a video on the same card is untouched. Any submitted
+generation without a successful terminal result retains a durable unresolved marker: an
+interrupt acknowledgement does not prove GPU completion. Restart
 cannot fabricate success or launch a duplicate. Recovery: enter maintenance;
-verify Swarm/Comfy Pods and DRM holders
+verify the ComfyUI Pods and DRM holders
 are gone; preserve the marker as evidence; clear it only after the owner has
 resolved the abandoned job; then restart the qualified split profile.
 

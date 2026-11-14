@@ -87,10 +87,10 @@ If any check fails, the model gets a short error it can explain, such as `video_
 | Documents | Open WebUI → CPU Qwen embedding model → embedded Chroma | Preserve document permissions; answer/citation quality remains unqualified |
 | Web research | Open WebUI/Qwen Code → shared Exa adapter | Auto search and public-page extraction; one durable request ceiling; Tavily optional |
 | Memory | Browser and coding clients → service-tools memory tools → Graphiti on Neo4j | Live in the `assistant-memory` experience; per-user memory groups; facts are stored only when someone asks |
-| Image creation | Open WebUI → service-tools image adapter → SwarmUI → ComfyUI on either GPU | Qwen-Image-2512 only; two pictures at once in shared mode (one per GPU), one in split mode |
+| Image creation | Open WebUI → service-tools image adapter → ComfyUI on either GPU | Qwen-Image-2512 only; two pictures at once in shared mode (one per GPU), one in split mode |
 | Short videos | Open WebUI → service-tools `generate_video` (MCP) → `comfyui-gpu0` | Wan 2.2 T2V A14B; shared mode only; one clip at a time; picture permission |
 | Voice input | Browser microphone → Open WebUI → local faster-whisper | CPU transcription on the workstation; audio never leaves it |
-| Creative controls | Operator → SwarmUI; ComfyUI remains its embedded backend | No new public ComfyUI port or unauthenticated creative Ingress |
+| Creative controls | SwarmUI moves to a separate creator mode (planned); family modes no longer run it | No new public ComfyUI port or unauthenticated creative Ingress |
 | Spoken answers | Open WebUI browser speech synthesis | Quality and voice availability depend on the browser and operating system |
 
 The family profile adds a common name, four prompt suggestions and an explicit
@@ -309,7 +309,7 @@ image, so each mode's contract is `active`:
   against 8.35 GB on 2026-11-13); `UQS` left 9.04 GB in its 2026-11-11 qualification.
   Measured live with `UQS` on 2026-11-13 (32,624 MiB per card; `UQSB` leaves the same):
 
-  | | Pictures card (`gpu-1`, SwarmUI) | Video card (`gpu-0`, `comfyui-gpu0`) |
+  | | Pictures card (`gpu-1`, then SwarmUI) | Video card (`gpu-0`, `comfyui-gpu0`) |
   | --- | --- | --- |
   | In use before any picture | 25,585 MiB | 25,121 MiB |
   | Peak | 29,885 MiB (two pictures at once) | 31,913 MiB (a 5-second clip) |
@@ -321,9 +321,9 @@ image, so each mode's contract is `active`:
   shared mode's extra context comes from bundling the draft cache, not from the image
   generators' share. For longer contexts, use large mode (262,112 per conversation, no
   pictures or video).
-- SwarmUI and its self-started ComfyUI use `gpu-1`. A second ComfyUI
-  (`apps/base/comfyui-gpu0`) uses `gpu-0`, the matching gap SGLang leaves there, and
-  SwarmUI reaches it as a remote `comfyui_api` backend.
+- `comfyui-gpu1` (`apps/base/comfyui-gpu1`) uses `gpu-1`. A second ComfyUI
+  (`apps/base/comfyui-gpu0`) uses `gpu-0`, the matching gap SGLang leaves there. service-tools
+  sends each picture straight to one of them.
 - The rendered gateway policy lists the contract model in `image_models`, so the gateway
   accepts `ready <model> --images` for it. Other modes keep images on the 9B split profile.
 - Image access stays per user: bind the Admin and Parents accounts with
@@ -335,13 +335,13 @@ image, so each mode's contract is `active`:
 Moving between shared and large mode needs a fresh render and apply first; see
 [service modes](MODES.md). Within a shared render, start it with `session switch shared` once
 the host config sets
-`SESSION_IMAGE2_DEPLOYMENT=comfyui-gpu0` beside `SESSION_IMAGE_DEPLOYMENT=swarmui`
+`SESSION_IMAGE2_DEPLOYMENT=comfyui-gpu0` beside `SESSION_IMAGE_DEPLOYMENT=comfyui-gpu1`
 (docs/AI-SERVICE.md step 8). The switch:
 - refuses unless the running contract model is `Qwen3.8-27B-MXFP4` on `gpu-0` and
   `gpu-1`, with each image generator on one of those cards and on different cards;
 - checks CPU and memory for all three pods together, before anything stops;
 - starts SGLang first, so it sizes its KV pool before any image VRAM is in use, then
-  SwarmUI, then the second ComfyUI;
+  `comfyui-gpu1`, then `comfyui-gpu0`;
 - admits images at the gateway only after all three are ready. If either generator
   fails to start, the session is marked failed and the gateway stays closed.
 
@@ -549,24 +549,25 @@ Cancellation uncertainty retains the durable in-flight marker and blocks another
 job. An interrupt acknowledgement is not proof that GPU work has stopped.
 
 The adapter runs one picture at a time, or two in shared mode (`IMAGE_CONCURRENCY=2`
-on `service-tools`), one per SwarmUI backend. Each running picture owns its own
+on `service-tools`), one per picture ComfyUI. Each running picture owns its own
 marker under `/state`: `image-inflight.json` for the first and `image-inflight-1.json`
 for the second. A marker no running request owns blocks new pictures in every mode
 (HTTP 503 `image_backend_needs_operator_check`, no `Retry-After`; a full adapter
 returns 429 `image_busy` instead). `/health` reports `image_active`, `image_slots` and
 `image_recovery_required`. A cancelled picture also keeps its marker, because
-SwarmUI acknowledging an interrupt does not prove the GPU work stopped.
+ComfyUI acknowledging an interrupt does not prove the GPU work stopped.
 
 To recover, confirm both backends are idle, then remove the stale marker:
 
 ```sh
-kubectl -n ai-home-lab exec deploy/comfyui-gpu0 -c comfyui -- /SwarmUI/dlbackend/ComfyUI/venv/bin/python -c \
-  "import json,urllib.request; q=json.load(urllib.request.urlopen('http://127.0.0.1:7821/queue',timeout=5)); print(len(q['queue_running']), len(q['queue_pending']))"
+for d in comfyui-gpu1 comfyui-gpu0; do
+  kubectl -n ai-home-lab exec deploy/$d -c comfyui -- /SwarmUI/dlbackend/ComfyUI/venv/bin/python -c \
+    "import json,urllib.request; q=json.load(urllib.request.urlopen('http://127.0.0.1:7821/queue',timeout=5)); print(len(q['queue_running']), len(q['queue_pending']))"
+done
 kubectl -n ai-home-lab exec deploy/service-tools -c tools -- ls /state      # which image-inflight*.json
 kubectl -n ai-home-lab exec deploy/service-tools -c tools -- rm /state/image-inflight-1.json
 ```
 
-Check SwarmUI's own backend the same way (its server log shows no running generation).
 Restarting either image backend while pictures are in flight leaves a marker. A mode
 switch therefore waits, once draining refuses new pictures and videos, until service-tools
 reports none running (`image_active`, `video_active` on `/health`; up to

@@ -310,7 +310,7 @@
           {
             "podSelector": {
               "matchLabels": {
-                "app.kubernetes.io/name": "swarmui"
+                "app.kubernetes.io/name": "comfyui-gpu1"
               }
             }
           }
@@ -318,7 +318,7 @@
         "ports": [
           {
             "protocol": "TCP",
-            "port": 7801
+            "port": 7821
           }
         ]
       },
@@ -462,12 +462,12 @@
   "apiVersion": "networking.k8s.io/v1",
   "kind": "NetworkPolicy",
   "metadata": {
-    "name": "swarmui-service-flows"
+    "name": "comfyui-gpu1-service-flows"
   },
   "spec": {
     "podSelector": {
       "matchLabels": {
-        "app.kubernetes.io/name": "swarmui"
+        "app.kubernetes.io/name": "comfyui-gpu1"
       }
     },
     "policyTypes": [
@@ -481,25 +481,6 @@
             "podSelector": {
               "matchLabels": {
                 "app.kubernetes.io/name": "service-tools"
-              }
-            }
-          }
-        ],
-        "ports": [
-          {
-            "protocol": "TCP",
-            "port": 7801
-          }
-        ]
-      }
-    ],
-    "egress": [
-      {
-        "to": [
-          {
-            "podSelector": {
-              "matchLabels": {
-                "app.kubernetes.io/name": "comfyui-gpu0"
               }
             }
           }
@@ -534,13 +515,6 @@
     "ingress": [
       {
         "from": [
-          {
-            "podSelector": {
-              "matchLabels": {
-                "app.kubernetes.io/name": "swarmui"
-              }
-            }
-          },
           {
             "podSelector": {
               "matchLabels": {

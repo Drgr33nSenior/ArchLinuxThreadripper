@@ -46,10 +46,10 @@ class ToolsTests(unittest.IsolatedAsyncioTestCase):
         self.queries = []
         self.deleted = False
         self.available = True
-        self.slow = False
-        self.gate = None
-        self.cancel_ack = True
-        self.artifact_path = "View/local/raw/fixture.png"
+        self.slow = False  # history never completes (cancellation tests)
+        self.gate = None  # history completes once set
+        self.queued = {}  # prompt_id -> ComfyUI host
+        self.artifact = {"filename": "picture_00001_.png", "subfolder": "", "type": "output"}
         webui = yaml.safe_load((ROOT / "apps/overlays/service/webui.yaml").read_text())
         environment = {e["name"]: e.get("value") for e in webui["spec"]["template"]["spec"]["containers"][0]["env"]}
         allowed = environment.get("API_KEYS_ALLOWED_ENDPOINTS", "").split(",")
@@ -81,26 +81,28 @@ class ToolsTests(unittest.IsolatedAsyncioTestCase):
                 return httpx.Response(200, json={"id": "doc2", "filename": GUIDE_NAME, "data": {"content": GUIDE}})
             if path == "/_service/status":
                 return httpx.Response(200, json={"phase": "ready", "model": "Qwen3.5-9B", "images": self.available})
-            if path == "/API/GetNewSession":
-                return httpx.Response(200, json={"session_id": "fixture-session"})
-            if path == "/API/GenerateText2Image":
-                if self.slow:
-                    await asyncio.sleep(10)
-                if self.gate is not None:
-                    await self.gate.wait()
-                return httpx.Response(200, json={"images": [self.artifact_path]})
-            if path == "/" + self.artifact_path:
-                return httpx.Response(200, content=b"\x89PNG\r\n\x1a\nfixture", headers={"Content-Type": "image/png"})
-            if path == "/API/InterruptAll":
-                self.assertFalse(json.loads(req.content)["other_sessions"])
-                return httpx.Response(200, json={"success": self.cancel_ack})
-            if path == "/API/GetCurrentStatus":
-                return httpx.Response(200, json={"status": {k: 0 for k in
-                    ("waiting_gens", "loading_models", "waiting_backends", "live_gens")}})
+            # ComfyUI (comfy1 = gpu-1, comfy0 = gpu-0)
+            if req.url.host in ("comfy1", "comfy0"):
+                if path == "/prompt" and req.method == "POST":
+                    prompt_id = f"fixture-{len(self.queued):04d}"
+                    self.queued[prompt_id] = req.url.host
+                    return httpx.Response(200, json={"prompt_id": prompt_id, "number": len(self.queued)})
+                if path.startswith("/history/"):
+                    prompt_id = path.rsplit("/", 1)[1]
+                    if self.slow or (self.gate is not None and not self.gate.is_set()):
+                        return httpx.Response(200, json={})
+                    return httpx.Response(200, json={prompt_id: {
+                        "status": {"status_str": "success", "completed": True},
+                        "outputs": {"11": {"images": [self.artifact]}}}})
+                if path == "/view":
+                    return httpx.Response(200, content=b"\x89PNG\r\n\x1a\nfixture", headers={"Content-Type": "image/png"})
+                if path in ("/queue", "/interrupt") and req.method == "POST":
+                    return httpx.Response(200, json={})
             raise AssertionError("unexpected upstream route")
         self.upstream = httpx.AsyncClient(transport=httpx.MockTransport(upstream))
-        self.tools = ServiceTools(self.upstream, "http://webui", "http://swarm", "http://gateway",
+        self.tools = ServiceTools(self.upstream, "http://webui", ("http://comfy1", "http://comfy0"), "http://gateway",
             self.mapping, self.root / "state", image_timeout=0.2, public_webui="https://chat.test")
+        self.tools.poll_seconds = 0.01
         self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=self.tools.app), base_url="http://tools")
         self.headers = {"Authorization": "Bearer " + "s" * 32, "X-OpenWebUI-User-Id": "alice"}
         self.image = {"model": "workstation-qwen-image", "prompt": "fixture landscape", "size": "1328x1328"}
@@ -108,6 +110,9 @@ class ToolsTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         await self.client.aclose()
         await self.upstream.aclose()
+
+    def jobs(self):
+        return [(r.url.host, json.loads(r.content)["prompt"]) for r in self.calls if r.url.path == "/prompt"]
 
     async def retrieve(self, collection, **extra):
         return await self.tool("retrieve_project_passage", {"collection": collection, "query": "project evidence", **extra})
@@ -201,84 +206,89 @@ class ToolsTests(unittest.IsolatedAsyncioTestCase):
         self.available = False
         response = await self.client.post("/webui/images/generations", headers=self.headers, json=self.image)
         self.assertEqual(503, response.status_code)
-        self.assertFalse(any(r.url.path == "/API/GetNewSession" for r in self.calls))
+        self.assertEqual([], self.jobs())
         self.available = True
         response = await self.client.post("/webui/images/generations", headers=self.headers, json=self.image)
         self.assertEqual(200, response.status_code)
         self.assertIn("b64_json", response.json()["data"][0])
-        job = next(json.loads(r.content) for r in self.calls if r.url.path == "/API/GenerateText2Image")
-        workflow = json.loads(job["comfyworkflowraw"])
+        [(host, workflow)] = self.jobs()
+        self.assertEqual("comfy1", host)  # slot 0 is gpu-1's ComfyUI
         self.assertEqual("fixture landscape", workflow["6"]["inputs"]["text"])
         self.assertEqual(1, workflow["8"]["inputs"]["batch_size"])
-        # Swarm needs a model it knows, but must not run its own load job before the raw workflow
-        self.assertEqual(("QwenImage/qwen_image_2512_bf16", True), (job["model"], job["noloadmodels"]))
-        self.assertEqual((8, 1.0), (job["steps"], job["cfgscale"]))
         self.assertEqual((8, 1.0), (workflow["9"]["inputs"]["steps"], workflow["9"]["inputs"]["cfg"]))
+        self.assertEqual("SaveImage", workflow["11"]["class_type"])
+        view = next(r for r in self.calls if r.url.path == "/view")
+        self.assertEqual(("comfy1", "picture_00001_.png", "output"),
+                         (view.url.host, view.url.params["filename"], view.url.params["type"]))
         self.assertFalse((self.root / "state/image-inflight.json").exists())
 
-    async def test_swarm_filename_spaces_are_encoded_for_artifact_fetch(self):
-        self.artifact_path = "View/local/raw/a red cabin.png"
-        response = await self.client.post("/webui/images/generations", headers=self.headers, json=self.image)
-        self.assertEqual(200, response.status_code)
-        fetch = next(r for r in self.calls if r.url.path == "/" + self.artifact_path)
-        self.assertEqual(b"/View/local/raw/a%20red%20cabin.png", fetch.url.raw_path)
+    async def test_unexpected_artifact_names_are_refused_before_any_fetch(self):
+        self.tools.image_timeout = 5
+        for artifact in ({"filename": "../secret.png", "subfolder": "", "type": "output"},
+                         {"filename": "picture_00001_.png", "subfolder": "..", "type": "output"},
+                         {"filename": "picture_00001_.png", "subfolder": "", "type": "temp"}):
+            self.artifact = artifact
+            (self.root / "state/image-inflight.json").unlink(missing_ok=True)
+            response = await self.client.post("/webui/images/generations", headers=self.headers, json=self.image)
+            self.assertEqual((502, "invalid_image_artifact"), (response.status_code, response.json()["error"]["code"]))
+        self.assertFalse(any(r.url.path == "/view" for r in self.calls))
 
     async def test_distinct_image_requests_do_not_mutate_the_loaded_workflow(self):
+        self.tools.image_timeout = 5
         for prompt, size in (("first landscape", "1664x928"), ("second landscape", "1328x1328")):
             response = await self.client.post("/webui/images/generations", headers=self.headers,
                 json={**self.image, "prompt": prompt, "size": size, "n": 1, "response_format": "b64_json"})
             self.assertEqual(200, response.status_code)
-        jobs = [json.loads(r.content) for r in self.calls if r.url.path == "/API/GenerateText2Image"]
-        self.assertEqual([1664, 1328], [json.loads(j["comfyworkflowraw"])["8"]["inputs"]["width"] for j in jobs])
-        self.assertEqual(["first landscape", "second landscape"], [j["prompt"] for j in jobs])
+        jobs = [workflow for _, workflow in self.jobs()]
+        self.assertEqual([1664, 1328], [w["8"]["inputs"]["width"] for w in jobs])
+        self.assertEqual(["first landscape", "second landscape"], [w["6"]["inputs"]["text"] for w in jobs])
+        self.assertNotEqual(jobs[0]["9"]["inputs"]["seed"], jobs[1]["9"]["inputs"]["seed"])
         self.assertEqual("", self.tools.image_workflow["6"]["inputs"]["text"])
         self.assertEqual(0, self.tools.image_workflow["9"]["inputs"]["seed"])
         health = (await self.client.get("/health")).json()
         self.assertEqual("workstation-qwen-image", health["image_profile"])
         self.assertEqual(64, len(health["workflow_sha256"]))
 
-    async def test_unsupported_images_never_reach_swarm(self):
-        for change in ({"model": "unqualified-flux"}, {"n": True}, {"n": 2}, {"size": "huge"}, {"size": "1024x0"},
-                       {"prompt": "${workflow}"}, {"workflow": {"class_type": "untrusted"}}):
+    async def test_unsupported_images_never_reach_comfyui(self):
+        for change in ({"model": "unqualified-flux"}, {"model": "workstation-sdxl"}, {"n": True}, {"n": 2},
+                       {"size": "huge"}, {"size": "1024x0"}, {"prompt": "${workflow}"},
+                       {"workflow": {"class_type": "untrusted"}}):
             response = await self.client.post("/webui/images/generations", headers=self.headers,
                                               json={**self.image, **change})
             self.assertEqual(400, response.status_code)
         self.assertEqual([], self.calls)
 
-    async def test_failed_cancellation_survives_restart_and_blocks_duplicate_job(self):
-        self.slow, self.cancel_ack = True, False
+    async def test_a_timed_out_picture_is_cancelled_and_its_marker_survives_restart(self):
+        self.slow = True
         response = await self.client.post("/webui/images/generations", headers=self.headers, json=self.image)
         self.assertEqual(503, response.status_code)
+        [(_, _)] = self.jobs()
+        prompt_id = next(iter(self.queued))
+        # Dropped from the queue and, if running, interrupted: that prompt only, on that ComfyUI.
+        cancels = [(r.url.host, r.url.path, json.loads(r.content)) for r in self.calls if r.url.path in ("/queue", "/interrupt")]
+        self.assertEqual([("comfy1", "/queue", {"delete": [prompt_id]}), ("comfy1", "/interrupt", {"prompt_id": prompt_id})], cancels)
+        # Neither answer proves the GPU stopped: the marker stays and blocks the next picture.
         self.assertTrue((self.root / "state/image-inflight.json").is_file())
         self.tools.active.clear()  # The in-memory state of a restarted process.
         response = await self.client.post("/webui/images/generations", headers=self.headers, json=self.image)
         self.assertEqual(503, response.status_code)
         self.assertEqual("image_backend_needs_operator_check", response.json()["error"]["code"])
         self.assertNotIn("retry-after", response.headers)
-        self.assertEqual(1, sum(r.url.path == "/API/GenerateText2Image" for r in self.calls))
-
-    async def test_interrupt_acknowledgement_is_not_terminal_gpu_completion(self):
-        self.slow, self.cancel_ack = True, True
-        response = await self.client.post("/webui/images/generations", headers=self.headers, json=self.image)
-        self.assertEqual(503, response.status_code)
-        self.assertTrue(any(r.url.path == "/API/GetCurrentStatus" for r in self.calls))
-        self.assertTrue((self.root / "state/image-inflight.json").is_file())
-        self.tools.active.clear()
-        response = await self.client.post("/webui/images/generations", headers=self.headers, json=self.image)
-        self.assertEqual(503, response.status_code)
-        self.assertEqual(1, sum(r.url.path == "/API/GenerateText2Image" for r in self.calls))
+        self.assertEqual(1, len(self.jobs()))
 
     async def test_two_slots_run_two_images_at_once_and_refuse_a_third(self):
-        tools = ServiceTools(self.upstream, "http://webui", "http://swarm", "http://gateway",
+        tools = ServiceTools(self.upstream, "http://webui", ("http://comfy1", "http://comfy0"), "http://gateway",
                              self.mapping, self.root / "state2", image_timeout=5, image_slots=2)
+        tools.poll_seconds = 0.01
         client = httpx.AsyncClient(transport=httpx.ASGITransport(app=tools.app), base_url="http://tools")
         self.addAsyncCleanup(client.aclose)
         post = lambda: client.post("/webui/images/generations", headers=self.headers, json=self.image)
         self.gate = asyncio.Event()
         first, second = asyncio.create_task(post()), asyncio.create_task(post())
-        while sum(r.url.path == "/API/GenerateText2Image" for r in self.calls) < 2:
+        while len(self.jobs()) < 2:
             await asyncio.sleep(0.01)
-        # Both in flight, each with its own durable marker; a third is refused.
+        # One per card, each with its own durable marker; a third is refused.
+        self.assertEqual(["comfy0", "comfy1"], sorted(host for host, _ in self.jobs()))
         self.assertTrue((self.root / "state2/image-inflight.json").is_file())
         self.assertTrue((self.root / "state2/image-inflight-1.json").is_file())
         health = (await client.get("/health")).json()
@@ -289,23 +299,25 @@ class ToolsTests(unittest.IsolatedAsyncioTestCase):
         self.gate.set()
         self.assertEqual([200, 200], [(await first).status_code, (await second).status_code])
         self.assertEqual([], sorted(p.name for p in (self.root / "state2").glob("image-inflight*")))
-        self.assertEqual(2, sum(r.url.path == "/API/GenerateText2Image" for r in self.calls))
+        self.assertEqual(2, len(self.jobs()))
 
     async def test_a_stale_second_slot_marker_blocks_every_mode(self):
-        self.gate = None
         (self.root / "state").mkdir(mode=0o700)
         (self.root / "state/image-inflight-1.json").write_text("{}")
         # The one-slot adapter (any mode after shared) still sees slot 1's marker.
         response = await self.client.post("/webui/images/generations", headers=self.headers, json=self.image)
         self.assertEqual(503, response.status_code)
         self.assertTrue((await self.client.get("/health")).json()["image_recovery_required"])
-        self.assertFalse(any(r.url.path == "/API/GenerateText2Image" for r in self.calls))
+        self.assertEqual([], self.jobs())
 
     def test_image_slots_are_bounded(self):
         for slots in (0, 3, "2", True):
             with self.assertRaises(ValueError, msg=slots):
-                ServiceTools(self.upstream, "http://webui", "http://swarm", "http://gateway",
+                ServiceTools(self.upstream, "http://webui", ("http://comfy1", "http://comfy0"), "http://gateway",
                              self.mapping, self.root / "state3", image_slots=slots)
+        with self.assertRaises(ValueError):  # two slots need two ComfyUIs
+            ServiceTools(self.upstream, "http://webui", ("http://comfy1",), "http://gateway",
+                         self.mapping, self.root / "state3", image_slots=2)
 
     def test_requested_sizes_snap_to_qwen_aspect_buckets(self):
         self.assertEqual(QWEN_SIZES, self.tools.image_profile["sizes"])
@@ -324,9 +336,9 @@ class ToolsTests(unittest.IsolatedAsyncioTestCase):
         response = await self.client.post("/webui/images/generations", headers=self.headers,
                                           json={**self.image, "size": "1536x1024"})
         self.assertEqual(200, response.status_code)
-        job = next(json.loads(r.content) for r in self.calls if r.url.path == "/API/GenerateText2Image")
-        latent = json.loads(job["comfyworkflowraw"])["8"]["inputs"]
-        self.assertEqual((1584, 1056, 1584, 1056), (job["width"], job["height"], latent["width"], latent["height"]))
+        [(_, workflow)] = self.jobs()
+        latent = workflow["8"]["inputs"]
+        self.assertEqual((1584, 1056), (latent["width"], latent["height"]))
 
 
 if __name__ == "__main__":
