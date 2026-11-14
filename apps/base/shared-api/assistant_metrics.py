@@ -52,8 +52,8 @@ FAMILIES = {
     "workstation_assistant_kv_tail_operations_total": (
         "counter", "Elastic KV tail hand-overs: shrink before media, ComfyUI unload (free) and grow after a quiet spell.",
         {"op": ("shrink", "free", "grow"),
-         "outcome": ("ok", "disabled", "busy", "timeout", "release_unconfirmed", "cannot_migrate", "insufficient_vram",
-                     "map_failed", "not_released", "unavailable", "error")}),
+         "outcome": ("ok", "disabled", "busy", "timeout", "release_unconfirmed", "cannot_migrate", "verify_failed",
+                     "insufficient_vram", "map_failed", "not_released", "unavailable", "error")}),
     "workstation_assistant_kv_tail_duration_seconds": (
         "histogram", "Elastic KV tail hand-over latency by operation.", {"op": ("shrink", "free", "grow")}),
     "workstation_assistant_kv_tail_state": (

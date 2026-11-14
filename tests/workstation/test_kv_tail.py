@@ -210,7 +210,7 @@ class GatewayRouteTests(unittest.IsolatedAsyncioTestCase):
     async def test_shrink_forwards_bounded_waits_and_returns_sglangs_answer(self):
         response = await self.post({"action": "shrink", "timeout_s": 15})
         self.assertEqual((200, {"ok": True, "state": "unbacked"}), (response.status_code, response.json()))
-        self.assertEqual([("/kv_tail", {"action": "shrink", "timeout_s": 15, "release_timeout_s": 10})], self.sent)
+        self.assertEqual([("/kv_tail", {"action": "shrink", "release_timeout_s": 10})], self.sent)
         self.status, self.answer = 409, {"ok": False, "reason": "busy"}
         response = await self.post({"action": "shrink"})
         self.assertEqual((409, "busy"), (response.status_code, response.json()["reason"]))
