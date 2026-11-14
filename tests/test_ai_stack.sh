@@ -740,6 +740,14 @@ grep -q '^workstation_ai_stack_stage_last_result{stage="rocm"} 1$' "$metrics/ai-
 ! grep -v -E '^workstation_ai_stack_[a-z_]+(\{stage="(rocm|torch|sglang|image|comfyui|swarmui|creative)"\})? [0-9.]+$' "$metrics/ai-stack.prom" | grep -q . ||
   fail 'unexpected textfile line'
 python3 -I "$dir/stage-metrics.py" "$work/absent" rocm start 2>/dev/null || fail 'missing metrics directory failed the build'
+# Every stage build-stage.sh accepts is one stage-metrics.py records (its track() would fail).
+python3 -I - "$dir/build-stage.sh" "$dir/stage-metrics.py" <<'PY' || fail 'stage-metrics.py and build-stage.sh list different stages'
+import ast, re, sys
+stages = re.search(r"\[\[ \$stage =~ \^\(([a-z|]+)\)\$ \]\]", open(sys.argv[1]).read()).group(1).split("|")
+tree = ast.parse(open(sys.argv[2]).read())
+metrics = next(ast.literal_eval(n.value) for n in tree.body if isinstance(n, ast.Assign) and n.targets[0].id == "STAGES")
+assert sorted(stages) == sorted(metrics), (stages, metrics)
+PY
 # The driver's EXIT trap records the real exit status of a failing stage.
 bash -c 'here=$1; metrics_dir=$2; stage=sglang
   eval "$(sed -n "/^track() {/,/^}/p" "$here/build-stage.sh")"
