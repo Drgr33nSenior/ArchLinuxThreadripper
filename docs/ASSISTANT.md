@@ -347,6 +347,29 @@ the host config sets
 
 `maintenance`, `split` and `ai` stop the second generator with everything else.
 
+#### Elastic chat cache (trial, off by default)
+
+With serving patches 0031-0033, SGLang can back an extra "tail" of KV cache in the memory the
+ComfyUIs are not using. The tail only holds more cached conversations, so returning to an older
+chat skips re-reading it; the context a conversation may use stays at the arm's base (100,768).
+`service-tools` hands the memory back and forth (`apps/base/shared-api/kv_tail.py`):
+
+- **Before a picture or clip** it asks SGLang to release the tail through the gateway's
+  `/_service/kv_tail` route (service key only; status, shrink and grow, nothing else reaches
+  SGLang). SGLang moves any running chat's cache out of the tail, then answers once both cards
+  show the memory free. The picture waits at most 15 seconds for that answer; otherwise it is
+  refused with `chat_memory_busy` or `chat_memory_unconfirmed` and never reaches ComfyUI. A chat
+  is never paused or cut off.
+- **After 10 minutes with no picture or clip** it asks each ComfyUI to unload its models
+  (`POST /free`), waits until each holds less than 1.5 GiB, then asks SGLang to grow the tail. The
+  first picture after a quiet spell reloads its models from NVMe; a run of pictures does not.
+
+`KV_TAIL_ENABLED=true` on service-tools turns it on; it needs an SGLang arm that sets
+`SGLANG_GFX1201_ELASTIC_KV_BASE_TOKENS`. SGLang without the tail answers `disabled`, which
+lets media run as before. State is in `/health` (`kv_tail`) and in the
+`workstation_assistant_kv_tail_*` metrics. Rollback: unset the variable and render the
+`UQSB` arm.
+
 #### Short videos (shared mode)
 
 In shared mode the assistant can make a 5-second silent clip in the chat. `service-tools` lists

@@ -27,6 +27,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 from assistant_metrics import METRICS, record_serving_contract
 from boundary import Refusal, browser_key, read_body, secret_json
 import handoff
+from kv_tail import KvTail
 from project_scope import handoff_owner, memory_group, require_project, accessible_projects
 from retrieval import TOOL_NAMES as RETRIEVAL_TOOLS, Retrieval
 from video import TOOL as VIDEO_TOOL, VideoTool
@@ -67,6 +68,8 @@ def web_refusal(exc, now):
 
 
 def video_outcome(exc):
+    if exc.code == "chat_memory_busy":
+        return "busy"
     return {403: "denied", 429: "busy", 499: "cancelled", 400: "invalid"}.get(
         exc.status, "not_ready" if exc.code == "video_requires_ready_image_mode" else "failed")
 
@@ -186,7 +189,7 @@ PICTURE_FILE = re.compile(r"picture_[0-9]{5}_\.png\Z")
 class ServiceTools:
     def __init__(self, client, webui, image_comfy, gateway, browser_file, state_dir, image_timeout=240, public_webui="", web_search=None,
                  memory=None, memory_key_file="/run/memory/service-key", memory_write=False, handoffs=None, image_slots=1,
-                 video_comfy=None):
+                 video_comfy=None, kv_tail=None):
         self.client = client
         self.webui, self.gateway = webui, gateway
         self.image_comfy = tuple(image_comfy)  # one ComfyUI base URL per image slot
@@ -204,9 +207,11 @@ class ServiceTools:
             raise ValueError("image_slots must be 1 or 2, one per picture ComfyUI")
         self.poll_seconds = 0.5
         self.image_slots = image_slots
+        # Elastic KV tail hand-over (kv_tail.py), or None when chat runs without a tail.
+        self.kv_tail = kv_tail
         self.active = set()  # slots with a request in flight in this process
         # Short videos (video.py) on the shared-mode second ComfyUI, or None when disabled.
-        self.video = (VideoTool(self.upstream_json, client, video_comfy, gateway, browser_file, Path(__file__).parent)
+        self.video = (VideoTool(self.upstream_json, client, video_comfy, gateway, browser_file, Path(__file__).parent, kv_tail)
                       if video_comfy else None)
         # Project retrieval tools (retrieval.py) share the webui-rag-profile settings.
         self.retrieval = Retrieval(self.upstream_json, webui, self.public_webui, os.environ)
@@ -237,6 +242,7 @@ class ServiceTools:
                 "image_recovery_required": bool(self.stale_markers()),
                 "video_active": bool(self.video and self.video.active),
                 "image_profile": self.image_profile["id"], "workflow_sha256": self.workflow_sha256,
+                "kv_tail": self.kv_tail.status() if self.kv_tail else {"enabled": False},
                 "retrieval": self.retrieval.status(),
                 "web_search": self.web_search.status() if self.web_search else {"status": "disabled"}}
 
@@ -638,7 +644,9 @@ class ServiceTools:
                 # both cards at once. The 240 s picture budget plus session and cleanup stays inside this,
                 # and this inside Open WebUI's 300 s client timeout.
                 async with asyncio.timeout(270):
-                    result = await self.generate(request, prompt, size, slot)
+                    # Chat releases its KV tail first (at most 20 s); the rest fits the 240 s picture budget.
+                    async with self.kv_tail.media() if self.kv_tail else contextlib.nullcontext():
+                        result = await self.generate(request, prompt, size, slot)
             finally:
                 self.active.discard(slot)
             return JSONResponse(result, headers={"Cache-Control": "no-store"})
@@ -662,18 +670,25 @@ def create_app():
         provider = json.loads(policy_file.read_text())["provider"]
         search = WebSearch(client, "/run/web-search/" + provider + "-api-key", "/state", policy_file,
                            content_limit=int(os.environ.get("WEB_PAGE_CHAR_LIMIT", "6000")))
+    image_slots = int(os.environ.get("IMAGE_CONCURRENCY", "1"))
+    # Shared mode only: the second ComfyUI (apps/base/comfyui-gpu0) holds the Wan stack.
+    video_comfy = "http://comfyui-gpu0:7821" if os.environ.get("VIDEO_ENABLED", "false") == "true" else None
+    kv_tail = (KvTail(client, "http://litellm:4000", "/run/browser/mapping.json",
+                      IMAGE_COMFY[:image_slots] + ((video_comfy,) if video_comfy else ()))
+               if os.environ.get("KV_TAIL_ENABLED", "false") == "true" else None)
     service = ServiceTools(client, "http://open-webui:8080", IMAGE_COMFY,
                            "http://litellm:4000", "/run/browser/mapping.json", "/state",
                            public_webui=os.environ["PUBLIC_WEBUI_BASE_URL"], web_search=search,
                            memory="http://graphiti-memory:8000" if os.environ.get("MEMORY_ENABLED", "false") == "true" else None,
                            memory_write=os.environ.get("MEMORY_WRITE_ENABLED", "false") == "true",
-                           handoffs=handoffs, image_slots=int(os.environ.get("IMAGE_CONCURRENCY", "1")),
-                           # Shared mode only: the second ComfyUI (apps/base/comfyui-gpu0) holds the Wan stack.
-                           video_comfy="http://comfyui-gpu0:7821" if os.environ.get("VIDEO_ENABLED", "false") == "true" else None)
+                           handoffs=handoffs, image_slots=image_slots,
+                           video_comfy=video_comfy, kv_tail=kv_tail)
     # Starlette 1.x (FastAPI 0.136, the pinned gateway image) removed
     # add_event_handler/on_event; close the shared client from the lifespan.
     @contextlib.asynccontextmanager
     async def lifespan(_app):
+        if kv_tail:
+            kv_tail.schedule_grow()  # chat takes the memory after the first quiet spell
         try:
             yield
         finally:

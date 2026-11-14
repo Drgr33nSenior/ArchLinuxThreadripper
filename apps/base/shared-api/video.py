@@ -8,6 +8,7 @@ shows in the chat. Access follows picture access: the user must be bound with im
 """
 import asyncio
 import base64
+import contextlib
 import copy
 import hashlib
 import json
@@ -82,10 +83,11 @@ def tool_spec(profile):
 
 
 class VideoTool:
-    def __init__(self, upstream_json, client, comfy, gateway, permissions_file, profile_dir):
+    def __init__(self, upstream_json, client, comfy, gateway, permissions_file, profile_dir, kv_tail=None):
         self.upstream_json, self.client = upstream_json, client
         self.comfy, self.gateway, self.permissions_file = comfy, gateway, permissions_file
         self.profile, self.workflow, self.workflow_sha256 = load_video_profile(profile_dir)
+        self.kv_tail = kv_tail  # kv_tail.KvTail, or None
         self.active = False
         self.poll_seconds = 2.0
 
@@ -122,7 +124,8 @@ class VideoTool:
             raise Refusal(429, "video_busy")
         self.active = True  # no await between the check and the claim
         try:
-            return await self.render(prompt.strip(), orientation, is_disconnected)
+            async with self.kv_tail.media() if self.kv_tail else contextlib.nullcontext():
+                return await self.render(prompt.strip(), orientation, is_disconnected)
         finally:
             self.active = False
 

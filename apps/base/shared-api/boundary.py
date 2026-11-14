@@ -10,12 +10,21 @@ import json
 import time
 from pathlib import Path
 
+import httpx
+
 
 CHAT_MODELS = {"Qwen3.8-27B-FP8": (32768, 4096), "Qwen3.5-9B": (4096, 1024)}
 # Models that may serve with image generation on. Source default: the one-GPU 9B split
 # profile. A rendered policy replaces it (shared mode adds the two-GPU contract model).
 IMAGE_MODELS = {"Qwen3.5-9B"}
 MAX_BODY = 1024 * 1024
+# The gateway is SGLang's only client; service-tools reaches the elastic KV tail through it.
+SGLANG_URL = "http://sglang:30000"
+KV_TAIL_ACTIONS = {"status", "shrink", "grow"}
+
+
+def sglang_client():
+    return httpx.AsyncClient(trust_env=False, follow_redirects=False)
 # Chat bodies may be larger: Open WebUI resends every image a tool returned earlier in the chat
 # as base64 on each later turn, and a generate_video clip is an animated WEBP of up to 8 MiB
 # (10.7 MiB as base64; 2.3-5.2 MiB measured). 64 MiB holds a chat with several clips; the clips
@@ -244,6 +253,8 @@ class GatewayBoundary:
                 return await send({"type": "http.response.body", "body": ("\n".join(lines) + "\n").encode()})
             if path == "/_service/control":
                 return await self.control(scope, headers, receive, send)
+            if path == "/_service/kv_tail":
+                return await self.kv_tail(scope, headers, receive, send)
             if path.startswith("/webui/"):
                 if path not in {"/webui/v1/models", "/webui/v1/chat/completions"}:
                     raise Refusal(404, "unsupported_route")
@@ -309,6 +320,47 @@ class GatewayBoundary:
         headers = [(k, v) for k, v in headers if k.lower() != b"content-length"] + [(b"content-length", str(len(body)).encode())]
         await send({"type": "http.response.start", "status": start.get("status", 502), "headers": headers})
         await send({"type": "http.response.body", "body": body})
+
+    async def kv_tail(self, scope, headers, receive, send):
+        """Forward one elastic KV tail action from service-tools to SGLang (serving patch 0033).
+
+        Only status, shrink and grow pass, authenticated with the service key service-tools already
+        holds for pictures, so no other SGLang endpoint becomes reachable. SGLang without the tail
+        (no route, or the flag off) answers "disabled", which service-tools treats as nothing to
+        release. SGLang's own answer is returned unchanged: 200 when done, 409 when not."""
+        key = str(secret_json(self.browser_file).get("service_key", ""))
+        if scope["method"] != "POST" or len(key) < 32 or not hmac.compare_digest(
+                headers.get(b"authorization", b""), ("Bearer " + key).encode()):
+            raise Refusal(401, "invalid_service_credential")
+        data = json.loads(await read_body(receive, 1024))
+        if not isinstance(data, dict) or data.get("action") not in KV_TAIL_ACTIONS or set(data) - {"action", "timeout_s"}:
+            raise Refusal(400, "invalid_kv_tail_action")
+        body, wait = {"action": data["action"]}, 10
+        if data["action"] == "shrink":
+            limit = data.get("timeout_s", 15)
+            if type(limit) not in (int, float) or not 1 <= limit <= 30:
+                raise Refusal(400, "invalid_kv_tail_action")
+            # Ten more seconds for SGLang to see the released memory on both cards.
+            body.update(timeout_s=limit, release_timeout_s=10)
+            wait = limit + 15
+        elif "timeout_s" in data:
+            raise Refusal(400, "invalid_kv_tail_action")
+        elif data["action"] == "grow":
+            wait = 60
+        try:
+            async with sglang_client() as client:
+                response = await client.post(SGLANG_URL + "/kv_tail", json=body, timeout=wait)
+        except httpx.HTTPError:
+            raise Refusal(503, "kv_tail_unavailable") from None
+        if response.status_code == 404:
+            return await reply(send, 200, {"ok": False, "reason": "disabled"})
+        try:
+            answer = response.json()
+        except ValueError:
+            answer = None
+        if response.status_code not in {200, 409} or not isinstance(answer, dict) or not isinstance(answer.get("ok"), bool):
+            raise Refusal(503, "kv_tail_unavailable")
+        return await reply(send, 200 if answer["ok"] else 409, answer)
 
     async def control(self, scope, headers, receive, send):
         key = Path(self.control_file).read_text().strip()
