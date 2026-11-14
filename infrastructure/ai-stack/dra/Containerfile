@@ -1,0 +1,16 @@
+# The AMD GPU DRA driver image, from the dra stage's outputs (build context: its out/).
+# Same contents as upstream's deployments/container/Dockerfile runtime layer: the two
+# binaries, the vendored AMD SMI libraries on the loader path, libdrm and kmod (modprobe,
+# used only by the AutoPartition feature gate). The base is pinned by digest (upstream
+# uses a UBI tag plus `microdnf update`); the three Debian packages come from the archive
+# at build time, as in the image stage, and the SBOM records their versions. No USER: the
+# GPU operator runs the plugin privileged as root, as upstream's image expects.
+ARG DRA_RUNTIME_BASE_IMAGE
+FROM ${DRA_RUNTIME_BASE_IMAGE}
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends kmod libdrm2 libdrm-amdgpu1 && \
+    rm -rf /var/lib/apt/lists/*
+COPY lib/ /opt/amd-smi/lib/
+COPY bin/gpu-kubeletplugin bin/webhook /usr/bin/
+COPY LICENSE RECEIPT.json buildinfo.txt /usr/share/doc/k8s-gpu-dra-driver/
+ENV LD_LIBRARY_PATH=/opt/amd-smi/lib

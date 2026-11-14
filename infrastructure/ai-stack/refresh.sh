@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Move stack.lock to the current upstream heads and show what changed. Every
 # component tracks main; the build image is the one TheRock's CI uses at the
-# new TheRock commit, and Triton is the commit the new PyTorch pins. The
-# game-streaming pins in the repository's versions.lock move too: the newest
+# new TheRock commit, Triton is the commit the new PyTorch pins, and the DRA
+# driver's Go image is the release its env.mk names. The game-streaming pins in the repository's versions.lock move too: the newest
 # stable Sunshine release, the current archlinux:latest digest and the newest
 # Arch archive snapshot. Review the diff, then run build-all.sh; unchanged
 # stages are reused.
@@ -57,6 +57,13 @@ hub_image() {
   printf 'docker.io/%s@%s\n' "$repository" "$digest"
 }
 new[RUNTIME_BASE_IMAGE]=$(hub_image "$(get RUNTIME_BASE_TAG)")
+# The DRA driver: main's head, built with the golang release upstream's env.mk names there.
+new[DRA_DRIVER_COMMIT]=$(head_of "$(get DRA_DRIVER_REPOSITORY)")
+dra_go=$(raw "$(slug "$(get DRA_DRIVER_REPOSITORY)")" "${new[DRA_DRIVER_COMMIT]}" env.mk | sed -n 's/^GOLANG_VERSION ?= //p')
+[[ $dra_go =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] || stop 'the DRA driver env.mk does not name a Go release'
+dra_go_image=$(hub_image "docker.io/library/golang:$dra_go-trixie")
+new[DRA_GO_IMAGE]=docker.io/library/golang:$dra_go-trixie@${dra_go_image#*@}
+new[DRA_RUNTIME_BASE_IMAGE]=$(hub_image "$(get DRA_RUNTIME_BASE_TAG)")
 
 # Game streaming (the repository's versions.lock): the newest stable Sunshine
 # release, its commit and the SHA-256 digests GitHub publishes for both assets.

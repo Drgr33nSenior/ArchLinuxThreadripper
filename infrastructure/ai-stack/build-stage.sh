@@ -3,7 +3,7 @@
 # from stack.lock. Each run directory is keyed by the pins that affect it, so a
 # refresh rebuilds only stages whose inputs changed; ccache and source clones
 # persist under $AI_STACK_ROOT across runs.
-# Usage: build-stage.sh rocm|torch|sglang|image|comfyui|swarmui|creative|graphiti|gaming|webui
+# Usage: build-stage.sh rocm|torch|sglang|image|comfyui|swarmui|creative|graphiti|gaming|webui|dra
 set -euo pipefail
 stop() {
   printf 'STOP: %s\n' "$*" >&2
@@ -11,8 +11,8 @@ stop() {
 }
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 stage=${1:-}
-[[ $stage =~ ^(rocm|torch|sglang|image|comfyui|swarmui|creative|graphiti|gaming|webui)$ ]] ||
-  stop 'usage: build-stage.sh rocm|torch|sglang|image|comfyui|swarmui|creative|graphiti|gaming|webui'
+[[ $stage =~ ^(rocm|torch|sglang|image|comfyui|swarmui|creative|graphiti|gaming|webui|dra)$ ]] ||
+  stop 'usage: build-stage.sh rocm|torch|sglang|image|comfyui|swarmui|creative|graphiti|gaming|webui|dra'
 lock=$here/stack.lock
 read_lock() {
   awk -F= -v key="$1" '$1 == key {print substr($0, index($0, "=") + 1); n++} END {exit n != 1}' "$lock" ||
@@ -100,6 +100,18 @@ OPEN_WEBUI_FORK_REPOSITORY=$(read_lock OPEN_WEBUI_FORK_REPOSITORY)
 OPEN_WEBUI_FORK_COMMIT=$(commit OPEN_WEBUI_FORK_COMMIT)
 webui_key=$(key_of "$(read_lock WEBUI_IMAGE_REPOSITORY)" "$OPEN_WEBUI_FORK_COMMIT" "$(content "$here/webui/smoke.py")")
 webui_run=$root/builds/webui-$webui_key
+# The AMD GPU DRA driver (the GPU operator's draDriver) from upstream main: upstream's own
+# `make cmds` in the pinned Go image with no network (dra/build.sh), then the runtime image.
+# The key covers the commit, both base images and every stage file, including the smoke test.
+export DRA_DRIVER_REPOSITORY DRA_DRIVER_COMMIT DRA_GO_IMAGE
+DRA_DRIVER_REPOSITORY=$(read_lock DRA_DRIVER_REPOSITORY)
+DRA_DRIVER_COMMIT=$(commit DRA_DRIVER_COMMIT)
+DRA_GO_IMAGE=$(digest_image DRA_GO_IMAGE)
+DRA_RUNTIME_BASE_IMAGE=$(digest_image DRA_RUNTIME_BASE_IMAGE)
+dra_files=("$here"/dra/{build.sh,Containerfile,smoke.sh})
+dra_key=$(key_of "$(read_lock DRA_IMAGE_REPOSITORY)" "$DRA_DRIVER_COMMIT" "$DRA_GO_IMAGE" "$DRA_RUNTIME_BASE_IMAGE" \
+  "$(content "${dra_files[@]}")")
+dra_run=$root/builds/dra-$dra_key
 patches=$root/patches/$SGLANG_PATCHSET_SHA256
 need() { [[ -s $1/out/RECEIPT.json ]] || stop "build the $2 stage first ($1)"; }
 
@@ -209,6 +221,40 @@ if [[ $stage == webui ]]; then
     --entrypoint python "$tag" -I /smoke.py
   printf 'IMAGE=%s\n' "$tag"
   [[ ${AI_STACK_PUSH:-0} != 1 ]] || publish "$tag" "$webui_run" "$here/webui/scan-allowlist.json"
+  exit 0
+fi
+if [[ $stage == dra ]]; then
+  tag=$(read_lock DRA_IMAGE_REPOSITORY):$dra_key
+  if podman image exists "$tag" && [[ ${AI_STACK_PUSH:-0} != 1 || -s $dra_run/out/image.digest ]]; then
+    printf 'BUILT=dra %s\n' "$tag"
+    exit 0
+  fi
+  track /dev/null
+  if [[ ! -s $dra_run/out/RECEIPT.json ]]; then
+    # The source is exactly the pinned commit, fetched by id and checked before it is built.
+    rm -rf -- "$dra_run/git" "$dra_run/src"
+    mkdir -p "$dra_run/git" "$dra_run/src" "$dra_run/out"
+    git -C "$dra_run/git" init -q
+    git -C "$dra_run/git" fetch -q --depth 1 "$DRA_DRIVER_REPOSITORY" "$DRA_DRIVER_COMMIT"
+    [[ $(git -C "$dra_run/git" rev-parse FETCH_HEAD) == "$DRA_DRIVER_COMMIT" ]] || stop 'fetched DRA driver commit does not match the pin'
+    git -C "$dra_run/git" archive FETCH_HEAD | tar -x -C "$dra_run/src"
+    rm -rf -- "$dra_run/git"
+    # Offline (vendored modules only) and bounded to the build budget: the host serves live.
+    podman run --rm --pull=missing --name "ai-stack-dra-$dra_key" --network none --memory 16g --memory-swap 16g \
+      -e DRA_DRIVER_REPOSITORY -e DRA_DRIVER_COMMIT -e DRA_GO_IMAGE -e JOBS \
+      -v "$dra_run/src:/work/src:ro" -v "$dra_run/out:/work/out" -v "$here/dra/build.sh:/build.sh:ro" \
+      "$DRA_GO_IMAGE" bash /build.sh 2>&1 | tee "$dra_run/build.log"
+    rm -rf -- "$dra_run/src"
+  fi
+  podman build --pull=missing --build-arg DRA_RUNTIME_BASE_IMAGE="$DRA_RUNTIME_BASE_IMAGE" \
+    --label org.opencontainers.image.revision="$DRA_DRIVER_COMMIT" \
+    --label org.opencontainers.image.source="${DRA_DRIVER_REPOSITORY%.git}" \
+    -f "$here/dra/Containerfile" -t "$tag" "$dra_run/out"
+  # Offline, non-root, read-only: binaries load, operator flags exist, feature gates default off.
+  podman run --rm --pull=never --network none --read-only --user 65534:65534 \
+    -v "$here/dra/smoke.sh:/smoke.sh:ro" --entrypoint bash "$tag" /smoke.sh
+  printf 'IMAGE=%s\n' "$tag"
+  [[ ${AI_STACK_PUSH:-0} != 1 ]] || publish "$tag" "$dra_run" "$here/dra/scan-allowlist.json"
   exit 0
 fi
 # The game-streaming image: the repository's own Sunshine recipe (`workstationctl sunshine

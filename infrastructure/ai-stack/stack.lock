@@ -46,6 +46,16 @@ OPEN_WEBUI_FORK_REPOSITORY=https://github.com/Drgr33nSenior/open-webui.git
 OPEN_WEBUI_FORK_BRANCH=workstation/reasoning-controls
 OPEN_WEBUI_FORK_COMMIT=21bc3e3da87d25e988b412710bafcefd4b4261db
 WEBUI_IMAGE_REPOSITORY=registry.lan.thespry.family/local/open-webui
+# AMD GPU DRA driver (the GPU operator's draDriver), built by the dra stage from upstream main.
+# refresh.sh moves the commit to main's head and the Go image to the golang release upstream's
+# env.mk names at that commit (GOLANG_VERSION); the build stops if the two disagree.
+DRA_DRIVER_REPOSITORY=https://github.com/ROCm/k8s-gpu-dra-driver.git
+DRA_DRIVER_COMMIT=8bf83533ad07a5f82c525692fef9547a64e8ba6e
+DRA_GO_IMAGE=docker.io/library/golang:1.26.7-trixie@sha256:978084e7adea0904b6d76cbc9afcb9baeed6ee170eecdc8866566aaa9f22ad0c
+# refresh.sh resolves DRA_RUNTIME_BASE_TAG to the digest in DRA_RUNTIME_BASE_IMAGE (same glibc as the Go image).
+DRA_RUNTIME_BASE_TAG=docker.io/library/debian:trixie-slim
+DRA_RUNTIME_BASE_IMAGE=docker.io/library/debian@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
+DRA_IMAGE_REPOSITORY=registry.lan.thespry.family/local/k8s-gpu-dra-driver
 # Supply-chain tools, pinned by digest and upgraded by review (refresh.sh
 # leaves them unchanged). Releases at least two weeks old when pinned.
 COSIGN_IMAGE=ghcr.io/sigstore/cosign/cosign:v3.1.4@sha256:0f06154836d2de34f887a5c273506d52ca43edaa1d9e53e6510fa78a48f69c2d
