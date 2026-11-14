@@ -1506,6 +1506,9 @@ class ServingContractTests(unittest.TestCase):
         self.assertEqual(("645558", "100768"), (argv[argv.index("--max-total-tokens") + 1], argv[argv.index("--context-length") + 1]))
         self.assertEqual(("201600", "100768"), (env["SGLANG_GFX1201_ELASTIC_KV_BASE_TOKENS"], env["SGLANG_GFX1201_ELASTIC_KV_BASE_CONTEXT"]))
         self.assertIn("--disable-overlap-schedule", argv)  # the tail refuses the overlap scheduler
+        # The tail is GPU memory only: SGLang's CPU/RAM stays UQSB's measured sizing, not the dual-gpu default.
+        self.assertEqual(renders["UQSB"]["sglang"]["spec"]["template"]["spec"]["containers"][0]["resources"],
+                         sglang["resources"])
         tools = {arm: {e["name"]: e.get("value") for e in renders[arm]["service-tools"]["spec"]["template"]["spec"]["containers"][0]["env"]}
                  for arm in renders}
         self.assertEqual("true", tools["UQSE"].get("KV_TAIL_ENABLED"))

@@ -734,6 +734,15 @@ def host_resources(profile, arm_name):
     """The arm's qualification record's measured SGLang CPU/RAM requests and limits, validated, or None."""
     record = qualification_record(profile, arm_name)
     value = record.get("host_resources") if isinstance(record, dict) else None
+    source = (profile["arms"].get(arm_name) or {}).get("host_resources_from")
+    if value is None and source:
+        # A candidate arm that changes only GPU memory use (UQSE: UQSB plus an elastic KV tail) takes the
+        # measured CPU/RAM of the qualified arm it names. Without this it would fall back to the unmeasured
+        # dual-gpu sizing (24 CPU / 38 GiB), which on 2026-11-14 evicted the rest of the stack.
+        require(source != arm_name and source in profile["arms"], f"arm {arm_name}: host_resources_from must name another arm")
+        donor = qualification_record(profile, source)
+        value = donor.get("host_resources") if isinstance(donor, dict) else None
+        require(value is not None, f"arm {arm_name} takes host_resources from {source}, which has no measured record")
     if value is None:
         return None
     require(isinstance(value, dict) and set(value) >= {"requests", "limits", "evidence"} and value["evidence"],
