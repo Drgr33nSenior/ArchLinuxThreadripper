@@ -403,7 +403,9 @@ Known gaps:
 - The forwarded session token is not limited by `API_KEYS_ALLOWED_ENDPOINTS`;
   service-tools only calls the read routes listed above with it, plus
   `GET /api/v1/chats/<id>` and `GET /api/v1/folders/<id>` for
-  [chat-folder projects](#chat-folder-projects).
+  [chat-folder projects](#chat-folder-projects) and, for
+  [deep research](ASSISTANT.md#deep-research), the caller's own permissions and the
+  status lines and sources it posts to the caller's own chat message.
 - Memory and retrieval refusals are HTTP errors. Pinned Open WebUI shows them as
   a generic tool error, not the refusal code. Handoff refusals and the
   chat-folder scope refusals are tool results.

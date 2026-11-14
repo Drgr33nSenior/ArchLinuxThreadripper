@@ -49,6 +49,11 @@ FAMILIES = {
     "workstation_assistant_video_requests_total": (
         "counter", "Video tool calls (generate_video) by outcome.",
         {"client": CLIENTS, "outcome": ("ok", "denied", "busy", "not_ready", "cancelled", "failed", "invalid", "unavailable")}),
+    "workstation_assistant_deep_research_total": (
+        "counter", "Deep research calls (deep_research) by outcome (needs_confirmation = the person is asked first, "
+                   "nothing searched; partial = notes without a written report). Its web requests also count above.",
+        {"client": CLIENTS, "outcome": ("ok", "partial", "no_evidence", "needs_confirmation", "denied", "busy", "budget",
+                                        "not_ready", "invalid", "cancelled", "failed", "unavailable")}),
     "workstation_assistant_kv_tail_operations_total": (
         "counter", "Elastic KV tail hand-overs: shrink before media, ComfyUI unload (free) and grow after a quiet spell.",
         {"op": ("shrink", "free", "grow"),
