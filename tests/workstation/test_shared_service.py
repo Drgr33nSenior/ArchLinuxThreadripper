@@ -1477,15 +1477,47 @@ class ServingContractTests(unittest.TestCase):
         # 0028-0030): shared mode gets 100,768 tokens per conversation in UQS's bytes, large
         # mode keeps the model's 262,112 with a larger pool. A mode switch keeps the live image,
         # so a contract is active only on the image its arm was qualified on.
-        new = "registry.lan.thespry.family/local/sglang-gfx1201@sha256:38fc4d8a6318be676ca46ae18355fadeab5af6d4b8a2915b1d8ea83be9282ce1"
+        # Since 2026-11-14 shared mode defaults to UQSE (UQSB plus the elastic KV tail, its own image).
+        new = {"shared": "registry.lan.thespry.family/local/sglang-gfx1201@sha256:b4a906754da14db05e868f8cfa81cd6db9fef4056e269c562dfcf908f1a868ca",
+               "large": "registry.lan.thespry.family/local/sglang-gfx1201@sha256:38fc4d8a6318be676ca46ae18355fadeab5af6d4b8a2915b1d8ea83be9282ce1"}
         old = "registry.lan.thespry.family/local/sglang-gfx1201@sha256:9fc1a58ca06ae493a2e76ebab3d325245b740e98552b7db3214ef543e01e1c9c"
-        for mode, arm, context, pool in (("shared", "UQSB", 100768, 201600), ("large", "UQLB", 262112, 674688)):
+        for mode, arm, context, pool in (("shared", "UQSE", 100768, 645558), ("large", "UQLB", 262112, 674688)):
             with self.subTest(mode):
-                contract = service.serving_contract(self.PROFILE, runtime_image=new, mode=mode)
+                contract = service.serving_contract(self.PROFILE, runtime_image=new[mode], mode=mode)
                 self.assertEqual((f"qwen3.8-27b-mxfp4-tp2.{arm}", "active"), (contract["contract"], contract["status"]))
                 self.assertEqual((context, pool), (contract["budgets"]["context_length"], contract["budgets"]["max_total_tokens"]))
                 self.assertIn("--speculative-draft-kv-bundling", contract["_render"]["argv"])
                 self.assertEqual("provisional", service.serving_contract(self.PROFILE, runtime_image=old, mode=mode)["status"])
+
+    def test_elastic_arm_keeps_uqsb_context_and_turns_on_the_tail_hand_over(self):
+        # UQSE (serving patches 0031-0033): UQSB's base pool and context, a reservation the size of
+        # UQLB's pool, and service-tools switched to hand the tail back before every picture or clip.
+        site = self.root / "site-elastic.json"
+        site.write_text(json.dumps({"context": "fixture", "node": "fixture", "node_address": "192.168.77.9",
+            "management_cidr": "192.168.77.0/24", "client_cidrs": ["192.168.77.0/24"],
+            "webui_host": "chat.fixture.test", "api_host": "api.fixture.test", "tls_secret": "fixture-tls"}))
+        renders = {}
+        for arm in ("UQSE", "UQSB"):
+            output = self.root / f"shared-{arm}"
+            service.render(SimpleNamespace(output=output, site=site, mode="shared", experience="assistant-memory",
+                                           serving_profile=self.PROFILE, arm=arm, runtime_image=None, output_tokens=4096))
+            renders[arm] = {o["metadata"]["name"]: o for o in service.load_objects((output / "workloads.yaml").read_text())
+                            if o["kind"] == "Deployment"}
+        sglang = renders["UQSE"]["sglang"]["spec"]["template"]["spec"]["containers"][0]
+        argv, env = sglang["args"], {e["name"]: e.get("value") for e in sglang["env"]}
+        self.assertEqual(("645558", "100768"), (argv[argv.index("--max-total-tokens") + 1], argv[argv.index("--context-length") + 1]))
+        self.assertEqual(("201600", "100768"), (env["SGLANG_GFX1201_ELASTIC_KV_BASE_TOKENS"], env["SGLANG_GFX1201_ELASTIC_KV_BASE_CONTEXT"]))
+        self.assertIn("--disable-overlap-schedule", argv)  # the tail refuses the overlap scheduler
+        # The tail is GPU memory only: SGLang's CPU/RAM stays UQSB's measured sizing, not the dual-gpu default.
+        self.assertEqual(renders["UQSB"]["sglang"]["spec"]["template"]["spec"]["containers"][0]["resources"],
+                         sglang["resources"])
+        tools = {arm: {e["name"]: e.get("value") for e in renders[arm]["service-tools"]["spec"]["template"]["spec"]["containers"][0]["env"]}
+                 for arm in renders}
+        self.assertEqual("true", tools["UQSE"].get("KV_TAIL_ENABLED"))
+        self.assertNotIn("KV_TAIL_ENABLED", tools["UQSB"])
+        contract = service.serving_contract(self.PROFILE, arm="UQSE", mode="shared")
+        self.assertEqual(100768, contract["budgets"]["context_length"])
+        self.assertEqual("UQSE", service.shared_default_arm(json.loads(Path(self.PROFILE).read_text())))
 
     def test_shared_render_serves_uqs_with_both_image_generators(self):
         site = self.root / "site.json"
