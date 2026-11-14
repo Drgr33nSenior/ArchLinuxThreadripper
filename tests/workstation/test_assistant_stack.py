@@ -93,26 +93,75 @@ DEFAULT_CONFIG = {
         # An Admin Panel edit to the prompt lasts until the next start, like the other pins.
         self.assertEqual("Use tools.", pin.system_prompt_change({"system": "edited"}, "Use tools.")["system"])
 
-    def test_system_prompt_failures_are_reported_and_never_stop_the_start(self):
+    def test_model_record_failures_are_reported_and_never_stop_the_start(self):
         import os
         pin = load_pin_config()
+        skipped = {"skipped": "DEFAULT_MODELS names no model"}
         with unittest.mock.patch.dict(os.environ, {"DEFAULT_MODELS": ""}, clear=True):
-            self.assertEqual({"skipped": "DEFAULT_MODELS names no model"}, pin.system_prompt_report())
-        with unittest.mock.patch.dict(os.environ, {"DEFAULT_MODELS": "a, b"}, clear=True):
+            self.assertEqual((skipped, skipped), pin.model_record_report())
+        environ = {"DEFAULT_MODELS": "a, b", "MODEL_BUILTIN_TOOLS_OFF": "notes, calendar,notes"}
+        with unittest.mock.patch.dict(os.environ, environ, clear=True):
             # Outside the image Open WebUI cannot be imported: reported by type, not raised.
-            self.assertEqual({"error": "ModuleNotFoundError"}, pin.system_prompt_report())
-            with unittest.mock.patch.object(pin, "SYSTEM_PROMPT", Path("/nonexistent/system-prompt.md")):
-                self.assertEqual({"error": "system-prompt.md missing"}, pin.system_prompt_report())
+            error = {"error": "ModuleNotFoundError"}
+            self.assertEqual((error, error), pin.model_record_report())
             seen = []
 
-            async def fake(model_ids, prompt):
-                seen.append((model_ids, prompt))
-                return {"a": "updated", "b": "no model record"}
-            with unittest.mock.patch.object(pin, "pin_system_prompt", fake):
-                report = pin.system_prompt_report()
+            async def fake(model_ids, prompt, builtin_off):
+                seen.append((model_ids, prompt, builtin_off))
+                return {"a": ("updated", "unchanged"), "b": ("no model record", "no model record")}
+            with unittest.mock.patch.object(pin, "pin_model_records", fake):
+                report = pin.model_record_report()
+                # A missing prompt file is reported; the tool categories are still written.
+                with unittest.mock.patch.object(pin, "SYSTEM_PROMPT", Path("/nonexistent/system-prompt.md")):
+                    missing = pin.model_record_report()
         prompt = (ROOT / "apps/components/assistant/system-prompt.md").read_text().strip()
-        self.assertEqual([(["a", "b"], prompt)], seen)
-        self.assertEqual({"characters": len(prompt), "models": {"a": "updated", "b": "no model record"}}, report)
+        self.assertEqual([(["a", "b"], prompt, ["notes", "calendar"]), (["a", "b"], None, ["notes", "calendar"])], seen)
+        self.assertEqual({"characters": len(prompt), "models": {"a": "updated", "b": "no model record"}}, report[0])
+        self.assertEqual({"off": ["notes", "calendar"], "models": {"a": "unchanged", "b": "no model record"}}, report[1])
+        self.assertEqual({"error": "system-prompt.md missing"}, missing[0])
+        self.assertEqual(report[1], missing[1])
+
+    def test_builtin_tool_categories_change_one_field_and_are_idempotent(self):
+        pin = load_pin_config()
+        stored = {"capabilities": {"builtin_tools": True}, "toolIds": ["server:mcp:workstation"]}
+        changed = pin.builtin_tools_change(stored, ["notes", "calendar"])
+        self.assertEqual({**stored, "builtinTools": {"notes": False, "calendar": False}}, changed)
+        self.assertNotIn("builtinTools", stored)  # the stored value is copied, not edited in place
+        self.assertIsNone(pin.builtin_tools_change(changed, ["calendar", "notes"]))
+        # The list is the whole truth: an Admin Panel switch lasts until the next start, and a
+        # category taken off the list comes back.
+        edited = {**stored, "builtinTools": {"notes": False, "web_search": False}}
+        self.assertEqual({"notes": False, "calendar": False}, pin.builtin_tools_change(edited, ["notes", "calendar"])["builtinTools"])
+        self.assertEqual(stored, pin.builtin_tools_change(changed, []))
+        self.assertIsNone(pin.builtin_tools_change(stored, []))
+        self.assertIsNone(pin.builtin_tools_change({**stored, "builtinTools": None}, []))
+        self.assertEqual({"builtinTools": {"notes": False}}, pin.builtin_tools_change(None, ["notes"]))
+
+    def test_builtin_tool_categories_are_read_from_the_installed_open_webui(self):
+        source = """
+    def is_builtin_tool_enabled(category: str, default: bool = True) -> bool:
+        return builtin_tools.get(category, default)
+    if is_builtin_tool_enabled('time'):
+    if is_builtin_tool_enabled('user_input', True):
+    if is_note_chat or (
+        is_builtin_tool_enabled('notes') and config.get('notes.enable')
+    """
+        self.assertEqual({"time", "user_input", "notes"}, load_pin_config().builtin_tool_categories(source))
+
+    def test_confirmation_exemption_follows_the_group_list(self):
+        pin = load_pin_config()
+        stored = {"chat": {"controls": True}, "features": {"web_search": True, "notes": True}}
+        granted = pin.confirmation_change(stored, True)
+        self.assertEqual({**stored["features"], "web_search_without_confirmation": True}, granted["features"])
+        self.assertEqual(stored["chat"], granted["chat"])
+        self.assertNotIn("web_search_without_confirmation", stored["features"])  # copied, not edited in place
+        self.assertIsNone(pin.confirmation_change(granted, True))
+        # A group that never had the permission and is not on the list is left alone.
+        self.assertIsNone(pin.confirmation_change(stored, False))
+        self.assertIsNone(pin.confirmation_change(None, False))
+        # A grant made in the Admin Panel, or left from an earlier list, is removed.
+        self.assertIs(False, pin.confirmation_change(granted, False)["features"]["web_search_without_confirmation"])
+        self.assertEqual({"features": {"web_search_without_confirmation": True}}, pin.confirmation_change(None, True))
 
 
 class AssistantTests(unittest.TestCase):
@@ -229,6 +278,22 @@ class AssistantTests(unittest.TestCase):
             for field in ("image", "command", "resources", "securityContext"):
                 self.assertEqual(old_tools["containers"][0][field], tools["containers"][0][field])
             self.assertEqual(old_tools["volumes"], [v for v in tools["volumes"] if v["name"] != "web-search"])
+
+    def test_family_keeps_the_search_confirmation_and_unused_tools_are_off(self):
+        env = dict(line.split("=", 1) for line in (ROOT / "apps/components/assistant/assistant.env").read_text().splitlines()
+                   if "=" in line and not line.startswith("#"))
+        # Only Parents skip the confirmation; the children's group (Family) is never on the list.
+        self.assertEqual("Parents", env["WEB_SEARCH_WITHOUT_CONFIRMATION_GROUPS"])
+        off = set(env["MODEL_BUILTIN_TOOLS_OFF"].split(","))
+        self.assertEqual({"notes", "calendar", "channels", "automations", "skills", "tools", "notifications"}, off)
+        # What the family uses stays: search and page reading, images, code, knowledge, files.
+        self.assertFalse(off & {"web_search", "image_generation", "code_interpreter", "knowledge", "files",
+                                "memory", "time", "user_input", "chats", "tasks"})
+        for objects in (self.large, self.split):
+            app, merged = environment(objects)
+            self.assertEqual("true", merged["ENABLE_WEB_SEARCH_CONFIRMATION"])
+            self.assertEqual(env["MODEL_BUILTIN_TOOLS_OFF"], merged["MODEL_BUILTIN_TOOLS_OFF"])
+            self.assertEqual("Parents", merged["WEB_SEARCH_WITHOUT_CONFIRMATION_GROUPS"])
 
     def test_tool_use_system_prompt_is_short_plain_and_keeps_the_safety_posture(self):
         prompt = (ROOT / "apps/components/assistant/system-prompt.md").read_text()

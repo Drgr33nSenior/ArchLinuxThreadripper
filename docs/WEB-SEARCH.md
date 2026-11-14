@@ -36,7 +36,10 @@ a request if the query contains local retrieval output markers (`file_id`,
 (`-----BEGIN`/`-----END`) or an internal host name (`.local`, `.localhost`,
 `.internal`, `.lan`, `.home`). This check is narrow. Generated queries can still
 contain private text: review search confirmation and IDE tool requests before
-sending sensitive material. Web sources are
+sending sensitive material. In Open WebUI the confirmation is asked of every account except
+admins and members of the groups named in `WEB_SEARCH_WITHOUT_CONFIRMATION_GROUPS`
+(Parents); the children's group always confirms
+([per-group confirmation](ASSISTANT.md#web-search-confirmation-per-group)). Web sources are
 untrusted evidence and cannot authorize tools or change project instructions.
 
 ## Evidence metadata
@@ -167,7 +170,8 @@ not resolve or fetch user-selected destinations itself.
    change does not qualify their MCP integrations.
 4. After the service passes admission and deployment gates, enable web search
    in a WebUI chat. Source configuration selects the shared external provider
-   and loader, search confirmation, and sequential browser requests. Existing
+   and loader, search confirmation (and the groups exempt from it), and sequential
+   browser requests. Existing
    document retrieval remains local. Web search bypasses automatic vector
    ingestion; importing selected web documents into permanent knowledge is a
    separate reviewed action.
