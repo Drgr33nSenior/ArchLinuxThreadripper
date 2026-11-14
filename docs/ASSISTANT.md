@@ -363,6 +363,9 @@ chat skips re-reading it; the context a conversation may use stays at the arm's 
 - **After 10 minutes with no picture or clip** it asks each ComfyUI to unload its models
   (`POST /free`), waits until each holds less than 1.5 GiB, then asks SGLang to grow the tail. The
   first picture after a quiet spell reloads its models from NVMe; a run of pictures does not.
+- **Self-healing:** service-tools never trusts its own idea of the tail. Every picture or clip asks
+  SGLang to release it (a released tail answers in milliseconds), and every quiet spell it reads
+  SGLang's state and grows the tail again if a restart or anything else released it.
 
 Shared mode renders arm `UQSE` (UQSB plus the tail), which sets
 `SGLANG_GFX1201_ELASTIC_KV_BASE_TOKENS` and, through the render, `KV_TAIL_ENABLED=true` on

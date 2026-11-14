@@ -28,6 +28,7 @@ class Fixture:
         self.grow = {"ok": True, "state": "backed", "tail_tokens": 444000}
         self.gateway_down = False
         self.hold = None  # an asyncio.Event the shrink waits for
+        self.state = "unbacked"  # SGLang's real tail state, which status reports
         self.held = {"comfy1": 20 * GIB, "comfy0": 20 * GIB}
         self.frees = True  # ComfyUI drops its models after /free
 
@@ -39,10 +40,16 @@ class Fixture:
             if self.gateway_down:
                 raise httpx.ConnectError("down")
             assert request.headers["authorization"] == "Bearer " + KEY
+            if body["action"] == "status":
+                return httpx.Response(200, json={"ok": True, "state": self.state})
             if body["action"] == "shrink":
                 if self.hold:
                     await self.hold.wait()
+                if self.shrink["ok"]:
+                    self.state = "unbacked"
                 return httpx.Response(200 if self.shrink["ok"] else 409, json=self.shrink)
+            if self.grow["ok"]:
+                self.state = "backed"
             return httpx.Response(200 if self.grow["ok"] else 409, json=self.grow)
         if host in self.held:
             if path == "/free":
@@ -73,14 +80,42 @@ class KvTailTests(unittest.IsolatedAsyncioTestCase):
     async def settle(self):
         await asyncio.sleep(0.3)
 
-    async def test_media_shrinks_once_then_runs_without_asking_again(self):
+    async def test_every_job_asks_sglang_to_release_the_tail(self):
         async with self.tail.media():
             self.assertEqual([("gateway", "/_service/kv_tail", "shrink")], self.fixture.actions())
         async with self.tail.media():
             pass
-        # The tail is known released: the second job does not ask again.
-        self.assertEqual(1, sum(a == "shrink" for _, _, a in self.fixture.actions()))
+        # Never trusted from memory: SGLang may have been regrown or restarted in between.
+        self.assertEqual(2, sum(a == "shrink" for _, _, a in self.fixture.actions()))
         self.assertFalse(self.tail.backed)
+
+    async def test_a_tail_grown_behind_our_back_is_still_released_before_the_job(self):
+        self.tail.backed = False  # this process believes the tail is released
+        self.fixture.state = "backed"  # but something grew it
+        async with self.tail.media():
+            self.assertEqual("unbacked", self.fixture.state)
+
+    async def test_a_tail_lost_behind_our_back_is_grown_again_after_a_quiet_spell(self):
+        async with self.tail.media():
+            pass
+        await self.settle()
+        self.assertTrue(self.tail.backed)
+        self.fixture.state = "unbacked"  # SGLang restarted, or a shrink came from elsewhere
+        self.fixture.calls.clear()
+        await self.settle()
+        self.assertEqual("backed", self.fixture.state)
+        self.assertIn("grow", [a for _, _, a in self.fixture.actions()])
+
+    async def test_a_backed_tail_is_only_checked_not_regrown(self):
+        async with self.tail.media():
+            pass
+        await self.settle()
+        self.fixture.calls.clear()
+        await self.settle()  # further quiet spells: status checks only
+        actions = [a for _, _, a in self.fixture.actions()]
+        self.assertIn("status", actions)
+        self.assertNotIn("grow", actions)
+        self.assertFalse([path for _, path, _ in self.fixture.calls if path == "/free"])
 
     async def test_busy_or_unconfirmed_release_refuses_before_the_job(self):
         for answer, code in (({"ok": False, "reason": "busy"}, "chat_memory_busy"),
@@ -126,7 +161,9 @@ class KvTailTests(unittest.IsolatedAsyncioTestCase):
         actions = self.fixture.actions()
         frees = [host for host, path, _ in actions if path == "/free"]
         self.assertEqual(["comfy1", "comfy0"], frees)  # each ComfyUI once, video's included
-        self.assertEqual("grow", actions[-1][2])
+        kinds = [k for _, _, k in actions if k]
+        first_grow = kinds.index("grow")
+        self.assertEqual({"status"}, set(kinds[first_grow + 1:]) or {"status"})  # afterwards only re-checks
         self.assertTrue(self.tail.backed)
         # The next picture releases it again before running.
         async with self.tail.media():
@@ -163,7 +200,7 @@ class KvTailTests(unittest.IsolatedAsyncioTestCase):
             pass
         await self.settle()
         grows = [a for _, _, a in self.fixture.actions()].count("grow")
-        self.assertGreaterEqual(grows, 2)
+        self.assertGreaterEqual(grows, 2)  # retried every quiet spell
         self.assertFalse(self.tail.backed)
         self.assertIn('workstation_assistant_kv_tail_operations_total{op="grow",outcome="insufficient_vram"}',
                       METRICS.render())
