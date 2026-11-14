@@ -4,7 +4,7 @@ pkgname=k3s-workstation-bin
 _lock="$startdir/../../../versions.lock"
 _release=$(awk -F= '$1 == "K3S_VERSION" {print $2}' "$_lock")
 _sha256=$(awk -F= '$1 == "K3S_BINARY_SHA256" {print $2}' "$_lock")
-[[ $_release =~ ^v1\.36\.[0-9]+\+k3s[0-9]+$ && $_sha256 =~ ^[a-f0-9]{64}$ ]] || return 1
+[[ $_release =~ ^v1\.37\.[0-9]+\+k3s[0-9]+$ && $_sha256 =~ ^[a-f0-9]{64}$ ]] || return 1
 pkgver=${_release#v}
 pkgver=${pkgver/+/.}
 pkgrel=1
@@ -18,7 +18,7 @@ conflicts=('k3s' 'k3s-bin' 'rke2' 'rke2-bin' 'rke2-workstation-bin')
 options=('!strip' '!debug')
 source=("k3s-${_release}::https://github.com/k3s-io/k3s/releases/download/${_release}/k3s"
         'k3s.service')
-sha256sums=("$_sha256" 'c61fe192c4f7c8343847584786e034324c2118053b6f7f0ec471f8328d135257')
+sha256sums=("$_sha256" 'f8c291e2ac6743e330841dca61d245180b23405ef73db734d6a617363a00e717')
 
 package() {
   install -Dm755 "$srcdir/k3s-${_release}" "$pkgdir/usr/bin/k3s"

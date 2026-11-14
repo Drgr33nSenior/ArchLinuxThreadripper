@@ -979,6 +979,9 @@ class ResourceTests(unittest.TestCase):
             write = values["ports"]["websecure"]["transport"]["respondingTimeouts"]["writeTimeout"]
             self.assertGreater(int(write.rstrip("s")), max(service.DEADLINE_SECONDS.values()))
             self.assertEqual({"default": False}, values["ports"]["web"]["expose"])
+            # Valid for Traefik chart 41 (K3s 1.37): its schema rejects the old top-level logs key.
+            self.assertNotIn("logs", values)
+            self.assertFalse(values.get("accessLog", {}).get("enabled", False))
             # Staging issues into its own Secret; production into the Ingress TLS Secret.
             for name, issuer, secret in (("certificate-staging.yaml", "letsencrypt-staging-cloudflare", "fixture-tls-staging"),
                                          ("certificate.yaml", "letsencrypt-production-cloudflare", "fixture-tls")):

@@ -1,4 +1,4 @@
-# Adapted from k3s-io/k3s v1.36.6+k3s1 install.sh (unit unchanged since v1.35.7+k3s1); managed by pacman.
+# Adapted from k3s-io/k3s v1.37.2+k3s1 install.sh (unit unchanged since v1.35.7+k3s1); managed by pacman.
 [Unit]
 Description=Lightweight Kubernetes
 Documentation=https://docs.k3s.io

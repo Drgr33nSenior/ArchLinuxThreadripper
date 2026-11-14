@@ -1,4 +1,4 @@
-# K3s v1.36 kubelet drop-in, read after K3s's own 00-k3s-defaults.conf (which sets
+# K3s v1.37 kubelet drop-in, read after K3s's own 00-k3s-defaults.conf (which sets
 # imageMaximumGCAge: 0s, so unused images are otherwise kept until the disk is 85% full).
 # The kubelet removes images no container has used for this long; the registry keeps
 # every pushed build. "0s" restores the K3s default.

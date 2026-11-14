@@ -1,4 +1,4 @@
-# K3s v1.36 kubelet drop-in. This is emitted only for an explicit full-SMT
+# K3s v1.37 kubelet drop-in. This is emitted only for an explicit full-SMT
 # reservation; do not hand-edit a CPUManager checkpoint to migrate policy.
 apiVersion: kubelet.config.k8s.io/v1beta1
 kind: KubeletConfiguration
@@ -12,4 +12,4 @@ cpuManagerPolicyOptions:
 reservedSystemCPUs: {{ lab_reserved_system_cpus | to_json }}
 topologyManagerPolicy: restricted
 topologyManagerScope: pod
-# All three policy options are stable in 1.36; no feature gate is required.
+# All three policy options are stable since 1.36 (unchanged in 1.37); no feature gate is required.

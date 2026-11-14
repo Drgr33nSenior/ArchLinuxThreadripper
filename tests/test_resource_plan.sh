@@ -66,7 +66,7 @@ if (ws_resources_plan "$work/asymmetric-topology.json" "$work/asymmetric-plan") 
 fi
 [[ ! -e $work/asymmetric-plan ]]
 
-printf 'K3S_VERSION=v1.37.0+k3s1\n' >"$work/unsupported.lock"
+printf 'K3S_VERSION=v1.38.0+k3s1\n' >"$work/unsupported.lock"
 if (ws_resources_plan "$work/two-dimm.json" "$work/unsupported-plan" "$work/unsupported.lock") >/dev/null 2>&1; then
   printf 'unsupported K3s minor was accepted\n' >&2
   exit 1

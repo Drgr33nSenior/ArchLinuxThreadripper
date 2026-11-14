@@ -284,20 +284,35 @@ tested backups or GPU qualification. See the [architecture](https://docs.k3s.io/
 [RKE2 comparison](https://docs.rke2.io/#how-is-this-different-from-rke-or-k3s).
 
 `infrastructure/packages/k3s/PKGBUILD` reads `K3S_VERSION` and
-`K3S_BINARY_SHA256` from `versions.lock`. The pin is `v1.36.6+k3s1`.
+`K3S_BINARY_SHA256` from `versions.lock`. The pin is `v1.37.2+k3s1`.
 Verify its binary hash against the upstream checksum file and release-asset
 metadata. The package owns
 `/usr/bin/k3s` and `k3s.service`, adapted from that release's service definition.
 It omits uninstall/killall helpers and does not start services. Review, build
 and sign it with makepkg as a non-root user, then install the signed package.
 
-It includes containerd v2.3.7-k3s1.36 and Traefik chart 40.1.7. Existing
+It includes containerd v2.3.7-k3s1 and Traefik chart 41.6.1 (K3s build 41.6.101).
+Chart 41's schema rejects chart 40's top-level `logs` key (access logs moved to
+`accessLog`); the service's Traefik values set neither and rely on the default,
+access logs off, so the same values render identically on both charts. Existing
 ingress-nginx migration settings must use `kubernetesIngressNGINX` instead of
-`kubernetesIngressNginx`. Review the [release notes](https://github.com/k3s-io/k3s/releases/tag/v1.36.6%2Bk3s1)
-before upgrading. AMD GPU Operator v1.5.1 supports Radeon AI PRO on Kubernetes
-1.29–1.36; do not move to 1.37 until a supported operator release exists.
-Complete the existing backup and restore procedure before a running-cluster
-upgrade.
+`kubernetesIngressNginx`. Review the [release notes](https://github.com/k3s-io/k3s/releases/tag/v1.37.2%2Bk3s1)
+and the Kubernetes 1.37 urgent upgrade notes before upgrading.
+
+**Kubernetes 1.37 and the GPU Operator.** AMD documents GPU Operator v1.5.1, and
+upstream `main` as of 2026-11-14, for Kubernetes 1.29–1.36 only. The owner chose
+1.37 anyway (2026-11-14): the chart allows `>=1.29`, the operator parts in use
+(controller, node labeller, metrics exporter; the device plugin is off) use
+stable APIs, and the DRA driver is the git build against the 1.37 libraries. Its
+health service needs a 1.37 kubelet, which stops watching a driver that answers
+`Unimplemented`; a 1.36 kubelet retries every 5 s and logs an error each time.
+Recheck this when AMD publishes a release that lists 1.37.
+
+Kubernetes does not support minor-version downgrades: after an upgrade, the
+rollback is restoring the pre-upgrade server state (stopped K3s, the SQLite
+datastore and its matching token) with the previous package, not reinstalling an
+older package over the upgraded datastore. Complete the existing backup and
+restore procedure before a running-cluster upgrade.
 
 Use a fresh K3s data directory. The role refuses existing `/var/lib/rancher/rke2`
 state. An existing RKE2 installation needs a separate workload/PVC migration and
@@ -696,7 +711,7 @@ of repository validation.
 ## Primary references inspected
 
 - [K3s advanced configuration and containerd v3](https://docs.k3s.io/advanced)
-- [Pinned K3s release](https://github.com/k3s-io/k3s/releases/tag/v1.36.6%2Bk3s1)
+- [Pinned K3s release](https://github.com/k3s-io/k3s/releases/tag/v1.37.2%2Bk3s1)
 - [AMD GPU Operator v1.5.1 source](https://github.com/ROCm/gpu-operator/tree/v1.5.1)
 - [AMD device-plugin/DRA exclusivity](https://instinct.docs.amd.com/projects/gpu-operator/en/main/device_plugin/device-plugin.html)
 - [systemd cryptenroll PCR syntax](https://github.com/systemd/systemd/blob/main/man/systemd-cryptenroll.xml)
