@@ -103,6 +103,170 @@ limits, shared coding-client tools and the separate direct Codex OAuth path.
 Web results remain temporary prompt evidence; the existing local RAG store and
 document permissions remain authoritative. End-to-end search is not yet qualified.
 
+## Private coding sandbox (candidate, off by default)
+
+`service render --sandbox-config /private/sandbox.json` adds native Open Terminal
+support in **large/coder mode only**. It writes a separate `sandbox.yaml`; its
+controller Deployment starts at zero replicas. Omitting the flag pins an empty
+`TERMINAL_SERVER_CONNECTIONS` list, including when persistent WebUI settings exist.
+This candidate is not a qualified live service.
+
+The integration uses Open Terminal 0.17.9 and Terminals 0.3.3, pinned by commit in
+`infrastructure/ai-stack/stack.lock`. The WebUI fork at `21bc3e3` uses the 0.3
+policy API (`/p/sandbox`, `terminal_id`, `/files/cwd` and native OpenAPI tools).
+Terminals 0.4 changes that API and must not replace this pin independently.
+The Jupyter engine takes one server URL and credentials; it does not provision
+isolated user pods. A shared Jupyter or shared Open Terminal process therefore
+does not meet this deployment's isolation requirement. A separate Playwright MCP
+server is unnecessary: the native command tool can run the installed Playwright
+Chromium, and native file tools return its screenshots to the model.
+
+**Isolation and lifecycle.** The upstream orchestrator creates one pod per
+authenticated user. Chats for that user share a workspace. Each pod has its own
+2 GiB `emptyDir`, UID/GID 1000, a read-only image, no service-account token, no
+host mounts or GPU, dropped capabilities, no privilege escalation and
+RuntimeDefault seccomp. Temporary files use the workspace volume. Fifteen idle
+minutes stop and delete the pod; a two-hour maximum lifetime also ends active
+work. Files and background processes disappear at teardown. Download wanted
+files first. There is no shared PVC or automatic upload of family documents.
+
+The trusted controller has a service account restricted to pods, services and
+per-workspace API-key Secrets in `assistant-sandbox`. These credentials never
+enter a workspace. The workspace's own terminal key grants access only to that
+workspace. A small ASGI gate checks the caller's WebUI session, exact user ID and
+current groups before forwarding to the native orchestrator. It exposes no policy
+administration API. Static tool discovery starts no pod. WebSocket sessions
+reauthenticate by reconnecting after at most 60 seconds.
+
+**Access.** WebUI's admin role and the exact Parents group are allowed. Family is
+off by default. The render sets native group read grants; the controller repeats
+the group check on each HTTP call. Family membership takes precedence over
+Parents membership, so adding a child to both does not bypass the switch.
+Set `family_enabled` to `true` in the source config, re-render and restart the
+controller and WebUI to enable children. Disabling access does not interrupt a
+command already running; idle and lifetime teardown remain the backstops.
+No model grants, gateway keys or cybersecurity-model permissions change.
+
+Example configuration (replace the example image digest and group IDs with
+owner-verified values; these are identifiers, not credentials):
+
+```json
+{
+  "image": "registry.lan.thespry.family/local/assistant-sandbox@sha256:DIGEST_FROM_SIGNED_BUILD",
+  "parents_group_id": "PARENTS_GROUP_UUID",
+  "family_group_id": "FAMILY_GROUP_UUID",
+  "family_enabled": false,
+  "api_server_cidr": "192.168.30.11/32",
+  "api_server_port": 6443
+}
+```
+
+**Network and threat model.** The workspace namespace has default-deny policies.
+Only the controller can initiate connections to workspace port 8000. Workspaces
+have no egress rules, including DNS, cluster services, other workspaces, LAN and
+Internet. Chromium and local web servers communicate inside the same pod.
+The controller alone can reach WebUI, DNS and the exact configured API endpoint.
+There is no public Ingress, NodePort or browser-debugging listener.
+
+Prompt-injected code and malicious pages can destroy or expose the current user's
+workspace through tool responses. They receive no family storage, service keys
+or Kubernetes identity. Chromium runs headless with its inner sandbox disabled
+because this image uses the pod/container security boundary; it is not a second
+isolation boundary. Kernel/container escapes remain a shared-host risk. Do not
+upload secrets. NetworkPolicy cannot by itself guarantee denial of traffic to
+the hosting node on every CNI. Prove node-address, ClusterIP, DNS, LAN and
+cross-user denials in a scratch K3s deployment before live rollout; do not weaken
+seccomp or grant `NET_ADMIN` to obtain them.
+
+Default Internet egress is **none**. A package-registry proxy would need exact
+PyPI/npm artifact and redirect allowlists, private-address and DNS-rebinding
+denials, and no generic CONNECT tunnel. It also introduces package-install
+scripts and an exfiltration channel. That is a separate owner decision, as is
+unrestricted public Internet access. The image already includes Python, Node,
+npm, git, curl, jq, ripgrep, shell/build tools, a Python static server and
+Playwright Chromium. Runtime package downloads fail under the default policy.
+
+**Capacity.** A namespace quota bounds the pool to two workspace pods (each
+750m CPU / 2 GiB RAM / 2 GiB ephemeral storage) plus one controller (250m CPU /
+256 MiB RAM / 256 MiB ephemeral storage). Requests equal limits. Fractional CPU
+requests use the shared CPU pool and avoid
+the host CPU Manager's whole-core SMT alignment requirement. The planner
+reserves the whole 1.75 CPU / 4.25 GiB pool even when no workspace is running.
+The session switch's existing all-namespace pod accounting includes active
+sandbox pods. Kubernetes admission prevents a sleeping workspace from consuming
+unreserved CPU or RAM when other work has filled the node; it may remain pending.
+
+At the tested 42 CPUs and 51,200 MiB allocatable RAM, large mode with the memory
+stack, full telemetry (6,656 MiB reserve), Alertmanager and the full pool leaves
+**1.75 CPUs and 3,584 MiB**. Builds and VMs require additional admission.
+Shared mode is refused: current source declares 43.5 application CPUs and
+55.5 GiB application RAM before telemetry or this pool. Its selected 14 GiB
+SGLang pod also inherits a 16 GiB memory-backed volume, which the planner refuses.
+This feature does not lower existing workload limits to make the test pass.
+
+**Images and metrics.** The `sandbox` pipeline stage builds from the two pinned
+source commits, runs the offline native-tool/browser smoke and scans with the
+existing Trivy policy and an empty exception list. `AI_STACK_PUSH=1` then uses
+the existing signing, SBOM attestation and signature verification path. Supply
+the resulting digest to the render; tags alone are refused. Open Terminal is
+MIT; Terminals has the Open WebUI Enterprise licence with a personal,
+non-commercial-use exception. This image is for the owner's family installation;
+organizational deployment needs a separate licence review. Playwright is Apache
+2.0; Chromium and OS/Python/Node dependencies retain their own licences. The
+image carries the upstream licence texts and the pipeline produces an SBOM.
+
+Alloy scrapes `workstation_sandbox_executions_total{group="Admin|Parents|Family"}`
+from the controller. It counts authorized native command attempts, including
+attempts that fail; counters reset on controller restart. The kubelet collector
+retains CPU, memory and throttling metrics for the sandbox namespace. Application
+and access logging are disabled: no code, output, tokens or user IDs are emitted
+to the telemetry path. Native command-result buffers remain transient files in
+that user's workspace so tool results can be read; they disappear with the pod.
+
+**Owner rollout after merge and qualification:**
+
+1. Run `AI_STACK_PUSH=1 bash infrastructure/ai-stack/build-stage.sh sandbox` on
+   the build host. Keep the scan, SBOM, signature verification and `image.digest`.
+2. Set the signed digest, actual group UUIDs and API endpoint in `sandbox.json`.
+   Choose whether children may use it and whether disposable workspaces suffice.
+3. Render the assistant in large mode with `--sandbox-config`, and run
+   `service plan` with fresh node resource and telemetry evidence. Inspect both
+   `workloads.yaml` and `sandbox.yaml`. Run the scratch K3s denials, quota,
+   idle cleanup and cross-account tests before applying either to the live site.
+4. Apply the reviewed sandbox bundle through the owner's normal deployment
+   process, then start its controller. Set `MODE_SANDBOX_CONFIG` to preserve the
+   config in coder-mode renders. The flag deliberately refuses family/shared
+   mode until that composition is right-sized and verified. The mode command
+   does not apply the separate namespace bundle.
+5. Roll out the rendered WebUI configuration. Select **Private coding workspace**
+   in a native-tool-capable chat. Ask it to write a small HTML game, serve it on
+   loopback, run Playwright, inspect the screenshot and describe the result.
+   Verify Admin and Parents access and Family denial from separate accounts.
+
+For rollback, omit `--sandbox-config` (and unset `MODE_SANDBOX_CONFIG`), roll out
+the resulting WebUI config, and let the controller reap workspaces before
+stopping it. Deleting the namespace or stopping active workspaces loses their
+disposable files; retain wanted files first. No rollout or deletion is automatic.
+
+**2026-11-14 scratch evidence.** Rootless Podman on the workstation built candidate
+`c37b81317714`, whose local manifest digest is recorded as
+`ASSISTANT_SANDBOX_CANDIDATE_IMAGE` in `versions.lock`. It has not been signed or
+published. The native `/execute` tool wrote and served **Star catcher**; Playwright
+1.65.2 clicked three stars, observed the win state and zero page errors, and the
+native file tool returned the PNG. The [captured screenshot](assets/sandbox-game-20261114.png)
+shows the disabled star button and “You win!”. This is an assistant-authored tool
+smoke, not a qualified SGLang/WebUI conversation. The final image also passed a
+probe of the actual upstream Kubernetes pod builder and idle reaper against a fake
+API: separate user pod names, preserved security/resources and idle deletion.
+Real controller database migrations, policy seeding and application startup also
+passed at 250m CPU / 256 MiB RAM, with cluster I/O replaced by a test double.
+
+Trivy passed the existing policy with no exceptions: 7 critical findings without
+available fixes, 313 high, 674 medium, 971 low and 29 unknown. Passing that policy
+does not mean the image is vulnerability-free. Actual K3s network enforcement,
+quota saturation, controller restart/reconciliation, cross-account WebUI behavior,
+image signing/promotion and the complete model-driven chat remain unverified.
+
 ## Select and render
 
 Use the existing [service setup](AI-SERVICE.md) for private DNS, TLS, credentials,

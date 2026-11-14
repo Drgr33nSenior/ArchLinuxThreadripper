@@ -27,7 +27,7 @@ k3s_allowed_key() {
     SGLANG_SERVER_ARGS_SHA256 | SGLANG_COMPILE_DECORATION_SHA256 | SGLANG_QWEN35_SOURCE_SHA256) return 0 ;;
     QWEN_CODE_VERSION | QWEN_CODE_COMMIT | DSH_COMMIT | HERMES_AGENT_COMMIT) return 0 ;;
     K3S_SELINUX_RPM_SHA256) return 0 ;;
-    OPEN_WEBUI_VERSION | OPEN_WEBUI_COMMIT | OPEN_WEBUI_IMAGE | RAG_EMBEDDING_REPOSITORY | RAG_EMBEDDING_REVISION | RAG_RERANKER_REPOSITORY | RAG_RERANKER_REVISION) return 0 ;;
+    OPEN_WEBUI_VERSION | OPEN_WEBUI_COMMIT | OPEN_WEBUI_IMAGE | OPEN_TERMINAL_VERSION | TERMINALS_VERSION | PLAYWRIGHT_VERSION | ASSISTANT_SANDBOX_CANDIDATE_IMAGE | RAG_EMBEDDING_REPOSITORY | RAG_EMBEDDING_REVISION | RAG_RERANKER_REPOSITORY | RAG_RERANKER_REVISION) return 0 ;;
     STT_WHISPER_REPOSITORY | STT_WHISPER_REVISION) return 0 ;;
     SGLANG_DUAL_MODEL_REPOSITORY | SGLANG_DUAL_MODEL_REVISION | SGLANG_SINGLE_MODEL_REPOSITORY | SGLANG_SINGLE_MODEL_REVISION) return 0 ;;
     STEAM_HEADLESS_BASE_IMAGE | STEAM_HEADLESS_REVIEWED_SOURCE | SUNSHINE_VERSION | SUNSHINE_COMMIT | SUNSHINE_DEBIAN_SHA256 | SUNSHINE_MESA_DEBIAN_VERSION | KWIN_DEBIAN_VERSION) return 0 ;;
@@ -50,9 +50,11 @@ k3s_validate_value() {
     QWEN_CODE_COMMIT | DSH_COMMIT | HERMES_AGENT_COMMIT) [[ "$value" =~ ^[a-f0-9]{40}$ ]] || k3s_die "$key must be an exact agent source revision" ;;
     K3S_VERSION) [[ "$value" =~ ^v1\.37\.[0-9]+\+k3s[0-9]+$ ]] || k3s_die "$key must be an exact K3s release" ;;
     OPEN_WEBUI_VERSION) [[ "$value" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || k3s_die "$key must be an exact Open WebUI release" ;;
+    OPEN_TERMINAL_VERSION | TERMINALS_VERSION | PLAYWRIGHT_VERSION) [[ "$value" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || k3s_die "$key must be an exact sandbox component release" ;;
     OPEN_WEBUI_COMMIT | RAG_EMBEDDING_REVISION | RAG_RERANKER_REVISION | STT_WHISPER_REVISION | SGLANG_DUAL_MODEL_REVISION | SGLANG_SINGLE_MODEL_REVISION) [[ "$value" =~ ^[a-f0-9]{40}$ ]] || k3s_die "$key must be an exact source revision" ;;
     SGLANG_DUAL_MODEL_REPOSITORY) [[ "$value" == Qwen/Qwen3.8-27B-FP8 ]] || k3s_die "$key must select the reviewed dual-GPU checkpoint" ;;
     SGLANG_SINGLE_MODEL_REPOSITORY) [[ "$value" == Qwen/Qwen3.5-9B ]] || k3s_die "$key must select the reviewed single-GPU checkpoint" ;;
+    ASSISTANT_SANDBOX_CANDIDATE_IMAGE) [[ "$value" =~ ^registry\.lan\.thespry\.family/local/assistant-sandbox@sha256:[a-f0-9]{64}$ ]] || k3s_die "$key must be a digest-pinned sandbox candidate" ;;
     OPEN_WEBUI_IMAGE) [[ "$value" =~ ^(ghcr\.io/open-webui/open-webui:v[0-9]+\.[0-9]+\.[0-9]+|registry\.lan\.thespry\.family/local/open-webui:[a-f0-9]{12})@sha256:[a-f0-9]{64}$ ]] || k3s_die "$key must be a digest-pinned Open WebUI image (upstream release or the webui stage)" ;;
     RAG_EMBEDDING_REPOSITORY) [[ "$value" == Qwen/Qwen3-Embedding-0.6B ]] || k3s_die "$key must select the reviewed Qwen embedding model" ;;
     RAG_RERANKER_REPOSITORY) [[ "$value" == cross-encoder/ms-marco-MiniLM-L6-v2 ]] || k3s_die "$key must select the reviewed MiniLM cross-encoder" ;;
@@ -174,6 +176,7 @@ k3s_load_config() {
   unset QWEN_CODE_VERSION QWEN_CODE_COMMIT DSH_COMMIT HERMES_AGENT_COMMIT
   unset K3S_SELINUX_RPM_SHA256
   unset OPEN_WEBUI_VERSION OPEN_WEBUI_COMMIT OPEN_WEBUI_IMAGE RAG_EMBEDDING_REPOSITORY RAG_EMBEDDING_REVISION RAG_RERANKER_REPOSITORY RAG_RERANKER_REVISION
+  unset OPEN_TERMINAL_VERSION TERMINALS_VERSION PLAYWRIGHT_VERSION ASSISTANT_SANDBOX_CANDIDATE_IMAGE
   unset STT_WHISPER_REPOSITORY STT_WHISPER_REVISION
   unset SGLANG_DUAL_MODEL_REPOSITORY SGLANG_DUAL_MODEL_REVISION SGLANG_SINGLE_MODEL_REPOSITORY SGLANG_SINGLE_MODEL_REVISION
   unset STEAM_HEADLESS_BASE_IMAGE STEAM_HEADLESS_REVIEWED_SOURCE SUNSHINE_VERSION SUNSHINE_COMMIT SUNSHINE_DEBIAN_SHA256 SUNSHINE_MESA_DEBIAN_VERSION KWIN_DEBIAN_VERSION

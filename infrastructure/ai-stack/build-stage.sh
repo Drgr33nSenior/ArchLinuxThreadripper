@@ -3,7 +3,7 @@
 # from stack.lock. Each run directory is keyed by the pins that affect it, so a
 # refresh rebuilds only stages whose inputs changed; ccache and source clones
 # persist under $AI_STACK_ROOT across runs.
-# Usage: build-stage.sh rocm|torch|sglang|image|comfyui|swarmui|creative|graphiti|gaming|webui|dra
+# Usage: build-stage.sh rocm|torch|sglang|image|comfyui|swarmui|creative|graphiti|gaming|webui|dra|sandbox
 set -euo pipefail
 stop() {
   printf 'STOP: %s\n' "$*" >&2
@@ -11,8 +11,8 @@ stop() {
 }
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 stage=${1:-}
-[[ $stage =~ ^(rocm|torch|sglang|image|comfyui|swarmui|creative|graphiti|gaming|webui|dra)$ ]] ||
-  stop 'usage: build-stage.sh rocm|torch|sglang|image|comfyui|swarmui|creative|graphiti|gaming|webui|dra'
+[[ $stage =~ ^(rocm|torch|sglang|image|comfyui|swarmui|creative|graphiti|gaming|webui|dra|sandbox)$ ]] ||
+  stop 'usage: build-stage.sh rocm|torch|sglang|image|comfyui|swarmui|creative|graphiti|gaming|webui|dra|sandbox'
 lock=$here/stack.lock
 read_lock() {
   awk -F= -v key="$1" '$1 == key {print substr($0, index($0, "=") + 1); n++} END {exit n != 1}' "$lock" ||
@@ -125,24 +125,17 @@ track() {
   trap "python3 '$here/stage-metrics.py' '$metrics_dir' '$stage' finish --status \$? --ccache-stats '$stats'" EXIT
 }
 
-# Scan before push, then sign and attest; image.digest is written only once
-# the pushed image verifies, so a failed step is retried on the next run.
-# Usage: publish TAG RUN_DIR SCAN_ALLOWLIST
-publish() {
-  local tag=$1 run=$2 allowlist=$3 keys authfile cosign_image trivy_image scan ref
-  keys=${AI_STACK_SIGNING_DIR:-$HOME/.config/ai-stack/signing}
-  [[ -s $here/signing/cosign.pub && -s $keys/cosign.key && -s $keys/cosign_password.cred ]] ||
-    stop 'image signing is not set up: run signing/init-key.sh and commit signing/cosign.pub'
-  authfile=${REGISTRY_AUTH_FILE:-${XDG_RUNTIME_DIR:-/run/user/$UID}/containers/auth.json}
-  [[ -s $authfile ]] || stop "no registry login at $authfile; run podman login first"
-  cosign_image=$(digest_image COSIGN_IMAGE)
+# Scan without registry mutation or signing-key access (also used by publish).
+scan_image() {
+  local tag=$1 run=$2 allowlist=$3 trivy_image scan
+  local -a scan_limits=()
+  [[ $stage != sandbox ]] || scan_limits=(--cpus=2 --memory=2g --memory-swap=2g)
   trivy_image=$(digest_image TRIVY_IMAGE)
   scan=$run/out/scan
   mkdir -p "$scan" "$root/scan" "$root/trivy-cache"
-  rm -f -- "$scan/pushed.digest"
   podman save --format docker-archive -o "$root/scan/image.tar" "$tag"
   trivy() {
-    podman run --rm --pull=missing --network host --user 0:0 -v "$root/scan:/scan:ro" \
+    podman run "${scan_limits[@]}" --rm --pull=missing --network host --user 0:0 -v "$root/scan:/scan:ro" \
       -v "$root/trivy-cache:/cache" -v "$scan:/out" "$trivy_image" image --cache-dir /cache \
       --input /scan/image.tar --scanners vuln --quiet "$@"
   }
@@ -158,6 +151,21 @@ publish() {
     version --cache-dir /cache --format json >"$scan/trivy-version.json"
   python3 "$here/image/scan-policy.py" "$scan/vulns.json" "$allowlist" >"$scan/policy.json" ||
     stop "vulnerability policy blocks this image; see $scan/policy.json"
+}
+# Scan before push, then sign and attest; image.digest is written only once
+# the pushed image verifies, so a failed step is retried on the next run.
+# Usage: publish TAG RUN_DIR SCAN_ALLOWLIST
+publish() {
+  local tag=$1 run=$2 allowlist=$3 keys authfile cosign_image scan ref
+  keys=${AI_STACK_SIGNING_DIR:-$HOME/.config/ai-stack/signing}
+  [[ -s $here/signing/cosign.pub && -s $keys/cosign.key && -s $keys/cosign_password.cred ]] ||
+    stop 'image signing is not set up: run signing/init-key.sh and commit signing/cosign.pub'
+  authfile=${REGISTRY_AUTH_FILE:-${XDG_RUNTIME_DIR:-/run/user/$UID}/containers/auth.json}
+  [[ -s $authfile ]] || stop "no registry login at $authfile; run podman login first"
+  cosign_image=$(digest_image COSIGN_IMAGE)
+  scan=$run/out/scan
+  scan_image "$tag" "$run" "$allowlist"
+  rm -f -- "$scan/pushed.digest"
   podman push --digestfile "$scan/pushed.digest" "$tag"
   ref=${tag%:*}@$(<"$scan/pushed.digest")
   COSIGN_PASSWORD=$(systemd-creds --user decrypt --name=cosign_password "$keys/cosign_password.cred" -)
@@ -179,6 +187,46 @@ publish() {
   mv -- "$scan/pushed.digest" "$run/out/image.digest"
   printf 'PUSHED=%s\nSIGNED=%s\n' "$ref" "$ref"
 }
+if [[ $stage == sandbox ]]; then
+  track /dev/null
+  sandbox_files=("$here"/sandbox/{Containerfile,control.py,terminal.py,smoke.py,scan-allowlist.json})
+  sandbox_key=$(key_of "$(read_lock OPEN_TERMINAL_COMMIT)" "$(read_lock TERMINALS_COMMIT)" \
+    "$(read_lock PLAYWRIGHT_VERSION)" \
+    "$(digest_image RUNTIME_BASE_IMAGE)" "$(content "${sandbox_files[@]}")")
+  sandbox_run=$root/builds/sandbox-$sandbox_key
+  tag=$(read_lock SANDBOX_IMAGE_REPOSITORY):$sandbox_key
+  mkdir -p "$sandbox_run/src" "$sandbox_run/out"
+  cp "${sandbox_files[@]}" "$sandbox_run/src/"
+  for source in terminal terminals; do
+    if [[ $source == terminal ]]; then
+      revision=$(commit OPEN_TERMINAL_COMMIT)
+      upstream=https://github.com/open-webui/open-terminal.git
+    else
+      revision=$(commit TERMINALS_COMMIT)
+      upstream=https://github.com/open-webui/terminals.git
+    fi
+    mkdir -p "$sandbox_run/$source-git" "$sandbox_run/src/$source-source"
+    git -C "$sandbox_run/$source-git" init -q
+    git -C "$sandbox_run/$source-git" fetch -q --depth 1 "$upstream" "$revision"
+    [[ $(git -C "$sandbox_run/$source-git" rev-parse FETCH_HEAD) == "$revision" ]] || stop 'sandbox source revision mismatch'
+    git -C "$sandbox_run/$source-git" archive FETCH_HEAD | tar -x -C "$sandbox_run/src/$source-source"
+  done
+  podman build --pull=missing --cpu-period=100000 --cpu-quota=200000 --memory=2g --memory-swap=2g \
+    --build-arg RUNTIME_BASE_IMAGE="$(digest_image RUNTIME_BASE_IMAGE)" \
+    --build-arg PLAYWRIGHT_VERSION="$(read_lock PLAYWRIGHT_VERSION)" \
+    -f "$sandbox_run/src/Containerfile" -t "$tag" "$sandbox_run/src"
+  podman run --rm --pull=never --network none --read-only --user 1000:1000 \
+    --cap-drop=ALL --security-opt=no-new-privileges --cpus=0.75 --memory=2g --memory-swap=2g --pids-limit=256 \
+    --tmpfs /home/user:rw,mode=1777,size=512m --tmpfs /tmp:rw,mode=1777,size=128m \
+    "$tag" python /opt/sandbox/smoke.py
+  printf 'IMAGE=%s\n' "$tag"
+  if [[ ${AI_STACK_PUSH:-0} == 1 ]]; then
+    publish "$tag" "$sandbox_run" "$here/sandbox/scan-allowlist.json"
+  else
+    scan_image "$tag" "$sandbox_run" "$here/sandbox/scan-allowlist.json"
+  fi
+  exit 0
+fi
 if [[ $stage == graphiti ]]; then
   tag=$(read_lock GRAPHITI_IMAGE_REPOSITORY):$graphiti_key
   if podman image exists "$tag" && [[ ${AI_STACK_PUSH:-0} != 1 || -s $graphiti_run/out/image.digest ]]; then

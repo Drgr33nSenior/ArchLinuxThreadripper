@@ -228,6 +228,8 @@ SESSION_STREAMING_PATH=sunshine
 # family and coder render the service from this checkout and apply it inside the
 # session switch (docs/MODES.md). Uncomment and set the site file for those two modes.
 # MODE_SERVICE_SITE=/home/OWNER/ai-stack/private/site.json
+# Optional; refuses shared mode until its existing CPU/RAM budget is qualified.
+# MODE_SANDBOX_CONFIG=/home/OWNER/ai-stack/private/sandbox.json
 # Composition the renders use (service, assistant or assistant-memory).
 MODE_SERVICE_EXPERIENCE=assistant-memory
 # Optional overrides; the defaults are shown.

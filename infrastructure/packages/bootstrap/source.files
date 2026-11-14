@@ -599,3 +599,10 @@ infrastructure/ai-stack/serving/qualify.py
 infrastructure/ai-stack/serving/qwen3.8-27b-mxfp4-tp2.json
 infrastructure/ai-stack/serving/render.py
 infrastructure/ai-stack/stack.lock
+lib/workstation/sandbox.py
+infrastructure/ai-stack/sandbox/Containerfile
+infrastructure/ai-stack/sandbox/control.py
+infrastructure/ai-stack/sandbox/terminal.py
+infrastructure/ai-stack/sandbox/smoke.py
+infrastructure/ai-stack/sandbox/scan-allowlist.json
+docs/assets/sandbox-game-20261114.png
