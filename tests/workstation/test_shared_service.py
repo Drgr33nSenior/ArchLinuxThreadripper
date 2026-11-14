@@ -87,7 +87,10 @@ class BoundaryTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("defaultReasoningEffort", served)  # no contract default in this fixture
         self.assertNotIn("supportedReasoningEfforts", other)
         self.assertEqual(boundary.CHAT_MODELS[served["id"]][0], served["context_window"])
+        # The allowance a request gets by default: the context wheel is full at the difference.
+        self.assertEqual((32768, 4096), (served["context_window"], served["max_output_tokens"]))
         self.assertNotIn("context_window", other)
+        self.assertNotIn("max_output_tokens", other)
         self.assertEqual(int(dict(messages[0]["headers"])[b"content-length"]), len(body))
         with mock.patch.object(boundary, "DEFAULT_REASONING_EFFORT", "high"):
             self.assertEqual("xhigh", boundary.reasoning_declaration()["defaultReasoningEffort"])
@@ -116,7 +119,7 @@ class BoundaryTests(unittest.IsolatedAsyncioTestCase):
     async def test_model_list_reports_full_context_without_changing_input_or_output_budgets(self):
         async def listing(scope, receive, send):
             await boundary.reply(send, 200, {"data": [
-                {"id": "fixture-chat", "max_input_tokens": 1200, "max_output_tokens": 512, "context_window": 1},
+                {"id": "fixture-chat", "max_input_tokens": 1200, "max_output_tokens": 1, "context_window": 1},
                 {"id": "fixture-embedding"},
                 None,
             ]})
