@@ -1,16 +1,31 @@
 --- a/PKGBUILD
 +++ b/PKGBUILD
-@@ -7,7 +7,7 @@
+@@ -6,7 +6,7 @@
+ # will be on config.extra file.
  
  pkgbase=linux-git
 -pkgver=7.0.r11782.c1f49dea2b8f
-+pkgver=7.3.3.r0.d50d994bffa3.stable.linux
--pkgrel=1
-+pkgrel=3
++pkgver=7.3.4.r0.7595a62d45ee.stable.linux
+ pkgrel=1
  pkgdesc="Linus Torvalds' Mainline Linux"
  url="https://www.kernel.org"
- arch=(x86_64)
-@@ -214,14 +214,22 @@
+@@ -56,6 +56,7 @@
+   config.user    # user custom config
+   remote         # custom remote config
+   patches        # user patches config
++  0001-drm-amdgpu-fix-TLB-invalidation-fence-handling-v4.patch  # carried amdgpu fix (AMD drm-fixes-7.4 566ed98e48be); drop once 7.3.y has it
+ )
+ validpgpkeys=(
+   'ABAF11C65A2970B130ABE3C479BE3E4300411886'  # Linus Torvalds
+@@ -68,6 +69,7 @@
+   'SKIP'                                                                                                                              # config.user
+   'SKIP'                                                                                                                              # remote
+   'a483bfcc2f7926def88842a1b5da5170ed50e941d82e5389521c71e82015f1b1d8503efda1517f85105a5ed218bd4ca282f4381b16926cdc774c85b8b5a11615'  # patches
++  'f891e51d1b5fa9c6dba52583d95c78cbeed6e274f4695963ac6e5953c147f16de904c8360fbabe4071a0b5ae5ed55b56355318500db2b9b476b70ca76c4faf21'  # 0001-drm-amdgpu-fix-TLB-invalidation-fence-handling-v4.patch
+ )
+ 
+ export KBUILD_BUILD_HOST=archlinux
+@@ -214,14 +216,22 @@
  }
  
  _package-headers() {

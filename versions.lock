@@ -41,9 +41,9 @@ LINUX_GIT_AUR_COMMIT=c783913866ae402948c9becf6ea60c52a50f8204
 LINUX_GIT_SOURCE_REPOSITORY=stable/linux
 # Upstream stable release; the native build still requires hardware-profile,
 # package, boot and rollback qualification on this workstation.
-LINUX_GIT_SOURCE_TAG=v7.3.3
-LINUX_GIT_SOURCE_TAG_OBJECT=b7cb9f473aa648c37e68d08cb2f3c154f17f593c
-LINUX_GIT_SOURCE_COMMIT=d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd
+LINUX_GIT_SOURCE_TAG=v7.3.4
+LINUX_GIT_SOURCE_TAG_OBJECT=8310b43a724c54668eeaa6860234078a7886915a
+LINUX_GIT_SOURCE_COMMIT=7595a62d45ee1a2297eafa5f2ef5d0a45142d84d
 AWS_SSM_AUR_REPOSITORY=https://aur.archlinux.org/aws-session-manager-plugin.git
 AWS_SSM_AUR_COMMIT=aa93839e62d2eb14ebfdd4eb38a538d5172c2674
 # AMD migration source inputs inspected 2026-09-04. These are candidates, not a

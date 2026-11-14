@@ -213,17 +213,31 @@ directories and does not change the locked input checkout.
 
 The build applies `templates/workstation/linux-git-packaging.patch` to a
 verified copy of the locked recipe. It pins the recipe's version to the locked
-7.3.3 stable source so makepkg does not reset the package release after
+7.3.4 stable source so makepkg does not reset the package release after
 configuration.
-Package release 2 added the headers package's required script interpreters,
-cryptography module and tools, and removes its incorrect backup entries.
-Release 3 enables AMD PCIe peer support and omits the four other GPU families
-listed in the target overlay. These configuration choices are retained for 7.3.3.
-It does not change kernel code or disable package audits. The build retains the
+The headers package carries its required script interpreters, cryptography
+module and tools, and has no incorrect backup entries (added in 7.3.3 releases 2
+and 3). AMD PCIe peer support is enabled and the four other GPU families listed
+in the target overlay are omitted. These configuration choices carry over
+unchanged to 7.3.4, which starts again at package release 1.
+It does not disable package audits. Kernel code changes only through upstream fixes
+carried in `templates/workstation/linux-git-patches/`, each one verbatim from an
+upstream tree and listed with its b2sum in the recipe's `source=()` by the
+packaging patch: makepkg verifies it and the recipe's `prepare()` applies it after
+checking out the locked commit. The builder refuses a carried patch the recipe does
+not list, and records each one's name and SHA-256 in `linux-git.build-lock`. Drop
+a carried patch, and its source and b2sum lines, as soon as a pinned stable release
+contains the fix.
+
+Carried for 7.3.4:
+
+| Patch | Upstream | Why | Drop when |
+| --- | --- | --- | --- |
+| `0001-drm-amdgpu-fix-TLB-invalidation-fence-handling-v4.patch` | AMD `drm-fixes-7.4` commit `566ed98e48be` (Christian König; reviewed by Felix Kuehling; `Cc: stable`) | With full Resizable BAR (both R9700s) amdgpu updates compute page tables with the CPU, and a combined unmap/map could skip waiting for the TLB invalidation, so a later map at the same address hit stale translations. ComfyUI's DynamicVRAM remaps constantly (ROCm TheRock issue 8744) | a 7.3.y stable release includes it | The build retains the
 effective recipe and patch hashes. Audit logs and detached signatures are not
 package archives and are excluded from artifact discovery.
 
-The current source records both the annotated `v7.3.3` tag object and its exact
+The current source records both the annotated `v7.3.4` tag object and its exact
 peeled commit from the upstream `stable/linux` tree. This is a released stable
 kernel, not a floating branch. The AUR package remains named `linux-git` so it
 can coexist with the official stable and LTS recovery packages.

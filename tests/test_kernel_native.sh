@@ -25,6 +25,7 @@ mkdir -p -- "$source_dir" "$chroot_dir" "$fake_bin" "$profile_dir"
 git init -q "$source_dir"
 cat >"$source_dir/PKGBUILD" <<'RECIPE'
 # Synthetic executable metadata; exact patch context from the locked recipe.
+# will be on config.extra file.
 
 pkgbase=linux-git
 pkgver=7.0.r11782.c1f49dea2b8f
@@ -33,6 +34,21 @@ pkgdesc="Linus Torvalds' Mainline Linux"
 url="https://www.kernel.org"
 arch=(x86_64)
 backup=(etc/linux-git/config etc/linux-git/remote etc/linux-git/patches/patches)
+source=(
+  config.user    # user custom config
+  remote         # custom remote config
+  patches        # user patches config
+)
+validpgpkeys=(
+  'ABAF11C65A2970B130ABE3C479BE3E4300411886'  # Linus Torvalds
+)
+b2sums=(
+  'SKIP'                                                                                                                              # config.user
+  'SKIP'                                                                                                                              # remote
+  'a483bfcc2f7926def88842a1b5da5170ed50e941d82e5389521c71e82015f1b1d8503efda1517f85105a5ed218bd4ca282f4381b16926cdc774c85b8b5a11615'  # patches
+)
+
+export KBUILD_BUILD_HOST=archlinux
 _package() {
   :
 }
@@ -61,13 +77,13 @@ git -C "$source_dir" add PKGBUILD config config.extra config.user remote patches
 git -C "$source_dir" -c user.name=Test -c user.email=test@example.invalid commit -qm initial
 git -C "$source_dir" remote add origin https://example.invalid/linux-git.git
 aur_commit="$(git -C "$source_dir" rev-parse HEAD)"
-kernel_commit=d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd
+kernel_commit=7595a62d45ee1a2297eafa5f2ef5d0a45142d84d
 cat >"$lock_file" <<EOF
 LINUX_GIT_AUR_REPOSITORY=https://example.invalid/linux-git.git
 LINUX_GIT_AUR_COMMIT=$aur_commit
 LINUX_GIT_SOURCE_REPOSITORY=stable/linux
-LINUX_GIT_SOURCE_TAG=v7.3.3
-LINUX_GIT_SOURCE_TAG_OBJECT=b7cb9f473aa648c37e68d08cb2f3c154f17f593c
+LINUX_GIT_SOURCE_TAG=v7.3.4
+LINUX_GIT_SOURCE_TAG_OBJECT=8310b43a724c54668eeaa6860234078a7886915a
 LINUX_GIT_SOURCE_COMMIT=$kernel_commit
 EOF
 
@@ -178,6 +194,16 @@ for override in etc/linux-git/config etc/linux-git/remote etc/linux-git/patches/
 done
 
 ws_kernel_stage_packaging "$source_dir" "$aur_commit" "$stage_dir" "$repo_root/templates/workstation/linux-git-packaging.patch" >/dev/null
+ws_kernel_stage_carried_patches "$stage_dir"
+cmp -s "$repo_root/templates/workstation/linux-git-patches/0001-drm-amdgpu-fix-TLB-invalidation-fence-handling-v4.patch" "$stage_dir/0001-drm-amdgpu-fix-TLB-invalidation-fence-handling-v4.patch"
+# A carried patch the recipe does not list (so makepkg would not verify or apply it) is refused.
+unlisted_stage="$work/unlisted-stage"
+mkdir -p -- "$unlisted_stage"
+grep -vF '0001-drm-amdgpu-fix-TLB-invalidation-fence-handling-v4.patch' "$stage_dir/PKGBUILD" >"$unlisted_stage/PKGBUILD"
+if (ws_kernel_stage_carried_patches "$unlisted_stage") >/dev/null 2>&1; then
+  echo 'a carried kernel patch missing from the recipe sources was staged' >&2
+  exit 1
+fi
 (
   # Only the synthetic, local fixture is sourced here.
   pkgrel=''
@@ -186,8 +212,8 @@ ws_kernel_stage_packaging "$source_dir" "$aur_commit" "$stage_dir" "$repo_root/t
   depends=()
   # shellcheck disable=SC1091
   source "$stage_dir/PKGBUILD"
-  [[ $pkgrel == 3 && ${#backup[@]} == 3 ]]
-  [[ $pkgver == 7.3.3.r0.d50d994bffa3.stable.linux ]]
+  [[ $pkgrel == 1 && ${#backup[@]} == 3 ]]
+  [[ $pkgver == 7.3.4.r0.7595a62d45ee.stable.linux ]]
   _package-headers
   [[ ${#backup[@]} == 0 ]]
   for dependency in python python-cryptography perl sed make gawk; do
@@ -258,9 +284,12 @@ grep -Fxq 'installed = rust-1.90.0-1' "$output_dir/linux-git.headers.BUILDINFO"
 grep -Fxq 'W: synthetic warning retained for review' "$output_dir/linux-git.namcap.txt"
 grep -Fxq "AUR_COMMIT=$aur_commit" "$output_dir/linux-git.build-lock"
 grep -Fxq 'KERNEL_SOURCE_REPOSITORY=stable/linux' "$output_dir/linux-git.build-lock"
-grep -Fxq 'KERNEL_SOURCE_TAG=v7.3.3' "$output_dir/linux-git.build-lock"
-grep -Fxq 'KERNEL_SOURCE_TAG_OBJECT=b7cb9f473aa648c37e68d08cb2f3c154f17f593c' "$output_dir/linux-git.build-lock"
+grep -Fxq 'KERNEL_SOURCE_TAG=v7.3.4' "$output_dir/linux-git.build-lock"
+grep -Fxq 'KERNEL_SOURCE_TAG_OBJECT=8310b43a724c54668eeaa6860234078a7886915a' "$output_dir/linux-git.build-lock"
 grep -Fxq "KERNEL_SOURCE_COMMIT=$kernel_commit" "$output_dir/linux-git.build-lock"
+# The carried upstream fix is staged for makepkg, kept with the packages and locked.
+grep -Eq '^CARRIED_PATCH=0001-drm-amdgpu-fix-TLB-invalidation-fence-handling-v4.patch [a-f0-9]{64}$' "$output_dir/linux-git.build-lock"
+cmp -s "$repo_root/templates/workstation/linux-git-patches/0001-drm-amdgpu-fix-TLB-invalidation-fence-handling-v4.patch" "$output_dir/0001-drm-amdgpu-fix-TLB-invalidation-fence-handling-v4.patch"
 grep -Eq '^HARDWARE_POLICY_SHA256=[a-f0-9]{64}$' "$output_dir/linux-git.build-lock"
 grep -Eq '^PACKAGING_PATCH_SHA256=[a-f0-9]{64}$' "$output_dir/linux-git.build-lock"
 grep -Eq '^EFFECTIVE_PKGBUILD_SHA256=[a-f0-9]{64}$' "$output_dir/linux-git.build-lock"

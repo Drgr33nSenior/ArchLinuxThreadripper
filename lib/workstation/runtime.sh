@@ -260,6 +260,32 @@ ws_kernel_stage_packaging() {
   patch --batch --forward --fuzz=0 -d "$build_dir" -p1 <"$patch_file" || ws_die 'kernel packaging patch failed'
 }
 
+# Upstream fixes carried until a stable release includes them. Each one must also be
+# listed, with its b2sum, in the recipe's source=() by the reviewed packaging patch,
+# so makepkg verifies it and the recipe's prepare() applies it with patch -Np1.
+ws_kernel_carried_patches() {
+  local dir patch
+  dir="$(ws_repo_root)/templates/workstation/linux-git-patches"
+  [[ -d $dir && ! -L $dir ]] || return 0
+  for patch in "$dir"/*.patch; do
+    [[ -e $patch ]] || continue
+    [[ -f $patch && ! -L $patch ]] || ws_die "carried kernel patch is not a regular file: $patch"
+    printf '%s\n' "$patch"
+  done
+}
+
+ws_kernel_stage_carried_patches() {
+  local build_dir=$1 patch name list
+  list=$(ws_kernel_carried_patches) || return 1
+  while IFS= read -r patch; do
+    [[ -n $patch ]] || continue
+    name=${patch##*/}
+    grep -Fq "  $name  #" "$build_dir/PKGBUILD" ||
+      ws_die "carried kernel patch is not listed in the recipe sources: $name"
+    install -m 0644 -- "$patch" "$build_dir/$name"
+  done <<<"$list"
+}
+
 ws_kernel_reject_chroot_overrides() {
   local chroot_dir="$1" relative path
   for relative in etc/linux-git/config etc/linux-git/remote etc/linux-git/patches/patches; do
@@ -367,7 +393,7 @@ ws_kernel_build() {
   ws_require_user
   (($# == 4 || $# == 5)) || ws_die 'kernel build requires AUR checkout, clean chroot, observed profile, output directory and optional versions.lock'
   local source_dir="$1" chroot_dir="$2" profile_dir="$3" output_dir="$4" lock_file="${5:-$(ws_repo_root)/versions.lock}"
-  local expected_repo expected_commit source_repo source_commit source_tag source_tag_object build_dir template policy jobs headers_package effective_config config_delta buildinfo toolchain_metadata namcap_report package package_hashes diff_status module_inventory profile_validation packaging_patch package_list
+  local expected_repo expected_commit source_repo source_commit source_tag source_tag_object build_dir template policy jobs headers_package effective_config config_delta buildinfo toolchain_metadata namcap_report package package_hashes diff_status module_inventory profile_validation packaging_patch package_list patch
   [[ $(uname -m) == x86_64 ]] || ws_die 'native kernel build is supported only on the x86_64 target host'
   [[ ! -e "$output_dir" && ! -L "$output_dir" ]] || ws_die "kernel output already exists; refusing to replace candidate: $output_dir"
   chroot_dir="$(ws_validate_clean_chroot "$chroot_dir")"
@@ -396,6 +422,7 @@ ws_kernel_build() {
   ws_kernel_stage_native_config "$source_dir" "$expected_commit" "$build_dir" "$template"
   packaging_patch="$(ws_repo_root)/templates/workstation/linux-git-packaging.patch"
   ws_kernel_stage_packaging "$source_dir" "$expected_commit" "$build_dir" "$packaging_patch"
+  ws_kernel_stage_carried_patches "$build_dir"
   printf 'REMOTE=%q\nCOMMIT=%q\n' "$source_repo" "$source_commit" >"$build_dir/remote"
   (
     cd -- "$build_dir"
@@ -468,6 +495,14 @@ ws_kernel_build() {
     "$(common::sha256_file "$output_dir/linux-git.headers.BUILDINFO")" "$(common::sha256_file "$output_dir/linux-git.chroot-toolchain.txt")" \
     "$(common::sha256_file "$output_dir/linux-git.namcap.txt")" "$(basename -- "$package_hashes")" \
     "$(common::sha256_file "$package_hashes")" >"$output_dir/linux-git.build-lock"
+  # Record each carried upstream fix beside the packages it went into.
+  local carried
+  carried=$(ws_kernel_carried_patches) || return 1
+  while IFS= read -r patch; do
+    [[ -n $patch ]] || continue
+    install -m 0644 -- "$patch" "$output_dir/${patch##*/}"
+    printf 'CARRIED_PATCH=%s %s\n' "${patch##*/}" "$(common::sha256_file "$patch")" >>"$output_dir/linux-git.build-lock"
+  done <<<"$carried"
   printf 'PACKAGING_PATCH_SHA256=%s\nEFFECTIVE_PKGBUILD_SHA256=%s\n' \
     "$(common::sha256_file "$packaging_patch")" "$(common::sha256_file "$output_dir/linux-git.PKGBUILD")" >>"$output_dir/linux-git.build-lock"
   if grep -Eq '(^|[[:space:]])(W|WARNING|Warning):' "$namcap_report"; then

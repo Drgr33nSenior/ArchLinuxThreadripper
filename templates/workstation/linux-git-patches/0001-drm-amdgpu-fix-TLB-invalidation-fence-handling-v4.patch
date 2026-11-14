@@ -1,0 +1,281 @@
+From 566ed98e48be75a76eea34745815a51ba36687a8 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Christian=20K=C3=B6nig?= <christian.koenig@amd.com>
+Date: Thu, 8 Oct 2026 14:10:14 +0200
+Subject: [PATCH] drm/amdgpu: fix TLB invalidation fence handling v4
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+After each unmap it might be necessary to invalidate the TLB to flush out
+VM changes to the HW and make it visible to executing work.
+
+We tracked that as part of the vm->last_update fence, but as pointed out
+by David it can be that this is overwritten by PDE updates when we have a
+combined unmap/map operation.
+
+In that case userspace doesn't correctly wait for the TLB invalidation to
+finish leading to all kind of problems (sq_int, page faults etc...).
+
+v2: fix ref leaking and error handling as pointed out by AI
+v3: fix inverted ! pointed out by Benjamin
+v4: fix || / && pointed out by Benjamin
+
+Signed-off-by: Christian König <christian.koenig@amd.com>
+Reviewed-by: Felix Kuehling <felix.kuehling@amd.com>
+Signed-off-by: Alex Deucher <alexander.deucher@amd.com>
+(cherry picked from commit 892f46c7ae70969dbe0e0b88b5864df6f5582b98)
+Cc: stable@vger.kernel.org
+---
+ drivers/gpu/drm/amd/amdgpu/amdgpu_gem.c       | 32 ++++++++-------
+ drivers/gpu/drm/amd/amdgpu/amdgpu_vm.c        | 39 +++++++++----------
+ drivers/gpu/drm/amd/amdgpu/amdgpu_vm.h        | 13 ++++---
+ .../gpu/drm/amd/amdgpu/amdgpu_vm_tlb_fence.c  | 22 ++++++++---
+ 4 files changed, 60 insertions(+), 46 deletions(-)
+
+diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_gem.c b/drivers/gpu/drm/amd/amdgpu/amdgpu_gem.c
+index fb51866..b190b6c 100644
+--- a/drivers/gpu/drm/amd/amdgpu/amdgpu_gem.c
++++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_gem.c
+@@ -826,8 +826,10 @@ amdgpu_gem_va_update_vm(struct amdgpu_device *adev,
+ 
+ 	/* Always update PDEs after we touched the mappings. */
+ 	r = amdgpu_vm_update_pdes(adev, vm, false);
+-	if (r)
+-		goto error;
++
++error:
++	if (r && r != -ERESTARTSYS)
++		DRM_ERROR("Couldn't update BO_VA (%d)\n", r);
+ 
+ 	if ((operation == AMDGPU_VA_OP_MAP ||
+ 	     operation == AMDGPU_VA_OP_REPLACE) &&
+@@ -836,27 +838,27 @@ amdgpu_gem_va_update_vm(struct amdgpu_device *adev,
+ 		/*
+ 		 * For MAP/REPLACE of non per-VM BOs we need to sync to both the
+ 		 * bo_va->last_pt_update and vm->last_update or otherwise we
+-		 * potentially miss the PDE updates.
++		 * potentially miss the PDE updates or TLB invalidation.
+ 		 */
+ 		fence = dma_fence_unwrap_merge(vm->last_update,
++					       vm->last_tlb_inv,
+ 					       bo_va->last_pt_update);
+-		if (!fence) {
+-			/* As fallback in OOM situations */
+-			dma_fence_wait(vm->last_update, false);
++		if (!fence)
+ 			dma_fence_wait(bo_va->last_pt_update, false);
+-			fence = dma_fence_get_stub();
+-		}
++
+ 	} else {
+-		fence = dma_fence_get(vm->last_update);
++		fence = dma_fence_unwrap_merge(vm->last_update,
++					       vm->last_tlb_inv);
+ 	}
+ 
+-	return fence;
+-
+-error:
+-	if (r && r != -ERESTARTSYS)
+-		DRM_ERROR("Couldn't update BO_VA (%d)\n", r);
++	if (!fence) {
++		/* As fallback in OOM situations */
++		dma_fence_wait(vm->last_update, false);
++		dma_fence_wait(vm->last_tlb_inv, false);
++		fence = dma_fence_get_stub();
++	}
+ 
+-	return dma_fence_get(vm->last_update);
++	return fence;
+ }
+ 
+ int amdgpu_gem_va_ioctl(struct drm_device *dev, void *data,
+diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_vm.c b/drivers/gpu/drm/amd/amdgpu/amdgpu_vm.c
+index 1605a5b..82b9b2d 100644
+--- a/drivers/gpu/drm/amd/amdgpu/amdgpu_vm.c
++++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_vm.c
+@@ -1083,21 +1083,16 @@ static void amdgpu_vm_tlb_seq_cb(struct dma_fence *fence,
+  */
+ static void
+ amdgpu_vm_tlb_flush(struct amdgpu_vm_update_params *params,
+-		    struct dma_fence **fence,
++		    struct dma_fence *fence,
+ 		    struct amdgpu_vm_tlb_seq_struct *tlb_cb)
+ {
+ 	struct amdgpu_vm *vm = params->vm;
+ 
+ 	tlb_cb->vm = vm;
+-	if (!fence || !*fence) {
+-		amdgpu_vm_tlb_seq_cb(NULL, &tlb_cb->cb);
+-		return;
+-	}
+-
+-	if (!dma_fence_add_callback(*fence, &tlb_cb->cb,
+-				    amdgpu_vm_tlb_seq_cb)) {
+-		dma_fence_put(vm->last_tlb_flush);
+-		vm->last_tlb_flush = dma_fence_get(*fence);
++	if (fence && !dma_fence_add_callback(fence, &tlb_cb->cb,
++					     amdgpu_vm_tlb_seq_cb)) {
++		dma_fence_put(vm->last_seq_flush);
++		vm->last_seq_flush = dma_fence_get(fence);
+ 	} else {
+ 		amdgpu_vm_tlb_seq_cb(NULL, &tlb_cb->cb);
+ 	}
+@@ -1107,11 +1102,12 @@ amdgpu_vm_tlb_flush(struct amdgpu_vm_update_params *params,
+ 	 * sort out the issues with KIQ/MES TLB invalidation timeouts.
+ 	 */
+ 	if (!params->unlocked && vm->need_tlb_fence) {
+-		amdgpu_vm_tlb_fence_create(params->adev, vm, fence);
++		amdgpu_vm_tlb_fence_create(params->adev, vm, fence,
++					   &vm->last_tlb_inv);
+ 
+ 		/* Makes sure no PD/PT is freed before the flush */
+-		dma_resv_add_fence(vm->root.bo->tbo.base.resv, *fence,
+-				   DMA_RESV_USAGE_BOOKKEEP);
++		dma_resv_add_fence(vm->root.bo->tbo.base.resv,
++				   vm->last_tlb_inv, DMA_RESV_USAGE_BOOKKEEP);
+ 	}
+ }
+ 
+@@ -1260,7 +1256,7 @@ int amdgpu_vm_update_range(struct amdgpu_device *adev, struct amdgpu_vm *vm,
+ 		goto error_free;
+ 
+ 	if (params.needs_flush) {
+-		amdgpu_vm_tlb_flush(&params, fence, tlb_cb);
++		amdgpu_vm_tlb_flush(&params, *fence, tlb_cb);
+ 		tlb_cb = NULL;
+ 	}
+ 
+@@ -2659,7 +2655,8 @@ int amdgpu_vm_init(struct amdgpu_device *adev, struct amdgpu_vm *vm,
+ 
+ 	vm->last_update = dma_fence_get_stub();
+ 	vm->last_unlocked = dma_fence_get_stub();
+-	vm->last_tlb_flush = dma_fence_get_stub();
++	vm->last_seq_flush = dma_fence_get_stub();
++	vm->last_tlb_inv = dma_fence_get_stub();
+ 	vm->generation = amdgpu_vm_generation(adev, NULL);
+ 
+ 	mutex_init(&vm->eviction_lock);
+@@ -2703,7 +2700,8 @@ error_free_root:
+ 
+ error_free_delayed:
+ 	dma_fence_put(vm->last_update);
+-	dma_fence_put(vm->last_tlb_flush);
++	dma_fence_put(vm->last_seq_flush);
++	dma_fence_put(vm->last_tlb_inv);
+ 	dma_fence_put(vm->last_unlocked);
+ 	ttm_lru_bulk_move_fini(&adev->mman.bdev, &vm->lru_bulk_move);
+ 	amdgpu_vm_fini_entities(vm);
+@@ -2844,11 +2842,12 @@ void amdgpu_vm_fini(struct amdgpu_device *adev, struct amdgpu_vm *vm)
+ 	amdgpu_bo_reserve(root, true);
+ 	dma_fence_wait(vm->last_unlocked, false);
+ 	dma_fence_put(vm->last_unlocked);
+-	dma_fence_wait(vm->last_tlb_flush, false);
++	dma_fence_wait(vm->last_seq_flush, false);
+ 	/* Make sure that all fence callbacks have completed */
+-	dma_fence_lock_irqsave(vm->last_tlb_flush, flags);
+-	dma_fence_unlock_irqrestore(vm->last_tlb_flush, flags);
+-	dma_fence_put(vm->last_tlb_flush);
++	dma_fence_lock_irqsave(vm->last_seq_flush, flags);
++	dma_fence_unlock_irqrestore(vm->last_seq_flush, flags);
++	dma_fence_put(vm->last_seq_flush);
++	dma_fence_put(vm->last_tlb_inv);
+ 
+ 	list_for_each_entry_safe(mapping, tmp, &vm->freed, list) {
+ 		if (mapping->flags & AMDGPU_VM_PAGE_PRT && prt_fini_needed) {
+diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_vm.h b/drivers/gpu/drm/amd/amdgpu/amdgpu_vm.h
+index 8e478d3..713a597 100644
+--- a/drivers/gpu/drm/amd/amdgpu/amdgpu_vm.h
++++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_vm.h
+@@ -328,11 +328,12 @@ struct amdgpu_vm {
+ 	struct drm_sched_entity	immediate;
+ 	struct drm_sched_entity	delayed;
+ 
+-	/* Last finished delayed update */
++	/* Last TLB seq/fence */
+ 	atomic64_t		tlb_seq;
+-	struct dma_fence	*last_tlb_flush;
++	struct dma_fence	*last_seq_flush;
+ 	atomic64_t		kfd_last_flushed_seq;
+ 	uint64_t		tlb_fence_context;
++	struct dma_fence	*last_tlb_inv;
+ 
+ 	/* How many times we had to re-generate the page tables */
+ 	uint64_t		generation;
+@@ -561,7 +562,7 @@ static inline uint64_t amdgpu_vm_tlb_seq(struct amdgpu_vm *vm)
+ 	 * sure that the dma_fence structure isn't freed up.
+ 	 */
+ 	rcu_read_lock();
+-	lock = dma_fence_spinlock(vm->last_tlb_flush);
++	lock = dma_fence_spinlock(vm->last_seq_flush);
+ 	rcu_read_unlock();
+ 
+ 	spin_lock_irqsave(lock, flags);
+@@ -576,9 +577,9 @@ void amdgpu_vm_update_fault_cache(struct amdgpu_device *adev,
+ 				  uint32_t status,
+ 				  unsigned int vmhub);
+ void amdgpu_vm_tlb_fence_create(struct amdgpu_device *adev,
+-				 struct amdgpu_vm *vm,
+-				 struct dma_fence **fence);
+-
++				struct amdgpu_vm *vm,
++				struct dma_fence *dep,
++				struct dma_fence **fence);
+ void amdgpu_vm_print_task_info(struct amdgpu_device *adev,
+ 			       struct amdgpu_task_info *task_info);
+ 
+diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_vm_tlb_fence.c b/drivers/gpu/drm/amd/amdgpu/amdgpu_vm_tlb_fence.c
+index b0002c8..180e02d 100644
+--- a/drivers/gpu/drm/amd/amdgpu/amdgpu_vm_tlb_fence.c
++++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_vm_tlb_fence.c
+@@ -75,7 +75,19 @@ static const struct dma_fence_ops amdgpu_tlb_fence_ops = {
+ 	.get_timeline_name = amdgpu_tlb_fence_get_timeline_name
+ };
+ 
+-void amdgpu_vm_tlb_fence_create(struct amdgpu_device *adev, struct amdgpu_vm *vm,
++/**
++ * amdgpu_vm_tlb_fence_create - create a TLB invalidation fence
++ * @adev: the amdgpu device
++ * @vm: the vm to use
++ * @dep: the dependency to wait for
++ * @fence: the resulting fence
++ *
++ * Creates a TLB invalidation fence which signals when all the VMIDs assigned to
++ * the PASID of the VM are invalidated.
++ */
++void amdgpu_vm_tlb_fence_create(struct amdgpu_device *adev,
++				struct amdgpu_vm *vm,
++				struct dma_fence *dep,
+ 				struct dma_fence **fence)
+ {
+ 	struct amdgpu_tlb_fence *f;
+@@ -86,16 +98,15 @@ void amdgpu_vm_tlb_fence_create(struct amdgpu_device *adev, struct amdgpu_vm *vm
+ 		 * We can't fail since the PDEs and PTEs are already updated, so
+ 		 * just block for the dependency and execute the TLB flush
+ 		 */
+-		if (*fence)
+-			dma_fence_wait(*fence, false);
++		if (dep)
++			dma_fence_wait(dep, false);
+ 
+ 		amdgpu_gmc_flush_gpu_tlb_pasid(adev, vm->pasid, 2, true, 0);
+-		*fence = dma_fence_get_stub();
+ 		return;
+ 	}
+ 
+ 	f->adev = adev;
+-	f->dependency = *fence;
++	f->dependency = dma_fence_get(dep);
+ 	f->pasid = vm->pasid;
+ 	INIT_WORK(&f->work, amdgpu_tlb_fence_work);
+ 	spin_lock_init(&f->lock);
+@@ -107,5 +118,6 @@ void amdgpu_vm_tlb_fence_create(struct amdgpu_device *adev, struct amdgpu_vm *vm
+ 	dma_fence_get(&f->base);
+ 	schedule_work(&f->work);
+ 
++	dma_fence_put(*fence);
+ 	*fence = &f->base;
+ }
+-- 
+2.54.0 (Apple Git-157)
+
