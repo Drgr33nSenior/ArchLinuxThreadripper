@@ -14,7 +14,7 @@ It runs in **shared mode** today. [Service modes](MODES.md) explains the alterna
 
 | Feature | How to use it | Who |
 | --- | --- | --- |
-| Chat | Chat with `Qwen3.8-27B-MXFP4`. To change how long it thinks: the **Reasoning effort** slider in the message box (Off, Low, Medium, Max; it starts at Medium) | Everyone with an account |
+| Chat | Chat with `Qwen3.8-27B-MXFP4`. To change how long it thinks: the **Reasoning effort** slider in the message box (Off, Low, Medium, Max; it starts at Medium). The [ring beside the send button](#context-wheel) shows how full the conversation is; start a new chat when it turns red | Everyone with an account |
 | Pictures | Ask for a picture, or use the image button; Qwen-Image makes a 1328×1328 picture in about 65 s (75 s if two are rendering) | Accounts with picture permission (Admin and Parents) |
 | Short videos | Ask for a short video; a 5-second clip appears in the chat after about 80 s | Accounts with picture permission and the normal `user` role (the Parents' daily accounts); shared mode only |
 | Voice input | The microphone button; speech is transcribed on the workstation | Everyone |
@@ -802,6 +802,43 @@ Any other value is refused with `invalid_reasoning_effort`. Chat Controls and Pa
 enabled for every user (`USER_PERMISSIONS_CHAT_CONTROLS`/`_PARAMS`, pinned in
 `apps/components/assistant/assistant.env`), so the Family group has the control too.
 
+### Context wheel
+
+A small ring beside the send button shows how full the conversation's context is. Point at
+it (or focus it with the keyboard) for the numbers, for example "41,200 of 88,480 tokens
+(46%), including instructions and tools". A click opens Open WebUI's own status panel
+(the `/status` command).
+
+| Part | Source |
+| --- | --- |
+| Tokens used | The newest reply on the branch on screen that reported usage: its `prompt_tokens` plus `completion_tokens`, as SGLang counted them. The prompt already holds the system prompt, the tool definitions, attached files and every earlier message |
+| Capacity | `context_window` minus `max_output_tokens` from the gateway's model list: 100,768 − 12,288 = 88,480 in family mode, 262,112 − 12,288 = 249,824 in coder mode. Without `max_output_tokens` the whole window counts |
+| Colour | Grey below 75%, amber from 75%, red from 90%. Amber and red also print the percentage beside the ring, and red adds "start a new chat" to the tooltip |
+
+What it does not show:
+
+- **It is measured, not live.** The ring moves when a reply finishes. Text being typed, a
+  file just attached and a reply still streaming are not counted until the next reply
+  reports usage. Before the first reply the ring is empty and says so.
+- **It reads the last model call of a turn.** A turn that used tools made several calls;
+  the ring shows the last one, which contains the others. Open WebUI's `total_tokens` adds
+  the calls together and is not used.
+- **Thinking is counted once.** A reply's thinking is part of `completion_tokens`, and Open
+  WebUI by default does not send it back on the next turn, so the next prompt can be
+  smaller than the ring suggested.
+- **Max effort has more room than the ring says.** At Max the gateway sets no output
+  allowance, so a request is refused only when the prompt alone exceeds the window. The
+  ring keeps the 12,288-token reserve for every effort.
+- **A regenerated or edited turn** shows the branch on screen, not its siblings. A preset
+  uses its base model's fields when the account can see the base model.
+
+The ring appears only for a model whose list entry carries `context_window`. Nothing is
+requested or stored for it: the browser reads the chat and the model list it already holds. Each person can
+hide it under **Settings → Interface → Show Context Usage**. Upstream Open WebUI 0.13.3
+shows a token count in its status panel and a percentage only with context compaction
+enabled (it is not, here); the ring is the fork's addition and reuses upstream's usage
+reader.
+
 The earlier `· Think` and `· Fast` model presets are retired. A deployment that still has
 them keeps them in Open WebUI's database: an admin deletes them under **Admin Panel →
 Settings → Models** (or Workspace → Models). Nothing re-creates them.
@@ -1117,11 +1154,12 @@ failed-test-to-fix cycle, interrupt and resume, and context compaction.
 ## Pinned inputs and gates
 
 The new experience pins Open WebUI **0.13.3** from the workstation fork
-(`Drgr33nSenior/open-webui`, commit `2cd8ab0d79f95cbf6c869e8699a5475038e73e68`: upstream
-`b0e6098e9409` plus provider-declared Model Controls, four dependency fixes and the
-[per-group web search confirmation](#web-search-confirmation-per-group)), built,
+(`Drgr33nSenior/open-webui`, commit `b54c6e75f719e4063b66b4c29b3a830c402f0963`: upstream
+`b0e6098e9409` plus provider-declared Model Controls, four dependency fixes, the
+[per-group web search confirmation](#web-search-confirmation-per-group) and the
+[context wheel](#context-wheel)), built,
 scanned and signed by the `webui` AI-stack stage as
-`registry.lan.thespry.family/local/open-webui:0d02ef9cdebe@sha256:e53f34d99004ffa3d33938b8f88f70824ba471cb13de23cd53dcf6aa65a7e462`.
+`registry.lan.thespry.family/local/open-webui:2367f24ee8f8@sha256:fe550dacba896cec4fe63202855e3a6c063d82924ee19014467137a93ce17aa8`.
 The legacy `service` experience retains its previous selection. The older RAG
 functional gate is evidence for its recorded image, not qualification of 0.13.3.
 Run a fresh UI/account, upload/ACL, retrieval, web-search/tool and image-return
