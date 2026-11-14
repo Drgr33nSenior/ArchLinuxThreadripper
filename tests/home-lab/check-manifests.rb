@@ -205,11 +205,11 @@ require_check(named(single, 'Deployment', 'sglang').dig('spec', 'template', 'spe
 single_sglang = named(single, 'Deployment', 'sglang').dig('spec', 'template', 'spec')
 require_check(single_sglang['containers'][0].dig('resources', 'limits') == {'cpu' => '20', 'memory' => '32Gi'} && gpu_claims(single_sglang) == %w[gpu-0], 'Single GPU SGLang resource envelope changed')
 guaranteed_pod(single_sglang)
-swarmui = named(single, 'Deployment', 'swarmui').dig('spec', 'template', 'spec')
+picture = named(single, 'Deployment', 'comfyui-gpu1').dig('spec', 'template', 'spec')
 # CPU right-sized from the live shared-mode measurement (2026-11-11, peak 2.3 cores).
-require_check(swarmui['containers'][0].dig('resources', 'limits') == {'cpu' => '4', 'memory' => '12Gi'} && gpu_claims(swarmui) == %w[gpu-1], 'SwarmUI resource envelope changed')
-require_check(swarmui['initContainers'][0].dig('resources', 'limits') == {'cpu' => '2', 'memory' => '64Mi'}, 'SwarmUI init resource envelope changed')
-guaranteed_pod(swarmui)
+require_check(picture['containers'][0].dig('resources', 'limits') == {'cpu' => '4', 'memory' => '12Gi'} && gpu_claims(picture) == %w[gpu-1], 'Picture ComfyUI resource envelope changed')
+require_check(picture['initContainers'][0].dig('resources', 'limits') == {'cpu' => '2', 'memory' => '64Mi'}, 'Picture ComfyUI init resource envelope changed')
+guaranteed_pod(picture)
 compat = documents(directory, 'rdna4-compat')
 env = named(compat, 'Deployment', 'sglang').dig('spec', 'template', 'spec', 'containers')[0]['env']
 require_check(env.any? { |e| e == {'name' => 'HSA_OVERRIDE_GFX_VERSION', 'value' => '12.0.1'} }, 'Compatibility overlay missing explicit override')

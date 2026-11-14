@@ -6,7 +6,7 @@ spec:
     spec:
       priorityClassName: interactive-ai-priority
       # One card. Kustomize replaces (does not merge) resourceClaims, so state the
-      # full list: gpu-0 only; gpu-1 belongs to SwarmUI in split mode.
+      # full list: gpu-0 only; gpu-1 belongs to comfyui-gpu1 (pictures) in split mode.
       resourceClaims:
         - {name: gpu-0, resourceClaimName: gpu-0}
       containers:

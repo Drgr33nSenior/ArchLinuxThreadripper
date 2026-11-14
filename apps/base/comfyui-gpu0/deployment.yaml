@@ -56,7 +56,7 @@ spec:
           # directly instead of self-started by SwarmUI.
           image: registry.lan.thespry.family/local/creative-gfx1201@sha256:47a22cd2d6a0e95686d7f4f899944bc2b2bd7258a704b4ae16259af87bd324c2
           command: [/SwarmUI/dlbackend/ComfyUI/venv/bin/python, /SwarmUI/dlbackend/ComfyUI/main.py]
-          # The same picture settings as SwarmUI's own backend in Backends.fds, plus the video flags.
+          # The same picture settings as comfyui-gpu1, plus the video flags.
           args:
             - --listen
             - 0.0.0.0
@@ -146,12 +146,6 @@ spec:
             # infrastructure/ai-stack/models/stage-video.py.
             - {name: state, mountPath: /video, subPath: Video, readOnly: true}
             - {name: state, mountPath: /image, subPath: Image, readOnly: true}
-            # As in SwarmUI's pod, so SwarmUI finds Swarm model QwenImage/qwen_image_2512_bf16 on this
-            # backend too (it routes a request only to a backend that lists the model).
-            - name: state
-              mountPath: /SwarmUI/Models/diffusion_models/QwenImage
-              subPath: Image/diffusion_models
-              readOnly: true
       volumes:
         - name: config
           configMap: {name: comfyui-gpu0-model-paths}

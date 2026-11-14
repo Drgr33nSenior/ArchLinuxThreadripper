@@ -1,0 +1,131 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: comfyui-gpu1
+  annotations:
+    ai-home-lab.local/qualification: pending-picture-generator
+spec:
+  # The picture generator on gpu-1 in every mode with pictures (split, shared). service-tools
+  # sends its fixed Qwen-Image workflow here directly; shared mode adds comfyui-gpu0 on gpu-0.
+  replicas: 0
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app.kubernetes.io/name: comfyui-gpu1}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: comfyui-gpu1}
+    spec:
+      automountServiceAccountToken: false
+      priorityClassName: creative-priority
+      terminationGracePeriodSeconds: 60
+      nodeSelector: {ai-home-lab.local/gfx: gfx1201}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        # render and video on gr33nstein, as the SGLang serving contract.
+        supplementalGroups: [987, 983]
+        seccompProfile: {type: RuntimeDefault}
+      initContainers:
+        # ComfyUI refuses to start when a directory given by --user/--input/--output-directory
+        # is missing, and /work is a fresh emptyDir: create them with the MIOpen dirs.
+        - name: miopen-dirs
+          image: docker.io/library/busybox:1.37.0@sha256:9db7b59979c38555a39def84a31fb98b5296952f9e3afd4f6f11f05b07adfab0
+          command: [sh, -ec]
+          args: [mkdir -p /state/Data/miopen-gpu1/user-db /state/Data/miopen-gpu1/cache /work/user /work/input /work/output]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          # Two CPUs, not one: under the static CPU Manager with full-pcpus-only, a Guaranteed
+          # container asking for an odd number of whole CPUs is refused at admission.
+          resources:
+            requests: {cpu: '2', memory: 64Mi}
+            limits: {cpu: '2', memory: 64Mi}
+          volumeMounts:
+            - {name: state, mountPath: /state}
+            - {name: work, mountPath: /work}
+      # The shared gpu-1 claim (infrastructure/gpu-operator/claims.yaml) that SGLang TP2 also
+      # references in shared mode; DRA shows this pod only that card, as ordinal zero.
+      resourceClaims:
+        - {name: gpu-1, resourceClaimName: gpu-1}
+      containers:
+        - name: comfyui
+          # The signed creative image's embedded ComfyUI venv, run directly as on gpu-0.
+          image: registry.lan.thespry.family/local/creative-gfx1201@sha256:47a22cd2d6a0e95686d7f4f899944bc2b2bd7258a704b4ae16259af87bd324c2
+          command: [/SwarmUI/dlbackend/ComfyUI/venv/bin/python, /SwarmUI/dlbackend/ComfyUI/main.py]
+          # comfyui-gpu0's picture settings (see its comments for the measurements), without video.
+          args:
+            - --listen
+            - 0.0.0.0
+            - --port
+            - '7821'
+            - --extra-model-paths-config
+            - /config/comfy-model-paths.yaml
+            - --output-directory
+            - /work/output
+            - --temp-directory
+            - /tmp/comfy-temp
+            - --input-directory
+            - /work/input
+            - --user-directory
+            - /work/user
+            # No --fp8_e4m3fn-unet/-text-enc: the bf16 Qwen-Image model stays bf16 under its
+            # bf16-trained Lightning LoRA.
+            - --reserve-vram
+            - '1.5'
+            # DynamicVRAM ignores --reserve-vram; --vram-headroom keeps 2 GB of the card free.
+            - --vram-headroom
+            - '2'
+            # Stream the 41 GB picture model from the local NVMe instead of holding it in RAM.
+            - --fast-disk
+            - --use-ck-attention
+            # Stock nodes only: the fixed workflow saves with SaveImage and service-tools reads it
+            # back through /view.
+            - --disable-all-custom-nodes
+          ports: [{name: http, containerPort: 7821}]
+          env:
+            - {name: HF_HUB_OFFLINE, value: '1'}
+            - {name: HOME, value: /work}
+            - {name: COMFYUI_ENABLE_MIOPEN, value: '1'}
+            - {name: MIOPEN_USER_DB_PATH, value: /miopen/user-db}
+            - {name: MIOPEN_CUSTOM_CACHE_DIR, value: /miopen/cache}
+            # ROCm: keep AMD's profiler SDK from registering as an HSA tool (idle CPU spin).
+            - {name: ROCPROFILER_REGISTER_ENABLED, value: '0'}
+            # Leave SGLang's tensor-parallel rank on this card 16 of 64 CUs ComfyUI cannot occupy,
+            # as comfyui-gpu0 does (14 Nov bake-off: 48 against 64 CUs cost about 5% picture time).
+            - {name: HSA_CU_MASK, value: '0:0-47'}
+          resources:
+            # Qwen-Image-2512 bf16 1328^2 2026-11-14 (test pods with these flags, 12 GiB): anon peak
+            # 7.0 GiB; 4 CPUs: 88 s cold, 72-74 s warm with gpu-0 rendering at the same time; 8 CPUs:
+            # 69 s cold, 64 s warm alone, 74-75 s two at once; 2.2 GB of the card free at peak.
+            # 4 here for split mode's capacity plan; shared mode raises it to 8
+            # (apps/overlays/assistant-shared).
+            requests: {cpu: '4', memory: 12Gi}
+            limits: {cpu: '4', memory: 12Gi}
+            claims: [{name: gpu-1}]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          startupProbe:
+            httpGet: {path: /system_stats, port: http}
+            periodSeconds: 10
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: {path: /system_stats, port: http}
+            timeoutSeconds: 3
+          volumeMounts:
+            - {name: config, mountPath: /config, readOnly: true}
+            - {name: work, mountPath: /work}
+            - {name: state, mountPath: /miopen, subPath: Data/miopen-gpu1}
+            # The Qwen-Image-2512 picture stack (catalog qwen-image-2512), staged on the local-NVMe
+            # creative-models volume by infrastructure/ai-stack/models/stage-video.py.
+            - {name: state, mountPath: /image, subPath: Image, readOnly: true}
+      volumes:
+        - name: config
+          configMap: {name: comfyui-gpu1-model-paths}
+        - name: work
+          emptyDir: {sizeLimit: 8Gi}
+        - name: state
+          persistentVolumeClaim: {claimName: creative-models}

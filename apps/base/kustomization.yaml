@@ -6,5 +6,5 @@ resources:
   - priorities.yaml
   - network-policy.yaml
   - sglang
-  - swarmui
+  - comfyui-gpu1
   - open-webui

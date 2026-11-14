@@ -1366,9 +1366,9 @@ def capacity(resources, workloads, telemetry, telemetry_stack, mode, build_mib=0
     require(all(type(n) is int and n >= 0 for n in (build_mib, build_cpus, vm_mib, vm_cpus)), "budgets must be nonnegative integers")
     names = {"sglang", "open-webui", "litellm", "gateway-postgres", "service-tools"}
     if mode == "split":
-        names.add("swarmui")
+        names.add("comfyui-gpu1")
     elif mode == "shared":
-        names |= {"swarmui", "comfyui-gpu0"}
+        names |= {"comfyui-gpu1", "comfyui-gpu0"}
     selected = {o["metadata"]["name"]: o for o in workloads if o["kind"] == "Deployment"}
     # Opt-in memory workloads count against the same budget when rendered.
     names |= {"neo4j", "memory-embedding", "graphiti-memory"} & selected.keys()
@@ -1384,7 +1384,7 @@ def capacity(resources, workloads, telemetry, telemetry_stack, mode, build_mib=0
              {"name": "telemetry", "memory_mib": reserve, "cpu": telemetry_cpu},
              {"name": "builds", "memory_mib": build_mib, "cpu": build_cpus},
              {"name": "optional-vms", "memory_mib": vm_mib, "cpu": vm_cpus}]
-    # Shared claims: SGLang (gpu-0, gpu-1) and SwarmUI (gpu-1) need two cards, not three.
+    # Shared claims: SGLang (gpu-0, gpu-1) and the picture ComfyUIs need two cards, not three.
     gpu = len(set().union(*(gpu_claims(selected[name]) for name in names)))
     memory = resources["memory"]["allocatable_mib"] - sum(r["memory_mib"] for r in rows)
     cpu = resources["allocatable_logical_cpus"] - sum(r["cpu"] for r in rows)

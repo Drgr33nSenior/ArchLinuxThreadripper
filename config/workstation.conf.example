@@ -211,7 +211,7 @@ SESSION_GAME_DEPLOYMENT=steam-headless
 # SESSION_GAME_NAMESPACE=gaming
 # Opt-in service admission and image ownership; configure only after qualification.
 SESSION_SERVICE_ENABLED=false
-SESSION_IMAGE_DEPLOYMENT=swarmui
+SESSION_IMAGE_DEPLOYMENT=comfyui-gpu1
 # Shared mode's second image generator on the model's other card (needs the service enabled).
 # SESSION_IMAGE2_DEPLOYMENT=comfyui-gpu0
 # SESSION_SERVICE_CONTROL_FILE=/etc/workstation/gateway-control-key

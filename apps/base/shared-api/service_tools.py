@@ -1,4 +1,4 @@
-"""Retrieval/web research tools, task handoffs, memory, a single-owner Swarm image adapter and short videos.
+"""Retrieval/web research tools, task handoffs, memory, a fixed-workflow ComfyUI picture adapter and short videos.
 
 No Kubernetes, shell, workflow upload, or direct public URL fetching. The only
 local writes are the web request ledger, the task handoff SQLite file and the
@@ -19,7 +19,6 @@ import re
 import secrets
 import time
 from pathlib import Path
-from urllib.parse import unquote
 
 import httpx
 from fastapi import FastAPI, Request
@@ -141,7 +140,7 @@ def qwen_workflow(profile):
                                                    "denoise": 1.0}},
         "10": {"class_type": "VAEDecodeTiled", "inputs": {"samples": ["9", 0], "vae": ["4", 0], "tile_size": 512, "overlap": 64,
                                                           "temporal_size": 64, "temporal_overlap": 8}},
-        "11": {"class_type": "SwarmSaveImageWS", "inputs": {"images": ["10", 0]}},
+        "11": {"class_type": "SaveImage", "inputs": {"images": ["10", 0], "filename_prefix": "picture"}},
     }
 
 
@@ -153,16 +152,12 @@ def load_image_profile(directory):
     """
     directory = Path(directory)
     profile = json.loads((directory / "image-profile.json").read_text())
-    expected = {"schema", "id", "catalog", "swarm_model", "workflow", "files", "sizes", "steps", "cfg_scale", "serving_models"}
+    expected = {"schema", "id", "catalog", "workflow", "files", "sizes", "steps", "cfg_scale", "serving_models"}
     if not isinstance(profile, dict) or set(profile) != expected:
         raise ValueError("invalid image profile")
     files = profile["files"]
     if (type(profile["schema"]) is not int or profile["schema"] != 2 or profile["id"] != IMAGE_MODEL
             or profile["catalog"] != "qwen-image-2512" or profile["workflow"] != "qwen-image-workflow.json"
-            # SwarmUI requires a model it knows: the same file, as both picture pods mount it at
-            # Models/diffusion_models/QwenImage. The raw workflow loads it from /image either way.
-            or not isinstance(files, dict) or not isinstance(files.get("diffusion_model"), dict)
-            or profile["swarm_model"] != "QwenImage/" + str(files["diffusion_model"].get("name", "")).removesuffix(".safetensors")
             # the gateway's rendered policy decides which of these may serve images in a mode
             or not isinstance(profile["serving_models"], list) or not profile["serving_models"]
             or not set(profile["serving_models"]) <= {"Qwen3.5-9B", "Qwen3.8-27B-MXFP4"}
@@ -181,17 +176,20 @@ def load_image_profile(directory):
     return profile, qwen_workflow(profile), hashlib.sha256(raw).hexdigest()
 
 
-# Image slots: one per SwarmUI backend. Shared mode runs two (SwarmUI's own ComfyUI on
-# gpu-1 and comfyui-gpu0); every other mode one. Markers are checked for all of them.
-MAX_IMAGE_SLOTS = 2
+# Image slots: one per picture ComfyUI, in this order. Shared mode runs both (comfyui-gpu1 and
+# comfyui-gpu0); split mode only the first. Markers are checked for all of them.
+IMAGE_COMFY = ("http://comfyui-gpu1:7821", "http://comfyui-gpu0:7821")
+MAX_IMAGE_SLOTS = len(IMAGE_COMFY)
+PICTURE_FILE = re.compile(r"picture_[0-9]{5}_\.png\Z")
 
 
 class ServiceTools:
-    def __init__(self, client, webui, swarm, gateway, browser_file, state_dir, image_timeout=240, public_webui="", web_search=None,
+    def __init__(self, client, webui, image_comfy, gateway, browser_file, state_dir, image_timeout=240, public_webui="", web_search=None,
                  memory=None, memory_key_file="/run/memory/service-key", memory_write=False, handoffs=None, image_slots=1,
                  video_comfy=None):
         self.client = client
-        self.webui, self.swarm, self.gateway = webui, swarm, gateway
+        self.webui, self.gateway = webui, gateway
+        self.image_comfy = tuple(image_comfy)  # one ComfyUI base URL per image slot
         self.browser_file = browser_file
         self.state_dir = Path(state_dir)
         self.image_timeout = image_timeout
@@ -202,8 +200,9 @@ class ServiceTools:
         # Task handoffs: a handoff.HandoffStore on /state, or None when disabled.
         self.handoffs = handoffs
         self.image_profile, self.image_workflow, self.workflow_sha256 = load_image_profile(Path(__file__).parent)
-        if type(image_slots) is not int or not 1 <= image_slots <= MAX_IMAGE_SLOTS:
-            raise ValueError("image_slots must be 1 or 2")
+        if type(image_slots) is not int or not 1 <= image_slots <= min(MAX_IMAGE_SLOTS, len(self.image_comfy)):
+            raise ValueError("image_slots must be 1 or 2, one per picture ComfyUI")
+        self.poll_seconds = 0.5
         self.image_slots = image_slots
         self.active = set()  # slots with a request in flight in this process
         # Short videos (video.py) on the shared-mode second ComfyUI, or None when disabled.
@@ -523,23 +522,22 @@ class ServiceTools:
                                             search.extract([args["url"]], offset=offset), failure=web_outcome)}
         return {"content": [{"type": "text", "text": json.dumps(value)}], "isError": False}
 
-    async def interrupt(self, session):
-        result = await self.upstream_json("POST", self.swarm + "/API/InterruptAll",
-                                          data={"session_id": session, "other_sessions": False}, timeout=5)
-        if result.get("success") is not True:
-            return False
-        for _ in range(10):
-            status = await self.upstream_json("POST", self.swarm + "/API/GetCurrentStatus",
-                                              data={"session_id": session}, timeout=3)
-            counts = status.get("status", status)
-            if all(counts.get(k) == 0 for k in ("waiting_gens", "loading_models", "waiting_backends", "live_gens")):
-                return True
-            await asyncio.sleep(0.25)
-        return False
+    async def cancel(self, comfy, prompt_id):
+        """Best effort: drop the prompt from the queue, or stop it if it is the one running.
+
+        /interrupt with a prompt_id only stops that prompt, so a video on the same ComfyUI is
+        untouched. Neither answer proves the GPU work stopped, so the caller keeps its marker.
+        """
+        for path, body in (("/queue", {"delete": [prompt_id]}), ("/interrupt", {"prompt_id": prompt_id})):
+            try:
+                await self.client.post(comfy + path, json=body, timeout=5)
+            except httpx.HTTPError:
+                pass
 
     async def generate(self, request, prompt, size, slot=0):
         marker = self.marker(slot)
-        session = None
+        comfy = self.image_comfy[slot]
+        prompt_id = None
         completed = False
         try:
             state = await self.upstream_json("GET", self.gateway + "/_service/status", timeout=3)
@@ -547,14 +545,13 @@ class ServiceTools:
             if (state.get("phase") != "ready" or not state.get("images")
                     or state.get("model") not in profile["serving_models"]):
                 raise Refusal(503, "images_require_ready_image_mode")
-            session = (await self.upstream_json("POST", self.swarm + "/API/GetNewSession", data={}))['session_id']
             # Marker survives a crash. A restarted adapter refuses new images
             # until an operator verifies/restarts the backend and clears it.
             self.state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
             with marker.open("x") as output:
                 os.chmod(marker, 0o600)
                 json.dump({"status": "inflight", "created_at": time.time(), "profile": profile["id"],
-                           "workflow_sha256": self.workflow_sha256}, output)
+                           "workflow_sha256": self.workflow_sha256, "backend": comfy}, output)
                 output.flush()
                 os.fsync(output.fileno())
             directory_fd = os.open(self.state_dir, os.O_RDONLY | os.O_DIRECTORY)
@@ -567,34 +564,33 @@ class ServiceTools:
             workflow["6"]["inputs"]["text"] = prompt
             workflow["8"]["inputs"].update(width=width, height=height)
             workflow["9"]["inputs"]["seed"] = secrets.randbits(63)
-            # Swarm refuses a request without a model it knows. "noloadmodels" stops it running
-            # its own model-load job first (it would build a non-raw workflow for that model):
-            # the backend is marked loaded and the raw workflow loads its own files.
-            task = asyncio.create_task(self.upstream_json("POST", self.swarm + "/API/GenerateText2Image",
-                data={"session_id": session, "images": 1, "prompt": prompt, "width": width,
-                      "model": profile["swarm_model"], "noloadmodels": True,
-                      "height": height, "steps": profile["steps"], "cfgscale": profile["cfg_scale"], "seed": workflow["9"]["inputs"]["seed"],
-                      "comfyworkflowraw": json.dumps(workflow)}, timeout=self.image_timeout))
-            try:
-                async with asyncio.timeout(self.image_timeout):
-                    while not task.done():
-                        if await request.is_disconnected():
-                            raise Refusal(499, "image_request_cancelled")
-                        await asyncio.sleep(0.1)
-                    result = await task
-            finally:
-                if not task.done():
-                    task.cancel()
-                    await asyncio.gather(task, return_exceptions=True)
-            paths = result.get("images", [])
-            if len(paths) != 1 or not isinstance(paths[0], str):
+            queued = await self.upstream_json("POST", comfy + "/prompt",
+                                              data={"prompt": workflow, "client_id": "service-tools-image"}, timeout=15)
+            prompt_id = queued.get("prompt_id")
+            if not isinstance(prompt_id, str) or not re.fullmatch(r"[A-Za-z0-9-]{8,64}", prompt_id):
+                prompt_id = None
                 raise Refusal(502, "image_generation_failed")
-            path = paths[0]
-            decoded = unquote(path)
-            if not path.startswith("View/") or any(x in decoded for x in ("..", "\\", "?", "#", ":")):
+            async with asyncio.timeout(self.image_timeout):
+                while True:
+                    await asyncio.sleep(self.poll_seconds)
+                    if await request.is_disconnected():
+                        raise Refusal(499, "image_request_cancelled")
+                    entry = (await self.upstream_json("GET", comfy + "/history/" + prompt_id, timeout=10)).get(prompt_id)
+                    status = (entry or {}).get("status", {})
+                    if status.get("completed") is not None:
+                        break
+            if status.get("status_str") != "success":
+                raise Refusal(502, "image_generation_failed")
+            files = (entry.get("outputs", {}).get("11") or {}).get("images") or []
+            if len(files) != 1 or not isinstance(files[0], dict):
+                raise Refusal(502, "image_generation_failed")
+            item = files[0]
+            name, subfolder = item.get("filename", ""), item.get("subfolder", "")
+            if item.get("type") != "output" or subfolder != "" or not PICTURE_FILE.fullmatch(str(name)):
                 raise Refusal(502, "invalid_image_artifact")
             raw = bytearray()
-            async with self.client.stream("GET", self.swarm + "/" + path, timeout=15) as response:
+            async with self.client.stream("GET", comfy + "/view", params={"filename": name, "subfolder": "", "type": "output"},
+                                          timeout=15) as response:
                 if response.status_code != 200 or response.headers.get("content-type", "").split(";")[0] != "image/png":
                     raise Refusal(502, "invalid_image_artifact")
                 async for part in response.aiter_bytes():
@@ -606,17 +602,10 @@ class ServiceTools:
             completed = True
             return {"created": int(time.time()), "data": [{"b64_json": base64.b64encode(raw).decode()}]}
         finally:
-            if session and not completed:
-                try:
-                    async def bounded_interrupt():
-                        async with asyncio.timeout(10):
-                            return await self.interrupt(session)
-                    # Swarm's acknowledgement/counters can precede actual
-                    # Comfy termination. Keep the durable marker after any
-                    # submitted job without a successful terminal result.
-                    await asyncio.shield(bounded_interrupt())
-                except (Refusal, httpx.HTTPError, TimeoutError, ValueError):
-                    pass  # Keep the marker: cancellation acknowledgement is unknown.
+            if prompt_id and not completed:
+                # Keep the durable marker after any submitted job without a successful terminal
+                # result: a cancellation acknowledgement does not prove the GPU work stopped.
+                await asyncio.shield(self.cancel(comfy, prompt_id))
             if completed:
                 marker.unlink(missing_ok=True)
 
@@ -673,7 +662,7 @@ def create_app():
         provider = json.loads(policy_file.read_text())["provider"]
         search = WebSearch(client, "/run/web-search/" + provider + "-api-key", "/state", policy_file,
                            content_limit=int(os.environ.get("WEB_PAGE_CHAR_LIMIT", "6000")))
-    service = ServiceTools(client, "http://open-webui:8080", "http://swarmui:7801",
+    service = ServiceTools(client, "http://open-webui:8080", IMAGE_COMFY,
                            "http://litellm:4000", "/run/browser/mapping.json", "/state",
                            public_webui=os.environ["PUBLIC_WEBUI_BASE_URL"], web_search=search,
                            memory="http://graphiti-memory:8000" if os.environ.get("MEMORY_ENABLED", "false") == "true" else None,

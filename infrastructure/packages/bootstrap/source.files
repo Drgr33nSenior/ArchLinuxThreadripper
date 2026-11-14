@@ -99,6 +99,10 @@ apps/base/comfyui-gpu0/comfy-model-paths.yaml
 apps/base/comfyui-gpu0/deployment.yaml
 apps/base/comfyui-gpu0/kustomization.yaml
 apps/base/comfyui-gpu0/service.yaml
+apps/base/comfyui-gpu1/comfy-model-paths.yaml
+apps/base/comfyui-gpu1/deployment.yaml
+apps/base/comfyui-gpu1/kustomization.yaml
+apps/base/comfyui-gpu1/service.yaml
 apps/overlays/default/kustomization.yaml
 apps/overlays/dual-gpu/kustomization.yaml
 apps/overlays/dual-gpu/sglang.yaml

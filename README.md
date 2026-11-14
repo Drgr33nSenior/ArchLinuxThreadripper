@@ -41,11 +41,10 @@ flowchart LR
   webui -->|"tools and pictures"| tools["service-tools"]
   tools --> mem["Memory<br/>(Graphiti + Neo4j)"]
   tools --> web["Web search<br/>(Exa)"]
-  tools -->|"pictures"| swarm["SwarmUI<br/>GPU 1"]
-  swarm --> comfy0["ComfyUI<br/>GPU 0"]
-  tools -->|"video"| comfy0
-  nas[("NAS<br/>model store")] -.-> sglang & swarm & comfy0
-  nvme[("Local NVMe<br/>video models")] -.-> comfy0
+  tools -->|"pictures"| comfy1["ComfyUI<br/>GPU 1"]
+  tools -->|"pictures and video"| comfy0["ComfyUI<br/>GPU 0"]
+  nas[("NAS<br/>model store")] -.-> sglang
+  nvme[("Local NVMe<br/>picture and video models")] -.-> comfy1 & comfy0
 ```
 
 - **Chat** goes from Open WebUI through the gateway, which checks the user's key and
@@ -53,8 +52,8 @@ flowchart LR
 - **Tools** (document search, memory, web search, task handoffs and video) are an MCP
   server, `service-tools`. It checks every call against the signed-in user's own
   permissions.
-- **Pictures** go through `service-tools` to SwarmUI, which runs one ComfyUI on each GPU.
-  **Video** goes straight to the ComfyUI on GPU 0.
+- **Pictures** go from `service-tools` straight to a ComfyUI on each GPU, with one fixed
+  Qwen-Image workflow. **Video** goes to the ComfyUI on GPU 0. SwarmUI is not in this path.
 - Kubernetes [DRA](docs/HOME-LAB.md) lets the chat model and a generator share each GPU.
 
 More detail: [architecture](docs/ARCHITECTURE.md) and [the family assistant](docs/ASSISTANT.md).

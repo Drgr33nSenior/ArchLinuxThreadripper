@@ -269,49 +269,46 @@ class AssistantTests(unittest.TestCase):
         self.assertEqual(profile, json.loads(cm["data"]["image-profile.json"]))
         self.assertEqual(workflow, json.loads(cm["data"][profile["workflow"]]))
 
-    def test_swarmui_mounts_the_qwen_image_stack_read_only(self):
-        pod = named(self.split, "Deployment", "swarmui")["spec"]["template"]["spec"]
+    def test_comfyui_gpu1_runs_the_qwen_image_stack_read_only(self):
+        pod = named(self.split, "Deployment", "comfyui-gpu1")["spec"]["template"]["spec"]
+        self.assertNotIn("swarmui", {o["metadata"]["name"] for o in self.split if o["kind"] == "Deployment"})
         container = pod["containers"][0]
         self.assertRegex(container["image"], r"^registry\.lan\.thespry\.family/local/creative-gfx1201@sha256:[a-f0-9]{64}$")
         self.assertEqual([987, 983], pod["securityContext"]["supplementalGroups"])
+        self.assertEqual([{"name": "gpu-1", "resourceClaimName": "gpu-1"}], pod["resourceClaims"])
         # the picture stack from the local-NVMe creative volume, not the NAS ai-models volume
         self.assertIn({"name": "state", "mountPath": "/image", "subPath": "Image", "readOnly": True}, container["volumeMounts"])
-        self.assertIn({"name": "image-paths", "mountPath": "/config", "readOnly": True}, container["volumeMounts"])
         self.assertNotIn("models", [v["name"] for v in pod["volumes"]])
-        # Swarm model QwenImage/<file> for SwarmUI's registry, read-only below a writable folder
-        profile, _, _ = load_image_profile(ROOT / "apps/base/shared-api")
-        folder, name = profile["swarm_model"].split("/")
-        self.assertEqual(name + ".safetensors", profile["files"]["diffusion_model"]["name"])
-        self.assertIn({"name": "state", "mountPath": f"/SwarmUI/Models/diffusion_models/{folder}",
-                       "subPath": "Image/diffusion_models", "readOnly": True}, container["volumeMounts"])
-        self.assertIn(f"/state/Models/diffusion_models/{folder}", pod["initContainers"][0]["args"][0].split())
-        config = next(v for v in pod["volumes"] if v["name"] == "image-paths")["configMap"]["name"]
-        self.assertTrue(config.startswith("swarmui-image-paths"), config)
-        paths = yaml.safe_load((ROOT / "apps/base/swarmui/image-model-paths.yaml").read_text())
+        config = next(v for v in pod["volumes"] if v["name"] == "config")["configMap"]["name"]
+        self.assertTrue(config.startswith("comfyui-gpu1-model-paths"), config)
+        paths = yaml.safe_load((ROOT / "apps/base/comfyui-gpu1/comfy-model-paths.yaml").read_text())
         self.assertEqual({"qwen_image": {"base_path": "/image", "diffusion_models": "diffusion_models", "loras": "loras",
                                          "text_encoders": "text_encoders", "vae": "vae"}}, paths)
         env = {e["name"]: e["value"] for e in container["env"]}
         self.assertEqual("1", env["COMFYUI_ENABLE_MIOPEN"])
         self.assertEqual("0:0-47", env["HSA_CU_MASK"])
+        # MIOpen databases persist on the state volume; the init container creates them.
+        mounts = {m["mountPath"]: m for m in container["volumeMounts"]}
+        self.assertEqual("Data/miopen-gpu1", mounts["/miopen"]["subPath"])
         for key in ("MIOPEN_USER_DB_PATH", "MIOPEN_CUSTOM_CACHE_DIR"):
-            # Persistent (Data is on the state volume) and created by the seed container.
-            self.assertTrue(env[key].startswith("/SwarmUI/Data/"), key)
-            self.assertIn(env[key].replace("/SwarmUI/", "/state/", 1), pod["initContainers"][0]["args"][0])
+            self.assertTrue(env[key].startswith("/miopen/"), key)
+            self.assertIn(env[key].replace("/miopen/", "/state/Data/miopen-gpu1/", 1), pod["initContainers"][0]["args"][0])
+        # the service's only route in: service-tools sends the fixed workflow to this port
+        port = container["args"][container["args"].index("--port") + 1]
+        self.assertEqual(int(port), named(self.split, "Service", "comfyui-gpu1")["spec"]["ports"][0]["port"])
 
     def test_comfyui_starts_with_the_measured_shared_card_flags(self):
         # Qwen-Image streamed from the NVMe (--fast-disk) with 2 GB of DynamicVRAM headroom; no fp8
         # downcast of the bf16 model. --reserve-vram keeps ComfyUI out of what SGLang grows into.
-        seed = (ROOT / "apps/base/swarmui/Backends.fds").read_text()
-        args = next(line for line in seed.splitlines() if "ExtraArgs:" in line).split("ExtraArgs:", 1)[1].split()
+        args = named(self.split, "Deployment", "comfyui-gpu1")["spec"]["template"]["spec"]["containers"][0]["args"]
         for flag in ("--fp8_e4m3fn-unet", "--fp8_e4m3fn-text-enc", "--disable-dynamic-vram"):
             self.assertNotIn(flag, args)
-        for flag in ("--fast-disk", "--use-ck-attention"):
+        for flag in ("--fast-disk", "--use-ck-attention", "--disable-all-custom-nodes"):
             self.assertIn(flag, args)
         self.assertEqual("1.5", args[args.index("--reserve-vram") + 1])
         self.assertEqual("2", args[args.index("--vram-headroom") + 1])
-        self.assertEqual("/config/image-model-paths.yaml", args[args.index("--extra-model-paths-config") + 1])
+        self.assertEqual("/config/comfy-model-paths.yaml", args[args.index("--extra-model-paths-config") + 1])
         self.assertNotIn("--cuda-device", args)  # DRA shows the pod only its claimed card, as ordinal zero
-        self.assertEqual(seed, (ROOT / "infrastructure/ai-stack/creative/Backends.fds").read_text())
 
     def test_shared_mode_adds_a_second_comfyui_on_gpu0_only_in_shared_renders(self):
         shared = service.kustomize(ROOT / "apps/overlays/assistant-shared")
@@ -327,72 +324,64 @@ class AssistantTests(unittest.TestCase):
             env = {e["name"]: e.get("value") for e in webui["env"]}
             self.assertEqual("true", env["ENABLE_IMAGE_GENERATION"])
             self.assertEqual("2", tools_env(objects)["IMAGE_CONCURRENCY"])  # one per card
+            self.assertNotIn("swarmui", {o["metadata"]["name"] for o in objects if o["kind"] == "Deployment"})
         # large-model budgets, not the 9B split ones
         self.assertEqual({e["name"]: e.get("value") for e in named(self.large, "Deployment", "open-webui")["spec"]["template"]["spec"]["containers"][0]["env"]}["WEB_SEARCH_RESULT_COUNT"],
                          {e["name"]: e.get("value") for e in named(shared, "Deployment", "open-webui")["spec"]["template"]["spec"]["containers"][0]["env"]}["WEB_SEARCH_RESULT_COUNT"])
         comfy = named(shared, "Deployment", "comfyui-gpu0")["spec"]["template"]["spec"]
-        swarm = named(shared, "Deployment", "swarmui")["spec"]["template"]["spec"]
+        gpu1 = named(shared, "Deployment", "comfyui-gpu1")["spec"]["template"]["spec"]
         self.assertEqual(0, named(shared, "Deployment", "comfyui-gpu0")["spec"]["replicas"])
+        self.assertEqual("qualified", named(shared, "Deployment", "comfyui-gpu1")["metadata"]["annotations"]["workstation.ai/qualification"])
         self.assertEqual([{"name": "gpu-0", "resourceClaimName": "gpu-0"}], comfy["resourceClaims"])
-        self.assertEqual(swarm["securityContext"], comfy["securityContext"])
-        c, s = comfy["containers"][0], swarm["containers"][0]
-        self.assertEqual(s["image"], c["image"])
+        self.assertEqual(gpu1["securityContext"], comfy["securityContext"])
+        c, g = comfy["containers"][0], gpu1["containers"][0]
+        self.assertEqual(g["image"], c["image"])
         # 8 CPUs per picture backend in shared mode (Qwen-Image 64 s warm instead of 74 s); the
-        # split composition keeps SwarmUI at its measured 4.
-        for container, memory in ((s, "12Gi"), (c, "10Gi")):
+        # split composition keeps comfyui-gpu1 at its measured 4.
+        for container, memory in ((g, "12Gi"), (c, "10Gi")):
             self.assertEqual({"cpu": "8", "memory": memory}, container["resources"]["limits"])
-        split_swarm = named(self.split, "Deployment", "swarmui")["spec"]["template"]["spec"]["containers"][0]
-        self.assertEqual({"cpu": "4", "memory": "12Gi"}, split_swarm["resources"]["limits"])
-        self.assertEqual(c["resources"]["requests"], {k: v for k, v in c["resources"]["limits"].items()})
+            self.assertEqual(container["resources"]["requests"], {k: v for k, v in container["resources"]["limits"].items()})
+        split_gpu1 = named(self.split, "Deployment", "comfyui-gpu1")["spec"]["template"]["spec"]["containers"][0]
+        self.assertEqual({"cpu": "4", "memory": "12Gi"}, split_gpu1["resources"]["limits"])
         self.assertEqual([{"name": "gpu-0"}], c["resources"]["claims"])
-        # the same picture stack mount and file names as SwarmUI's self-started ComfyUI
+        # the same picture stack mount and file names on both cards
         image = {"name": "state", "mountPath": "/image", "subPath": "Image", "readOnly": True}
-        self.assertIn(image, s["volumeMounts"])
+        self.assertIn(image, g["volumeMounts"])
         self.assertIn(image, c["volumeMounts"])
-        # and the same Swarm model folder, so SwarmUI routes the picture model to either backend
-        registry = lambda container: [m for m in container["volumeMounts"] if m.get("subPath") == "Image/diffusion_models"]
-        self.assertEqual(registry(s), registry(c))
-        self.assertEqual(1, len(registry(c)))
         self.assertNotIn("models", [v["name"] for v in comfy["volumes"]])
         paths = yaml.safe_load((ROOT / "apps/base/comfyui-gpu0/comfy-model-paths.yaml").read_text())
-        self.assertEqual(yaml.safe_load((ROOT / "apps/base/swarmui/image-model-paths.yaml").read_text())["qwen_image"],
+        self.assertEqual(yaml.safe_load((ROOT / "apps/base/comfyui-gpu1/comfy-model-paths.yaml").read_text())["qwen_image"],
                          paths["qwen_image"])
-        # the same measured flags as SwarmUI's own backend
-        seed = (ROOT / "apps/base/swarmui/Backends.fds").read_text()
-        swarm_args = seed.split("ExtraArgs:", 1)[1].splitlines()[0].split()
+        # the same measured picture flags on both cards
         for flag in ("--fp8_e4m3fn-unet", "--fp8_e4m3fn-text-enc"):
-            self.assertNotIn(flag, swarm_args)
+            self.assertNotIn(flag, g["args"])
             self.assertNotIn(flag, c["args"])
         for flag in ("--fast-disk", "--use-ck-attention"):
-            self.assertIn(flag, swarm_args)
+            self.assertIn(flag, g["args"])
             self.assertIn(flag, c["args"])
-        for flag in ("--reserve-vram", "--vram-headroom"):
-            self.assertEqual(swarm_args[swarm_args.index(flag) + 1], c["args"][c["args"].index(flag) + 1], flag)
+        for flag in ("--reserve-vram", "--vram-headroom", "--port"):
+            self.assertEqual(g["args"][g["args"].index(flag) + 1], c["args"][c["args"].index(flag) + 1], flag)
         cu_mask = lambda container: next(e["value"] for e in container["env"] if e["name"] == "HSA_CU_MASK")
-        self.assertEqual(cu_mask(s), cu_mask(c))
+        self.assertEqual(cu_mask(g), cu_mask(c))
         # the video backend caps DynamicVRAM (it ignores --reserve-vram): 2 GB free at a clip's peak
         self.assertEqual("2", c["args"][c["args"].index("--vram-headroom") + 1])
         self.assertNotIn("--disable-dynamic-vram", c["args"])
         # every directory ComfyUI is pointed at on the emptyDir exists before it starts
-        init = named(shared, "Deployment", "comfyui-gpu0")["spec"]["template"]["spec"]["initContainers"][0]
-        self.assertIn({"name": "work", "mountPath": "/work"}, init["volumeMounts"])
-        created = init["args"][0].split()
-        for flag in ("--user-directory", "--input-directory", "--output-directory"):
-            path = c["args"][c["args"].index(flag) + 1]
-            self.assertTrue(path.startswith("/work/") and path in created, (flag, path))
-        port = c["args"][c["args"].index("--port") + 1]
-        service_port = named(shared, "Service", "comfyui-gpu0")["spec"]["ports"][0]["port"]
-        self.assertEqual(int(port), service_port)
-        # SwarmUI's second backend: remote ComfyUI by URL, idle (not errored) while it is off
-        backend = seed.split("\n1:\n", 1)[1]
-        self.assertIn("type: comfyui_api", backend)
-        self.assertIn(f"Address: http://comfyui-gpu0:{service_port}", backend)
-        self.assertIn("AllowIdle: true", backend)
+        for name, container in (("comfyui-gpu0", c), ("comfyui-gpu1", g)):
+            init = named(shared, "Deployment", name)["spec"]["template"]["spec"]["initContainers"][0]
+            self.assertIn({"name": "work", "mountPath": "/work"}, init["volumeMounts"])
+            created = init["args"][0].split()
+            for flag in ("--user-directory", "--input-directory", "--output-directory"):
+                path = container["args"][container["args"].index(flag) + 1]
+                self.assertTrue(path.startswith("/work/") and path in created, (name, flag, path))
+            port = container["args"][container["args"].index("--port") + 1]
+            service_port = named(shared, "Service", name)["spec"]["ports"][0]["port"]
+            self.assertEqual(int(port), service_port)
 
     def test_changed_workflow_or_unsupported_profile_refuses_startup(self):
         base = ROOT / "apps/base/shared-api"
         for mutation in ("node", "route", "batch", "profile", "path", "serving-model", "no-serving-models", "file", "steps",
-                         "swarm-model"):
+                         "save-node"):
             with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temp:
                 directory = Path(temp)
                 profile = json.loads((base / "image-profile.json").read_text())
@@ -402,7 +391,7 @@ class AssistantTests(unittest.TestCase):
                 if mutation == "batch": workflow["8"]["inputs"]["batch_size"] = 2
                 if mutation == "file": profile["files"]["lora"]["name"] = "unreviewed.safetensors"
                 if mutation == "steps": workflow["9"]["inputs"]["steps"] = 50
-                if mutation == "swarm-model": profile["swarm_model"] = "OfficialStableDiffusion/sd_xl_base_1.0"
+                if mutation == "save-node": workflow["11"]["class_type"] = "SwarmSaveImageWS"
                 if mutation == "profile": profile["id"] = "unqualified-model"
                 if mutation == "path": profile["workflow"] = "../untrusted.json"
                 if mutation == "serving-model": profile["serving_models"].append("unqualified-model")

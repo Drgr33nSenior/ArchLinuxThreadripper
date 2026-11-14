@@ -1,7 +1,7 @@
 # Shared mode: the two-GPU contract model (serving arm UQSB, render with
 # `service render --mode shared --serving-profile ... --arm UQSB`) plus image
-# generation in the VRAM it leaves free on both cards: SwarmUI with its self-started
-# ComfyUI on gpu-1 and a second ComfyUI on gpu-0 (apps/base/comfyui-gpu0). The large
+# generation in the VRAM it leaves free on both cards: ComfyUI on gpu-1
+# (apps/base/comfyui-gpu1) and a second ComfyUI on gpu-0 (apps/base/comfyui-gpu0). The large
 # assistant's budgets apply; only images are added.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -20,7 +20,7 @@ patches:
               - name: open-webui
                 env:
                   - {name: ENABLE_IMAGE_GENERATION, value: 'true'}
-  # One picture per card at a time: SwarmUI sends each request to an idle backend.
+  # One picture per card at a time: service-tools sends slot 0 to gpu-1 and slot 1 to gpu-0.
   - target: {kind: Deployment, name: service-tools}
     patch: |-
       apiVersion: apps/v1
@@ -36,25 +36,25 @@ patches:
                   # Short videos (generate_video, video.py) on comfyui-gpu0, which holds the Wan stack.
                   - {name: VIDEO_ENABLED, value: 'true'}
   # Session admission: `session switch shared` starts only Deployments marked qualified.
-  # Both generators have run in shared mode since 2026-11-11: SDXL 1024x1024 warm 6.6 s
-  # (gpu-1) and 7.2 s (gpu-0) beside the UQS arm, and Wan 2.2 video on comfyui-gpu0 since
-  # 2026-11-12 (docs/ASSISTANT.md, short videos). Marked here, not in apps/base, so the
-  # split and older overlays keep their own pending status.
+  # Two picture generators have run in shared mode since 2026-11-11 (SDXL, then Qwen-Image-2512
+  # measured on both cards 2026-11-14) and Wan 2.2 video on comfyui-gpu0 since 2026-11-12
+  # (docs/ASSISTANT.md, short videos). Marked here, not in apps/base, so the split and older
+  # overlays keep their own pending status.
   # 8 CPUs, as comfyui-gpu0: one Qwen-Image picture 64 s warm instead of 74 s (14 Nov,
-  # apps/base/swarmui/deployment.yaml). Gaming mode stops both, so they never share the node
+  # apps/base/comfyui-gpu1/deployment.yaml). Gaming mode stops both, so they never share the node
   # with the 12-CPU gaming pod.
-  - target: {kind: Deployment, name: swarmui}
+  - target: {kind: Deployment, name: comfyui-gpu1}
     patch: |-
       apiVersion: apps/v1
       kind: Deployment
       metadata:
-        name: swarmui
+        name: comfyui-gpu1
         annotations: {workstation.ai/qualification: qualified}
       spec:
         template:
           spec:
             containers:
-              - name: swarmui
+              - name: comfyui
                 resources:
                   requests: {cpu: '8'}
                   limits: {cpu: '8'}

@@ -22,7 +22,7 @@ flowchart TB
     sglang["SGLang<br/>both GPUs"]
     tools["service-tools<br/>MCP and picture adapter"]
     mem["Memory<br/>Graphiti, Neo4j, embeddings"]
-    swarm["SwarmUI + ComfyUI<br/>GPU 1"]
+    comfy1["ComfyUI<br/>GPU 1"]
     comfy0["ComfyUI<br/>GPU 0"]
   end
   nas[("NAS<br/>ai-models")]
@@ -30,10 +30,9 @@ flowchart TB
   traefik --> webui & gw
   webui --> gw --> sglang
   webui --> tools
-  tools --> mem & swarm & comfy0
-  swarm --> comfy0
-  nas -.-> sglang & swarm & comfy0
-  nvme -.-> comfy0
+  tools --> mem & comfy1 & comfy0
+  nas -.-> sglang
+  nvme -.-> comfy1 & comfy0
 ```
 
 | Component | What it does | Source |
@@ -43,7 +42,7 @@ flowchart TB
 | SGLang | Serves Qwen3.8-27B MXFP4 across both GPUs | [`apps/base/sglang`](../apps/base/sglang), [serving profile](../infrastructure/ai-stack/serving/qwen3.8-27b-mxfp4-tp2.json) |
 | service-tools | MCP tools (documents, memory, web search, handoffs, video) and the picture adapter; checks every call against the user | [`service_tools.py`](../apps/base/shared-api/service_tools.py) |
 | Memory | Graphiti with Neo4j and a local embedding model | [session memory](MEMORY.md) |
-| SwarmUI, ComfyUI | Qwen-Image pictures on GPU 1; a second ComfyUI on GPU 0 also makes video | [`apps/base/swarmui`](../apps/base/swarmui), [`apps/base/comfyui-gpu0`](../apps/base/comfyui-gpu0) |
+| ComfyUI | Qwen-Image pictures on GPU 1; a second ComfyUI on GPU 0 also makes video | [`apps/base/comfyui-gpu1`](../apps/base/comfyui-gpu1), [`apps/base/comfyui-gpu0`](../apps/base/comfyui-gpu0) |
 
 ### Where data lives
 
