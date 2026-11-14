@@ -556,6 +556,76 @@ LAN unencrypted. Export access is controlled on the NAS, not here. Place only
 data that may cross the LAN in clear text, such as public model weights, on
 `nas-nfs`.
 
+### Sandbox homes (per-user NAS volumes)
+
+Each person's coding workspace keeps its files in a ZFS dataset of their own on
+the NAS, with a size limit and scheduled snapshots. The NAS repository's
+`ansible/owner-sandbox-homes.yml` creates and exports the datasets (see its
+`docs/KUBERNETES-STORAGE.md`). [`lib/workstation/sandbox_homes.py`](../lib/workstation/sandbox_homes.py)
+renders the matching Kubernetes volumes. Both read one private list, so no
+cluster component holds NAS credentials and nothing provisions datasets on demand.
+
+**User mapping.** Keep `sandbox-users.json` with the other private site files
+(next to `site.json` and `sandbox.json`); never commit the real file:
+
+```json
+{ "users": [
+  {"webui_user_id": "00000000-0000-4000-8000-000000000001", "name": "example-parent", "quota": "20G", "group": "Parents"},
+  {"webui_user_id": "00000000-0000-4000-8000-000000000002", "name": "example-child", "group": "Family"}
+] }
+```
+
+| Field | Rule |
+| --- | --- |
+| `webui_user_id` | The exact Open WebUI user id; unique |
+| `name` | Lowercase DNS label, at most 32 characters; unique. It names the dataset, export and claim, so do not change it once the home holds files |
+| `quota` | Optional; whole gibibytes from `1G` to `500G`, default `20G` |
+| `group` | `Parents`, `Family` or `Admin` |
+
+`sandbox_homes.read_users(path)` validates the file and returns the users with
+the quota filled in. At most 32 users are accepted.
+
+**Interface for the sandbox.** Namespace `assistant-sandbox`; one claim
+`sandbox-home-<name>` per user (`sandbox_homes.claim_name(name)`), bound to a
+retained volume of the same name; every file belongs to UID/GID 1000 whichever
+identity wrote it; the mount path is the workspace's choice. A pod needs no root
+step or init container for ownership. Set `fsGroupChangePolicy: OnRootMismatch`
+beside `fsGroup: 1000` so the kubelet skips its recursive ownership pass. The
+namespace's ResourceQuota must allow one claim per user.
+
+**Volumes.** For each user the render writes a PersistentVolume (NFS CSI driver,
+the same server and mount options as `nas-nfs`, `Retain`, `ReadWriteOnce`,
+empty storage class, `claimRef` to its claim) and the claim, which names the
+volume. The volume's capacity shows the quota; the NAS dataset enforces it, and
+`df` in the workspace reports it. Every claim requests a fixed 1Gi because
+Kubernetes cannot resize a statically bound claim; a later quota change then
+alters only the volume and the dataset.
+
+**Order.** The exports must exist before a workspace mounts its claim:
+
+```sh
+# 1. Print the NAS variables; copy the file to where the NAS plays are run.
+python3 lib/workstation/sandbox_homes.py nas-vars /private/sandbox-users.json > sandbox-homes.json
+# 2. Run the NAS play there, first with --check --diff (NAS docs/KUBERNETES-STORAGE.md).
+# 3. Render the volumes and claims. The namespace comes from the sandbox bundle.
+python3 lib/workstation/sandbox_homes.py render /private/sandbox-users.json > sandbox-homes.yaml
+kubectl --context <reviewed-context> diff -f sandbox-homes.yaml
+kubectl --context <reviewed-context> apply -f sandbox-homes.yaml
+kubectl --context <reviewed-context> -n assistant-sandbox get pvc
+```
+
+Neither output contains a user id. To add a person, add the entry and repeat
+all three steps. To change a quota, repeat them; the claim is unchanged.
+
+Removing a person from the list removes nothing by itself: delete their claim
+and volume by hand after review. `Retain` and the NAS play both leave the
+dataset and its snapshots in place until the owner destroys them on the NAS.
+Restores are NAS-side operations, described in the NAS guide.
+
+Security: as with `nas-nfs`, NFS traffic crosses the LAN unencrypted and export
+access is controlled on the NAS. A home is exported only to this node, and each
+workspace mounts only its own claim.
+
 ### ROCm 10 SGLang candidate
 
 Status, 9 November 2026: this section describes the legacy `apps/` overlays
