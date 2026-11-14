@@ -48,7 +48,7 @@ k3s_validate_value() {
     SGLANG_SERVER_ARGS_SHA256 | SGLANG_COMPILE_DECORATION_SHA256 | SGLANG_QWEN35_SOURCE_SHA256) [[ "$value" =~ ^[a-f0-9]{64}$ ]] || k3s_die "$key must be a SHA-256 digest" ;;
     QWEN_CODE_VERSION) [[ "$value" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || k3s_die "$key must be an exact Qwen Code release" ;;
     QWEN_CODE_COMMIT | DSH_COMMIT | HERMES_AGENT_COMMIT) [[ "$value" =~ ^[a-f0-9]{40}$ ]] || k3s_die "$key must be an exact agent source revision" ;;
-    K3S_VERSION) [[ "$value" =~ ^v1\.36\.[0-9]+\+k3s[0-9]+$ ]] || k3s_die "$key must be an exact K3s release" ;;
+    K3S_VERSION) [[ "$value" =~ ^v1\.37\.[0-9]+\+k3s[0-9]+$ ]] || k3s_die "$key must be an exact K3s release" ;;
     OPEN_WEBUI_VERSION) [[ "$value" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || k3s_die "$key must be an exact Open WebUI release" ;;
     OPEN_WEBUI_COMMIT | RAG_EMBEDDING_REVISION | RAG_RERANKER_REVISION | STT_WHISPER_REVISION | SGLANG_DUAL_MODEL_REVISION | SGLANG_SINGLE_MODEL_REVISION) [[ "$value" =~ ^[a-f0-9]{40}$ ]] || k3s_die "$key must be an exact source revision" ;;
     SGLANG_DUAL_MODEL_REPOSITORY) [[ "$value" == Qwen/Qwen3.8-27B-FP8 ]] || k3s_die "$key must select the reviewed dual-GPU checkpoint" ;;

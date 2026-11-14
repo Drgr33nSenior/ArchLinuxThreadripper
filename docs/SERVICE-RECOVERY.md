@@ -308,7 +308,8 @@ GPU image generation still requires separate target qualification.
    startup must fail. Do not change the successful copy or active token to test this.
    Agentless mode is an experimental K3s inspection mode, not the service's normal
    deployment. Its flags were checked against the selected
-   [v1.36.6+k3s1 CLI source](https://github.com/k3s-io/k3s/blob/v1.36.6%2Bk3s1/pkg/cli/cmds/server.go).
+   [v1.37.2+k3s1 CLI source](https://github.com/k3s-io/k3s/blob/v1.37.2%2Bk3s1/pkg/cli/cmds/server.go)
+   (rechecked 2026-11-14: 1.37.2 only adds `--write-kubeconfig-name`).
 4. After the agentless checks pass, stop that foreground server. On the isolated
    host only, prepare the reviewed local-path provisioner, Flannel and node agent
    using the same captured K3s version and isolated network inputs. Keep application

@@ -27,7 +27,7 @@ driver for Instinct GPUs; Radeon support is what this pilot establishes.
   (`0000:c3:00.0`), selected by PCI address.
 - `probe.yaml`: a restricted pod that shares `gpu-1` and only lists devices.
 
-Prerequisites already met: Kubernetes v1.36.6 with `resource.k8s.io/v1`, CDI on
+Prerequisites already met: Kubernetes v1.37.2 with `resource.k8s.io/v1`, CDI on
 in K3s containerd (`/var/run/cdi`), Node Feature Discovery labels the node, and
 ROCm supports gfx1201 without overrides.
 

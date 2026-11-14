@@ -13,9 +13,9 @@ ALMALINUX_SIGNING_FINGERPRINT=BF18AC2876178908D6E71267D36CB86CB86B3716
 # Same-minor maintenance update reviewed 2026-09-09. No live upgrade performed.
 # Digest matches release checksums and GitHub asset metadata. See audit runbook
 # for bundled Traefik chart v40 migration and restore prerequisites.
-K3S_VERSION=v1.36.6+k3s1
-K3S_BINARY_SHA256=66ceb8e67edfa547195135d74783bfadc2ecc04a91059e90ae5f70a3dbc98c15
-K3S_MINOR=1.36
+K3S_VERSION=v1.37.2+k3s1
+K3S_BINARY_SHA256=265b3ee6a3198ef14033c63ef46cbb32370d83795199fb6d1b01f21575eddbda
+K3S_MINOR=1.37
 K3S_SELINUX_RPM_VERSION=1.6-1.el9
 K3S_SELINUX_RPM_SHA256=23d0095a766b89317d2bdbe8773825987db7221e48743417930a994ca1096793
 K3S_RPM_GPG_KEY_URL=https://rpm.rancher.io/public.key

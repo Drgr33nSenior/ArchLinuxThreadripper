@@ -81,7 +81,7 @@ assert runtime['enable_cdi'] is True
 assert runtime['cdi_spec_dirs'] == ['/etc/cdi', '/var/run/cdi']
 assert runtime['containerd']['runtimes']['runc']['options']['SystemdCgroup'] is True
 
-# CPUManager is an opt-in K3s v1.36 kubelet drop-in. The default leaves the
+# CPUManager is an opt-in K3s v1.37 kubelet drop-in. The default leaves the
 # pre-existing K3s kubelet configuration untouched.
 assert variables['lab_cpu_manager_policy'] == 'none'
 assert variables['lab_reserved_system_cpus'] == ''

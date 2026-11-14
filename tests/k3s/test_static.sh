@@ -102,7 +102,7 @@ k3s_load_config "$config_file" "$repo_root/versions.lock"
 KWIN_DEBIAN_VERSION=invalid
 k3s_load_config "$config_file" "$repo_root/versions.lock"
 [ "$KWIN_DEBIAN_VERSION" = '4:6.3.6-1' ]
-[ "$K3S_VERSION" = 'v1.36.6+k3s1' ]
+[ "$K3S_VERSION" = 'v1.37.2+k3s1' ]
 [ "$K3S_SELINUX_RPM_VERSION" = '1.6-1.el9' ]
 [ "$LINUX_GIT_SOURCE_TAG" = 'v7.3.4' ]
 [ "$LINUX_GIT_SOURCE_TAG_OBJECT" = '8310b43a724c54668eeaa6860234078a7886915a' ]
