@@ -135,7 +135,16 @@ class DashboardTests(unittest.TestCase):
         self.assertNotIn("or vector(0)", not_ready)
         self.assertIn("Succeeded|Failed", panels["Retained terminal Pods · history"]["targets"][0]["expr"])
         self.assertIn("not enforced disk quotas", panels["PersistentVolumeClaim requested capacity"]["description"])
-        self.assertIn("not free VRAM", panels["GPU allocation slots · node"]["description"])
+        self.assertIn("not free VRAM", panels["GPUs · AMD exporter"]["description"])
+        self.assertIn('job="amd-gpu"', panels["GPUs · AMD exporter"]["targets"][0]["expr"])
+        # GPUs reach Pods through DRA claims since the switch from the device plugin; amd.com/gpu is always 0.
+        for uid, title in (("workstation-kubernetes", "GPU claims · active Pods"), ("workstation-pods", "GPU claims · selected Pods")):
+            claims = next(p for p in self.dashboards[uid]["panels"] if p["title"] == title)
+            self.assertIn("kube_pod_resourceclaim_info", claims["targets"][0]["expr"])
+        for dashboard in self.dashboards.values():
+            for panel in dashboard["panels"]:
+                for target in panel.get("targets", []):
+                    self.assertNotIn("amd_com_gpu", target.get("expr", ""), (dashboard["uid"], panel["title"]))
         replicas = panels["Deployment replicas · desired and available"]["targets"][0]["expr"]
         self.assertIn("kube_deployment_spec_replicas", replicas)
         self.assertIn("kube_deployment_status_replicas_available", replicas)
@@ -188,7 +197,8 @@ class DashboardTests(unittest.TestCase):
                                          "workstation-observability-host", "kube-system", "kube-amd-gpu",
                                          "kube-node-lease", "kube-public"})
         allowed = next(a.split("=", 1)[1].split(",") for a in args if a.startswith("--metric-allowlist="))
-        self.assertEqual(len(allowed), 16)
+        self.assertEqual(len(allowed), 17)
+        self.assertIn("^kube_pod_resourceclaim_info$", allowed)
         self.assertTrue(all(a.startswith("^") and a.endswith("$") for a in allowed))
         self.assertTrue(any("kube_deployment_spec_replicas" in a for a in allowed))
         self.assertTrue(any("kube_pod_container_status_waiting_reason" in a for a in allowed))
