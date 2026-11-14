@@ -85,11 +85,13 @@ ws_mode() (
     ws_die 'cannot read the existing claims'
   ws_session_kubectl -n "$SESSION_NAMESPACE" get deployments -o json >"$render.live.json" ||
     ws_die 'cannot read the live Deployments'
+  local -a sandbox_args=()
+  [[ -z ${MODE_SANDBOX_CONFIG:-} ]] || sandbox_args=(--sandbox-config "$MODE_SANDBOX_CONFIG")
   "$(ws_measure_python)" "$(ws_repo_root)/lib/workstation/service.py" render "$MODE_SERVICE_SITE" "$render" \
     --mode "$render_mode" --experience "${MODE_SERVICE_EXPERIENCE:-assistant-memory}" \
     --existing-claims "$render.claims.json" \
     --serving-profile "${MODE_SERVING_PROFILE:-$(ws_repo_root)/infrastructure/ai-stack/serving/qwen3.8-27b-mxfp4-tp2.json}" \
-    --runtime-image "$image" >/dev/null || ws_die 'service render failed'
+    --runtime-image "$image" "${sandbox_args[@]}" >/dev/null || ws_die 'service render failed'
   contract="$(jq -ce '{status, contract, arm: .selection.arm, context: .budgets.context_length, pool: .budgets.max_total_tokens}' "$render/serving-contract.json")" ||
     ws_die 'the render has no serving contract'
   [[ "$(jq -r .status <<<"$contract")" == active ]] ||

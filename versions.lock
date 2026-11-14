@@ -127,3 +127,10 @@ QWEN_CODE_VERSION=0.27.1
 QWEN_CODE_COMMIT=c2eccf7459c8d6d4b2a5df3733d2f3833153763b
 DSH_COMMIT=c389f96bf3a9b6807cb71ed6bdad5849be0df6d8
 HERMES_AGENT_COMMIT=13fb5e1eceba51fc45a48b5d95a357e144d42689
+
+# Native assistant sandbox sources; runtime image is supplied by digest to --sandbox-config.
+OPEN_TERMINAL_VERSION=0.17.9
+TERMINALS_VERSION=0.3.3
+PLAYWRIGHT_VERSION=1.65.2
+# Built and scanned locally; not signed or published. Promotion is owner-run.
+ASSISTANT_SANDBOX_CANDIDATE_IMAGE=registry.lan.thespry.family/local/assistant-sandbox@sha256:93ac1589a71e95cb75c828c29bd32173b878411b201557b1f7dc36e49601f038

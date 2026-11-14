@@ -17,6 +17,7 @@ import urllib.parse
 import urllib.request
 
 import yaml
+import sandbox
 
 
 # Kubernetes reads manifests as YAML 1.1, where bare y/n/yes/no/on/off (any case)
@@ -1274,6 +1275,11 @@ def render(args):
             "--mode shared needs --serving-profile and an assistant experience")
     overlay = {"large": experience, "split": experience + "-split", "shared": experience + "-shared"}[args.mode]
     objects = kustomize(ROOT / "apps/overlays" / overlay)
+    sandbox_config = sandbox.read_config(args.sandbox_config) if getattr(args, "sandbox_config", None) else None
+    require(not sandbox_config or (args.mode == "large" and
+            getattr(args, "serving_profile", None) and experience.startswith("assistant")),
+            "sandbox requires an assistant serving contract in large mode; shared capacity is not qualified")
+    sandbox_objects = sandbox.render(sandbox_config, ROOT) if sandbox_config else []
     contract = None
     if getattr(args, "serving_profile", None):
         # Every consumer comes from one contract; an incomplete contract still
@@ -1322,8 +1328,13 @@ def render(args):
     objects.append({"apiVersion": "traefik.io/v1alpha1", "kind": "Middleware",
                     "metadata": {"name": "private-clients", "namespace": "ai-home-lab"},
                     "spec": {"ipAllowList": {"sourceRange": site["client_cidrs"]}}})
+    if experience.startswith("assistant"):
+        sandbox.configure_webui(objects, sandbox_config)
+        webui = next(o for o in objects if o["kind"] == "Deployment" and o["metadata"]["name"] == "open-webui")
+        pin_webui_settings(webui["spec"]["template"]["spec"]["containers"][0], objects)
     output = new_directory(args.output)
     (output / "workloads.yaml").write_text(kube_yaml_all(objects))
+    (output / "sandbox.yaml").write_text(kube_yaml_all(sandbox_objects))
     (output / "gaming.yaml").write_text(kube_yaml_all(gaming))
     (output / "traefik.yaml").write_text(traefik_config(site))
     for name, certificate in certificates(site).items():
@@ -1355,12 +1366,14 @@ def render(args):
             # Handoff tools follow the rendered service: offered only when it serves them.
             client.write(f'AGENT_HANDOFF_ENABLED={"true" if tools_env.get("HANDOFF_ENABLED") == "true" else "false"}\n')
     files = ["workloads.yaml", "gaming.yaml", "traefik.yaml", "certificate-staging.yaml", "certificate.yaml", "migration.yaml",
-             "site.json", "client.conf"]
+             "site.json", "client.conf", "sandbox.yaml"]
     if contract:
         (output / "serving-contract.json").write_text(json.dumps(public_contract(contract), indent=2) + "\n")
         files.append("serving-contract.json")
     (output / "evidence.json").write_text(json.dumps({"status": "source-rendered-not-deployed", "mode": args.mode,
         "experience": experience,
+        "sandbox": {"enabled": bool(sandbox_config), "qualified": False,
+                    "egress": "none", "workspace_retention": "until idle teardown"},
         "existing_claims": existing,
         "serving_contract": ({"contract": contract["contract"], "status": contract["status"],
                               "missing_inputs": contract["missing_inputs"], "checks": contract_checks}
@@ -1387,6 +1400,7 @@ def capacity(resources, workloads, telemetry, telemetry_stack, mode, build_mib=0
     names |= {"neo4j", "memory-embedding", "graphiti-memory"} & selected.keys()
     require(names <= selected.keys(), "service composition incomplete")
     rows = [{"name": name, **pod_budget(selected[name])} for name in sorted(names)]
+    rows += sandbox.capacity_rows(workloads)
     reserve = telemetry["reserve_mib"]
     telemetry_cpu = sum(pod_budget(o)["cpu"] for o in telemetry_stack if pod_spec(o))
     # Alertmanager is an optional extension to the existing telemetry composition.
@@ -1418,7 +1432,9 @@ def plan(args):
     telemetry = verify(args.telemetry)
     require(telemetry["enabled"], "supply enabled telemetry evidence")
     result = capacity(json.loads(Path(args.resources).read_text()),
-        load_objects((Path(args.rendered) / "workloads.yaml").read_text()), telemetry,
+        load_objects((Path(args.rendered) / "workloads.yaml").read_text()) +
+        (load_objects((Path(args.rendered) / "sandbox.yaml").read_text())
+         if (Path(args.rendered) / "sandbox.yaml").exists() else []), telemetry,
         load_objects((Path(args.telemetry) / "stack.yaml").read_text()), evidence["mode"],
         args.build_mib, args.build_cpus, args.vm_mib, args.vm_cpus)
     output = new_directory(args.output)
@@ -1550,6 +1566,7 @@ def main():
     p.add_argument("site"); p.add_argument("output"); p.add_argument("--mode", choices=["large", "split", "shared"], default="large")
     p.add_argument("--experience", choices=["service", "assistant", "assistant-memory"], default="service")
     p.add_argument("--existing-claims", help="operator-collected PVC JSON; preserve immutable storage classes")
+    p.add_argument("--sandbox-config", help="opt-in native terminal pool config; off when omitted")
     p.add_argument("--serving-profile", help="AI-stack serving profile; renders every consumer from its contract")
     p.add_argument("--arm", help="profile arm; default: the arm the profile marks default "
                    "(shared mode: the arm it marks shared_default, if any)")

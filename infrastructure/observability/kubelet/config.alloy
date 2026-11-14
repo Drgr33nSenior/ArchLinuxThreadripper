@@ -29,7 +29,7 @@ prometheus.relabel "cgroup" {
   rule {
     source_labels = ["namespace"]
     action = "keep"
-    regex = "(|default|ai-home-lab|workstation-observability|workstation-observability-host|kube-system|kube-amd-gpu|kube-node-lease|kube-public)"
+    regex = "(|default|ai-home-lab|assistant-sandbox|workstation-observability|workstation-observability-host|kube-system|kube-amd-gpu|kube-node-lease|kube-public)"
   }
   // Host cgroups, pod cgroups and pause containers have no container name, so
   // the labelkeep below would merge them into one series per pod (or one for
