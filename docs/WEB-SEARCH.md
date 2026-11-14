@@ -18,6 +18,7 @@ fixtures; it predates the live deployment.
 | Qwen Code | HTTPS `/mcp` → `search_web` or `read_web_page` | Caller's restricted WebUI API key; normal client tool approval |
 | Browser tool server | WebUI "Workstation tools" MCP server → `/mcp` → `read_web_page` (with `offset`); its `search_web` is hidden from chats, which search through the browser search row above | Signed-in user's own WebUI session token; see [MEMORY.md](MEMORY.md#open-webui-tool-server) |
 | Project knowledge | Existing `/mcp` → `retrieve_project_passage` → WebUI retrieval | Current document ACLs and file checks; the existing Chroma store |
+| Deep research | `/mcp` → `deep_research` → the same adapter for its searches and page reads | The caller's Web Search permission; requests paced to at most four a minute; see [deep research](ASSISTANT.md#deep-research) |
 
 The native WebUI external loader does not forward user headers in pinned 0.12.5,
 and it posts only `{"urls": [...]}`, so it cannot request a later section.
@@ -87,6 +88,9 @@ Search hits and page metadata are flat scalar fields:
   profile requests one search result and limits pages to 1,600 characters.
 - A follow-up section read covers one URL and must end within the first 48,000
   characters of the provider text. Each section read reserves one request.
+- [Deep research](ASSISTANT.md#deep-research) spaces its own requests at least 15 s apart
+  (at most four a minute), waits when the minute is used up, and does not start a run
+  unless the day's remaining requests cover it (3, 6 or 9) plus ten.
 
 Exa search uses `auto` with at most three results and 1,600-character highlights.
 Snippets keep whole highlights; only a single oversized highlight is cut.

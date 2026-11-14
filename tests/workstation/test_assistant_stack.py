@@ -431,6 +431,25 @@ class AssistantTests(unittest.TestCase):
         self.assertEqual("/config/comfy-model-paths.yaml", args[args.index("--extra-model-paths-config") + 1])
         self.assertNotIn("--cuda-device", args)  # DRA shows the pod only its claimed card, as ordinal zero
 
+    def test_deep_research_is_on_only_in_shared_renders_and_ships_with_the_runtime(self):
+        tools_env = lambda objects: {e["name"]: e.get("value") for e in next(
+            c for c in named(objects, "Deployment", "service-tools")["spec"]["template"]["spec"]["containers"]
+            if c["name"] == "tools").get("env", [])}
+        shared = service.kustomize(ROOT / "apps/overlays/assistant-shared")
+        memory = service.kustomize(ROOT / "apps/overlays/assistant-memory-shared")
+        for objects in (shared, memory):
+            env = tools_env(objects)
+            self.assertEqual(("true", "true"), (env["DEEP_RESEARCH_ENABLED"], env["WEB_SEARCH_ENABLED"]))
+            self.assertNotIn("DEEP_RESEARCH_CONCURRENCY", env)  # one run at a time for the family
+            runtime = next(o for o in objects if o["kind"] == "ConfigMap" and o["metadata"]["name"].startswith("gateway-runtime"))
+            self.assertEqual((ROOT / "apps/base/shared-api/research.py").read_text(), runtime["data"]["research.py"])
+            # Its permission check works for coding keys too: the caller's own permissions, exact path.
+            _, webui = environment(objects)
+            self.assertIn("/api/v1/users/permissions", webui["API_KEYS_ALLOWED_ENDPOINTS"].split(","))
+            self.assertTrue(webui["ENABLE_FORWARD_USER_INFO_HEADERS"] == "true")  # chat ids for progress lines
+        for objects in (self.large, self.split):
+            self.assertNotIn("DEEP_RESEARCH_ENABLED", tools_env(objects))
+
     def test_shared_mode_adds_a_second_comfyui_on_gpu0_only_in_shared_renders(self):
         shared = service.kustomize(ROOT / "apps/overlays/assistant-shared")
         memory = service.kustomize(ROOT / "apps/overlays/assistant-memory-shared")

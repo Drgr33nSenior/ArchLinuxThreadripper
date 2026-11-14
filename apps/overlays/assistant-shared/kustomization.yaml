@@ -35,6 +35,9 @@ patches:
                   - {name: IMAGE_CONCURRENCY, value: '2'}
                   # Short videos (generate_video, video.py) on comfyui-gpu0, which holds the Wan stack.
                   - {name: VIDEO_ENABLED, value: 'true'}
+                  # Deep research (deep_research, research.py): one run at a time for the whole family,
+                  # paced web requests and the calling person's own gateway key (docs/ASSISTANT.md).
+                  - {name: DEEP_RESEARCH_ENABLED, value: 'true'}
   # Session admission: `session switch shared` starts only Deployments marked qualified.
   # Two picture generators have run in shared mode since 2026-11-11 (SDXL, then Qwen-Image-2512
   # measured on both cards 2026-11-14) and Wan 2.2 video on comfyui-gpu0 since 2026-11-12

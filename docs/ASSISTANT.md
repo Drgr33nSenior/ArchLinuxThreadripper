@@ -19,6 +19,7 @@ It runs in **shared mode** today. [Service modes](MODES.md) explains the alterna
 | Short videos | Ask for a short video; a 5-second clip appears in the chat after about 80 s | Accounts with picture permission and the normal `user` role (the Parents' daily accounts); shared mode only |
 | Voice input | The microphone button; speech is transcribed on the workstation | Everyone |
 | Web search | Automatic when a question needs current public information (Exa) | Everyone |
+| Deep research | Ask it to "research this properly"; a cited report arrives after 2 to 8 minutes, with progress shown under the message ([deep research](#deep-research)) | Everyone with Web Search permission and the normal `user` role; the children confirm first; shared mode only |
 | Memory | Ask it to remember something; it recalls it in later chats. Chats in a folder share that folder's memory, so one folder per book or school subject keeps them apart; ask to keep a folder's memory separate from everything else ([chat-folder projects](MEMORY.md#chat-folder-projects)) | Every daily (non-admin) account, private to each person |
 | Documents | Upload Markdown or text (up to 8 MiB) to a knowledge collection and ask about it | Everyone, per collection permissions |
 | Coding agents | Qwen Code and other IDE agents use the same model through an API key | Accounts given a key; see [coding clients](AGENT-HARNESSES.md) |
@@ -86,6 +87,7 @@ If any check fails, the model gets a short error it can explain, such as `video_
 | Conversation | Open WebUI → per-user gateway key → SGLang | Preserve the selected model identity and existing context limits |
 | Documents | Open WebUI → CPU Qwen embedding model → embedded Chroma | Preserve document permissions; answer/citation quality remains unqualified |
 | Web research | Open WebUI/Qwen Code → shared Exa adapter | Auto search and public-page extraction; one durable request ceiling; Tavily optional |
+| Deep research | Open WebUI/Qwen Code → service-tools `deep_research` (MCP) → the shared Exa adapter and the gateway as the calling person | Bounded searches, pages, time and model calls; one run for the whole family at a time; no new egress |
 | Memory | Browser and coding clients → service-tools memory tools → Graphiti on Neo4j | Live in the `assistant-memory` experience; per-user memory groups, per chat folder in the browser (the chat ID header, checked with the user's own token); facts are stored only when someone asks |
 | Image creation | Open WebUI → service-tools image adapter → ComfyUI on either GPU | Qwen-Image-2512 only; two pictures at once in shared mode (one per GPU), one in split mode |
 | Short videos | Open WebUI → service-tools `generate_video` (MCP) → `comfyui-gpu0` | Wan 2.2 T2V A14B; shared mode only; one clip at a time; picture permission |
@@ -102,6 +104,177 @@ The [web-search guide](WEB-SEARCH.md) covers provider-key provisioning, budget
 limits, shared coding-client tools and the separate direct Codex OAuth path.
 Web results remain temporary prompt evidence; the existing local RAG store and
 document permissions remain authoritative. End-to-end search is not yet qualified.
+
+## Deep research
+
+Ask for research ("research this properly", "do a deep dive on…", "compare these carefully")
+and the model calls the tool server's `deep_research` tool
+([`research.py`](../apps/base/shared-api/research.py)). It plans a few search queries, searches,
+reads the pages found, takes short notes from each page and writes a report with numbered
+citations `[n]` and a Sources list. Progress appears as status lines under the answer while it
+works ("Searching 2 of 3: …", "Reading source 4 of 8: …", "Writing the report from 7 sources").
+The model then shows the report.
+
+It is a bounded loop in service-tools, not a new service: search and page reading go through
+the same Exa adapter, request ledger and public-URL checks as every other web call, and the
+model calls go through the gateway as the person who asked, with their own key.
+
+```mermaid
+sequenceDiagram
+  actor U as Family member
+  participant W as Open WebUI
+  participant T as service-tools
+  participant E as Exa (shared adapter)
+  participant G as Gateway (person's own key)
+  U->>W: "Research this properly: …"
+  W->>T: deep_research(question, depth)
+  Note over T: Web Search permission? Chat ready?<br/>Today's web budget? One run per person,<br/>one for the family at a time
+  T->>G: Plan: search queries from the question only
+  loop Each query, then each three pages (15 s apart)
+    T->>E: Search, then read pages
+  end
+  loop Each source
+    T->>G: Notes from one page (no tools; page text is data)
+  end
+  T->>G: Report from the notes, citing [n]
+  Note over T: Removes citations of unread sources<br/>and foreign links, writes the Sources list
+  T-->>W: Status lines during the run, the sources, then the report
+  W-->>U: Report with [n] citations and Sources
+```
+
+### Bounds
+
+| Depth | Searches | Pages read | Web requests | Run limit | Report |
+| --- | --- | --- | --- | --- | --- |
+| `quick` | 3 | none: up to 6 search excerpts | 3 | 3 min (1.5 for the report) | 300–500 words |
+| `standard` (default) | 3 | up to 8 | 6 | 5.5 min (2.5 for the report) | 500–900 words |
+| `deep` | 5 | up to 12 | 9 | 8 min (2.5 for the report) | 800–1,300 words |
+
+- **Web budget.** This feature's provider requests are at least 15 s apart, so it uses at most
+  four of the six requests a minute the [shared ledger](WEB-SEARCH.md#limits-and-accounting)
+  allows and leaves two for everyone else's searches. If someone else used up the minute, it
+  waits for the next one. A run does not start unless the day's remaining requests cover it
+  plus ten. A page that cannot be read is replaced by its search excerpt, marked as such.
+- **Model time.** One model call at a time per run, on the person's own key (whose limit is
+  two at once, so their other chats still work), and one run at a time for the whole family
+  (`DEEP_RESEARCH_CONCURRENCY`, 1 or 2; default 1). A call refused with 429 waits 3 s and
+  retries: chat goes first. Per step: the plan at effort `low` (at most 2,000 output tokens),
+  each source's notes with thinking off (700; the lowest effort if a contract had no thinking
+  switch), the report at `medium` (7,000, under the 12,288 cap). Each source contributes at most
+  6,000 characters of page text (`WEB_PAGE_CHAR_LIMIT`, its first section) to one notes call and
+  at most 1,500 characters of notes to the report; raw pages never reach the report call.
+- **Time.** Gathering stops at the run limit minus the report's share; the report call gets
+  the rest. If it fails or runs out of time, the notes themselves come back, cited, with the
+  Sources list (status `partial`). Every model call is a separate gateway request well inside
+  the [time limits](#time-limits). If nothing relevant was found, the tool says so
+  (`no_evidence`) and tells the model not to answer from memory as if it had researched.
+- **Long tool call.** Open WebUI's MCP transport gives up on a connection that is silent for
+  300 s. Clients that accept a streamed answer (Streamable HTTP clients must; checked with the
+  `mcp` 2.3.0 client Open WebUI pins) get the result as one Server-Sent Event after comment
+  lines every 15 s; others get plain JSON at the end. When the caller goes away (for example
+  Stop in the chat), the run is cancelled within 15 s.
+
+Expected time and tokens, **simulated** on 14 November 2026 (not measured on the workstation):
+the real loop, request spacing and MCP client (the `mcp` 2.3.0 SDK Open WebUI pins), with a
+stand-in model that takes as long as the measured shared-mode rates (prefill 3,600 tokens/s,
+decode 86 tokens/s, one stream) for assumed output lengths (plan 450 tokens, notes 200 per
+source, report 2,200 / 3,200 / 4,300 including thinking) and Exa answering in 2.5 s (search)
+and 4 s (pages). Prompt tokens are a characters/4 estimate.
+
+| Depth | Wall time | Model calls | Prompt tokens | Output tokens | Model time: plan / notes / report |
+| --- | --- | --- | --- | --- | --- |
+| `quick` | 79 s | 8 | 3,900 | 3,850 | 5 / 15 / 26 s |
+| `standard` | 127 s | 10 | 14,100 | 5,250 | 5 / 22 / 37 s |
+| `deep` | 188 s | 14 | 20,900 | 7,150 | 5 / 34 / 50 s |
+
+Web pacing dominates; the model is busy for about half the run, one stream at a time. Add the
+chat model's own turn that shows the report (about 1,000–2,000 output tokens, 15–25 s). With
+other people chatting, decode per stream is slower and runs take longer; the run limits leave
+about 2.3–2.6 times these figures.
+
+### Who can use it
+
+Everyone whose effective Open WebUI permissions include **Web Search** (checked with their own
+token on `/api/v1/users/permissions`, per call), with the normal `user` role: the tool server
+refuses admin accounts, as for its other tools. Accounts that Open WebUI asks to confirm a web
+search ([per group](#web-search-confirmation-per-group): the children) get one step first. The
+first call searches nothing and returns what the run would do ("up to 5 web searches and 12
+pages, about 7 minutes. Start?") with a one-time code; the model asks the person, and only a
+second call with that code, from the same account within 15 minutes, runs the question and
+depth that were shown. Like the browser dialog it mirrors, this is a prompt to think, enforced
+only as far as the model follows it; the access control is the Web Search permission. A stronger
+form would be MCP elicitation, which Open WebUI 0.13.3 shows as a dialog, but it needs the tool
+server to speak MCP 2025-06-18 instead of 2025-03-26 (a change for every client), so it is not
+used. For those accounts the report is also written for a young reader, without graphic or
+sexual detail.
+
+It is on in shared mode (`DEEP_RESEARCH_ENABLED` in
+[`apps/overlays/assistant-shared`](../apps/overlays/assistant-shared/kustomization.yaml)), which
+the family uses; the large and split compositions do not set it. There is no separate per-group
+switch: Open WebUI's group permissions are a fixed set, so the Web Search permission decides.
+To turn it off, remove the variable and deploy; the tool disappears from the list.
+
+### Safety
+
+- **Page text is data.** Queries are planned from the question alone, before any page is read,
+  so a page cannot choose a search term or a URL; pages are only those the search returned.
+  Each page goes to its own notes call between random markers, as untrusted data whose
+  instructions are never to be followed. No model call in the loop is offered any tool, so a
+  page cannot make it call one. The report call sees only the notes, again marked untrusted.
+  The tool result tells the chat model the report is evidence, never instructions
+  (`content_trust: untrusted-source-text`).
+- **No invented sources.** The report may cite only the numbered sources that were read.
+  Other numbers, markdown links and bare URLs are removed (counted as `citations_removed` and
+  `links_removed`) and any list of sources the model wrote is cut; the Sources list is written
+  by service-tools from what it actually read, with each page's site, publication and retrieval
+  dates, "search excerpt only" where applicable and "not cited" for sources the report did not
+  use. Whether a cited source supports its sentence is the model's work and is not checked.
+- **Nothing new leaves the house.** The same provider and ledger as other web calls. Only the
+  planned queries are sent (if planning fails, the question's first 200 characters become the
+  one query), each checked by the adapter's private-material filter. Model calls stay on the
+  workstation.
+- **Progress and sources in the chat** are posted with the person's own session token to their
+  own message (`/api/v1/chats/{id}/messages/{id}/event`; Open WebUI forwards the chat and
+  message ids because `ENABLE_FORWARD_USER_INFO_HEADERS` is on). Open WebUI checks that the
+  chat is theirs. Nothing is stored except the 15-minute confirmation codes, in memory.
+
+Each tool call is counted in `workstation_assistant_deep_research_total` by outcome; its web
+requests also count in `workstation_assistant_web_requests_total`. `/health` reports runs in
+progress. The tool definition adds about 250 tokens to every chat that carries the tool server
+(a characters/4 estimate, not measured with the served tokenizer).
+
+### Why a tool and not Open WebUI sub-agents
+
+Open WebUI 0.13.3 has native sub-agents (`ENABLE_SUBAGENTS`, a `delegate_task` tool, background
+runs) and skills. They were not used: background sub-agents get no tool servers (so no
+`read_web_page`), every sub-agent is a full chat loop that resends its tool definitions on every
+step, raw pages land in its context, the number of searches and pages is up to the model, the
+limits (`SUBAGENTS_MAX_CONCURRENT`, `_MAX_ASYNC`) are global rather than per person, and the
+default sub-agent prompt is written for coding work in a workspace. Open WebUI shows MCP tool progress
+only through the status events above (its MCP client ignores progress notifications), so the
+tool posts them itself.
+
+### Rollout and acceptance
+
+The code ships in the `gateway-runtime` ConfigMap; no image changes. After the merge, render
+the shared composition as usual ([service modes](MODES.md#switch-modes)), diff it against the
+running objects as for any rollout (pod resources included), and apply: service-tools restarts with `research.py` and
+`DEEP_RESEARCH_ENABLED=true`, and Open WebUI restarts for the API-key allowlist entry
+`/api/v1/users/permissions` and the tool server description. A restart of service-tools ends a research
+run in progress; the person sees an error and can ask again.
+
+Acceptance, on a Parents daily account with the Workstation tools on:
+
+1. "Research properly: how efficient are home heat pumps below −10 °C, and what helps?" (standard).
+2. "Do a deep dive: what changed in the EU's right-to-repair rules for phones in 2025 and 2026?" (deep).
+3. "Quick research: what are the current recommendations for children's screen time?" (quick).
+
+For each: status lines appear while it runs; the report has `[n]` citations and a Sources list;
+every Sources URL opens the page it names; spot-check three cited sentences against their
+pages; note the time and the `tokens`, `provider_requests` and `citations_removed` in the tool
+result. Then, on a child's account, check that the first call asks before anything is searched
+and that declining searches nothing. While a run is in progress, check that another person's
+chat still answers and that a second research request is refused as busy.
 
 ## Private coding sandbox (candidate, off by default)
 

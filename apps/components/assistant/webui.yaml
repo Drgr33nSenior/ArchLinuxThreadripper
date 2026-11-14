@@ -89,7 +89,7 @@ spec:
                 "access_grants":[{"principal_type":"user",
                 "principal_id":"*","permission":"read"}]},"info":{"id":"workstation",
                 "name":"Workstation tools","description":"Project passages, task handoffs, memory,
-                short videos and long web pages, with your own permissions"}}]
+                short videos, long web pages and deep research, with your own permissions"}}]
             - {name: ENABLE_IMAGE_PROMPT_GENERATION, value: 'false'}
             - {name: AUDIO_TTS_ENGINE, value: ''}
             - {name: AUDIO_STT_OPENAI_API_BASE_URL, value: ''}

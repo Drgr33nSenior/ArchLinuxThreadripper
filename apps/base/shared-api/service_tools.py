@@ -1,10 +1,12 @@
-"""Retrieval/web research tools, task handoffs, memory, a fixed-workflow ComfyUI picture adapter and short videos.
+"""Retrieval/web research tools, deep research, task handoffs, memory, a fixed-workflow ComfyUI picture adapter
+and short videos.
 
 No Kubernetes, shell, workflow upload, or direct public URL fetching. The only
 local writes are the web request ledger, the task handoff and project-only memory
 SQLite files and the image recovery marker under /state. Videos (video.py) run one operator-owned workflow on the
-shared-mode second ComfyUI and come back as an MCP image item. Run one worker/replica. WebUI stores
-returned images under the requesting user.
+shared-mode second ComfyUI and come back as an MCP image item. Deep research (research.py) runs a
+bounded search-and-report loop through the same web adapter and the gateway, as the calling user.
+Run one worker/replica. WebUI stores returned images under the requesting user.
 """
 import asyncio
 import base64
@@ -22,7 +24,7 @@ from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 
 from assistant_metrics import METRICS, record_serving_contract
 from boundary import Refusal, browser_key, read_body, secret_json
@@ -30,6 +32,7 @@ import handoff
 from kv_tail import KvTail
 from project_scope import (CHAT_HEADER, MEMORY_MODES, MemoryModes, accessible_projects, chat_folder,
                            folder_memory_group, handoff_owner, memory_group, require_project)
+from research import TOOL as RESEARCH_TOOL, DeepResearch, chat_target
 from retrieval import TOOL_NAMES as RETRIEVAL_TOOLS, Retrieval
 from video import TOOL as VIDEO_TOOL, VideoTool
 from web_search import WebSearch
@@ -81,6 +84,35 @@ def web_refusal(exc, now):
     elif exc.code in {"web_search_day_limit", "web_search_month_limit"}:
         detail["note"] = "the web budget is used up for now; continue without web sources"
     return detail
+
+
+def research_outcome(exc):
+    if exc.code in {"deep_research_busy", "deep_research_already_running"}:
+        return "busy"
+    if exc.code == "deep_research_web_budget_low":
+        return "budget"
+    if exc.code == "deep_research_requires_ready_chat":
+        return "not_ready"
+    return {400: "invalid", 401: "denied", 403: "denied", 404: "denied"}.get(exc.status, "unavailable")
+
+
+def research_result(task):
+    """(metric outcome, MCP result) of a finished deep research task."""
+    if task.cancelled():
+        return "cancelled", {"content": [{"type": "text", "text": json.dumps({"error": "deep_research_cancelled"})}],
+                             "isError": True}
+    exc = task.exception()
+    if exc is None:
+        outcome, content = task.result()
+        return outcome, {"content": content, "isError": False}
+    code, outcome = ("deep_research_failed", "failed") if not isinstance(exc, Refusal) else (exc.code, research_outcome(exc))
+    return outcome, {"content": [{"type": "text", "text": json.dumps({"error": code})}], "isError": True}
+
+
+def metered_web(tool, client, call):
+    """A web request made by deep research, counted like the chat's own web calls."""
+    return metered("workstation_assistant_web_requests_total", {"tool": tool, "client": client}, call,
+                   success=lambda value: "ok" if value else "no_results", failure=web_outcome)
 
 
 def video_outcome(exc):
@@ -205,7 +237,7 @@ PICTURE_FILE = re.compile(r"picture_[0-9]{5}_\.png\Z")
 class ServiceTools:
     def __init__(self, client, webui, image_comfy, gateway, browser_file, state_dir, image_timeout=240, public_webui="", web_search=None,
                  memory=None, memory_key_file="/run/memory/service-key", memory_write=False, handoffs=None, image_slots=1,
-                 video_comfy=None, kv_tail=None):
+                 video_comfy=None, kv_tail=None, deep_research=0):
         self.client = client
         self.webui, self.gateway = webui, gateway
         self.image_comfy = tuple(image_comfy)  # one ComfyUI base URL per image slot
@@ -231,6 +263,10 @@ class ServiceTools:
         # Short videos (video.py) on the shared-mode second ComfyUI, or None when disabled.
         self.video = (VideoTool(self.upstream_json, client, video_comfy, gateway, browser_file, Path(__file__).parent, kv_tail)
                       if video_comfy else None)
+        # Deep research (research.py): deep_research is its global run limit, 0 when disabled.
+        # It needs web search; its model calls go to the gateway as the calling user.
+        self.research = (DeepResearch(self.upstream_json, client, webui, gateway, browser_file, web_search, metered_web,
+                                      concurrency=deep_research) if deep_research and web_search else None)
         # Project retrieval tools (retrieval.py) share the webui-rag-profile settings.
         self.retrieval = Retrieval(self.upstream_json, webui, self.public_webui, os.environ)
         self.app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
@@ -262,6 +298,7 @@ class ServiceTools:
                 "image_profile": self.image_profile["id"], "workflow_sha256": self.workflow_sha256,
                 "kv_tail": self.kv_tail.status() if self.kv_tail else {"enabled": False},
                 "retrieval": self.retrieval.status(),
+                "deep_research": self.research.status() if self.research else {"enabled": False},
                 "web_search": self.web_search.status() if self.web_search else {"status": "disabled"}}
 
     def require_web_search(self):
@@ -464,6 +501,8 @@ class ServiceTools:
                     result["tools"] += handoff.TOOLS
                 if self.video:
                     result["tools"] += self.video.tools()
+                if self.research:
+                    result["tools"] += self.research.tools()
                 if self.memory:
                     project = {"project": {"type": "string", "maxLength": 160, "description":
                         "Open WebUI knowledge collection id the user can read, for that project's memory. "
@@ -566,6 +605,26 @@ class ServiceTools:
                     if exc.status == 400:
                         raise
                     result = {"content": [{"type": "text", "text": json.dumps({"error": exc.code})}], "isError": True}
+            elif method == "tools/call" and params.get("name") == RESEARCH_TOOL:
+                if not self.research:
+                    raise Refusal(404, "deep_research_disabled")
+                labels = {"client": client}
+                try:
+                    job = await self.research.prepare(params.get("arguments"), user_id, headers,
+                                                      chat_target(request.headers), client)
+                except Refusal as exc:
+                    METRICS.inc("workstation_assistant_deep_research_total", **labels, outcome=research_outcome(exc))
+                    # As for videos: busy, budget, permission and readiness are tool results the
+                    # model can explain; malformed arguments stay HTTP 400.
+                    if exc.status == 400:
+                        raise
+                    result = {"content": [{"type": "text", "text": json.dumps({"error": exc.code})}], "isError": True}
+                else:
+                    if isinstance(job, list):  # the person is asked first; nothing was searched
+                        METRICS.inc("workstation_assistant_deep_research_total", **labels, outcome="needs_confirmation")
+                        result = {"content": job, "isError": False}
+                    else:
+                        return await self.research_response(request, identifier, job, labels)
             elif method == "tools/call" and params.get("name") in {"search_web", "read_web_page"}:
                 search = self.require_web_search()
                 args = params.get("arguments")
@@ -588,6 +647,46 @@ class ServiceTools:
             return JSONResponse({"error": exc.code}, status_code=exc.status)
         except (httpx.HTTPError, TimeoutError, ValueError, TypeError, KeyError, OSError):
             return JSONResponse({"error": "retrieval_unavailable"}, status_code=503)
+
+    async def research_response(self, request, identifier, job, labels):
+        """Run an admitted deep research job and answer the tools/call when it is done.
+
+        A run takes minutes. Clients that accept SSE (Streamable HTTP; Open WebUI and Qwen Code
+        do) get a text/event-stream answer with a comment line every keepalive interval, so a
+        client read timeout (Open WebUI's MCP transport: 300 s) never sees a silent connection,
+        then the JSON-RPC response as one `message` event. Others get plain JSON at the end.
+        A caller that leaves cancels the run."""
+        task = asyncio.create_task(job.run())
+        task.add_done_callback(job.release)  # also when cancelled before it started
+        task.add_done_callback(lambda t: METRICS.inc("workstation_assistant_deep_research_total", **labels,
+                                                     outcome=research_result(t)[0]))
+
+        def envelope():
+            return {"jsonrpc": "2.0", "id": identifier, "result": research_result(task)[1]}
+
+        if "text/event-stream" in request.headers.get("accept", ""):
+            async def events():
+                try:
+                    while not task.done():
+                        await asyncio.wait({task}, timeout=self.research.keepalive)
+                        if not task.done():
+                            yield b": keepalive\n\n"
+                    yield b"event: message\ndata: " + json.dumps(envelope()).encode() + b"\n\n"
+                finally:
+                    # No await here: a cancelled response scope would cancel it again.
+                    if not task.done():
+                        task.cancel()
+            return StreamingResponse(events(), media_type="text/event-stream", headers={"Cache-Control": "no-store"})
+        try:
+            while not task.done():
+                await asyncio.wait({task}, timeout=1)
+                if not task.done() and await request.is_disconnected():
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+            return JSONResponse(envelope(), headers={"Cache-Control": "no-store"})
+        finally:
+            if not task.done():
+                task.cancel()
 
     async def web_tool(self, search, name, args, client):
         if name == "search_web":
@@ -751,6 +850,9 @@ def create_app():
     image_slots = int(os.environ.get("IMAGE_CONCURRENCY", "1"))
     # Shared mode only: the second ComfyUI (apps/base/comfyui-gpu0) holds the Wan stack.
     video_comfy = "http://comfyui-gpu0:7821" if os.environ.get("VIDEO_ENABLED", "false") == "true" else None
+    # Deep research: off unless enabled; one run at a time unless DEEP_RESEARCH_CONCURRENCY says two.
+    deep_research = (int(os.environ.get("DEEP_RESEARCH_CONCURRENCY", "1"))
+                     if os.environ.get("DEEP_RESEARCH_ENABLED", "false") == "true" else 0)
     kv_tail = (KvTail(client, "http://litellm:4000", "/run/browser/mapping.json",
                       IMAGE_COMFY[:image_slots] + ((video_comfy,) if video_comfy else ()))
                if os.environ.get("KV_TAIL_ENABLED", "false") == "true" else None)
@@ -760,7 +862,7 @@ def create_app():
                            memory="http://graphiti-memory:8000" if os.environ.get("MEMORY_ENABLED", "false") == "true" else None,
                            memory_write=os.environ.get("MEMORY_WRITE_ENABLED", "false") == "true",
                            handoffs=handoffs, image_slots=image_slots,
-                           video_comfy=video_comfy, kv_tail=kv_tail)
+                           video_comfy=video_comfy, kv_tail=kv_tail, deep_research=deep_research)
     # Starlette 1.x (FastAPI 0.136, the pinned gateway image) removed
     # add_event_handler/on_event; close the shared client from the lifespan.
     @contextlib.asynccontextmanager

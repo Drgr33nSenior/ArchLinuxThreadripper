@@ -130,6 +130,28 @@ class WebSearch:
                 status["status"] = "web_search_accounting_unavailable"
         return status
 
+    def usage(self):
+        """Requests reserved in the current UTC minute, day and month (read-only).
+
+        Deep research checks the day's remaining budget before it starts. An unreadable
+        ledger refuses, as reserve() would."""
+        now = self.clock().astimezone(timezone.utc)
+        periods = {"minute": now.strftime("minute:%Y-%m-%dT%H:%M"), "day": now.strftime("day:%Y-%m-%d"),
+                   "month": now.strftime("month:%Y-%m")}
+        counts = dict.fromkeys(periods, 0)
+        if not self.database.exists():
+            return counts
+        try:
+            with sqlite3.connect(self.database.resolve().as_uri() + "?mode=ro", uri=True, timeout=2) as db:
+                for name, period in periods.items():
+                    row = db.execute("SELECT requests FROM usage WHERE period = ?", (period,)).fetchone()
+                    if row and (type(row[0]) is not int or row[0] < 0):
+                        raise sqlite3.DatabaseError("invalid request counter")
+                    counts[name] = row[0] if row else 0
+        except sqlite3.Error:
+            raise Refusal(503, "web_search_accounting_unavailable") from None
+        return counts
+
     def credential(self):
         # Projected Kubernetes Secret symlinks are intentional. Never log values.
         try:
