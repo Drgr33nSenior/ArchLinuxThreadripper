@@ -365,6 +365,20 @@ context, node and new output paths; placeholders are not site values.
    for a browser key and publish both updated mapping Secrets to revoke image
    permission. These are separate permissions. Verify denial before deleting the
    local credential record. WebUI retrieval keys have their own WebUI revocation.
+
+   Change an existing key's limits in place, found by its alias (the key value is
+   never read or printed):
+
+   ```sh
+   ./bin/workstationctl service limits --base-url http://127.0.0.1:14000 --master-file /private/new-service-credentials/master-key --alias browser-zarren --tpm 2000000
+   ```
+
+   Bounds are 60 requests a minute, 2,000,000 tokens a minute and 2 requests at
+   once. Concurrency is what shares the GPU between people. Tokens a minute count
+   the whole re-sent conversation, cached or not, so a coding agent at 40,000-80,000
+   tokens of context reaches 131,072 in two or three steps and gets `429` with a
+   60-second retry. Give agent and adult keys 2,000,000; a key whose user never
+   runs agents can stay lower.
 7. Start WebUI and the tools adapter only after source, database and persistence
    checks. Disable open signup; create the first administrator and family users
    through the existing WebUI account workflow. Keep the RAG model/fixtures staged

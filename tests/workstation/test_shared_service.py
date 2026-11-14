@@ -1097,6 +1097,65 @@ class CredentialFileTests(unittest.TestCase):
             self.assertTrue((output / "master-key").read_text().strip().startswith("sk-"))
 
 
+class KeyLimitTests(unittest.TestCase):
+    def args(self, **change):
+        fields = {"base_url": "http://127.0.0.1:14000", "master_file": "master", "alias": "browser-zarren",
+                  "rpm": None, "tpm": None, "concurrency": None}
+        return SimpleNamespace(**{**fields, **change})
+
+    def run_limits(self, args, reply=None):
+        with patch.object(service, "protected", return_value="sk-master"), \
+                patch.object(service, "admin_request", return_value=reply or {}) as admin, \
+                patch("builtins.print") as shown:
+            service.limits(args)
+        return admin, " ".join(str(c.args[0]) for c in shown.call_args_list)
+
+    def test_updates_only_named_limits_by_alias(self):
+        admin, shown = self.run_limits(self.args(tpm=2000000), {"key": "hashed", "tpm_limit": 2000000})
+        base, master, path, body = admin.call_args.args
+        self.assertEqual(("/key/update", "sk-master"), (path, master))
+        self.assertEqual({"key_alias": "browser-zarren", "tpm_limit": 2000000}, body)
+        self.assertEqual("browser-zarren: tpm 2000000", shown)
+        self.assertNotIn("hashed", shown)
+
+    def test_refuses_out_of_bound_or_empty_change_before_any_request(self):
+        for change in ({"tpm": 2000001}, {"concurrency": 3}, {"rpm": 0}, {}):
+            with self.subTest(change=change), patch.object(service, "protected", return_value="sk-master"), \
+                    patch.object(service, "admin_request") as admin, self.assertRaises(ValueError):
+                service.limits(self.args(**change))
+            admin.assert_not_called()
+
+    def test_refuses_bad_alias_and_unapplied_change(self):
+        with patch.object(service, "protected", return_value="sk-master"), \
+                patch.object(service, "admin_request") as admin, self.assertRaises(ValueError):
+            service.limits(self.args(alias="browser zarren", tpm=10))
+        admin.assert_not_called()
+        with self.assertRaises(ValueError):
+            self.run_limits(self.args(tpm=2000000), {"tpm_limit": 131072})
+        with self.assertRaises(ValueError):
+            self.run_limits(self.args(tpm=2000000), {"key_alias": "browser-family1", "tpm_limit": 2000000})
+
+    def test_provision_accepts_the_raised_token_bound_only(self):
+        policy = {"user_id": "u1", "client": "ide", "models": [sorted(service.MODELS)[0]], "rpm": 60,
+                  "tpm": 2000000, "concurrency": 2, "days": 30}
+        with tempfile.TemporaryDirectory() as directory:
+            request = Path(directory) / "policy.json"
+            for tpm, allowed in ((2000000, True), (2000001, False)):
+                request.write_text(json.dumps({**policy, "tpm": tpm}))
+                args = SimpleNamespace(master_file="master", request=request, existing_user=True,
+                                       base_url="http://127.0.0.1:14000", output=Path(directory) / f"out-{tpm}")
+                with self.subTest(tpm=tpm), patch.object(service, "protected", return_value="sk-master"), \
+                        patch.object(service, "admin_request",
+                                     side_effect=[{"user_id": "u1"}, {"key": "sk-new"}]) as admin:
+                    if allowed:
+                        service.provision(args)
+                        self.assertEqual(2000000, admin.call_args.args[3]["tpm_limit"])
+                    else:
+                        with self.assertRaises(ValueError):
+                            service.provision(args)
+                        admin.assert_not_called()
+
+
 class KubeYamlTests(unittest.TestCase):
     """Manifests are read as YAML 1.1 by Kubernetes and Prometheus: y/n/yes/no/on/off are booleans there."""
 
