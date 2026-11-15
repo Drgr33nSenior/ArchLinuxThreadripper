@@ -1,0 +1,40 @@
+{
+  "schema": 1,
+  "kind": "workstation-task-acceptance-spec",
+  "task_id": "record-publication",
+  "version": "2026-11-15.1",
+  "oracle": {"applicable": false, "reason": "The task changes an external record and writes a summary; it has no code to run."},
+  "external_state": {
+    "checks": [
+      {"id": "record-closed", "path": ["records", "job-7", "status"], "equals": "closed"},
+      {"id": "resolution-fixed", "path": ["records", "job-7", "resolution"], "equals": "fixed"}
+    ]
+  },
+  "deliverable": {
+    "answer": [
+      {"id": "answer-record", "path": ["record"], "equals": "job-7"},
+      {"id": "answer-revision", "path": ["revision"], "type": "integer"}
+    ],
+    "artifacts": [
+      {"id": "summary", "answer_path": ["artifact"], "format": "json", "fields": [
+        {"id": "summary-record", "path": ["record"], "equals": "job-7"},
+        {"id": "summary-text", "path": ["summary"], "type": "string"}
+      ]}
+    ],
+    "links": [
+      {"id": "record-link", "answer_path": ["link"], "format": "json", "fields": [
+        {"id": "link-record", "path": ["record"], "equals": "job-7"}
+      ]}
+    ]
+  },
+  "linkage": {
+    "checks": [
+      {"id": "answer-revision-current", "left": {"from": "answer", "path": ["revision"]},
+       "right": {"from": "state", "path": ["records", "job-7", "revision"]}},
+      {"id": "summary-revision-current", "left": {"from": "artifact", "name": "summary", "path": ["revision"]},
+       "right": {"from": "state", "path": ["records", "job-7", "revision"]}},
+      {"id": "link-revision-current", "left": {"from": "link", "name": "record-link", "path": ["revision"]},
+       "right": {"from": "state", "path": ["records", "job-7", "revision"]}}
+    ]
+  }
+}
