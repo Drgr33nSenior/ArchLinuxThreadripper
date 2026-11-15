@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "kind": "workstation-task-acceptance-spec",
+  "task_id": "window-counts-repair",
+  "version": "2026-11-15.1",
+  "editable": ["windows.py"],
+  "ignore": ["__pycache__"],
+  "oracle": {
+    "command": ["/usr/bin/python3", "-E", "-s", "-B", "-m", "unittest", "-q", "test_windows", "test_acceptance"],
+    "canary": "canary",
+    "seconds": 60,
+    "baseline": "fail",
+    "references": [
+      {"id": "trusted", "overlay": "reference", "expected": "pass"},
+      {"id": "closed-boundary", "overlay": "mutants/closed-boundary", "expected": "fail"},
+      {"id": "unvalidated-width", "overlay": "mutants/unvalidated-width", "expected": "fail"}
+    ]
+  },
+  "tests": {
+    "command": ["/usr/bin/python3", "-E", "-s", "-B", "-m", "unittest", "-q"],
+    "patterns": ["test_*.py"]
+  },
+  "external_state": {"applicable": false, "reason": "The task changes one source file and no external system."},
+  "deliverable": {"applicable": false, "reason": "The protected tests grade the editable file; the task requires no answer field or produced file."},
+  "linkage": {"applicable": false, "reason": "No external state is declared."}
+}
