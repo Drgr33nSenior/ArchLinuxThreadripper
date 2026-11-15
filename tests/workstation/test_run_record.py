@@ -573,9 +573,23 @@ class RunRecordTests(unittest.TestCase):
             root = Path(tmp)
             (root / "plan.json").write_text(json.dumps(plan))
             (root / "identity.json").write_text(json.dumps(identity))
+            # Wait for complete samples, rather than assuming collection finishes
+            # within a fixed sleep on a busy CI host. The runner still has a timeout.
+            workload = "\n".join([
+                "import sys, time",
+                "from pathlib import Path",
+                "samples = Path(sys.argv[1])",
+                "deadline = time.monotonic() + 15",
+                "while time.monotonic() < deadline:",
+                "    if samples.exists() and samples.read_text().count('\\n') >= 2:",
+                "        break",
+                "    time.sleep(0.01)",
+                "else:",
+                "    raise RuntimeError('two telemetry samples were not produced')",
+            ])
             runner = [sys.executable, "-B", str(ROOT / "lib/workstation/measurement.py"), "--output", str(root / "run"),
                       "--timeout", "20", "--run-plan", str(root / "plan.json"), "--run-identity", str(root / "identity.json"),
-                      "run", "--", sys.executable, "-c", "import time; time.sleep(1.2)"]
+                      "run", "--", sys.executable, "-c", workload, str(root / "run/telemetry.jsonl")]
             self.assertEqual(subprocess.run(runner, capture_output=True, text=True, timeout=60).returncode, 0)
             attempt = json.loads(subprocess.run(CLI + ["attempt", str(root / "run"), "--model", "fixture-model",
                                                        "--tokens", "12", "5"], capture_output=True, text=True,
