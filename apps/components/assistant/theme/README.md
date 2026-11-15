@@ -22,8 +22,8 @@ Each user still picks Light, Dark or OLED in their own settings, and this theme 
 - **The mark.** Edit `logo.svg`, then run `./render-assets.sh` and commit the regenerated files. The script needs podman and network access. It renders in the pinned Arch base image (`SUNSHINE_ARCH_BASE_IMAGE` in `versions.lock`) with librsvg and ImageMagick from the signed Arch repositories.
 - **A new file.** Add it to the `webui-theme` generator in `../kustomization.yaml` and to the mounts in `../webui.yaml`. Also add it to `infrastructure/packages/bootstrap/source.files` and `bridge-runtime.files`.
 
-The title reads "Family AI (Open WebUI)", because Open WebUI appends that suffix to any custom `WEBUI_NAME`.
+The title reads "Family AI (OpenMettle)": the fork appends the product name to any custom `WEBUI_NAME`, and the OpenMettle branding switch (`OPENMETTLE_BRANDING` in `../webui.yaml`) makes that product OpenMettle instead of Open WebUI. The switch replaces only Open WebUI's own icons, so the files here still win. See [OpenMettle theme](../../../../docs/ASSISTANT.md#openmettle-theme).
 
 ## Licence
 
-Open WebUI's licence forbids replacing its branding, with one exception that applies here: deployments with at most 50 end users within any rolling 30 days. If this deployment ever grows past that, restore the upstream assets by removing the `webui-theme` mounts. Alternatively, keep the Open WebUI logo and theme the colours only.
+Open WebUI's licence forbids replacing its branding, with one exception that applies here: deployments with at most 50 end users within any rolling 30 days. If this deployment ever grows past that, restore the upstream assets by removing the `webui-theme` mounts and set `OPENMETTLE_BRANDING` to `'false'`. Alternatively, keep the Open WebUI logo and theme the colours only.

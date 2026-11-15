@@ -206,6 +206,8 @@ class AssistantTests(unittest.TestCase):
             self.assertEqual(2, len(app["envFrom"]))
             self.assertEqual("/rag-models/Qwen3-Embedding-0.6B", env["RAG_EMBEDDING_MODEL"])
             self.assertEqual("Family AI", env["WEBUI_NAME"])
+            # The fork's branding switch; allowed while the deployment has at most 50 users.
+            self.assertEqual("true", env["OPENMETTLE_BRANDING"])
             self.assertEqual(model, env["DEFAULT_MODELS"])
             self.assertEqual(images, env["ENABLE_IMAGE_GENERATION"])
             # Admin Panel settings persist; the deployment's own settings are re-applied by
