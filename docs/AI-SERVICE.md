@@ -82,6 +82,13 @@ credentials. Fixed-label status/request metrics, readiness and Kubernetes events
 remain available. Diagnose native internals in the disposable synthetic smoke
 environment; do not enable raw gateway logs for family traffic.
 
+The one exception is a fixed-schema request-trace event. The gateway writes one
+line to its container log for a chat request that carries an
+`X-Workstation-Run-Context` header from a measurement runner. The line holds
+validated run identifiers, a fixed result and code, the HTTP status and two
+timestamps, and nothing from the request content. A request without the header
+writes nothing. See [Run records](RUN-RECORDS.md#request-trace-events).
+
 Primary sources checked against selected source versions:
 
 - [LiteLLM virtual keys](https://docs.litellm.ai/docs/proxy/virtual_keys),

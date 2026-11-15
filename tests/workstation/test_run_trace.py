@@ -252,23 +252,27 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.service.requests_started = dict.fromkeys(assistant_metrics.ROUTES, 0)
 
     async def test_a_streamed_response_counts_until_its_last_byte(self):
-        streaming, release = asyncio.Event(), asyncio.Event()
+        # The count does not depend on a run context: an ordinary request is counted the same way.
+        for started, headers in enumerate(({}, {run_trace.HEADER: CONTEXT.encode()}), 1):
+            with self.subTest(identified=bool(headers)):
+                streaming, release = asyncio.Event(), asyncio.Event()
 
-        async def stream(scope, receive, send):
-            await send({"type": "http.response.start", "status": 200, "headers": []})
-            await send({"type": "http.response.body", "body": b": keepalive\n\n", "more_body": True})
-            streaming.set()
-            await release.wait()
-            await send({"type": "http.response.body", "body": b"data: done\n\n", "more_body": False})
-        lifecycle = RequestLifecycle(stream, self.service)
-        request = asyncio.create_task(call(lifecycle, "/mcp", {}, {run_trace.HEADER: CONTEXT.encode()}))
-        await streaming.wait()
-        self.assertEqual((list(self.service.requests_active.values()), self.service.requests_started["mcp"], self.events),
-                         (["mcp"], 1, []))
-        release.set()
-        await request
-        self.assertEqual((self.service.requests_active, self.events[0]["result"], self.events[0]["operation"]),
-                         ({}, "ok", "mcp"))
+                async def stream(scope, receive, send):
+                    await send({"type": "http.response.start", "status": 200, "headers": []})
+                    await send({"type": "http.response.body", "body": b": keepalive\n\n", "more_body": True})
+                    streaming.set()
+                    await release.wait()
+                    await send({"type": "http.response.body", "body": b"data: done\n\n", "more_body": False})
+                request = asyncio.create_task(call(RequestLifecycle(stream, self.service), "/mcp", {}, headers))
+                await streaming.wait()
+                # The response has started and sent bytes, and the request still counts.
+                self.assertEqual((list(self.service.requests_active.values()), self.service.requests_started["mcp"],
+                                  self.events), (["mcp"], started, []))
+                release.set()
+                await request
+                self.assertEqual(self.service.requests_active, {})
+        self.assertEqual([(event["result"], event["operation"], event["status"]) for event in self.events],
+                         [("ok", "mcp", 200)])
 
     async def test_failures_and_cancellation_release_the_count(self):
         async def broken(scope, receive, send):
@@ -276,18 +280,29 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
 
         async def hanging(scope, receive, send):
             await asyncio.sleep(30)
-        with self.assertRaises(RuntimeError):
-            await call(RequestLifecycle(broken, self.service), "/mcp", {}, {run_trace.HEADER: CONTEXT.encode()})
-        request = asyncio.create_task(call(RequestLifecycle(hanging, self.service), "/webui/search", {},
-                                           {run_trace.HEADER: CONTEXT.encode()}))
-        await asyncio.sleep(0.01)
-        self.assertEqual(list(self.service.requests_active.values()), ["web"])
-        request.cancel()
-        with self.assertRaises(asyncio.CancelledError):
-            await request
-        self.assertEqual(self.service.requests_active, {})
+
+        async def cut_off(scope, receive, send):
+            # The client went away while the answer was streaming.
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b": keepalive\n\n", "more_body": True})
+            await asyncio.sleep(30)
+        for headers in ({}, {run_trace.HEADER: CONTEXT.encode()}):
+            with self.subTest(identified=bool(headers)):
+                with self.assertRaises(RuntimeError):
+                    await call(RequestLifecycle(broken, self.service), "/mcp", {}, headers)
+                self.assertEqual(self.service.requests_active, {})
+                for app, path, route in ((hanging, "/webui/search", "web"), (cut_off, "/mcp", "mcp")):
+                    request = asyncio.create_task(call(RequestLifecycle(app, self.service), path, {}, headers))
+                    await asyncio.sleep(0.01)
+                    self.assertEqual(list(self.service.requests_active.values()), [route])
+                    request.cancel()
+                    with self.assertRaises(asyncio.CancelledError):
+                        await request
+                    self.assertEqual(self.service.requests_active, {})
+        # Every request was counted as started; only the identified ones wrote an event.
+        self.assertEqual(self.service.requests_started, {"mcp": 4, "image": 0, "web": 2})
         self.assertEqual([(event["result"], event["operation"], event["status"]) for event in self.events],
-                         [("error", "mcp", None), ("cancelled", "web", None)])
+                         [("error", "mcp", None), ("cancelled", "web", None), ("cancelled", "mcp", 200)])
 
     async def test_other_routes_pass_through_uncounted(self):
         async def plain(scope, receive, send):
@@ -398,10 +413,11 @@ class ServiceToolsTraceTests(unittest.IsolatedAsyncioTestCase):
                      'workstation_assistant_active_requests{route="image"} 0',
                      'workstation_assistant_active_requests{route="web"} 0',
                      'workstation_assistant_requests_started_total{route="mcp"} 0',
-                     f"workstation_assistant_process_start_time_seconds {self.tools.process_started:.12g}"):
+                     f"workstation_assistant_process_start_time_seconds {self.tools.process_started!r}"):
             self.assertIn(line + "\n", metrics)
         self.gate = asyncio.Event()
-        request = asyncio.create_task(self.mcp("tools/list"))
+        # An ordinary request, without a run context, as the chat interface sends it.
+        request = asyncio.create_task(self.mcp("tools/list", headers={"Authorization": "Bearer fixture-user-token"}))
         await self.entered.wait()
         # A short tool call is in flight: no completion counter has moved, yet the work is visible.
         busy = (await self.client.get("/health")).json()["requests"]
@@ -411,19 +427,27 @@ class ServiceToolsTraceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('workstation_assistant_requests_started_total{route="mcp"} 1\n', metrics)
         self.gate.set()
         self.assertEqual((await request).status_code, 200)
+        self.gate = None
         after = (await self.client.get("/health")).json()["requests"]
-        self.assertEqual((after["active"], after["started_total"]["mcp"]), (0, 1))
+        self.assertEqual((after["active"], after["started_total"]["mcp"], self.events), (0, 1, []))
         metrics = (await self.client.get("/metrics")).text
         self.assertIn('workstation_assistant_active_requests{route="mcp"} 0\n', metrics)
-        # Reading health and metrics is not work; run identifiers never become labels or values.
+        # Reading health and metrics is not work.
         self.assertEqual((await self.client.get("/health")).json()["requests"], after)
+        # A request with a run context is counted the same way; its identifiers never become labels or values.
+        self.assertEqual((await self.mcp("tools/list")).status_code, 200)
+        metrics = (await self.client.get("/metrics")).text
+        self.assertIn('workstation_assistant_requests_started_total{route="mcp"} 2\n', metrics)
         for identifier in IDENTIFIERS:
             self.assertNotIn(identifier, metrics)
         self.assertEqual(len(self.events), 1)
         # Web and picture routes are counted on their own series; a refusal still counts as started work.
         self.assertEqual((await self.client.post("/webui/search", json={})).status_code, 401)
         self.assertEqual((await self.client.post("/webui/images/generations", json={})).status_code, 401)
-        self.assertEqual(self.tools.request_activity()["started_total"], {"mcp": 1, "image": 1, "web": 1})
+        self.assertEqual(self.tools.request_activity()["started_total"], {"mcp": 2, "image": 1, "web": 1})
+        # The process identity is one value in both places and does not change while the process lives.
+        self.assertEqual((await self.client.get("/health")).json()["process_started_unix_seconds"], idle["process_started_unix_seconds"])
+        self.assertIn(f"workstation_assistant_process_start_time_seconds {idle['process_started_unix_seconds']!r}\n", metrics)
 
     def test_counter_values_are_rendered_exactly(self):
         metrics = assistant_metrics.Metrics()
@@ -431,7 +455,7 @@ class ServiceToolsTraceTests(unittest.IsolatedAsyncioTestCase):
         metrics.set("workstation_assistant_process_start_time_seconds", 1763190000.125)
         text = metrics.render()
         self.assertIn('workstation_assistant_requests_started_total{route="mcp"} 12345678\n', text)
-        self.assertIn("workstation_assistant_process_start_time_seconds 1763190000.12\n", text)
+        self.assertIn("workstation_assistant_process_start_time_seconds 1763190000.125\n", text)
         self.assertEqual(assistant_metrics.FAMILIES["workstation_assistant_active_requests"][2],
                          {"route": ("mcp", "image", "web")})
 

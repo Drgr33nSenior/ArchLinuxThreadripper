@@ -1,7 +1,11 @@
 """Offline run-record-v1 fixtures: identity, plan binding, failures, acceptance and resource joins.
 
-Synthetic records only; no model, gateway, PSU or GPU is contacted. The request
-path through the gateway and service-tools is tested in test_run_trace.py.
+No model, gateway, PSU or GPU is contacted. Attempt, trace and resource records are
+synthetic. Acceptance records are task acceptance results in the checker's format:
+acceptance.jsonl is authored for the three fixture tasks and says so in each record;
+publication/results holds records the checker itself wrote. Every one is validated by
+task_acceptance.validate_result. The request path through the gateway and service-tools
+is tested in test_run_trace.py.
 """
 
 import copy
@@ -12,7 +16,6 @@ import random
 import subprocess
 import sys
 import tempfile
-import types
 import unittest
 from unittest import mock
 
@@ -22,6 +25,7 @@ sys.path.insert(0, str(ROOT / "apps/base/shared-api"))
 import assistant_metrics
 import measurement
 import run_record as rr
+import task_acceptance
 import telemetry_power
 
 FIXTURES = ROOT / "tests/fixtures/run-record"
@@ -32,6 +36,23 @@ CLI = [sys.executable, "-B", str(ROOT / "lib/workstation/run_record.py")]
 
 def jsonl(name):
     return [json.loads(line) for line in (FIXTURES / name).read_text().splitlines() if line.strip()]
+
+
+def changed(result, change):
+    """A copy of an acceptance result after ``change``; the recorded verdict and reasons stay as they were."""
+    result = copy.deepcopy(result)
+    change(result)
+    return result
+
+
+def redecided(result, **statuses):
+    """A copy with other component statuses and the verdict and reasons the checker's rule gives them."""
+    result = copy.deepcopy(result)
+    for name, status in statuses.items():
+        result["components"][name] = {"status": status, "reason": "fixture"}
+    result["verdict"] = task_acceptance.verdict(result["components"])
+    result["reasons"] = task_acceptance.reasons(result["components"])
+    return result
 
 
 class RunRecordTests(unittest.TestCase):
@@ -63,8 +84,9 @@ class RunRecordTests(unittest.TestCase):
 
     def test_completed_failed_and_retried_fixtures_trace_end_to_end(self):
         report = self.report()
-        self.assertEqual((report["schema"], report["kind"], report["interface"], report["acceptance_interface"]),
-                         (1, "run-record-report", "run-record-v1", "task-acceptance-v1"))
+        self.assertEqual((report["schema"], report["kind"], report["interface"], report["acceptance_result"]),
+                         (1, "run-record-report", "run-record-v1",
+                          {"kind": task_acceptance.RESULT_KIND, "schema": task_acceptance.SCHEMA}))
         completed = self.task(report, "fixture-completed")
         self.assertEqual((completed["status"], completed["accepted_attempt_id"], completed["task_wall_seconds"],
                           completed["meets_latency_target"]), ("accepted", "fixture-completed-1", 60.0, True))
@@ -86,7 +108,9 @@ class RunRecordTests(unittest.TestCase):
     def test_tool_success_never_decides_task_acceptance(self):
         report = self.report()
         retried = self.task(report, "fixture-retried")["attempt_records"]
-        # Every tool call succeeded yet the checker rejected; failed tool calls yet accepted.
+        # Every tool call succeeded and completion was claimed, yet the checker rejected; failed tool calls yet accepted.
+        self.assertEqual(self.acceptance[2]["evidence"]["claim"],
+                         {"completed": True, "contradicted": True, "decides_verdict": False})
         self.assertEqual((retried[0]["tool_calls"], retried[0]["acceptance"]), ({"succeeded": 4, "failed": 0}, "rejected"))
         self.assertEqual((retried[2]["tool_calls"], retried[2]["acceptance"]), ({"succeeded": 2, "failed": 2}, "accepted"))
         statuses = {t["task_id"]: t["status"] for t in report["tasks"]}
@@ -129,31 +153,39 @@ class RunRecordTests(unittest.TestCase):
             self.report(attempts=attempts)
 
     def test_missing_or_unavailable_final_verdict_is_unverified_not_accepted(self):
-        for verdicts in ([a for a in self.acceptance if a["attempt_id"] != "fixture-failed-1"],
-                         [dict(a, verdict="unavailable") if a["attempt_id"] == "fixture-failed-1" else a
-                          for a in self.acceptance]):
-            report = self.report(acceptances=verdicts)
+        # The failed check could not be made at all: the checker's rule then gives "unavailable", not "rejected".
+        unavailable = redecided(self.acceptance[1], deliverable="unavailable")
+        self.assertEqual((unavailable["verdict"], unavailable["subject"]["attempt_id"]), ("unavailable", "fixture-failed-1"))
+        for results in ([a for a in self.acceptance if a["subject"]["attempt_id"] != "fixture-failed-1"],
+                        [self.acceptance[0], unavailable, *self.acceptance[2:]]):
+            report = self.report(acceptances=results)
             self.assertEqual(self.task(report, "fixture-failed")["status"], "unverified")
             self.assertEqual(report["summary"]["tasks_accepted"], 2)
         report = self.report(acceptances=[])
         self.assertEqual(report["summary"]["tasks_accepted"], 0)
         self.assertEqual(report["coverage"]["attempts_with_acceptance"], 0)
 
-    def test_acceptance_join_rejects_mismatched_or_duplicate_verdicts(self):
+    def test_acceptance_join_rejects_mismatched_or_duplicate_results(self):
+        first = self.acceptance[0]
+        early = "2023-11-14T22:14:29+00:00"  # One second before fixture-completed-1 ended.
         cases = {
-            "does not match": dict(self.acceptance[0], attempt_id="fixture-missing"),
-            "does not match ": dict(self.acceptance[0], task_id="fixture-failed"),
-            "does not match  ": dict(self.acceptance[0], run_id="fixture-run-2"),
-            "predates": dict(self.acceptance[0], evaluated_unix_ns=self.attempts[0]["ended_unix_ns"] - 1),
-            "checker digest": dict(self.acceptance[0], checker={"id": "fixture-checker", "sha256": None}),
-            "unsupported task-acceptance": dict(self.acceptance[0], interface="task-acceptance-v0"),
-            "verdict must be": dict(self.acceptance[0], verdict="self-reported-done"),
+            "does not match": changed(first, lambda r: r["subject"].update(attempt_id="fixture-missing")),
+            "does not match ": changed(first, lambda r: r.update(task_id="fixture-failed")),
+            "does not match  ": changed(first, lambda r: r["subject"].update(run_id="fixture-run-2")),
+            "does not match   ": changed(first, lambda r: r.update(spec_version="v2")),
+            "predates": changed(first, lambda r: r.update(created_utc=early)),
+            "checker_sha256 must be a sha256": changed(first, lambda r: r.update(checker_sha256=None)),
+            "not a task acceptance result of this schema": changed(first, lambda r: r.update(schema=2)),
+            "not a task acceptance result of this schema ": {
+                "schema": 1, "kind": "task-acceptance", "interface": "task-acceptance-v1", "task_id": "fixture-completed",
+                "task_version": "v1", "run_id": "fixture-run-1", "attempt_id": "fixture-completed-1", "verdict": "accepted"},
+            "do not follow from the recorded components": changed(first, lambda r: r.update(verdict="self-reported-done")),
         }
-        for message, verdict in cases.items():
+        for message, result in cases.items():
             with self.subTest(message), self.assertRaisesRegex(ValueError, message.strip()):
-                self.report(acceptances=[verdict] + self.acceptance[1:])
-        with self.assertRaisesRegex(ValueError, "more than one acceptance"):
-            self.report(acceptances=self.acceptance + [dict(self.acceptance[0], verdict="rejected")])
+                self.report(acceptances=[result] + self.acceptance[1:])
+        with self.assertRaisesRegex(ValueError, "more than one acceptance result"):
+            self.report(acceptances=self.acceptance + [redecided(first, deliverable="failed")])
 
     def test_identity_and_causal_parent_chain_are_enforced(self):
         def broken(change):
@@ -370,11 +402,11 @@ class RunRecordTests(unittest.TestCase):
         self.assertEqual(json.loads(result.stdout), json.loads(json.dumps(self.report())))
         with tempfile.TemporaryDirectory() as tmp:
             bad = Path(tmp) / "acceptance.jsonl"
-            bad.write_text(json.dumps(dict(self.acceptance[0], verdict="done")) + "\n")
+            bad.write_text(json.dumps(dict(self.acceptance[0], verdict="rejected")) + "\n")
             command[command.index("--acceptance") + 1] = str(bad)
             result = subprocess.run(command, capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 1)
-        self.assertIn("run record rejected", result.stderr)
+        self.assertIn("run record rejected: verdict or reasons do not follow from the recorded components", result.stderr)
         self.assertEqual(result.stdout, "")
 
     def test_plan_digest_is_bound_at_attempt_start_and_retrospective_edits_are_rejected(self):
@@ -616,27 +648,30 @@ class RunRecordTests(unittest.TestCase):
             self.assertNotIn(sentinel, kept + result.stdout + result.stderr)
             self.assertEqual(subprocess.run(command, capture_output=True, text=True, timeout=30).returncode, 1)
 
-    def test_real_checker_receipts_feed_the_join_through_the_adapter(self):
+    def publication(self):
         plan = json.loads((PUBLICATION / "plan.json").read_text())
         attempts = [json.loads(line) for line in (PUBLICATION / "attempts.jsonl").read_text().splitlines()]
         results = {path.stem: json.loads(path.read_text()) for path in sorted((PUBLICATION / "results").glob("*.json"))}
+        return plan, attempts, results
+
+    def test_results_written_by_the_checker_feed_the_join(self):
+        plan, attempts, results = self.publication()
         self.assertEqual(sorted(results), ["accepted", "rejected", "unavailable-unresolved", "unavailable-unverified"])
-        verdicts = {name: rr.acceptance_from_result(result) for name, result in results.items()}
-        self.assertEqual({name: (v["verdict"], v["task_id"], v["task_version"], v["attempt_id"])
-                          for name, v in verdicts.items()}, {
-            "rejected": ("rejected", "record-publication", "2026-11-15.1", "fixture-publication-1"),
-            "unavailable-unresolved": ("unavailable", "record-publication", "2026-11-15.1", "fixture-publication-2"),
-            "unavailable-unverified": ("unavailable", None, None, "fixture-publication-3"),
-            "accepted": ("accepted", "record-publication", "2026-11-15.1", "fixture-publication-4")})
-        for name, verdict in verdicts.items():
-            result = results[name]
-            self.assertEqual((verdict["run_id"], verdict["checker"], verdict["seal_sha256"]),
-                             ("fixture-publication-run", {"id": "workstation-task-acceptance", "sha256": result["checker_sha256"]},
-                              result["components"]["protection"]["seal_sha256"]))
-            self.assertEqual(verdict["spec_sha256"], result["spec_sha256"])
-        # The checker result records feed the join directly, and so do their converted verdicts.
+        for result in results.values():
+            self.assertIs(task_acceptance.validate_result(result), result)
+        joined = {name: rr.acceptance_from_result(result) for name, result in results.items()}
+        self.assertEqual({name: (j["verdict"], j["task_id"], j["task_version"], j["run_id"], j["attempt_id"])
+                          for name, j in joined.items()}, {
+            "rejected": ("rejected", "record-publication", "2026-11-15.1", "fixture-publication-run", "fixture-publication-1"),
+            "unavailable-unresolved": ("unavailable", "record-publication", "2026-11-15.1", "fixture-publication-run",
+                                       "fixture-publication-2"),
+            "unavailable-unverified": ("unavailable", None, None, "fixture-publication-run", "fixture-publication-3"),
+            "accepted": ("accepted", "record-publication", "2026-11-15.1", "fixture-publication-run", "fixture-publication-4")})
+        for name, result in results.items():
+            verified = result["components"]["protection"]["status"] == "passed"
+            self.assertEqual((joined[name]["checker_sha256"], joined[name]["spec_sha256"]),
+                             (result["checker_sha256"], result["spec_sha256"] if verified else None))
         report = rr.report(plan, attempts, list(results.values()))
-        self.assertEqual(report, rr.report(plan, attempts, list(verdicts.values())))
         task = report["tasks"][0]
         self.assertEqual([row["acceptance"] for row in task["attempt_records"]],
                          ["rejected", "unavailable", "unavailable", "accepted"])
@@ -644,7 +679,9 @@ class RunRecordTests(unittest.TestCase):
                          ("accepted", "fixture-publication-4", 360.0, True))
         self.assertEqual((report["summary"]["attempts"], report["summary"]["retries"],
                           report["coverage"]["attempts_with_acceptance"]), (4, 3, 4))
-        self.assertEqual(task["attempt_records"][0]["acceptance_spec_sha256"], results["rejected"]["spec_sha256"])
+        self.assertEqual([(row["acceptance_spec_sha256"], row["acceptance_checker_sha256"]) for row in task["attempt_records"]],
+                         [(joined[name]["spec_sha256"], results[name]["checker_sha256"])
+                          for name in ("rejected", "unavailable-unresolved", "unavailable-unverified", "accepted")])
         # No self-report override: the rejected attempt claimed completion, reported itself completed and
         # had only successful tool calls. The verdict is the checker's alone.
         self.assertTrue(results["rejected"]["evidence"]["claim"]["completed"])
@@ -658,98 +695,102 @@ class RunRecordTests(unittest.TestCase):
             self.assertEqual((unavailable["tasks"][0]["status"], unavailable["summary"]["tasks_unverified"]),
                              ("unverified", 1), name)
 
-    def test_checker_result_adapter_refuses_edited_incomplete_or_unjoinable_results(self):
-        results = {path.stem: json.loads(path.read_text()) for path in sorted((PUBLICATION / "results").glob("*.json"))}
-
-        def changed(name, change):
-            result = copy.deepcopy(results[name])
-            change(result)
-            return result
+    def test_edited_incomplete_or_unjoinable_results_are_refused(self):
+        plan, attempts, results = self.publication()
+        accepted, unverified = results["accepted"], results["unavailable-unverified"]
         cases = {
-            # A verdict edited to "accepted" without the components to support it.
-            "does not follow from the recorded components": changed("rejected", lambda r: r.update(verdict="accepted")),
-            "does not follow from the recorded components ": changed(
-                "unavailable-unverified", lambda r: r.update(verdict="accepted")),
-            "does not follow from the recorded components  ": changed(
-                "accepted", lambda r: r["components"]["linkage"].update(status="failed")),
-            # The model's completion claim or the repair-loop guidance marked as deciding.
-            "not deciding the verdict": changed("accepted", lambda r: r["evidence"]["claim"].update(decides_verdict=True)),
-            "not deciding the verdict ": changed("accepted", lambda r: r["evidence"]["guidance"].update(authoritative=True)),
-            "not deciding the verdict  ": changed("accepted", lambda r: r["evidence"].pop("claim")),
-            "every component with a known status": changed("accepted", lambda r: r["components"].pop("oracle")),
+            # The checker's rule: a verdict edited without the components to support it.
+            "do not follow from the recorded components": changed(results["rejected"], lambda r: r.update(verdict="accepted")),
+            "do not follow from the recorded components ": changed(unverified, lambda r: r.update(verdict="accepted")),
+            "do not follow from the recorded components  ": changed(
+                accepted, lambda r: r["components"]["linkage"].update(status="failed")),
+            "do not follow from the recorded components   ": changed(results["rejected"], lambda r: r.update(reasons=[])),
+            # The checker's rule: the completion claim or the repair-loop guidance marked as deciding.
+            "evidence that does not decide the verdict": changed(
+                accepted, lambda r: r["evidence"]["claim"].update(decides_verdict=True)),
+            "evidence that does not decide the verdict ": changed(
+                accepted, lambda r: r["evidence"]["guidance"].update(authoritative=True)),
+            "evidence that does not decide the verdict  ": changed(accepted, lambda r: r["evidence"].pop("claim")),
+            "every component with a known status": changed(accepted, lambda r: r["components"].pop("oracle")),
             "every component with a known status ": changed(
-                "accepted", lambda r: r["components"]["oracle"].update(status="skipped")),
+                accepted, lambda r: r["components"]["oracle"].update(status="skipped")),
             "every component with a known status  ": changed(
-                "accepted", lambda r: r["components"]["protection"].update(status="not-applicable")),
-            # Nothing to join on, and no way to supply it from outside the result.
-            "names no run and attempt": changed("accepted", lambda r: r["subject"].update(attempt_id=None)),
-            "names no run and attempt ": changed("accepted", lambda r: r["subject"].update(run_id=None)),
-            "task acceptance subject has unexpected or missing keys": changed(
-                "accepted", lambda r: r["subject"].update(task_id="record-publication")),
-            "exactly when the acceptance source was verified": changed("accepted", lambda r: r.update(task_id=None)),
+                accepted, lambda r: r["components"]["protection"].update(status="not-applicable")),
+            "result subject must hold run_id and attempt_id": changed(
+                accepted, lambda r: r["subject"].update(task_id="record-publication")),
+            "result subject must hold run_id and attempt_id ": changed(accepted, lambda r: r["subject"].update(attempt_id="a b")),
+            "exactly when the acceptance source was verified": changed(accepted, lambda r: r.update(task_id=None)),
             "exactly when the acceptance source was verified ": changed(
-                "unavailable-unverified", lambda r: r.update(task_id="record-publication")),
-            "task_version must be a bounded identifier": changed("accepted", lambda r: r.update(spec_version="release 1")),
-            "attempt_id must be a bounded identifier": changed("accepted", lambda r: r["subject"].update(attempt_id="a b")),
-            "checker digest": changed("accepted", lambda r: r.update(checker_sha256=None)),
-            "unsupported task acceptance result": changed("accepted", lambda r: r.update(schema=2)),
-            "task acceptance result has unexpected or missing keys": changed("accepted", lambda r: r.update(override="accepted")),
-            "task acceptance result has unexpected or missing keys ": changed("accepted", lambda r: r.pop("evidence")),
-            "no time zone": changed("accepted", lambda r: r.update(created_utc="2026-11-15T13:00:00")),
-            "Invalid isoformat": changed("accepted", lambda r: r.update(created_utc="yesterday")),
+                unverified, lambda r: r.update(task_id="record-publication")),
+            "not a task acceptance result of this schema": changed(accepted, lambda r: r.update(schema=2)),
+            "not a task acceptance result of this schema ": changed(accepted, lambda r: r.update(override="accepted")),
+            "not a task acceptance result of this schema  ": changed(accepted, lambda r: r.pop("evidence")),
+            "not a task acceptance result of this schema   ": [accepted],
+            # This module's rule: nothing to join on, and no way to supply it from outside the result.
+            "names no run and attempt": changed(accepted, lambda r: r["subject"].update(attempt_id=None)),
+            "names no run and attempt ": changed(accepted, lambda r: r["subject"].update(run_id=None)),
+            "spec_version must be a bounded identifier": changed(accepted, lambda r: r.update(spec_version="release 1")),
+            "spec_sha256 must be a sha256": changed(accepted, lambda r: r.update(spec_sha256="unknown")),
+            "checker_sha256 must be a sha256": changed(accepted, lambda r: r.update(checker_sha256=None)),
+            "no creation time": changed(accepted, lambda r: r.update(created_utc=None)),
+            "no time zone": changed(accepted, lambda r: r.update(created_utc="2026-11-15T13:00:00")),
+            "Invalid isoformat": changed(accepted, lambda r: r.update(created_utc="yesterday")),
         }
         for message, result in cases.items():
             with self.subTest(message), self.assertRaisesRegex(ValueError, message.strip()):
                 rr.acceptance_from_result(result)
-        with self.assertRaisesRegex(ValueError, "task acceptance result must be an object"):
-            rr.acceptance_from_result([results["accepted"]])
-        # A verdict record cannot claim an unverified task as accepted or rejected either.
-        verdict = rr.acceptance_from_result(results["unavailable-unverified"])
-        for forged in ("accepted", "rejected"):
-            with self.subTest(forged), self.assertRaisesRegex(ValueError, "task_id must be a bounded identifier"):
-                rr.validate_acceptance(dict(verdict, verdict=forged))
-        # A result for another task or run never joins this attempt.
-        plan = json.loads((PUBLICATION / "plan.json").read_text())
-        attempts = [json.loads(line) for line in (PUBLICATION / "attempts.jsonl").read_text().splitlines()]
-        other = dict(rr.acceptance_from_result(results["accepted"]), task_id="another-task")
+            with self.subTest(message + " in a report"), self.assertRaisesRegex(ValueError, message.strip()):
+                rr.report(plan, attempts, [result])
+        # A result for another task never joins this attempt.
         with self.assertRaisesRegex(ValueError, "does not match a recorded attempt"):
-            rr.report(plan, attempts, [other])
+            rr.report(plan, attempts, [changed(accepted, lambda r: r.update(task_id="another-task"))])
 
-    def test_checker_validation_also_runs_when_the_checker_is_installed(self):
-        result = json.loads((PUBLICATION / "results/accepted.json").read_text())
+    def test_the_checker_decides_what_a_valid_result_is(self):
+        # One contract: the join has no rule of its own for the verdict and asks the checker's validator.
+        plan, attempts, results = self.publication()
         seen = []
 
         def refuse(value):
             seen.append(value)
             raise ValueError("refused by the checker")
-        with mock.patch.dict(sys.modules, {"task_acceptance": types.SimpleNamespace(validate_result=refuse)}):
+        with mock.patch.object(task_acceptance, "validate_result", refuse):
             with self.assertRaisesRegex(ValueError, "refused by the checker"):
-                rr.acceptance_from_result(result)
-        self.assertEqual(seen, [result])
-        with mock.patch.dict(sys.modules, {"task_acceptance": types.SimpleNamespace(validate_result=seen.append)}):
-            self.assertEqual(rr.acceptance_from_result(result)["verdict"], "accepted")
+                rr.report(plan, attempts, [results["accepted"]])
+        self.assertEqual(seen, [results["accepted"]])
+        self.assertFalse(hasattr(rr, "validate_acceptance"))
 
-    def test_cli_converts_a_checker_result_and_reports_from_result_records(self):
+    def test_cli_validates_checker_result_files_and_reports_from_them(self):
+        names = ("rejected", "unavailable-unresolved", "unavailable-unverified", "accepted")
+        files = [str(PUBLICATION / "results" / (name + ".json")) for name in names]
         with tempfile.TemporaryDirectory() as tmp:
-            lines = []
-            for name in ("rejected", "unavailable-unresolved", "unavailable-unverified", "accepted"):
-                result = subprocess.run(CLI + ["acceptance", str(PUBLICATION / "results" / (name + ".json"))],
-                                        capture_output=True, text=True, check=True, timeout=30)
-                self.assertEqual(result.stdout.count("\n"), 1)
-                lines.append(result.stdout)
-            verdicts = Path(tmp) / "acceptance.jsonl"
-            verdicts.write_text("".join(lines))
+            listed = subprocess.run(CLI + ["acceptance", *files], capture_output=True, text=True, check=True, timeout=30)
+            # The records are the checker's, unchanged: one per line.
+            self.assertEqual([json.loads(line) for line in listed.stdout.splitlines()],
+                             [json.loads(Path(file).read_text()) for file in files])
+            results = Path(tmp) / "acceptance.jsonl"
+            results.write_text(listed.stdout)
             report = json.loads(subprocess.run(
                 CLI + ["report", "--plan", str(PUBLICATION / "plan.json"), "--attempts", str(PUBLICATION / "attempts.jsonl"),
-                       "--acceptance", str(verdicts)], capture_output=True, text=True, check=True, timeout=30).stdout)
+                       "--acceptance", str(results)], capture_output=True, text=True, check=True, timeout=30).stdout)
             self.assertEqual((report["summary"]["tasks_accepted"], report["summary"]["attempts"]), (1, 4))
+            # The checker's own CLI accepts the same files.
+            checker = [sys.executable, "-B", str(ROOT / "lib/workstation/task_acceptance.py"), "validate"]
+            self.assertEqual([subprocess.run(checker + [file], capture_output=True, text=True, check=True,
+                                             timeout=30).stdout.strip() for file in files],
+                             ["rejected", "unavailable", "unavailable", "accepted"])
             edited = json.loads((PUBLICATION / "results/rejected.json").read_text())
             edited["verdict"] = "accepted"
             (Path(tmp) / "edited.json").write_text(json.dumps(edited))
-            refused = subprocess.run(CLI + ["acceptance", str(Path(tmp) / "edited.json")],
-                                     capture_output=True, text=True, timeout=30)
-            self.assertEqual((refused.returncode, refused.stdout), (1, ""))
-            self.assertIn("does not follow from the recorded components", refused.stderr)
+            unjoinable = json.loads((PUBLICATION / "results/accepted.json").read_text())
+            unjoinable["subject"] = {"run_id": None, "attempt_id": None}
+            (Path(tmp) / "unjoinable.json").write_text(json.dumps(unjoinable))
+            for name, message in (("edited", "do not follow from the recorded components"),
+                                  ("unjoinable", "names no run and attempt"), ("absent", "regular bounded JSON file")):
+                refused = subprocess.run(CLI + ["acceptance", files[0], str(Path(tmp) / (name + ".json"))],
+                                         capture_output=True, text=True, timeout=30)
+                self.assertEqual((refused.returncode, refused.stdout), (1, ""), name)
+                self.assertIn("run record rejected: ", refused.stderr)
+                self.assertIn(message, refused.stderr)
 
     def test_overlap_counts_match_the_pairwise_definition(self):
         def pairwise(attempts):

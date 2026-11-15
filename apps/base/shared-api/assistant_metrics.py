@@ -188,9 +188,9 @@ class Metrics:
                     continue
                 for key, value in series:
                     labels = ",".join(f'{k}="{_escape(v)}"' for k, v in key)
-                    # Whole numbers stay exact: a consumer compares counter values between scrapes.
+                    # Whole numbers and millisecond times stay exact: a consumer compares values between scrapes.
                     lines.append(name + ("{" + labels + "}" if labels else "") + " "
-                                 + (str(value) if type(value) is int else f"{value:.12g}"))
+                                 + (str(value) if type(value) is int else f"{value:.15g}"))
         return "\n".join(lines) + "\n"
 
 

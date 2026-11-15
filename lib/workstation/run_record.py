@@ -3,8 +3,10 @@
 A run executes one declared plan (tasks, arm and latency targets) and records one
 attempt per try at a task. Attempts carry task/run/attempt/arm identities, a
 causal parent (the attempt a retry follows) and the digest of the plan they
-started under. Independent task acceptance (interface task-acceptance-v1),
-request-trace events and resource observations join on those IDs.
+started under. Request-trace events, resource observations and independent task
+acceptance join on those IDs. Acceptance is the task acceptance checker's result
+record, read as the checker wrote it and validated by the checker's own rule
+(task_acceptance.py, docs/TASK-ACCEPTANCE.md).
 
 Records hold identifiers, counts, timings, digests and watts only. Every object
 has a closed key set and every identifier a bounded format and length. That
@@ -34,16 +36,6 @@ import telemetry_power
 
 SCHEMA = 1
 INTERFACE = "run-record-v1"
-ACCEPTANCE_INTERFACE = "task-acceptance-v1"
-# The task acceptance checker's result record, schema 1 (lib/workstation/task_acceptance.py,
-# docs/TASK-ACCEPTANCE.md). acceptance_from_result() is the only reader of this shape.
-ACCEPTANCE_RESULT_KIND = "workstation-task-acceptance-result"
-ACCEPTANCE_RESULT_KEYS = ("schema", "kind", "task_id", "spec_version", "spec_sha256", "subject", "created_utc",
-                          "checker_sha256", "verdict", "reasons", "components", "evidence", "limitations")
-ACCEPTANCE_COMPONENTS = ("protection", "references", "oracle", "interference", "external_state", "deliverable",
-                         "linkage")
-ACCEPTANCE_STATUSES = ("passed", "failed", "unavailable", "not-applicable")
-ACCEPTANCE_CHECKER = "workstation-task-acceptance"
 ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 SHA256 = re.compile(r"[a-f0-9]{64}\Z")
 # Fixed operation and code names written by the services, never caller text.
@@ -51,7 +43,7 @@ TOKEN = re.compile(r"[a-z0-9][a-z0-9_:.-]{0,63}\Z")
 PCI_ADDRESS = re.compile(r"[a-f0-9]{4}:[a-f0-9]{2}:[a-f0-9]{2}\.[0-7]\Z")
 MAX_NS = 2**63
 MAX_COUNT = 10**12
-MAX_RECORDS = 10000  # Declared tasks, attempts and verdicts in one report.
+MAX_RECORDS = 10000  # Declared tasks, attempts and acceptance results in one report.
 MAX_SAMPLES = 100000  # PSU samples, GPU samples and request-trace events in one report.
 MAX_LINE = 4 * 1024 * 1024
 MAX_CONTEXT = 1024
@@ -67,7 +59,6 @@ MEASUREMENT_FAILURES = {"workload-exit": "unknown", "timeout": "timeout-cancella
                         "cleanup": "environment", "workload": "unknown"}
 OUTCOMES = ("completed", "failed")
 CAUSES = ("initial", "retry")
-VERDICTS = ("accepted", "rejected", "unavailable")
 LATENCY_TARGETS = ("task_wall_seconds",)
 IDENTITY_KEYS = ("task_id", "task_version", "run_id", "attempt_id", "arm_id", "parent_id", "cause")
 DEPLOYMENT_KEYS = ("serving_contract", "model", "tokenizer_sha256", "template_sha256")
@@ -249,30 +240,6 @@ def validate_attempt(value):
     return value
 
 
-def validate_acceptance(value):
-    """Interface task-acceptance-v1: one independent verdict per attempt, the join's view of a checker result.
-
-    The checker records no task when it could not verify its acceptance source.
-    Such a verdict is always "unavailable" and joins on run and attempt alone.
-    """
-    _keys(value, ("schema", "kind", "interface", "task_id", "task_version", "run_id", "attempt_id", "verdict",
-                  "checker", "spec_sha256", "seal_sha256", "evaluated_unix_ns"), name="acceptance")
-    _header(value, "task-acceptance", ACCEPTANCE_INTERFACE)
-    _id(value["run_id"], "run_id")
-    _id(value["attempt_id"], "attempt_id")
-    _require(value["verdict"] in VERDICTS, "verdict must be accepted, rejected or unavailable")
-    unverified = value["task_id"] is None and value["task_version"] is None and value["verdict"] == "unavailable"
-    _id(value["task_id"], "task_id", nullable=unverified)
-    _id(value["task_version"], "task_version", nullable=unverified)
-    _keys(value["checker"], ("id", "sha256"), name="checker")
-    _id(value["checker"]["id"], "checker id")
-    _digest(value["checker"]["sha256"], "checker digest", nullable=False)
-    _digest(value["spec_sha256"], "spec_sha256", nullable=unverified)
-    _digest(value["seal_sha256"], "seal_sha256")
-    _ns(value["evaluated_unix_ns"], "evaluated_unix_ns")
-    return value
-
-
 def validate_gpu_sample(value):
     _keys(value, ("schema", "kind", "interface", "device", "sensor", "unix_ns", "watts"), name="gpu sample")
     _header(value, "gpu-power-sample")
@@ -328,63 +295,39 @@ def attempt_from_receipt(receipt, deployment=None, tokens=None, tool_calls=None)
         "tool_calls": tool_calls, "tokens": tokens})
 
 
-def _checker_verdict(statuses):
-    """The checker's fixed schema 1 rule from component statuses to the verdict."""
-    if statuses["protection"] == "passed" and all(status in ("passed", "not-applicable") for status in statuses.values()):
-        return "accepted"
-    if statuses["protection"] == "passed" and any(statuses[name] == "failed" for name in ACCEPTANCE_COMPONENTS[2:]):
-        return "rejected"
-    return "unavailable"
-
-
 def acceptance_from_result(result):
-    """task-acceptance-v1 verdict from one task acceptance checker result record (schema 1).
+    """What the join needs from one task acceptance result record.
 
-    Every joined fact comes from the result: the caller cannot supply or override
-    a task, an attempt or a verdict. The verdict must follow from the recorded
-    component statuses by the checker's fixed rule, and the recorded completion
-    claim and guidance must be marked as not deciding it. The checker's own
-    validate_result() also runs when its module is installed beside this one.
-    A result without a run and attempt cannot be joined and is refused.
+    The checker's own validate_result() decides whether the record is well
+    formed and whether its verdict follows from the recorded components, so
+    there is one acceptance contract and a self-reported verdict is refused.
+    Every joined fact comes from the record: a caller cannot supply or override
+    a task, an attempt or a verdict. A result that names no run and attempt
+    cannot be joined. A result whose acceptance source was not verified records
+    no task; its verdict is "unavailable" and it joins on run and attempt alone.
     """
-    _keys(result, ACCEPTANCE_RESULT_KEYS, name="task acceptance result")
-    _require(result["schema"] == 1 and result["kind"] == ACCEPTANCE_RESULT_KIND, "unsupported task acceptance result")
-    components, evidence, subject = result["components"], result["evidence"], result["subject"]
-    _require(isinstance(components, dict) and all(
-        isinstance(components.get(name), dict) and components[name].get("status") in ACCEPTANCE_STATUSES
-        for name in ACCEPTANCE_COMPONENTS) and components["protection"]["status"] != "not-applicable",
-        "task acceptance result must record every component with a known status")
-    statuses = {name: components[name]["status"] for name in ACCEPTANCE_COMPONENTS}
-    _require(result["verdict"] == _checker_verdict(statuses),
-             "task acceptance verdict does not follow from the recorded components")
-    _require(isinstance(evidence, dict) and all(isinstance(evidence.get(name), dict) for name in ("claim", "guidance"))
-             and evidence["claim"].get("decides_verdict") is False and evidence["guidance"].get("authoritative") is False,
-             "task acceptance result must record its claim and guidance as not deciding the verdict")
-    _keys(subject, ("run_id", "attempt_id"), name="task acceptance subject")
+    # Imported only here: task_acceptance imports assistant_acceptance, which imports this module.
+    import task_acceptance
+    result = task_acceptance.validate_result(result)
+    subject, protection = result["subject"], result["components"]["protection"]
     _require(subject["run_id"] is not None and subject["attempt_id"] is not None,
              "task acceptance result names no run and attempt; run the checker with --run-id and --attempt-id")
-    verified = statuses["protection"] == "passed"
-    _require((result["task_id"] is not None) == verified,
-             "task_id is recorded exactly when the acceptance source was verified")
+    verified = protection["status"] == task_acceptance.PASSED
+    if verified:
+        _id(result["spec_version"], "task acceptance spec_version")
+    _digest(result["spec_sha256"], "task acceptance spec_sha256", nullable=not verified)
+    _digest(result["checker_sha256"], "task acceptance checker_sha256", nullable=False)
     created = result["created_utc"]
     _require(isinstance(created, str) and len(created) <= 64, "task acceptance result has no creation time")
     moment = datetime.datetime.fromisoformat(created)
     _require(moment.tzinfo is not None, "task acceptance creation time has no time zone")
-    try:
-        import task_acceptance
-    except ImportError:
-        pass  # The checker is installed separately; the checks above stand alone.
-    else:
-        task_acceptance.validate_result(result)
     epoch = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc)
-    return validate_acceptance({
-        "schema": SCHEMA, "kind": "task-acceptance", "interface": ACCEPTANCE_INTERFACE,
-        "task_id": result["task_id"], "task_version": result["spec_version"] if verified else None,
-        "run_id": subject["run_id"], "attempt_id": subject["attempt_id"], "verdict": result["verdict"],
-        "checker": {"id": ACCEPTANCE_CHECKER, "sha256": result["checker_sha256"]},
-        "spec_sha256": result["spec_sha256"] if verified else None,
-        "seal_sha256": components["protection"].get("seal_sha256"),
-        "evaluated_unix_ns": (moment - epoch) // datetime.timedelta(microseconds=1) * 1000})
+    return {"run_id": subject["run_id"], "attempt_id": subject["attempt_id"],
+            "task_id": result["task_id"] if verified else None,
+            "task_version": result["spec_version"] if verified else None,
+            "verdict": result["verdict"], "checker_sha256": result["checker_sha256"],
+            "spec_sha256": result["spec_sha256"] if verified else None,
+            "evaluated_unix_ns": (moment - epoch) // datetime.timedelta(microseconds=1) * 1000}
 
 
 def gpu_samples_from_snapshot(row):
@@ -614,7 +557,11 @@ def _trace_summary(events, attempt):
 
 
 def report(plan, attempts, acceptances, psu_samples=(), gpu_samples=(), traces=()):
-    """Join independent acceptance, request traces and resources to every attempt in one run."""
+    """Join independent acceptance, request traces and resources to every attempt in one run.
+
+    ``acceptances`` are task acceptance result records as the checker wrote them.
+    """
+    import task_acceptance  # Imported only here, as in acceptance_from_result().
     digest = plan_digest(plan)
     _require(len(attempts) <= MAX_RECORDS and len(acceptances) <= MAX_RECORDS, "too many records")
     _require(max(len(psu_samples), len(gpu_samples), len(traces)) <= MAX_SAMPLES, "too many samples or trace events")
@@ -623,18 +570,13 @@ def report(plan, attempts, acceptances, psu_samples=(), gpu_samples=(), traces=(
     chains = _chains(plan, attempts, digest)
     verdicts = {}
     by_attempt = {a["identity"]["attempt_id"]: a for a in attempts}
-    for acceptance in acceptances:
-        # A checker result record is read through its adapter; a verdict is validated as it is.
-        if isinstance(acceptance, dict) and acceptance.get("kind") == ACCEPTANCE_RESULT_KIND:
-            acceptance = acceptance_from_result(acceptance)
-        else:
-            validate_acceptance(acceptance)
+    for acceptance in map(acceptance_from_result, acceptances):
         attempt = by_attempt.get(acceptance["attempt_id"])
         _require(attempt is not None and acceptance["run_id"] == plan["run_id"]
                  and acceptance["task_id"] in (None, attempt["identity"]["task_id"])
                  and acceptance["task_version"] in (None, attempt["identity"]["task_version"]),
                  "acceptance does not match a recorded attempt")
-        _require(acceptance["attempt_id"] not in verdicts, "more than one acceptance verdict for an attempt")
+        _require(acceptance["attempt_id"] not in verdicts, "more than one acceptance result for an attempt")
         _require(acceptance["evaluated_unix_ns"] >= attempt["ended_unix_ns"], "acceptance predates the attempt's end")
         verdicts[acceptance["attempt_id"]] = acceptance
     traced, unmatched_traces = _traces(plan, attempts, traces, digest)
@@ -673,7 +615,7 @@ def report(plan, attempts, acceptances, psu_samples=(), gpu_samples=(), traces=(
             rows.append({"attempt_id": identity["attempt_id"], "parent_id": identity["parent_id"],
                          "cause": identity["cause"], "outcome": attempt["outcome"], "failure_category": category,
                          "acceptance": verdict["verdict"] if verdict else "missing",
-                         "checker": verdict["checker"] if verdict else None,
+                         "acceptance_checker_sha256": verdict["checker_sha256"] if verdict else None,
                          "acceptance_spec_sha256": verdict["spec_sha256"] if verdict else None,
                          "wall_seconds": wall, "tokens": attempt["tokens"], "tool_calls": attempt["tool_calls"],
                          "request_trace": _trace_summary(events, attempt) if events else None,
@@ -706,7 +648,7 @@ def report(plan, attempts, acceptances, psu_samples=(), gpu_samples=(), traces=(
     accepted_tasks = [t for t in tasks if t["status"] == "accepted"]
     return {
         "schema": SCHEMA, "kind": "run-record-report", "interface": INTERFACE,
-        "acceptance_interface": ACCEPTANCE_INTERFACE,
+        "acceptance_result": {"kind": task_acceptance.RESULT_KIND, "schema": task_acceptance.SCHEMA},
         "run_id": plan["run_id"], "arm_id": plan["arm_id"], "plan_sha256": digest,
         "plan_binding": "every attempt and request-trace event carries this digest from its start",
         "latency_targets": plan["latency_targets"], "latency_targets_declared_unix_ns": plan["declared_unix_ns"],
@@ -816,7 +758,7 @@ def main():
     action.add_argument("--plan", required=True)
     action.add_argument("--attempts", required=True, help="attempt records, JSON lines")
     action.add_argument("--acceptance", required=True,
-                        help="task-acceptance-v1 verdicts or checker result records, JSON lines")
+                        help="task acceptance result records as the checker wrote them, JSON lines")
     action.add_argument("--psu", help="PSU samples in recorded order, JSON lines")
     action.add_argument("--gpu", help="gpu-power-sample records, JSON lines")
     action.add_argument("--traces", help="request-trace events, JSON lines")
@@ -839,8 +781,8 @@ def main():
     action.add_argument("--run-id", required=True)
     action.add_argument("--output", required=True, help="new request-trace file")
     action.add_argument("log", nargs="+")
-    action = actions.add_parser("acceptance", help="task-acceptance-v1 verdict from a checker result file")
-    action.add_argument("result")
+    action = actions.add_parser("acceptance", help="validate checker result files; print them as JSON lines for report")
+    action.add_argument("result", nargs="+")
     args = parser.parse_args()
     try:
         if args.action == "report":
@@ -864,10 +806,17 @@ def main():
         elif args.action == "traces":
             result = traces_from_logs(args.log, args.run_id, args.output)
         else:
-            result = acceptance_from_result(json.loads(Path(args.result).read_text()))
+            _require(len(args.result) <= MAX_RECORDS, "too many acceptance results")
+            import task_acceptance  # Imported only here, as in acceptance_from_result().
+            results = [task_acceptance.load_result(path) for path in args.result]
+            for result in results:
+                acceptance_from_result(result)
+            lines = [json.dumps(result, sort_keys=True, allow_nan=False) for result in results]
     except (OSError, ValueError) as error:
         parser.exit(1, f"run record rejected: {error}\n")
-    if args.action in ("attempt", "acceptance"):
+    if args.action == "acceptance":
+        print("\n".join(lines))  # The checker's records, unchanged, one per line.
+    elif args.action == "attempt":
         print(json.dumps(result, sort_keys=True, allow_nan=False))  # One JSON line, ready to append.
     else:
         print(json.dumps(result, indent=2, sort_keys=True, allow_nan=False))
