@@ -172,19 +172,15 @@ class AssistantTests(unittest.TestCase):
 
     def test_family_theme_replaces_open_webui_static_sources(self):
         """Open WebUI empties its static folder at startup and copies /app/build/static,
-        so the theme must mount over that source, one file each, from one small ConfigMap."""
-        import base64, struct
-        theme = ROOT / "apps/components/assistant/theme"
-        sizes = {"favicon.png": 512, "favicon-96x96.png": 96, "apple-touch-icon.png": 180,
-                 "web-app-manifest-192x192.png": 192, "web-app-manifest-512x512.png": 512,
-                 "logo.png": 500, "splash.png": 500, "splash-dark.png": 500}
-        for name, size in sizes.items():  # drop-in replacements at upstream dimensions
-            header = (theme / name).read_bytes()[:24]
-            self.assertEqual(b"\x89PNG\r\n\x1a\n", header[:8], name)
-            self.assertEqual((size, size), struct.unpack(">II", header[16:24]), name)
-        self.assertEqual((theme / "logo.svg").read_bytes(), (theme / "favicon.svg").read_bytes())
-        manifest = json.loads((theme / "site.webmanifest").read_text())
-        self.assertEqual("Family AI", manifest["name"])
+        so the stylesheet must mount over that source from one small ConfigMap. Icons are not
+        mounted: the fork's branding switch puts Mettle in place of Open WebUI's stock icons,
+        and any mounted icon would win over it."""
+        import base64, re
+        css = (ROOT / "apps/components/assistant/theme/custom.css").read_text()
+        # The Family AI deep green (OKLCH hue 155-170) is gone; vermilion and graphite remain.
+        self.assertEqual([], [h for h in re.findall(r"oklch\([^)]*?\s([\d.]+)\s*(?:/|\))", css)
+                              if 140 <= float(h) <= 175])
+        self.assertIn("--color-blue-500: oklch(0.625 0.198 28)", css)
         for objects in (self.large, self.split):
             config = next(o for o in objects if o["kind"] == "ConfigMap"
                           and o["metadata"]["name"].startswith("webui-theme-"))
@@ -194,6 +190,7 @@ class AssistantTests(unittest.TestCase):
             self.assertLess(total, 900_000)  # ConfigMaps are limited to 1 MiB
             app, _ = environment(objects)
             mounts = {m["subPath"]: m for m in app["volumeMounts"] if m["name"] == "webui-theme"}
+            self.assertEqual({"custom.css"}, files)
             self.assertEqual(files, set(mounts))
             for name, mount in mounts.items():
                 self.assertEqual(f"/app/build/static/{name}", mount["mountPath"])
@@ -258,7 +255,7 @@ class AssistantTests(unittest.TestCase):
             self.assertEqual({**profiles[0], **reranker}, profiles[1])
             self.assertEqual(("none", "ms-marco-minilm-l6-v2"), tuple(p["RAG_RERANKER_PROFILE"] for p in profiles))
             # Added: the assistant profile, its network policy, the pin-config.py ConfigMap
-            # and the Family AI theme ConfigMap.
+            # and the OpenMettle palette ConfigMap (webui-theme).
             self.assertEqual(len(previous) + 4, len(objects))
             pins = next(o for o in objects if o["kind"] == "ConfigMap" and "pin-config.py" in o.get("data", {}))
             # The tool-use system prompt ships beside the script that writes it to the model record.

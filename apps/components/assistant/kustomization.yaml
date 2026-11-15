@@ -13,22 +13,11 @@ configMapGenerator:
   # pin-config.py and the tool-use system prompt it writes to the default model's record.
   - name: webui-config-pins
     files: [pin-config.py, system-prompt.md]
-  # Family AI theme (theme/README.md): stylesheet, app manifest and icons rendered
-  # from theme/logo.svg. Binary files become binaryData; the total stays well under 1 MiB.
+  # OpenMettle palette for the whole app (theme/README.md). The icons come from the fork's
+  # branding switch (OPENMETTLE_BRANDING in webui.yaml), not from this ConfigMap.
   - name: webui-theme
     files:
       - theme/custom.css
-      - theme/site.webmanifest
-      - theme/favicon.svg
-      - theme/favicon.ico
-      - theme/favicon.png
-      - theme/favicon-96x96.png
-      - theme/apple-touch-icon.png
-      - theme/web-app-manifest-192x192.png
-      - theme/web-app-manifest-512x512.png
-      - theme/logo.png
-      - theme/splash.png
-      - theme/splash-dark.png
 patches:
   - path: webui.yaml
   - path: tools.yaml
