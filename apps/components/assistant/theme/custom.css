@@ -59,6 +59,21 @@
 	--color-gray-700: oklch(0.42 0.011 262);
 }
 
+/* Open WebUI writes the keyboard focus outline and the form placeholder colour as fixed values at
+   build time (Tailwind's theme()), so the variables above do not reach them. The :root prefix
+   outranks the app's own rule, which loads after this file. Vermilion 500 measures 3.9:1 on white,
+   3.3:1 on ivory and 4.4:1 on graphite, above the 3:1 a focus indicator needs. */
+:root :focus-visible:not(.ProseMirror):not([contenteditable='true']):not(input):not(textarea),
+:root .focus-ring:focus-visible,
+:root.high-contrast :is(input, textarea, [contenteditable='true'], .ProseMirror):focus-visible {
+	outline-color: var(--color-blue-500);
+}
+
+input::placeholder,
+textarea::placeholder {
+	color: var(--color-gray-400);
+}
+
 ::selection {
 	background: oklch(0.89 0.065 32 / 0.7);
 }

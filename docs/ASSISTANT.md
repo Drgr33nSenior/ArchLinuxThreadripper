@@ -1053,11 +1053,13 @@ element's own background) and on the palette:
 | Send icon on the vermilion button (graphic, 3:1 needed) | 4.4:1 | 4.4:1 |
 | Send button against the composer | 3.7:1 | 3.8:1 |
 | Vermilion outlines and borders (3:1 needed) | 3.9:1 on white, 3.3:1 on ivory | 4.4:1 |
-| Focus outline seen on sidebar controls | 8.0:1 (graphite) | 9.2:1 (light grey) |
+| Keyboard focus outline (vermilion; some sidebar controls use their own grey) | 3.9:1 on white, 3.3:1 on ivory | 4.4:1 |
 
 Light mode darkens Open WebUI's greys 400–700 so tertiary text reaches 4.5:1; upstream's
-sit at 2–3:1. Not raised: input placeholder text (`placeholder:text-gray-300` in a few
-settings forms) and disabled controls, which upstream also leaves faint.
+sit at 2–3:1. Open WebUI bakes the focus outline and form placeholder colours into its
+stylesheet at build time, so `custom.css` sets those two explicitly. Not raised: the few
+settings fields that use `placeholder:text-gray-300`, and disabled controls, which upstream
+also leaves faint.
 
 **Reverting.**
 
