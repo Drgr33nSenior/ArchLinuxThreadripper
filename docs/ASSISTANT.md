@@ -1000,13 +1000,15 @@ Open WebUI wears OpenMettle's look throughout: ivory and graphite neutrals, one 
 
 The fork carries OpenMettle's theme and identity (fork commits on
 `workstation/reasoning-controls`: `ab3186bb34e5` the chat theme, `fa1bf005570b` the
-branding switch and footer, `7be5703691a2` the art and icon rework). OpenMettle is a
+branding switch and footer, `7be5703691a2` the art and icon rework, `cf2e76e5e9ac` plain-text
+replies). OpenMettle is a
 fork of Open WebUI, and the page always says so.
 
 | Part | What the family sees | Where | Switch |
 | --- | --- | --- | --- |
 | Palette | Ivory (#F2EBDD, #FAF7F1) and graphite (#24272C, #191C21) in every view: chat, sidebar, settings, sign-in. Vermilion only for the send button, the wordmark, links, selected borders and focus outlines. Green success dots, red errors and amber warnings keep their meaning | Chat area: fork. Rest: `theme/custom.css` | Always |
 | Welcome | Above a new chat: Mettle at 128 px in a soft pool of light with a contact shadow, the OpenMettle wordmark and "Bring out the best in your AI.". When the only model wears the default icon, the small avatar beside the model name is hidden so Mettle appears once. A single 420 ms fade-and-rise, none with reduced motion | Fork | Always |
+| Replies | Assistant replies are the text alone, with the action toolbar underneath, when one model answered the whole chat. The model's avatar and name come back for an arena reply, a turn sent to several models, or a chat where replies (on any branch) came from more than one model. The name stays in the reply's timestamp tooltip and in a heading screen readers announce | Fork | `OPENMETTLE_BRANDING` |
 | Footer | Under the chat and in **Settings → About**: `OpenMettle v0.1.0-dev · a fork of Open WebUI v0.13.3 (License) · <commit>`. The commit is the fork commit the image was built from; a build without one says "dev build". Selectable for a bug report | Fork | Always |
 | Name | "Family AI (OpenMettle)" in the title, sidebar, sign-in page and install manifest, instead of "Family AI (Open WebUI)". Browser notifications end in "/ OpenMettle" | Fork | `OPENMETTLE_BRANDING` |
 | Text | Interface text that names the application says OpenMettle, for example "OpenMettle can use tools provided by any OpenAPI server." Text about the Open WebUI project keeps its name: the Open WebUI Community, translation and sponsorship notes, plugin version requirements | Fork | `OPENMETTLE_BRANDING` |
