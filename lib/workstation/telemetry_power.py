@@ -11,7 +11,7 @@ import hashlib
 import json
 import math
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import secrets
 import stat
@@ -124,6 +124,38 @@ def collect(sysfs=Path("/sys"), proc=Path("/proc"), clock=None):
         return {**unavailable, "reason": "sensor_unavailable"}
     except (OSError, ValueError, UnicodeError):
         return {**unavailable, "reason": "invalid_sensor"}
+
+
+def sample_from_snapshot(row):
+    """collect()-shaped sample from one measurement.snapshot() row (a benchmark's telemetry.jsonl).
+
+    The snapshot keys each hwmon device by its resolved sysfs path, so the
+    device digest equals collect()'s. The row's clock pair is read just after
+    its sensor scan. Rails are not carried. A row without a valid boot ID or
+    clock pair yields a sample that advance() treats as unavailable.
+    """
+    unavailable = {"reason": "not_detected", "watts": None, "rails": {}}
+    hwmon = row.get("hwmon") if isinstance(row, dict) else None
+    if not isinstance(hwmon, dict):
+        return {**unavailable, "reason": "invalid_sensor"}
+    matches = [(path, entry) for path, entry in hwmon.items()
+               if isinstance(entry, dict) and entry.get("name") == "corsairpsu"]
+    if not matches:
+        return unavailable
+    if len(matches) != 1:
+        return {**unavailable, "reason": "ambiguous_devices"}
+    path, entry = matches[0]
+    try:
+        device = PurePosixPath(path)
+        if device.parent.name != "hwmon" or entry["labels"]["power1"] != "power total":
+            raise ValueError("unexpected Corsair hwmon layout")
+        identity = str(device.parent.parent.relative_to("/sys/devices"))
+        watts = _watts(entry["values"]["power1_input"])
+    except (KeyError, TypeError, ValueError):
+        return {**unavailable, "reason": "invalid_sensor"}
+    return {"reason": "available", "watts": watts, "rails": {},
+            "device": hashlib.sha256(identity.encode()).hexdigest(),
+            "boot_id": row.get("boot_id"), "unix_ns": row.get("unix_ns"), "monotonic_ns": row.get("monotonic_ns")}
 
 
 def _finite(value, maximum=1e30):

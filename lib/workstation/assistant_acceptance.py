@@ -30,6 +30,7 @@ import urllib.request
 
 import assistant_api
 from coding_eval import canonical, digest, execute_python, json_equal, parse_object, run_task
+import run_record
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -39,6 +40,8 @@ BEHAVIOUR = ROOT / "infrastructure/sglang/assistant-behaviour.json"
 SYSTEM_PROMPT = ROOT / "apps/components/assistant/system-prompt.md"
 BEHAVIOUR_KINDS = ("tool", "no-tool", "verify-or-disclose")
 BOUNDARIES = ("fixture", "direct", "gateway", "webui-api")
+# Boundaries that read a run context header (docs/RUN-RECORDS.md); the others are sent none.
+CONTEXT_BOUNDARIES = ("fixture", "gateway")
 NOT_RUN = "NOT RUN"
 MAX_BODY = 8 << 20
 FENCE = re.compile(r"```([A-Za-z0-9_./-]+)\n(.*?)```", re.S)
@@ -155,13 +158,15 @@ def credential(path):
 class Http:
     """Minimal JSON/SSE client: no proxies, no redirects, bounded bodies."""
 
-    def __init__(self, base, key, timeout):
-        self.base, self.key, self.timeout = base.rstrip("/"), key, timeout
+    def __init__(self, base, key, timeout, context=None):
+        self.base, self.key, self.timeout, self.context = base.rstrip("/"), key, timeout, context
 
     def post(self, path, body):
         headers = {"Content-Type": "application/json"}
         if self.key:
             headers["Authorization"] = "Bearer " + self.key
+        if self.context:
+            headers[run_record.CONTEXT_HEADER] = self.context
 
         class NoRedirect(urllib.request.HTTPRedirectHandler):
             def redirect_request(self, req, fp, code, msg, headers, newurl):
@@ -273,11 +278,11 @@ def followup(http, path, case, body, result, record, started, thinking, syntheti
     return record
 
 
-def run(menu, boundary, base, key, model, output_tokens, timeout, repetitions=None, cases=None):
+def run(menu, boundary, base, key, model, output_tokens, timeout, repetitions=None, cases=None, context=None):
     if boundary not in BOUNDARIES:
         raise ValueError("unknown boundary")
     path = "/api/chat/completions" if boundary == "webui-api" else "/v1/chat/completions"
-    http = Http(base, key, timeout)
+    http = Http(base, key, timeout, context if boundary in CONTEXT_BOUNDARIES else None)
     plans = [plan for plan in requests(menu, model, output_tokens, repetitions) if not cases or plan["case"] in cases]
     by_id = {case["id"]: case for case in menu["cases"]}
     synthetic = by_id["tool-result-followup"]["tool_result"]
@@ -415,11 +420,11 @@ def behaviour_attempt(http, path, menu, case, model, system):
     return record
 
 
-def behaviour_run(menu, boundary, base, key, model, timeout, system, repetitions=None, cases=None):
+def behaviour_run(menu, boundary, base, key, model, timeout, system, repetitions=None, cases=None, context=None):
     if boundary not in BOUNDARIES:
         raise ValueError("unknown boundary")
     path = "/api/chat/completions" if boundary == "webui-api" else "/v1/chat/completions"
-    http = Http(base, key, timeout)
+    http = Http(base, key, timeout, context if boundary in CONTEXT_BOUNDARIES else None)
     records, reachable = [], None
     for case in menu["cases"]:
         if cases and case["id"] not in cases:
@@ -477,6 +482,20 @@ def behaviour_report(menu, records, boundary, settings):
             "cases": by_case, "records": records, "limitations": menu["execution"]["limitations"]}
 
 
+def run_context(environ, boundary):
+    """(header value, report record) of the attempt this process runs under; (None, None) without one.
+
+    The measurement runner exports the context when it starts an identified attempt
+    (measurement.py --run-plan/--run-identity). Every request then carries it, so the
+    gateway's request-trace events join this report's records.
+    """
+    value = environ.get(run_record.CONTEXT_ENV)
+    if value is None:
+        return None, None
+    identity, plan_sha256 = run_record.parse_context(value)
+    return value, {"identity": identity, "plan_sha256": plan_sha256, "sent": boundary in CONTEXT_BOUNDARIES}
+
+
 def write_new(path, value):
     path = Path(path)
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -507,6 +526,12 @@ def main():
     p.add_argument("--no-system-prompt", action="store_true",
                    help="comparison arm, or webui-api (Open WebUI adds the pinned prompt itself)")
     args = parser.parse_args()
+    context = record = None
+    if args.action != "plan":
+        try:
+            context, record = run_context(os.environ, args.boundary)
+        except ValueError:
+            raise SystemExit("invalid run context in " + run_record.CONTEXT_ENV) from None
     if args.action == "behaviour":
         if not 1 <= args.timeout <= 3600 or (args.repetitions is not None and not 1 <= args.repetitions <= 20):
             raise SystemExit("invalid timeout or repetitions")
@@ -514,9 +539,9 @@ def main():
         system = None if args.no_system_prompt else system_prompt()
         settings = {"model": args.model, "timeout": args.timeout, "base_url_sha256": digest(args.base_url.encode()),
                     "request": menu["execution"]["request"], "system_prompt": system is not None,
-                    "system_prompt_sha256": digest(system.encode()) if system else None}
+                    "system_prompt_sha256": digest(system.encode()) if system else None, "run_context": record}
         records = behaviour_run(menu, args.boundary, args.base_url, credential(args.key_file), args.model,
-                                args.timeout, system, args.repetitions, args.case)
+                                args.timeout, system, args.repetitions, args.case, context)
         result = behaviour_report(menu, records, args.boundary, settings)
         write_new(args.output, result)
         print(result["status"], json.dumps(result["metrics"]))
@@ -536,9 +561,9 @@ def main():
     if not 1 <= args.timeout <= 3600 or not 128 <= args.output_tokens <= 65520:
         raise SystemExit("invalid timeout or output allowance")
     settings = {"model": args.model, "output_tokens": args.output_tokens, "timeout": args.timeout,
-                "base_url_sha256": digest(args.base_url.encode()), "profiles": menu["profiles"]}
+                "base_url_sha256": digest(args.base_url.encode()), "profiles": menu["profiles"], "run_context": record}
     records = run(menu, args.boundary, args.base_url, credential(args.key_file), args.model,
-                  args.output_tokens, args.timeout, args.repetitions, args.case)
+                  args.output_tokens, args.timeout, args.repetitions, args.case, context)
     result = report(menu, records, args.boundary, settings)
     write_new(args.output, result)
     print(result["status"], json.dumps(result["metrics"]))

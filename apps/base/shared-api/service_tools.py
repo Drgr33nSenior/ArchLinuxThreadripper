@@ -26,14 +26,15 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 
-from assistant_metrics import METRICS, record_serving_contract
-from boundary import Refusal, browser_key, read_body, secret_json
+from assistant_metrics import METRICS, ROUTES, record_serving_contract
+from boundary import Refusal, browser_key, read_body, reply, secret_json
 import handoff
 from kv_tail import KvTail
 from project_scope import (CHAT_HEADER, MEMORY_MODES, MemoryModes, accessible_projects, chat_folder,
                            folder_memory_group, handoff_owner, memory_group, require_project)
 from research import TOOL as RESEARCH_TOOL, DeepResearch, chat_target
 from retrieval import TOOL_NAMES as RETRIEVAL_TOOLS, Retrieval
+import run_trace
 from video import TOOL as VIDEO_TOOL, VideoTool
 from web_search import WebSearch
 
@@ -43,6 +44,14 @@ MCP_VERSION = "2025-03-26"
 IMAGE_MODEL = "workstation-qwen-image"
 MEMORY_TOOLS = {"recall_memory": "recall", "remember": "remember", "forget_memory": "forget",
                 "inspect_memory_source": "inspect", "set_project_memory_mode": "mode"}
+# Routes that do work for a caller, by metric route (assistant_metrics.ROUTES).
+WORK_ROUTES = {"/mcp": "mcp", "/webui/images/generations": "image", "/webui/search": "web", "/webui/fetch": "web"}
+# Request-trace operation names (run_trace.py): fixed names only, never the caller's text.
+TOOL_NAMES = (frozenset(RETRIEVAL_TOOLS) | frozenset(handoff.NAMES) | frozenset(MEMORY_TOOLS)
+              | {VIDEO_TOOL, RESEARCH_TOOL, "search_web", "read_web_page"})
+MCP_METHODS = {"initialize": "mcp:initialize", "ping": "mcp:ping", "tools/list": "mcp:tools-list",
+               "notifications/initialized": "mcp:notification"}
+TRACE_DETAIL = "workstation.request"  # ASGI scope key: what the handler learned about the request
 # Project-folder scope refusals the model can correct, so they are tool results, not HTTP errors.
 FOLDER_SCOPE_NOTES = {
     "project_set_by_chat_folder": "this chat is in a project folder, which sets the memory scope; call again without project",
@@ -50,6 +59,60 @@ FOLDER_SCOPE_NOTES = {
     "scope_needs_project_folder": "scope applies only in a chat inside a project folder; call again without scope",
     "project_only_memory": "this project's memory is project-only; it cannot use the user's general memory",
 }
+
+
+def mcp_operation(method, tool):
+    """Fixed operation name of one MCP request for its request-trace event."""
+    if method == "tools/call":
+        return "tool:" + tool if isinstance(tool, str) and tool in TOOL_NAMES else "tool:other"
+    return MCP_METHODS.get(method, "mcp:other") if isinstance(method, str) else "mcp:other"
+
+
+class RequestLifecycle:
+    """ASGI wrapper for the work routes: counts requests in flight and writes request-trace events.
+
+    A request counts from its first byte until its response ends, including a streamed
+    deep research answer. /health and /metrics are not work routes, so reading the count
+    never changes it. Run identifiers go only to the request-trace event, never to a metric.
+    """
+
+    def __init__(self, app, service):
+        self.app, self.service = app, service
+
+    async def __call__(self, scope, receive, send):
+        route = WORK_ROUTES.get(scope["path"]) if scope["type"] == "http" else None
+        if route is None:
+            return await self.app(scope, receive, send)
+        service = self.service
+        try:
+            trace = service.events.begin(route, dict(scope["headers"]))
+        except ValueError:
+            return await reply(send, 400, {"error": "invalid_run_context"})
+        status = None
+
+        async def tracked(message):
+            nonlocal status
+            if message["type"] == "http.response.start":
+                status = message["status"]
+            await send(message)
+
+        detail = scope[TRACE_DETAIL] = {}
+        request = object()
+        service.requests_active[request] = route
+        service.requests_started[route] += 1
+        METRICS.inc("workstation_assistant_requests_started_total", route=route)
+        result = "error"
+        try:
+            await self.app(scope, receive, tracked)
+            result = ("error" if status is None else "tool_error" if detail.get("tool_error") else
+                      "ok" if status < 400 else "limited" if status == 429 else
+                      "refused" if status < 500 else "backend_error")
+        except asyncio.CancelledError:
+            result = "cancelled"
+            raise
+        finally:
+            del service.requests_active[request]
+            trace.finish(result, status, operation=detail.get("operation"))
 
 
 def merge_recall(results):
@@ -237,8 +300,13 @@ PICTURE_FILE = re.compile(r"picture_[0-9]{5}_\.png\Z")
 class ServiceTools:
     def __init__(self, client, webui, image_comfy, gateway, browser_file, state_dir, image_timeout=240, public_webui="", web_search=None,
                  memory=None, memory_key_file="/run/memory/service-key", memory_write=False, handoffs=None, image_slots=1,
-                 video_comfy=None, kv_tail=None, deep_research=0):
+                 video_comfy=None, kv_tail=None, deep_research=0, events=None):
         self.client = client
+        # Request lifecycle (RequestLifecycle): requests in flight and started, by work route.
+        self.events = events or run_trace.Events("service-tools")
+        self.requests_active = {}
+        self.requests_started = dict.fromkeys(ROUTES, 0)
+        self.process_started = round(time.time(), 3)
         self.webui, self.gateway = webui, gateway
         self.image_comfy = tuple(image_comfy)  # one ComfyUI base URL per image slot
         self.browser_file = browser_file
@@ -270,6 +338,7 @@ class ServiceTools:
         # Project retrieval tools (retrieval.py) share the webui-rag-profile settings.
         self.retrieval = Retrieval(self.upstream_json, webui, self.public_webui, os.environ)
         self.app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+        self.app.add_middleware(RequestLifecycle, service=self)
         self.app.add_api_route("/mcp", self.mcp, methods=["POST"])
         self.app.add_api_route("/webui/images/generations", self.image, methods=["POST"])
         self.app.add_api_route("/health", self.health, methods=["GET"])
@@ -278,7 +347,17 @@ class ServiceTools:
         self.app.add_api_route("/webui/search", self.browser_search, methods=["POST"])
         self.app.add_api_route("/webui/fetch", self.browser_fetch, methods=["POST"])
 
+    def request_activity(self):
+        """Requests in flight on the work routes now, and started since this process started."""
+        active = dict.fromkeys(ROUTES, 0)
+        for route in self.requests_active.values():
+            active[route] += 1
+        return {"active": sum(active.values()), "active_by_route": active, "started_total": dict(self.requests_started)}
+
     async def metrics(self):
+        for route, count in self.request_activity()["active_by_route"].items():
+            METRICS.set("workstation_assistant_active_requests", count, route=route)
+        METRICS.set("workstation_assistant_process_start_time_seconds", self.process_started)
         return PlainTextResponse(METRICS.render(), media_type="text/plain; version=0.0.4")
 
     def marker(self, slot):
@@ -291,7 +370,9 @@ class ServiceTools:
         return [slot for slot in range(MAX_IMAGE_SLOTS) if slot not in self.active and self.marker(slot).exists()]
 
     async def health(self):
-        return {"status": "process-ready", "image_busy": len(self.active) >= self.image_slots,
+        return {"status": "process-ready", "requests": self.request_activity(),
+                "process_started_unix_seconds": self.process_started,
+                "image_busy": len(self.active) >= self.image_slots,
                 "image_active": len(self.active), "image_slots": self.image_slots,
                 "image_recovery_required": bool(self.stale_markers()),
                 "video_active": bool(self.video and self.video.active),
@@ -486,6 +567,8 @@ class ServiceTools:
             method, params = message.get("method"), message.get("params", {})
             if not isinstance(params, dict):
                 raise Refusal(400, "invalid_jsonrpc")
+            traced = request.scope.get(TRACE_DETAIL, {})
+            traced["operation"] = mcp_operation(method, params.get("name"))
             if method == "notifications/initialized":
                 return JSONResponse({}, status_code=202)
             if identifier is None or not isinstance(identifier, (int, str)):
@@ -641,6 +724,7 @@ class ServiceTools:
             else:
                 return JSONResponse({"jsonrpc": "2.0", "id": identifier,
                                      "error": {"code": -32601, "message": "unsupported_method"}})
+            traced["tool_error"] = result.get("isError") is True
             return JSONResponse({"jsonrpc": "2.0", "id": identifier, "result": result},
                                 headers={"Cache-Control": "no-store"})
         except Refusal as exc:
@@ -660,6 +744,8 @@ class ServiceTools:
         task.add_done_callback(job.release)  # also when cancelled before it started
         task.add_done_callback(lambda t: METRICS.inc("workstation_assistant_deep_research_total", **labels,
                                                      outcome=research_result(t)[0]))
+        task.add_done_callback(lambda t: request.scope.get(TRACE_DETAIL, {}).update(
+            tool_error=research_result(t)[1]["isError"]))
 
         def envelope():
             return {"jsonrpc": "2.0", "id": identifier, "result": research_result(task)[1]}
@@ -866,7 +952,9 @@ def create_app():
                            memory="http://graphiti-memory:8000" if os.environ.get("MEMORY_ENABLED", "false") == "true" else None,
                            memory_write=os.environ.get("MEMORY_WRITE_ENABLED", "false") == "true",
                            handoffs=handoffs, image_slots=image_slots,
-                           video_comfy=video_comfy, kv_tail=kv_tail, deep_research=deep_research)
+                           video_comfy=video_comfy, kv_tail=kv_tail, deep_research=deep_research,
+                           # Fixed-schema events on stdout, only for requests that carry a run context.
+                           events=run_trace.Events("service-tools", run_trace.descriptor_writer(1)))
     # Starlette 1.x (FastAPI 0.136, the pinned gateway image) removed
     # add_event_handler/on_event; close the shared client from the lifespan.
     @contextlib.asynccontextmanager

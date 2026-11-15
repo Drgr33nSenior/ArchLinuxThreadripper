@@ -288,6 +288,7 @@ apps/base/shared-api/video-profile.json
 apps/base/shared-api/video.py
 apps/base/shared-api/kv_tail.py
 apps/base/shared-api/research.py
+apps/base/shared-api/run_trace.py
 apps/base/shared-api/wan-t2v-workflow.json
 apps/components/assistant/kustomization.yaml
 apps/components/assistant/assistant.env

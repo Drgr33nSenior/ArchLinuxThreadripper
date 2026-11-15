@@ -12,6 +12,8 @@ from pathlib import Path
 
 import httpx
 
+import run_trace
+
 
 CHAT_MODELS = {"Qwen3.8-27B-FP8": (32768, 4096), "Qwen3.5-9B": (4096, 1024)}
 # Models that may serve with image generation on. Source default: the one-GPU 9B split
@@ -222,8 +224,11 @@ def reasoning_declaration():
 
 
 class GatewayBoundary:
-    def __init__(self, app, browser_file, control_file, request_timeout=180, first_token_timeout=None, idle_timeout=None):
+    def __init__(self, app, browser_file, control_file, request_timeout=180, first_token_timeout=None, idle_timeout=None,
+                 events=None):
         self.app, self.browser_file, self.control_file = app, browser_file, control_file
+        # Request-trace events for chat requests that carry a run context (run_trace.py).
+        self.events = events or run_trace.Events("gateway")
         self.request_timeout = request_timeout
         self.first_token_timeout, self.idle_timeout = first_token_timeout, idle_timeout
         # A process restart never restores a saved ready flag or completed job.
@@ -238,6 +243,7 @@ class GatewayBoundary:
         path = scope["path"]
         response_started = False
         original_send = send
+        trace = run_trace.UNTRACED
 
         async def send(message):
             nonlocal response_started
@@ -277,7 +283,12 @@ class GatewayBoundary:
             scope = dict(scope, headers=[(k, v) for k, v in headers.items()
                          if k in {b"authorization", b"content-type", b"accept"}])
             if scope["path"] == "/v1/chat/completions":
-                return await self.chat(scope, receive, send)
+                try:
+                    # Read here, never forwarded: only the three headers above reach LiteLLM.
+                    trace = self.events.begin("chat", headers)
+                except ValueError:
+                    raise Refusal(400, "invalid_run_context") from None
+                return await self.chat(scope, receive, send, trace)
             if scope["path"] == "/v1/models" and scope["method"] == "GET":
                 return await self.models(scope, receive, send)
             if scope["path"] in {"/v1/responses", "/responses"}:
@@ -285,16 +296,21 @@ class GatewayBoundary:
             return await self.app(scope, receive, send)
         except Refusal as exc:
             self.requests["limited" if exc.status == 429 else "refused"] += 1
+            trace.finish("limited" if exc.status == 429 else "refused", exc.status, exc.code)
             return await reply(send, exc.status, {"error": {"code": exc.code, "message": exc.code}})
         except json.JSONDecodeError:
+            trace.finish("refused", 400, "invalid_json")
             if response_started:
                 raise
             return await reply(send, 400, {"error": {"code": "invalid_json"}})
         except (OSError, ValueError, TypeError, KeyError):
             self.requests["backend_error"] += 1
+            trace.finish("backend_error", 503, "service_configuration_unavailable")
             if response_started:
                 raise
             return await reply(send, 503, {"error": {"code": "service_configuration_unavailable"}})
+        finally:
+            trace.finish("error")  # Only an exit that no branch above classified.
 
     async def models(self, scope, receive, send):
         """Publish each configured chat model's context window, output allowance and reasoning levels.
@@ -397,7 +413,7 @@ class GatewayBoundary:
                 task.cancel()
         return await reply(send, 200, {**self.state, "active": len(self.active)})
 
-    async def chat(self, scope, receive, send):
+    async def chat(self, scope, receive, send, trace=run_trace.UNTRACED):
         if scope["method"] != "POST":
             raise Refusal(405, "method_not_allowed")
         data = json.loads(await read_body(receive, MAX_CHAT_BODY))
@@ -520,8 +536,10 @@ class GatewayBoundary:
                 await backend_task
             result = "ok" if response_status < 400 else "limited" if response_status == 429 else "backend_error" if response_status >= 500 else "refused"
             self.requests[result] += 1
+            trace.finish(result, response_status)
         except TimeoutError:
             self.requests["backend_error"] += 1
+            trace.finish("backend_error", response_status if started else 504, deadline_code)
             if not started:
                 await reply(send, 504, {"error": {"code": deadline_code}})
             else:
@@ -529,6 +547,7 @@ class GatewayBoundary:
                 await send({"type": "http.response.body", "body": b"", "more_body": False})
         except asyncio.CancelledError:
             self.requests["cancelled"] += 1
+            trace.finish("cancelled", response_status if started else None, "request_cancelled")
             if not started and not disconnected.is_set():
                 await reply(send, 503, {"error": {"code": "request_cancelled"}})
             raise

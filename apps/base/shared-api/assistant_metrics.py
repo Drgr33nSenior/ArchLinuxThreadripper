@@ -2,7 +2,7 @@
 
 Every family declares its labels and the only values each label may take. A value
 outside that set is recorded as "other", so request text, document passages, URLs,
-user/project/session identifiers or secrets can never become a label. Metric
+user/project/session/run identifiers or secrets can never become a label. Metric
 values count tool outcomes only: a successful tool call is not evidence that the
 user's task succeeded.
 """
@@ -11,6 +11,8 @@ import threading
 
 # Shared label vocabularies.
 CLIENTS = ("mcp", "webui")
+# Work routes of service-tools: MCP, the picture adapter, and web search and fetch for Open WebUI.
+ROUTES = ("mcp", "image", "web")
 OUTCOMES_RETRIEVAL = ("evidence", "no_evidence", "error", "denied", "unavailable", "invalid")
 OUTCOMES_WEB = ("ok", "no_results", "provider_error", "quota", "invalid", "refused", "unavailable")
 OUTCOMES_STORE = ("ok", "conflict", "not_found", "denied", "invalid", "too_large", "error", "unavailable")
@@ -67,6 +69,14 @@ FAMILIES = {
     "workstation_assistant_serving_contract_info": (
         "gauge", "Serving contract the clients were rendered for (value 1).",
         {"contract": None, "status": ("active", "provisional", "incomplete")}),
+    "workstation_assistant_active_requests": (
+        "gauge", "Requests in flight on the work routes, for their whole response. /health and /metrics are not counted.",
+        {"route": ROUTES}),
+    "workstation_assistant_requests_started_total": (
+        "counter", "Requests started on the work routes. Unchanged between two scrapes with no request in flight: "
+                   "none ran in between.", {"route": ROUTES}),
+    "workstation_assistant_process_start_time_seconds": (
+        "gauge", "Unix time this process started. A change means the counters above restarted from zero.", {}),
 }
 # Labels whose values come from deployment configuration, not requests: bounded by format.
 CONFIG_VALUE = re.compile(r"[A-Za-z0-9._:-]{1,64}\Z")
@@ -136,6 +146,13 @@ class Metrics:
                 self.gauges[existing] = 0
             self.gauges[(name, key)] = 1
 
+    def set(self, name, value, **labels):
+        """Gauge holding a number for each label set."""
+        kind, key = self._key(name, labels)
+        assert kind == "gauge", name
+        with self.lock:
+            self.gauges[(name, key)] = value
+
     def observe(self, name, value, **labels):
         kind, key = self._key(name, labels)
         assert kind == "histogram", name
@@ -170,7 +187,10 @@ class Metrics:
                         lines.append(f"{name}_count{{{base}}} {entry['count']}")
                     continue
                 for key, value in series:
-                    lines.append(name + "{" + ",".join(f'{k}="{_escape(v)}"' for k, v in key) + "} " + f"{value:g}")
+                    labels = ",".join(f'{k}="{_escape(v)}"' for k, v in key)
+                    # Whole numbers stay exact: a consumer compares counter values between scrapes.
+                    lines.append(name + ("{" + labels + "}" if labels else "") + " "
+                                 + (str(value) if type(value) is int else f"{value:.12g}"))
         return "\n".join(lines) + "\n"
 
 

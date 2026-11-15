@@ -4,11 +4,15 @@ from pathlib import Path
 
 import boundary
 from boundary import GatewayBoundary, apply_policy
+import run_trace
 
 # Native dependency exceptions/print statements are not a content-safe logging
 # contract. Discard their stdout/stderr at the process boundary, including C
 # extensions. Fixed-label metrics, readiness and Kubernetes events remain the
 # operational signals. Debug a disposable synthetic fixture, never real traffic.
+# Only run_trace's fixed-schema events use this private copy of the original
+# stdout, and only for requests that carry a run context.
+event_log = os.dup(1)
 with open(os.devnull, "w") as diagnostic_sink:
     os.dup2(diagnostic_sink.fileno(), 1)
     os.dup2(diagnostic_sink.fileno(), 2)
@@ -32,4 +36,5 @@ from litellm.proxy.proxy_server import app as native_app  # noqa: E402
 
 app = GatewayBoundary(native_app, "/run/browser/mapping.json", "/run/gateway/control-key",
                       request_timeout=request_timeout, first_token_timeout=boundary.FIRST_TOKEN_TIMEOUT,
-                      idle_timeout=boundary.IDLE_TIMEOUT)
+                      idle_timeout=boundary.IDLE_TIMEOUT,
+                      events=run_trace.Events("gateway", run_trace.descriptor_writer(event_log)))

@@ -1,14 +1,17 @@
 """Run records (interface run-record-v1): identity, failures, acceptance and resource joins.
 
 A run executes one declared plan (tasks, arm and latency targets) and records one
-attempt per try at a task. Attempts carry task/run/attempt/arm identities and a
-causal parent (the attempt a retry follows). Independent task acceptance
-(interface task-acceptance-v1) and resource observations join on those IDs.
+attempt per try at a task. Attempts carry task/run/attempt/arm identities, a
+causal parent (the attempt a retry follows) and the digest of the plan they
+started under. Independent task acceptance (interface task-acceptance-v1),
+request-trace events and resource observations join on those IDs.
 
-Records hold identifiers, counts, timings, digests and watts only: no prompts,
-answers, paths, URLs or credentials. Every object has a closed key set and every
-identifier a bounded format, so free text cannot enter a record. Identifiers
-belong in records, traces and joins, never in Prometheus labels.
+Records hold identifiers, counts, timings, digests and watts only. Every object
+has a closed key set and every identifier a bounded format and length. That
+keeps prompts, answers, paths and URLs out by shape. It cannot recognise a
+secret that fits the identifier format: never derive an identifier from secret
+or personal data. Identifiers belong in records, traces and joins, never in
+Prometheus labels.
 
 Tool outcomes are recorded, but never decide task acceptance. Sampled PSU DC
 power is whole-system output; GPU board samples are a component of that load.
@@ -16,10 +19,14 @@ Neither is task energy, which stays null until an independent per-task meter
 exists. No third-party modules.
 """
 import argparse
+import bisect
+import collections
+import datetime
 import hashlib
 import json
 import math
-from pathlib import Path
+import os
+from pathlib import Path, PurePosixPath
 import re
 
 import telemetry_power
@@ -28,11 +35,26 @@ import telemetry_power
 SCHEMA = 1
 INTERFACE = "run-record-v1"
 ACCEPTANCE_INTERFACE = "task-acceptance-v1"
+# The task acceptance checker's result record, schema 1 (lib/workstation/task_acceptance.py,
+# docs/TASK-ACCEPTANCE.md). acceptance_from_result() is the only reader of this shape.
+ACCEPTANCE_RESULT_KIND = "workstation-task-acceptance-result"
+ACCEPTANCE_RESULT_KEYS = ("schema", "kind", "task_id", "spec_version", "spec_sha256", "subject", "created_utc",
+                          "checker_sha256", "verdict", "reasons", "components", "evidence", "limitations")
+ACCEPTANCE_COMPONENTS = ("protection", "references", "oracle", "interference", "external_state", "deliverable",
+                         "linkage")
+ACCEPTANCE_STATUSES = ("passed", "failed", "unavailable", "not-applicable")
+ACCEPTANCE_CHECKER = "workstation-task-acceptance"
 ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 SHA256 = re.compile(r"[a-f0-9]{64}\Z")
+# Fixed operation and code names written by the services, never caller text.
+TOKEN = re.compile(r"[a-z0-9][a-z0-9_:.-]{0,63}\Z")
+PCI_ADDRESS = re.compile(r"[a-f0-9]{4}:[a-f0-9]{2}:[a-f0-9]{2}\.[0-7]\Z")
 MAX_NS = 2**63
 MAX_COUNT = 10**12
-MAX_RECORDS = 10000
+MAX_RECORDS = 10000  # Declared tasks, attempts and verdicts in one report.
+MAX_SAMPLES = 100000  # PSU samples, GPU samples and request-trace events in one report.
+MAX_LINE = 4 * 1024 * 1024
+MAX_CONTEXT = 1024
 
 # Operational failure taxonomy. "unknown" is explicit: an unexplained failure
 # is never folded into another category or dropped.
@@ -49,6 +71,17 @@ VERDICTS = ("accepted", "rejected", "unavailable")
 LATENCY_TARGETS = ("task_wall_seconds",)
 IDENTITY_KEYS = ("task_id", "task_version", "run_id", "attempt_id", "arm_id", "parent_id", "cause")
 DEPLOYMENT_KEYS = ("serving_contract", "model", "tokenizer_sha256", "template_sha256")
+# One request header (and the same value in one environment variable) carries an
+# attempt's identity and plan digest to the gateway and service-tools. The
+# services parse it with apps/base/shared-api/run_trace.py; the tests keep the
+# two parsers identical.
+CONTEXT_HEADER = "X-Workstation-Run-Context"
+CONTEXT_ENV = "WORKSTATION_RUN_CONTEXT"
+CONTEXT_FIELDS = (("task", "task_id"), ("task_version", "task_version"), ("run", "run_id"),
+                  ("attempt", "attempt_id"), ("arm", "arm_id"), ("parent", "parent_id"), ("cause", "cause"))
+TRACE_SERVICES = ("gateway", "service-tools")
+TRACE_RESULTS = ("ok", "tool_error", "refused", "limited", "backend_error", "cancelled", "error")
+GPU_SENSORS = ("power1_average", "power1_input")
 TASK_ENERGY_REASON = ("no independent per-task meter: PSU DC samples are whole-system output and GPU board "
                       "samples are a component of it; neither is attributable to one task")
 
@@ -70,9 +103,11 @@ def _id(value, name, nullable=False):
     _require(isinstance(value, str) and ID.match(value) is not None, f"{name} must be a bounded identifier")
 
 
-def _digest(value, name):
-    _require(value is None or (isinstance(value, str) and SHA256.match(value) is not None),
-             f"{name} must be a sha256 hex digest or null")
+def _digest(value, name, nullable=True):
+    if value is None and nullable:
+        return
+    _require(isinstance(value, str) and SHA256.match(value) is not None,
+             f"{name} must be a sha256 hex digest" + (" or null" if nullable else ""))
 
 
 def _ns(value, name):
@@ -122,7 +157,7 @@ def validate_plan(value):
     for key in LATENCY_TARGETS:
         _number(targets[key], key, 86400 * 7)
     tasks = value["tasks"]
-    _require(isinstance(tasks, list) and 0 < len(tasks) <= MAX_RECORDS, "plan declares no tasks")
+    _require(isinstance(tasks, list) and 0 < len(tasks) <= MAX_RECORDS, "plan declares no tasks or too many")
     for task in tasks:
         _keys(task, ("task_id", "task_version"), name="task")
         _id(task["task_id"], "task_id")
@@ -131,11 +166,61 @@ def validate_plan(value):
     return value
 
 
+def plan_digest(plan):
+    """SHA-256 of the canonical plan: every target, task, the arm and the declaration time."""
+    return hashlib.sha256(canonical(validate_plan(plan))).hexdigest()
+
+
+def bind(plan, identity, now_unix_ns=None):
+    """Digest of the plan an attempt starts under, for the attempt's records and requests.
+
+    Call it when the attempt starts. report() later refuses any attempt or
+    request-trace event whose digest differs from the plan it is given, so a
+    target, task or arm edited after an attempt started is rejected.
+    """
+    digest = plan_digest(plan)
+    validate_identity(identity)
+    _require(identity["run_id"] == plan["run_id"], "identity belongs to another run")
+    _require(identity["arm_id"] == plan["arm_id"], "identity arm differs from the declared arm")
+    declared = {task["task_id"]: task["task_version"] for task in plan["tasks"]}
+    _require(declared.get(identity["task_id"]) == identity["task_version"], "identity names an undeclared task version")
+    _require(now_unix_ns is None or now_unix_ns >= plan["declared_unix_ns"],
+             "latency targets must be declared before the first attempt starts")
+    return digest
+
+
+def context_value(identity, plan_sha256):
+    """The CONTEXT_HEADER / CONTEXT_ENV value for one attempt: identity and plan digest."""
+    validate_identity(identity)
+    _digest(plan_sha256, "plan_sha256", nullable=False)
+    fields = [f"{name}={'-' if identity[key] is None else identity[key]}" for name, key in CONTEXT_FIELDS]
+    return ";".join(["v1", *fields, "plan=" + plan_sha256])
+
+
+def parse_context(value):
+    """(identity, plan_sha256) from a run context value; the inverse of context_value()."""
+    _require(isinstance(value, str) and len(value) <= MAX_CONTEXT, "run context must be a bounded string")
+    parts = value.split(";")
+    _require(len(parts) == len(CONTEXT_FIELDS) + 2 and parts[0] == "v1", "unsupported run context")
+    identity = {}
+    for part, (name, key) in zip(parts[1:-1], CONTEXT_FIELDS):
+        label, _, item = part.partition("=")
+        _require(label == name, "run context fields are missing or out of order")
+        identity[key] = item
+    if identity["parent_id"] == "-":
+        identity["parent_id"] = None
+    label, _, digest = parts[-1].partition("=")
+    _require(label == "plan", "run context has no plan digest")
+    _digest(digest, "run context plan", nullable=False)
+    return validate_identity(identity), digest
+
+
 def validate_attempt(value):
-    _keys(value, ("schema", "kind", "interface", "identity", "deployment", "started_unix_ns", "ended_unix_ns",
-                  "outcome", "failure", "tool_calls", "tokens"), name="attempt")
+    _keys(value, ("schema", "kind", "interface", "identity", "plan_sha256", "deployment", "started_unix_ns",
+                  "ended_unix_ns", "outcome", "failure", "tool_calls", "tokens"), name="attempt")
     _header(value, "attempt")
     validate_identity(value["identity"])
+    _digest(value["plan_sha256"], "plan_sha256", nullable=False)
     deployment = value["deployment"]
     _keys(deployment, DEPLOYMENT_KEYS, name="deployment")
     _id(deployment["serving_contract"], "serving_contract", nullable=True)
@@ -165,33 +250,66 @@ def validate_attempt(value):
 
 
 def validate_acceptance(value):
-    """Consumed interface task-acceptance-v1: one independent verdict per attempt."""
+    """Interface task-acceptance-v1: one independent verdict per attempt, the join's view of a checker result.
+
+    The checker records no task when it could not verify its acceptance source.
+    Such a verdict is always "unavailable" and joins on run and attempt alone.
+    """
     _keys(value, ("schema", "kind", "interface", "task_id", "task_version", "run_id", "attempt_id", "verdict",
-                  "checker", "evaluated_unix_ns"), name="acceptance")
+                  "checker", "spec_sha256", "seal_sha256", "evaluated_unix_ns"), name="acceptance")
     _header(value, "task-acceptance", ACCEPTANCE_INTERFACE)
-    for key in ("task_id", "task_version", "run_id", "attempt_id"):
-        _id(value[key], key)
+    _id(value["run_id"], "run_id")
+    _id(value["attempt_id"], "attempt_id")
     _require(value["verdict"] in VERDICTS, "verdict must be accepted, rejected or unavailable")
+    unverified = value["task_id"] is None and value["task_version"] is None and value["verdict"] == "unavailable"
+    _id(value["task_id"], "task_id", nullable=unverified)
+    _id(value["task_version"], "task_version", nullable=unverified)
     _keys(value["checker"], ("id", "sha256"), name="checker")
     _id(value["checker"]["id"], "checker id")
-    _require(value["checker"]["sha256"] is not None, "checker digest is required")
-    _digest(value["checker"]["sha256"], "checker sha256")
+    _digest(value["checker"]["sha256"], "checker digest", nullable=False)
+    _digest(value["spec_sha256"], "spec_sha256", nullable=unverified)
+    _digest(value["seal_sha256"], "seal_sha256")
     _ns(value["evaluated_unix_ns"], "evaluated_unix_ns")
     return value
 
 
 def validate_gpu_sample(value):
-    _keys(value, ("schema", "kind", "interface", "device", "unix_ns", "watts"), name="gpu sample")
+    _keys(value, ("schema", "kind", "interface", "device", "sensor", "unix_ns", "watts"), name="gpu sample")
     _header(value, "gpu-power-sample")
     _id(value["device"], "device")
+    _require(value["sensor"] in GPU_SENSORS, "GPU sensor must be power1_average or power1_input")
     _ns(value["unix_ns"], "unix_ns")
     _require(type(value["watts"]) in (int, float) and math.isfinite(value["watts"])
              and 0 <= value["watts"] <= telemetry_power.MAX_POWER_WATTS, "invalid GPU watts")
     return value
 
 
-def attempt_from_receipt(receipt, deployment, tokens=None, tool_calls=None):
-    """Attempt record from a measurement.py run.json that carries an identity."""
+def validate_trace(value):
+    """One request-trace event written by the gateway or service-tools (run_trace.py)."""
+    _keys(value, ("schema", "kind", "interface", "service", "operation", "identity", "plan_sha256",
+                  "started_unix_ns", "ended_unix_ns", "result", "status", "code"), name="request trace")
+    _header(value, "request-trace")
+    _require(value["service"] in TRACE_SERVICES, "request trace names an unknown service")
+    _require(isinstance(value["operation"], str) and TOKEN.match(value["operation"]) is not None,
+             "request trace operation must be a fixed name")
+    validate_identity(value["identity"])
+    _digest(value["plan_sha256"], "plan_sha256", nullable=False)
+    _ns(value["started_unix_ns"], "started_unix_ns")
+    _ns(value["ended_unix_ns"], "ended_unix_ns")
+    _require(value["ended_unix_ns"] >= value["started_unix_ns"], "request ends before it starts")
+    _require(value["result"] in TRACE_RESULTS, "unknown request trace result")
+    _require(value["status"] is None or (type(value["status"]) is int and 100 <= value["status"] <= 599),
+             "request trace status must be an HTTP status or null")
+    _require(value["code"] is None or (isinstance(value["code"], str) and TOKEN.match(value["code"]) is not None),
+             "request trace code must be a fixed name or null")
+    return value
+
+
+def attempt_from_receipt(receipt, deployment=None, tokens=None, tool_calls=None):
+    """Attempt record from a measurement.py run.json written with a plan and an identity.
+
+    A deployment value that was not captured stays null; it is never guessed.
+    """
     _require(isinstance(receipt, dict) and receipt.get("schema") == 1, "unsupported measurement receipt")
     started = receipt.get("started_unix_ns")
     elapsed = receipt.get("elapsed_seconds")
@@ -201,29 +319,116 @@ def attempt_from_receipt(receipt, deployment, tokens=None, tool_calls=None):
     category = None if succeeded else MEASUREMENT_FAILURES.get(receipt.get("error_category"), "unknown")
     return validate_attempt({
         "schema": SCHEMA, "kind": "attempt", "interface": INTERFACE, "identity": receipt.get("identity"),
-        "deployment": deployment, "started_unix_ns": started, "ended_unix_ns": started + round(elapsed * 1e9),
+        "plan_sha256": receipt.get("plan_sha256"),
+        "deployment": dict.fromkeys(DEPLOYMENT_KEYS) if deployment is None else deployment,
+        "started_unix_ns": started, "ended_unix_ns": started + round(elapsed * 1e9),
         "outcome": "completed" if succeeded else "failed",
         "failure": None if succeeded else {"category": category,
                                            "source": "measurement:" + str(receipt.get("error_category") or "status")},
         "tool_calls": tool_calls, "tokens": tokens})
 
 
-def _overlap(start, end, a, b):
-    return max(start, a), min(end, b)
+def _checker_verdict(statuses):
+    """The checker's fixed schema 1 rule from component statuses to the verdict."""
+    if statuses["protection"] == "passed" and all(status in ("passed", "not-applicable") for status in statuses.values()):
+        return "accepted"
+    if statuses["protection"] == "passed" and any(statuses[name] == "failed" for name in ACCEPTANCE_COMPONENTS[2:]):
+        return "rejected"
+    return "unavailable"
 
 
-def psu_window(samples, start_ns, end_ns):
-    """Sampled PSU DC output energy over one window, counting covered intervals only.
+def acceptance_from_result(result):
+    """task-acceptance-v1 verdict from one task acceptance checker result record (schema 1).
 
-    ``samples`` are telemetry_power.collect() results in recorded order. Each
-    consecutive pair goes through telemetry_power.advance(); only an "available"
-    interval counts, linearly interpolated where it straddles a window edge.
-    Every uncovered stretch is reported as a gap with its reason.
+    Every joined fact comes from the result: the caller cannot supply or override
+    a task, an attempt or a verdict. The verdict must follow from the recorded
+    component statuses by the checker's fixed rule, and the recorded completion
+    claim and guidance must be marked as not deciding it. The checker's own
+    validate_result() also runs when its module is installed beside this one.
+    A result without a run and attempt cannot be joined and is refused.
+    """
+    _keys(result, ACCEPTANCE_RESULT_KEYS, name="task acceptance result")
+    _require(result["schema"] == 1 and result["kind"] == ACCEPTANCE_RESULT_KIND, "unsupported task acceptance result")
+    components, evidence, subject = result["components"], result["evidence"], result["subject"]
+    _require(isinstance(components, dict) and all(
+        isinstance(components.get(name), dict) and components[name].get("status") in ACCEPTANCE_STATUSES
+        for name in ACCEPTANCE_COMPONENTS) and components["protection"]["status"] != "not-applicable",
+        "task acceptance result must record every component with a known status")
+    statuses = {name: components[name]["status"] for name in ACCEPTANCE_COMPONENTS}
+    _require(result["verdict"] == _checker_verdict(statuses),
+             "task acceptance verdict does not follow from the recorded components")
+    _require(isinstance(evidence, dict) and all(isinstance(evidence.get(name), dict) for name in ("claim", "guidance"))
+             and evidence["claim"].get("decides_verdict") is False and evidence["guidance"].get("authoritative") is False,
+             "task acceptance result must record its claim and guidance as not deciding the verdict")
+    _keys(subject, ("run_id", "attempt_id"), name="task acceptance subject")
+    _require(subject["run_id"] is not None and subject["attempt_id"] is not None,
+             "task acceptance result names no run and attempt; run the checker with --run-id and --attempt-id")
+    verified = statuses["protection"] == "passed"
+    _require((result["task_id"] is not None) == verified,
+             "task_id is recorded exactly when the acceptance source was verified")
+    created = result["created_utc"]
+    _require(isinstance(created, str) and len(created) <= 64, "task acceptance result has no creation time")
+    moment = datetime.datetime.fromisoformat(created)
+    _require(moment.tzinfo is not None, "task acceptance creation time has no time zone")
+    try:
+        import task_acceptance
+    except ImportError:
+        pass  # The checker is installed separately; the checks above stand alone.
+    else:
+        task_acceptance.validate_result(result)
+    epoch = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc)
+    return validate_acceptance({
+        "schema": SCHEMA, "kind": "task-acceptance", "interface": ACCEPTANCE_INTERFACE,
+        "task_id": result["task_id"], "task_version": result["spec_version"] if verified else None,
+        "run_id": subject["run_id"], "attempt_id": subject["attempt_id"], "verdict": result["verdict"],
+        "checker": {"id": ACCEPTANCE_CHECKER, "sha256": result["checker_sha256"]},
+        "spec_sha256": result["spec_sha256"] if verified else None,
+        "seal_sha256": components["protection"].get("seal_sha256"),
+        "evaluated_unix_ns": (moment - epoch) // datetime.timedelta(microseconds=1) * 1000})
+
+
+def gpu_samples_from_snapshot(row):
+    """gpu-power-sample records from one measurement.snapshot() row (a benchmark's telemetry.jsonl).
+
+    One sample per amdgpu display device that reported board power: the averaged
+    sensor when the driver has one, else the instantaneous one. A suspended or
+    unreadable card yields no sample, never zero watts.
+    """
+    samples = []
+    if not isinstance(row, dict) or type(row.get("unix_ns")) is not int or not 0 < row["unix_ns"] < MAX_NS:
+        return samples
+    hwmon, gpus = row.get("hwmon"), row.get("gpus_by_bdf")
+    if not isinstance(hwmon, dict) or not isinstance(gpus, dict):
+        return samples
+    for path, entry in sorted(hwmon.items()):
+        device = PurePosixPath(path).parent.parent.name
+        if (not isinstance(entry, dict) or entry.get("name") != "amdgpu" or device not in gpus
+                or PCI_ADDRESS.match(device) is None or not isinstance(entry.get("values"), dict)):
+            continue
+        for sensor in GPU_SENSORS:
+            raw = entry["values"].get(sensor)
+            if (isinstance(raw, str) and re.fullmatch(r"[0-9]{1,12}", raw)
+                    and int(raw) / 1000000 <= telemetry_power.MAX_POWER_WATTS):
+                samples.append({"schema": SCHEMA, "kind": "gpu-power-sample", "interface": INTERFACE, "device": device,
+                                "sensor": sensor, "unix_ns": row["unix_ns"], "watts": int(raw) / 1000000})
+                break
+    return samples
+
+
+def psu_timeline(samples):
+    """Classify recorded PSU samples once into consecutive wall-time segments.
+
+    ``samples`` are telemetry_power.collect()-shaped results in recorded order.
+    Each consecutive pair goes through telemetry_power.advance(); only an
+    "available" interval is covered. The timeline advances with the highest wall
+    time seen. A sample at or before that time (the wall clock stepped back)
+    adds no segment, and the stretch up to the next later sample is a
+    clock_discontinuity gap, so replayed wall time is never counted twice.
     """
     state, previous, pending = None, None, None
-    covered_joules = covered_ns = 0.0
-    gaps, resets = [], 0
-    first = last = None
+    mark = first = None
+    stepped, steps_back = False, 0
+    segments = []  # (start_unix_ns, end_unix_ns, gap reason or None, watts at start, watts at end)
     for sample in samples:
         _require(isinstance(sample, dict), "PSU sample must be an object")
         state, reason = telemetry_power.advance(state, sample)
@@ -231,33 +436,66 @@ def psu_window(samples, start_ns, end_ns):
             pending = "sample_unavailable"
             continue
         current = state["anchor"]
-        if previous is not None:
-            _require(current["unix_ns"] > previous["unix_ns"],
-                     "PSU sample wall clock is not increasing; a wall-time join would be unreliable")
-            a, b = _overlap(start_ns, end_ns, previous["unix_ns"], current["unix_ns"])
-            if b > a:
-                if reason == "available":
-                    span = current["unix_ns"] - previous["unix_ns"]
-                    slope = (current["watts"] - previous["watts"]) / span
-                    watts_a = previous["watts"] + slope * (a - previous["unix_ns"])
-                    watts_b = previous["watts"] + slope * (b - previous["unix_ns"])
-                    covered_joules += (watts_a + watts_b) * (b - a) / 2e9
-                    covered_ns += b - a
-                else:
-                    gap = pending if reason == "new_interval" and pending else reason
-                    gaps.append({"start_unix_ns": a, "end_unix_ns": b, "reason": gap})
-                    resets += reason in ("boot_changed", "device_changed")
-        first = current["unix_ns"] if first is None else first
-        last = current["unix_ns"]
+        if mark is None:
+            first = mark = current["unix_ns"]
+        elif current["unix_ns"] <= mark:
+            stepped, steps_back = True, steps_back + 1
+        else:
+            if stepped:
+                gap = "clock_discontinuity"
+            elif reason == "available":
+                gap = None
+            else:
+                gap = pending if reason == "new_interval" and pending else reason
+            segments.append((mark, current["unix_ns"], gap, previous["watts"] if gap is None else None,
+                             current["watts"] if gap is None else None))
+            mark, stepped = current["unix_ns"], False
         previous, pending = current, None
+    return {"segments": segments, "ends": [segment[1] for segment in segments], "first": first, "last": mark,
+            "trailing": pending, "steps_back": steps_back}
+
+
+def psu_window(timeline, start_ns, end_ns):
+    """Sampled PSU DC output energy over one window of a psu_timeline(), covered segments only.
+
+    A covered segment is integrated with the trapezoid rule and linearly
+    interpolated where it straddles a window edge. Every uncovered stretch is
+    reported as a gap with its reason; adjacent gaps with one reason are merged.
+    """
+    covered_joules = 0.0
+    covered_ns = resets = 0
+    gaps = []
+
+    def gap(start, end, reason):
+        if gaps and gaps[-1]["reason"] == reason and gaps[-1]["end_unix_ns"] == start:
+            gaps[-1]["end_unix_ns"] = end
+        else:
+            gaps.append({"start_unix_ns": start, "end_unix_ns": end, "reason": reason})
+
     window = end_ns - start_ns
+    first, last, segments = timeline["first"], timeline["last"], timeline["segments"]
     if first is None or first >= end_ns or last <= start_ns:
-        gaps = [{"start_unix_ns": start_ns, "end_unix_ns": end_ns, "reason": "no_samples"}] if window else []
+        if window:
+            gap(start_ns, end_ns, "no_samples")
     else:
         if first > start_ns:
-            gaps.insert(0, {"start_unix_ns": start_ns, "end_unix_ns": first, "reason": "no_samples"})
+            gap(start_ns, first, "no_samples")
+        index = bisect.bisect_right(timeline["ends"], start_ns)
+        while index < len(segments) and segments[index][0] < end_ns:
+            segment_start, segment_end, reason, watts_start, watts_end = segments[index]
+            a, b = max(start_ns, segment_start), min(end_ns, segment_end)
+            if reason is None:
+                slope = (watts_end - watts_start) / (segment_end - segment_start)
+                watts_a = watts_start + slope * (a - segment_start)
+                watts_b = watts_start + slope * (b - segment_start)
+                covered_joules += (watts_a + watts_b) * (b - a) / 2e9
+                covered_ns += b - a
+            else:
+                gap(a, b, reason)
+                resets += reason in ("boot_changed", "device_changed")
+            index += 1
         if last < end_ns:
-            gaps.append({"start_unix_ns": last, "end_unix_ns": end_ns, "reason": pending or "no_samples"})
+            gap(last, end_ns, timeline["trailing"] or "no_samples")
     return {"attribution": "system-psu-dc-output", "covered_seconds": covered_ns / 1e9,
             "window_seconds": window / 1e9, "coverage": covered_ns / window if window else None,
             "covered_joules": covered_joules, "gaps": gaps, "resets": resets,
@@ -267,37 +505,67 @@ def psu_window(samples, start_ns, end_ns):
                             "whole-system load, including concurrent and idle work"]}
 
 
-def gpu_window(samples, start_ns, end_ns):
-    """Instantaneous GPU board power samples in a window; not integrated as energy."""
+def gpu_index(samples):
+    """Validated GPU samples ordered by time, for gpu_window()."""
+    rows = sorted((sample["unix_ns"], sample["device"], sample["sensor"], sample["watts"])
+                  for sample in map(validate_gpu_sample, samples))
+    return [row[0] for row in rows], rows
+
+
+def gpu_window(index, start_ns, end_ns):
+    """Instantaneous GPU board power samples in a window of a gpu_index(); not integrated as energy."""
+    times, rows = index
     devices = {}
-    for sample in samples:
-        if start_ns <= sample["unix_ns"] <= end_ns:
-            devices.setdefault(sample["device"], []).append(sample["watts"])
+    for _, device, sensor, watts in rows[bisect.bisect_left(times, start_ns):bisect.bisect_right(times, end_ns)]:
+        entry = devices.setdefault(device, {"watts": [], "sensors": set()})
+        entry["watts"].append(watts)
+        entry["sensors"].add(sensor)
     return {"attribution": "gpu-board-component", "devices": {
-        device: {"samples": len(values), "mean_watts": sum(values) / len(values), "max_watts": max(values)}
-        for device, values in sorted(devices.items())},
+        device: {"samples": len(entry["watts"]), "mean_watts": sum(entry["watts"]) / len(entry["watts"]),
+                 "max_watts": max(entry["watts"]), "sensors": sorted(entry["sensors"])}
+        for device, entry in sorted(devices.items())},
         "assumptions": ["sampled board power; part of the PSU DC load, never added to it",
                         "sample counts are not coverage of short spikes"]}
 
 
-def _chains(plan, attempts):
+def overlaps(attempts):
+    """For each attempt_id, how many other attempts ran during some part of its interval."""
+    starts = sorted(attempt["started_unix_ns"] for attempt in attempts)
+    ends = sorted(attempt["ended_unix_ns"] for attempt in attempts)
+    instants = collections.Counter(attempt["started_unix_ns"] for attempt in attempts
+                                   if attempt["started_unix_ns"] == attempt["ended_unix_ns"])
+    counts = {}
+    for attempt in attempts:
+        start, end = attempt["started_unix_ns"], attempt["ended_unix_ns"]
+        # Others that started before this one ended, less those that had already ended.
+        count = bisect.bisect_left(starts, end) - bisect.bisect_right(ends, start)
+        counts[attempt["identity"]["attempt_id"]] = count + (instants[start] if start == end else -1)
+    return counts
+
+
+def _chains(plan, attempts, digest):
     by_id = {}
     for attempt in attempts:
         identity = attempt["identity"]
         _require(identity["attempt_id"] not in by_id, "duplicate attempt_id")
         _require(identity["run_id"] == plan["run_id"], "attempt belongs to another run")
         _require(identity["arm_id"] == plan["arm_id"], "attempt arm differs from the declared arm")
+        _require(attempt["plan_sha256"] == digest,
+                 "attempt was recorded under a different plan; a plan cannot change after an attempt starts")
         by_id[identity["attempt_id"]] = attempt
     declared = {task["task_id"]: task["task_version"] for task in plan["tasks"]}
     chains = {task_id: [] for task_id in declared}
-    children = {}
+    roots, children = {}, {}
     for attempt_id, attempt in by_id.items():
         identity = attempt["identity"]
         _require(declared.get(identity["task_id"]) == identity["task_version"], "attempt for an undeclared task version")
         _require(attempt["started_unix_ns"] >= plan["declared_unix_ns"],
                  "latency targets must be declared before the first attempt starts")
         parent = identity["parent_id"]
-        if parent is not None:
+        if parent is None:
+            _require(identity["task_id"] not in roots, "a task has more than one initial attempt in a run")
+            roots[identity["task_id"]] = attempt_id
+        else:
             _require(parent in by_id, "retry names an unknown parent attempt")
             parent_record = by_id[parent]
             _require(parent_record["identity"]["task_id"] == identity["task_id"], "retry parent is another task")
@@ -305,9 +573,7 @@ def _chains(plan, attempts):
             _require(parent not in children, "an attempt has more than one retry")
             children[parent] = attempt_id
     for task_id in declared:
-        roots = [a for a in by_id.values() if a["identity"]["task_id"] == task_id and a["identity"]["parent_id"] is None]
-        _require(len(roots) <= 1, "a task has more than one initial attempt in a run")
-        node = roots[0]["identity"]["attempt_id"] if roots else None
+        node = roots.get(task_id)
         while node is not None:
             chains[task_id].append(by_id[node])
             node = children.get(node)
@@ -315,26 +581,66 @@ def _chains(plan, attempts):
     return chains
 
 
-def report(plan, attempts, acceptances, psu_samples=(), gpu_samples=()):
-    """Join independent acceptance and resources to every attempt in one run."""
-    validate_plan(plan)
+def _traces(plan, attempts, traces, digest):
+    """Request-trace events grouped by recorded attempt, and the count that match none."""
+    by_attempt = {attempt["identity"]["attempt_id"]: attempt for attempt in attempts}
+    grouped, unmatched = {}, 0
+    for trace in traces:
+        validate_trace(trace)
+        identity = trace["identity"]
+        _require(identity["run_id"] == plan["run_id"], "request trace belongs to another run")
+        _require(trace["plan_sha256"] == digest,
+                 "request trace was recorded under a different plan; a plan cannot change after an attempt starts")
+        attempt = by_attempt.get(identity["attempt_id"])
+        if attempt is None:
+            unmatched += 1
+            continue
+        _require(identity == attempt["identity"], "request trace identity differs from its attempt")
+        grouped.setdefault(identity["attempt_id"], []).append(trace)
+    return grouped, unmatched
+
+
+def _trace_summary(events, attempt):
+    services = {}
+    for event in events:
+        row = services.setdefault(event["service"], {"requests": 0, "by_result": {}, "by_operation": {}})
+        row["requests"] += 1
+        for key, value in (("by_result", event["result"]), ("by_operation", event["operation"])):
+            row[key][value] = row[key].get(value, 0) + 1
+    return {"requests": len(events), "services": services,
+            "outside_attempt_window": sum(1 for event in events
+                                          if event["started_unix_ns"] < attempt["started_unix_ns"]
+                                          or event["ended_unix_ns"] > attempt["ended_unix_ns"])}
+
+
+def report(plan, attempts, acceptances, psu_samples=(), gpu_samples=(), traces=()):
+    """Join independent acceptance, request traces and resources to every attempt in one run."""
+    digest = plan_digest(plan)
     _require(len(attempts) <= MAX_RECORDS and len(acceptances) <= MAX_RECORDS, "too many records")
+    _require(max(len(psu_samples), len(gpu_samples), len(traces)) <= MAX_SAMPLES, "too many samples or trace events")
     for attempt in attempts:
         validate_attempt(attempt)
-    gpu_samples = [validate_gpu_sample(sample) for sample in gpu_samples]
-    chains = _chains(plan, attempts)
+    chains = _chains(plan, attempts, digest)
     verdicts = {}
     by_attempt = {a["identity"]["attempt_id"]: a for a in attempts}
     for acceptance in acceptances:
-        validate_acceptance(acceptance)
+        # A checker result record is read through its adapter; a verdict is validated as it is.
+        if isinstance(acceptance, dict) and acceptance.get("kind") == ACCEPTANCE_RESULT_KIND:
+            acceptance = acceptance_from_result(acceptance)
+        else:
+            validate_acceptance(acceptance)
         attempt = by_attempt.get(acceptance["attempt_id"])
         _require(attempt is not None and acceptance["run_id"] == plan["run_id"]
-                 and acceptance["task_id"] == attempt["identity"]["task_id"]
-                 and acceptance["task_version"] == attempt["identity"]["task_version"],
+                 and acceptance["task_id"] in (None, attempt["identity"]["task_id"])
+                 and acceptance["task_version"] in (None, attempt["identity"]["task_version"]),
                  "acceptance does not match a recorded attempt")
         _require(acceptance["attempt_id"] not in verdicts, "more than one acceptance verdict for an attempt")
         _require(acceptance["evaluated_unix_ns"] >= attempt["ended_unix_ns"], "acceptance predates the attempt's end")
         verdicts[acceptance["attempt_id"]] = acceptance
+    traced, unmatched_traces = _traces(plan, attempts, traces, digest)
+    timeline = psu_timeline(psu_samples)
+    gpu = gpu_index(gpu_samples)
+    overlapping = overlaps(attempts)
     target = plan["latency_targets"]["task_wall_seconds"]
     failures = dict.fromkeys(FAILURE_CATEGORIES, 0)
     totals = {"attempts": 0, "failed_attempts": 0, "retries": 0, "attempt_wall_seconds": 0.0,
@@ -363,17 +669,17 @@ def report(plan, attempts, acceptances, psu_samples=(), gpu_samples=()):
                         totals[key][field] += value
             if verdict and verdict["verdict"] == "accepted" and accepted is None:
                 accepted = attempt
-            overlapping = sum(1 for other in attempts if other is not attempt
-                              and other["started_unix_ns"] < attempt["ended_unix_ns"]
-                              and other["ended_unix_ns"] > attempt["started_unix_ns"])
+            events = traced.get(identity["attempt_id"])
             rows.append({"attempt_id": identity["attempt_id"], "parent_id": identity["parent_id"],
                          "cause": identity["cause"], "outcome": attempt["outcome"], "failure_category": category,
                          "acceptance": verdict["verdict"] if verdict else "missing",
                          "checker": verdict["checker"] if verdict else None,
+                         "acceptance_spec_sha256": verdict["spec_sha256"] if verdict else None,
                          "wall_seconds": wall, "tokens": attempt["tokens"], "tool_calls": attempt["tool_calls"],
-                         "overlapping_attempts": overlapping,
-                         "psu_dc": psu_window(psu_samples, attempt["started_unix_ns"], attempt["ended_unix_ns"]),
-                         "gpu_component": gpu_window(gpu_samples, attempt["started_unix_ns"], attempt["ended_unix_ns"]),
+                         "request_trace": _trace_summary(events, attempt) if events else None,
+                         "overlapping_attempts": overlapping[identity["attempt_id"]],
+                         "psu_dc": psu_window(timeline, attempt["started_unix_ns"], attempt["ended_unix_ns"]),
+                         "gpu_component": gpu_window(gpu, attempt["started_unix_ns"], attempt["ended_unix_ns"]),
                          "task_energy_joules": None})
         if not chain:
             status = "not-attempted"
@@ -392,8 +698,8 @@ def report(plan, attempts, acceptances, psu_samples=(), gpu_samples=()):
     if attempts:
         start = min(a["started_unix_ns"] for a in attempts)
         end = max(a["ended_unix_ns"] for a in attempts)
-        run_psu = psu_window(psu_samples, start, end)
-        run_gpu = gpu_window(gpu_samples, start, end)
+        run_psu = psu_window(timeline, start, end)
+        run_gpu = gpu_window(gpu, start, end)
     else:
         run_psu = run_gpu = None
     deployments = sorted({canonical(a["deployment"]) for a in attempts})
@@ -401,8 +707,8 @@ def report(plan, attempts, acceptances, psu_samples=(), gpu_samples=()):
     return {
         "schema": SCHEMA, "kind": "run-record-report", "interface": INTERFACE,
         "acceptance_interface": ACCEPTANCE_INTERFACE,
-        "run_id": plan["run_id"], "arm_id": plan["arm_id"],
-        "plan_sha256": hashlib.sha256(canonical(plan)).hexdigest(),
+        "run_id": plan["run_id"], "arm_id": plan["arm_id"], "plan_sha256": digest,
+        "plan_binding": "every attempt and request-trace event carries this digest from its start",
         "latency_targets": plan["latency_targets"], "latency_targets_declared_unix_ns": plan["declared_unix_ns"],
         "deployments": [json.loads(d) for d in deployments], "deployment_changed": len(deployments) > 1,
         "summary": {"tasks_declared": len(tasks), "tasks_accepted": len(accepted_tasks),
@@ -414,40 +720,157 @@ def report(plan, attempts, acceptances, psu_samples=(), gpu_samples=()):
         "coverage": {"attempts_with_acceptance": sum(1 for a in attempts
                                                      if a["identity"]["attempt_id"] in verdicts),
                      "attempts_with_tokens": totals["tokens"]["attempts_with_tokens"],
+                     "attempts_with_request_trace": len(traced),
+                     "request_trace_events": len(traces), "unmatched_request_trace_events": unmatched_traces,
                      "attempts": len(attempts), "psu_dc_run_coverage": run_psu["coverage"] if run_psu else None,
+                     "psu_samples": len(psu_samples), "psu_clock_steps_back": timeline["steps_back"],
                      "gpu_component_samples": len(gpu_samples)},
         "energy": {"psu_dc_run_window": run_psu, "gpu_component_run_window": run_gpu,
                    "task_attributable": {"joules": None, "reason": TASK_ENERGY_REASON}},
         "tasks": tasks}
 
 
-def _jsonl(path):
-    if path is None:
-        return []
-    rows = []
-    with open(path) as source:
-        for line in source:
+def _lines(path, limit, name):
+    """Non-empty lines of a file, at most ``limit`` of them and MAX_LINE bytes each."""
+    count = 0
+    with open(path, "rb") as source:
+        while True:
+            line = source.readline(MAX_LINE + 1)
+            if not line:
+                return
+            _require(len(line) <= MAX_LINE, f"{name} line is too long")
             if line.strip():
-                rows.append(json.loads(line))
-                _require(len(rows) <= MAX_RECORDS, "too many records")
-    return rows
+                count += 1
+                _require(count <= limit, f"too many {name} records")
+                yield line
+
+
+def _jsonl(path, limit=MAX_RECORDS, name="input"):
+    return [] if path is None else [json.loads(line) for line in _lines(path, limit, name)]
+
+
+def _write_lines(path, rows):
+    """Write JSON lines to a new file; never replace an existing one."""
+    count = 0
+    with open(path, "x") as output:
+        for row in rows:
+            output.write(json.dumps(row, sort_keys=True, allow_nan=False) + "\n")
+            count += 1
+    return count
+
+
+def resources_from_telemetry(telemetry, psu, gpu):
+    """Write PSU and GPU run-record samples from a benchmark's telemetry.jsonl; returns the counts."""
+    rows = psu_available = 0
+    gpu_rows = []
+
+    def psu_samples():
+        nonlocal rows, psu_available
+        for line in _lines(telemetry, MAX_SAMPLES, "telemetry"):
+            row = json.loads(line)
+            rows += 1
+            sample = telemetry_power.sample_from_snapshot(row)
+            psu_available += sample["watts"] is not None
+            gpu_rows.extend(gpu_samples_from_snapshot(row))
+            _require(len(gpu_rows) <= MAX_SAMPLES, "too many GPU samples")
+            yield sample
+
+    _write_lines(psu, psu_samples())
+    return {"telemetry_rows": rows, "psu_samples": rows, "psu_samples_available": psu_available,
+            "gpu_samples": _write_lines(gpu, gpu_rows)}
+
+
+def traces_from_logs(logs, run_id, output):
+    """Write one run's request-trace events from gateway and service-tools log files.
+
+    Other lines are counted, never copied: a log can hold other runs' events and
+    unrelated process output.
+    """
+    _id(run_id, "run_id")
+    counts = {"kept": 0, "other_runs": 0, "ignored_lines": 0}
+
+    def events():
+        for log in logs:
+            for line in _lines(log, 10 * MAX_SAMPLES, "log"):
+                try:
+                    event = validate_trace(json.loads(line))
+                except (ValueError, RecursionError):
+                    counts["ignored_lines"] += 1
+                    continue
+                if event["identity"]["run_id"] != run_id:
+                    counts["other_runs"] += 1
+                    continue
+                counts["kept"] += 1
+                _require(counts["kept"] <= MAX_SAMPLES, "too many request-trace events")
+                yield event
+
+    _write_lines(output, events())
+    return counts
 
 
 def main():
+    os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("action", choices=("report",))
-    parser.add_argument("--plan", required=True)
-    parser.add_argument("--attempts", required=True, help="attempt records, JSON lines")
-    parser.add_argument("--acceptance", required=True, help="task-acceptance-v1 verdicts, JSON lines")
-    parser.add_argument("--psu", help="telemetry_power.collect() samples, JSON lines in recorded order")
-    parser.add_argument("--gpu", help="gpu-power-sample records, JSON lines")
+    actions = parser.add_subparsers(dest="action", required=True)
+    action = actions.add_parser("report", help="join acceptance, traces and resources to one run's attempts")
+    action.add_argument("--plan", required=True)
+    action.add_argument("--attempts", required=True, help="attempt records, JSON lines")
+    action.add_argument("--acceptance", required=True,
+                        help="task-acceptance-v1 verdicts or checker result records, JSON lines")
+    action.add_argument("--psu", help="PSU samples in recorded order, JSON lines")
+    action.add_argument("--gpu", help="gpu-power-sample records, JSON lines")
+    action.add_argument("--traces", help="request-trace events, JSON lines")
+    action = actions.add_parser("context", help="bind an attempt to its plan; print the run context to send")
+    action.add_argument("--plan", required=True)
+    action.add_argument("--identity", required=True)
+    action = actions.add_parser("attempt", help="attempt record from a measurement run directory")
+    action.add_argument("run_directory")
+    action.add_argument("--serving-contract")
+    action.add_argument("--model")
+    action.add_argument("--tokenizer-sha256")
+    action.add_argument("--template-sha256")
+    action.add_argument("--tokens", nargs=2, type=int, metavar=("PROMPT", "COMPLETION"))
+    action.add_argument("--tool-calls", nargs=2, type=int, metavar=("SUCCEEDED", "FAILED"))
+    action = actions.add_parser("resources", help="PSU and GPU samples from a measurement telemetry.jsonl")
+    action.add_argument("telemetry")
+    action.add_argument("--psu", required=True, help="new PSU samples file")
+    action.add_argument("--gpu", required=True, help="new GPU samples file")
+    action = actions.add_parser("traces", help="one run's request-trace events from service log files")
+    action.add_argument("--run-id", required=True)
+    action.add_argument("--output", required=True, help="new request-trace file")
+    action.add_argument("log", nargs="+")
+    action = actions.add_parser("acceptance", help="task-acceptance-v1 verdict from a checker result file")
+    action.add_argument("result")
     args = parser.parse_args()
     try:
-        result = report(json.loads(Path(args.plan).read_text()), _jsonl(args.attempts), _jsonl(args.acceptance),
-                        _jsonl(args.psu), _jsonl(args.gpu))
+        if args.action == "report":
+            result = report(json.loads(Path(args.plan).read_text()), _jsonl(args.attempts, name="attempt"),
+                            _jsonl(args.acceptance, name="acceptance"), _jsonl(args.psu, MAX_SAMPLES, "PSU"),
+                            _jsonl(args.gpu, MAX_SAMPLES, "GPU"), _jsonl(args.traces, MAX_SAMPLES, "request-trace"))
+        elif args.action == "context":
+            identity = json.loads(Path(args.identity).read_text())
+            digest = bind(json.loads(Path(args.plan).read_text()), identity)
+            result = {"header": CONTEXT_HEADER, "environment": CONTEXT_ENV, "plan_sha256": digest,
+                      "value": context_value(identity, digest)}
+        elif args.action == "attempt":
+            receipt = json.loads((Path(args.run_directory) / "run.json").read_text())
+            result = attempt_from_receipt(
+                receipt, {"serving_contract": args.serving_contract, "model": args.model,
+                          "tokenizer_sha256": args.tokenizer_sha256, "template_sha256": args.template_sha256},
+                dict(zip(("prompt", "completion"), args.tokens)) if args.tokens else None,
+                dict(zip(("succeeded", "failed"), args.tool_calls)) if args.tool_calls else None)
+        elif args.action == "resources":
+            result = resources_from_telemetry(args.telemetry, args.psu, args.gpu)
+        elif args.action == "traces":
+            result = traces_from_logs(args.log, args.run_id, args.output)
+        else:
+            result = acceptance_from_result(json.loads(Path(args.result).read_text()))
     except (OSError, ValueError) as error:
         parser.exit(1, f"run record rejected: {error}\n")
-    print(json.dumps(result, indent=2, sort_keys=True, allow_nan=False))
+    if args.action in ("attempt", "acceptance"):
+        print(json.dumps(result, sort_keys=True, allow_nan=False))  # One JSON line, ready to append.
+    else:
+        print(json.dumps(result, indent=2, sort_keys=True, allow_nan=False))
 
 
 if __name__ == "__main__":

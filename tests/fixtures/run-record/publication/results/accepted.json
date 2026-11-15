@@ -1,0 +1,147 @@
+{
+  "checker_sha256": "9649eae899ec9a4275cab177293f4b998d7de503408764ea4206cc9faecc3a44",
+  "components": {
+    "deliverable": {
+      "answer": {
+        "fenced": false,
+        "sha256": "6ae90695f982d8791c6684dae5c88e9437c7a30b69521a32064bbfe01ce13195",
+        "status": "passed"
+      },
+      "artifacts": [
+        {
+          "bytes": 90,
+          "id": "summary",
+          "sha256": "b3dfeb174db156ca698a3936d66e3650a3214e569539ee8c85bc52e2d4a87931",
+          "status": "passed"
+        }
+      ],
+      "checks": [
+        {
+          "id": "answer-record",
+          "status": "passed"
+        },
+        {
+          "id": "answer-revision",
+          "status": "passed"
+        },
+        {
+          "id": "summary-record",
+          "status": "passed"
+        },
+        {
+          "id": "summary-text",
+          "status": "passed"
+        },
+        {
+          "id": "link-record",
+          "status": "passed"
+        }
+      ],
+      "links": [
+        {
+          "bytes": 34,
+          "id": "record-link",
+          "sha256": "fa4667a9f512bb02df2c4294f0c49f003396c9e97b1e7fdaa779289df50571c5",
+          "status": "passed",
+          "url_sha256": "059f3bafe11b49d4406e1b02723a891ccce6e7b9759492f77fbd63fe240ad3f0"
+        }
+      ],
+      "status": "passed"
+    },
+    "external_state": {
+      "checks": [
+        {
+          "id": "record-closed",
+          "status": "passed"
+        },
+        {
+          "id": "resolution-fixed",
+          "status": "passed"
+        }
+      ],
+      "observation": {
+        "sha256": "8096893de7893cf7cb3e291b51ec1cf3568b22087b2a93c3dd11889a27df0bed",
+        "status": "passed"
+      },
+      "status": "passed"
+    },
+    "interference": {
+      "reason": "The task changes an external record and writes a summary; it has no code to run.",
+      "status": "not-applicable"
+    },
+    "linkage": {
+      "checks": [
+        {
+          "id": "answer-revision-current",
+          "left_sha256": "4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce",
+          "right_sha256": "4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce",
+          "status": "passed"
+        },
+        {
+          "id": "summary-revision-current",
+          "left_sha256": "4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce",
+          "right_sha256": "4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce",
+          "status": "passed"
+        },
+        {
+          "id": "link-revision-current",
+          "left_sha256": "4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce",
+          "right_sha256": "4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce",
+          "status": "passed"
+        }
+      ],
+      "status": "passed"
+    },
+    "oracle": {
+      "reason": "The task changes an external record and writes a summary; it has no code to run.",
+      "status": "not-applicable"
+    },
+    "protection": {
+      "expected_seal_sha256": "aba69f2a29caeb2216cb3cfa0212f2f5786d4656f68c5911ca42aaf80480e4cc",
+      "seal_sha256": "aba69f2a29caeb2216cb3cfa0212f2f5786d4656f68c5911ca42aaf80480e4cc",
+      "status": "passed"
+    },
+    "references": {
+      "reason": "The task changes an external record and writes a summary; it has no code to run.",
+      "status": "not-applicable"
+    }
+  },
+  "created_utc": "2026-11-15T13:51:02.167298+00:00",
+  "evidence": {
+    "claim": {
+      "completed": true,
+      "contradicted": false,
+      "decides_verdict": false
+    },
+    "generated_tests": {
+      "status": "not-applicable"
+    },
+    "guidance": {
+      "authoritative": false,
+      "contradicted": false,
+      "supplied": false
+    },
+    "test_diff": {
+      "status": "not-applicable"
+    },
+    "workspace_suite": {
+      "status": "not-applicable"
+    }
+  },
+  "kind": "workstation-task-acceptance-result",
+  "limitations": [
+    "Commands run only in the network-free Linux sandbox; on another host the oracle is unavailable.",
+    "Submitted files share a process with the protected tests. The canary detects a manufactured pass, not every manipulation that targets one test.",
+    "Agent-written tests, IDE or project feedback and the completion claim are evidence and never decide the verdict."
+  ],
+  "reasons": [],
+  "schema": 1,
+  "spec_sha256": "9c3725ac100d1b0b243451d0c02e5a269d97016a86b5dddbec1d46ecb1b323f9",
+  "spec_version": "2026-11-15.1",
+  "subject": {
+    "attempt_id": "fixture-publication-4",
+    "run_id": "fixture-publication-run"
+  },
+  "task_id": "record-publication",
+  "verdict": "accepted"
+}
