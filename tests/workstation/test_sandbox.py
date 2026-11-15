@@ -171,11 +171,12 @@ class RenderTests(unittest.TestCase):
             security = policy["container_security_context"]
             self.assertTrue(security["readOnlyRootFilesystem"])
             self.assertTrue(security["runAsNonRoot"])
-            self.assertEqual((1000, 1000), (security["runAsUser"], security["runAsGroup"]))
+            # The dedicated non-login sandbox account; never 1000, the owner's login.
+            self.assertEqual((2002, 2002), (security["runAsUser"], security["runAsGroup"]))
             self.assertFalse(security["allowPrivilegeEscalation"])
             self.assertEqual(["ALL"], security["capabilities"]["drop"])
             self.assertEqual("RuntimeDefault", security["seccompProfile"]["type"])
-            self.assertEqual((1000, "OnRootMismatch"), (policy["pod_security_context"]["fsGroup"],
+            self.assertEqual((2002, "OnRootMismatch"), (policy["pod_security_context"]["fsGroup"],
                                                         policy["pod_security_context"]["fsGroupChangePolicy"]))
             container = spec["containers"][0]
             # Burstable: requested at measured use, limited with headroom; storage stays bounded.
@@ -198,7 +199,13 @@ class RenderTests(unittest.TestCase):
         role = next(o for o in self.objects if o["kind"] == "Role")
         # The controller mounts existing claims by name; it cannot create, read or delete one.
         self.assertEqual(["pods", "services", "secrets"], role["rules"][0]["resources"])
-        quota = self.named("ResourceQuota", "sandbox-pool")["spec"]["hard"]
+        # The controller shares the image's sandbox account and mounts no home.
+        controller = self.named("Deployment", sandbox.CONTROL)["spec"]["template"]["spec"]
+        self.assertEqual({"fsGroup": 2002}, controller["securityContext"])
+        self.assertEqual((2002, 2002), tuple(controller["containers"][0]["securityContext"][key]
+                                             for key in ("runAsUser", "runAsGroup")))
+        self.assertFalse(any("persistentVolumeClaim" in v or "nfs" in v for v in controller["volumes"]))
+        quota =self.named("ResourceQuota", "sandbox-pool")["spec"]["hard"]
         self.assertEqual({"pods": "5", "requests.cpu": "700m", "requests.memory": "832Mi", "requests.ephemeral-storage": "4384Mi",
                           "limits.cpu": "5000m", "limits.memory": "8960Mi", "limits.ephemeral-storage": "4384Mi",
                           "services": "5", "secrets": "2", "persistentvolumeclaims": "32"}, quota)
@@ -334,7 +341,7 @@ class RenderTests(unittest.TestCase):
         claims = {o["metadata"]["name"]: o for o in sandbox_homes.render(self.config["users"]) if o["kind"] == "PersistentVolumeClaim"}
         self.assertEqual({"sandbox-home-alice", "sandbox-home-kid"}, set(claims))
         self.assertEqual({sandbox.NAMESPACE}, {o["metadata"]["namespace"] for o in claims.values()})
-        self.assertEqual(sandbox_homes.OWNER, sandbox.policy(self.config, "family")["pod_security_context"]["runAsUser"])
+        self.assertEqual(sandbox.SANDBOX_UID, sandbox.policy(self.config, "family")["pod_security_context"]["runAsUser"])
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "config.json"
             missing = {k: v for k, v in CONFIG.items() if k != "family_enabled"}

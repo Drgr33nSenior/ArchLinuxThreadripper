@@ -5,11 +5,10 @@ from pathlib import Path
 import re
 import sys
 
-from sandbox import NAMESPACE
+from sandbox import NAMESPACE, SANDBOX_UID
 
 GROUPS = ("Parents", "Family", "Admin")
 DEFAULT_QUOTA = "20G"
-OWNER = 1000
 # The same NAS and mount options as the nas-nfs StorageClass; tests keep them in step.
 NAS_SERVER = "192.168.30.10"
 MOUNT_OPTIONS = ["nfsvers=4.2", "hard", "proto=tcp"]
@@ -74,8 +73,13 @@ def render(users):
 
 
 def nas_vars(users):
-    """Extra-vars for the NAS owner play; carries names and quotas only."""
+    """Extra-vars for the NAS owner play: names, quotas and the homes' numeric owner.
+
+    The owner is the UID/GID the workspace pods run as, so the NAS squashes every
+    write to the same account; no user id from the mapping is carried.
+    """
     return {"microserver_sandbox_homes_enabled": True,
+            "microserver_sandbox_uid": SANDBOX_UID, "microserver_sandbox_gid": SANDBOX_UID,
             "microserver_sandbox_homes": [{"name": user["name"], "quota": user["quota"]} for user in users]}
 
 

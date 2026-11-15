@@ -226,7 +226,7 @@ if [[ $stage == sandbox ]]; then
     --build-arg RUNTIME_BASE_IMAGE="$(digest_image RUNTIME_BASE_IMAGE)" \
     --build-arg PLAYWRIGHT_VERSION="$(read_lock PLAYWRIGHT_VERSION)" \
     -f "$sandbox_run/src/Containerfile" -t "$tag" "$sandbox_run/src"
-  podman run --rm --pull=never --network none --read-only --user 1000:1000 \
+  podman run --rm --pull=never --network none --read-only --user 2002:2002 \
     --cap-drop=ALL --security-opt=no-new-privileges --cpus=0.75 --memory=2g --memory-swap=2g --pids-limit=256 \
     --tmpfs /home/user:rw,mode=1777,size=512m --tmpfs /tmp:rw,mode=1777,size=128m \
     "$tag" python /opt/sandbox/smoke.py
