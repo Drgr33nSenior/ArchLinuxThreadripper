@@ -1,73 +1,104 @@
-/* Family AI theme (apps/components/assistant/theme). Open WebUI loads this after its
-   own styles on every page. Tailwind keeps its palette in the `theme` cascade layer,
-   so these unlayered variables win. Greys keep upstream lightness (so text contrast
-   is unchanged) with a slight deep-green tint; the blue and sky accents (focus rings,
-   selection borders, toggles) become greens. The OLED theme still sets gray-900/950
-   to true black as inline styles, which take precedence. */
+/* OpenMettle palette for the whole app (apps/components/assistant/theme). Open WebUI loads this
+   after its own styles on every page; Tailwind keeps its palette in the `theme` cascade layer, so
+   these unlayered variables win. The fork's chat area uses the same colours.
+
+   Neutrals: warm ivory at the light end (#F2EBDD, #FAF7F1), graphite at the dark end (#24272C,
+   #191C21), so sidebar, settings and sign-in match the chat area. Light mode darkens the 400-700
+   greys that Open WebUI uses for secondary and tertiary text, so they reach 4.5:1 on white, the
+   sidebar and the ivory chat area (upstream's tertiary greys sit at 2-3:1); dark mode keeps
+   upstream lightness, which already clears 4.5:1 on the graphite surfaces.
+
+   One accent: vermilion replaces the blue and sky scales (focus outlines, selected borders,
+   links). 600 is the text shade on light surfaces, 400 on dark ones, 500 for outlines and borders.
+   Semantic colours (green success and online dots, red errors, amber warnings) are untouched.
+
+   The OLED theme still sets gray-900/950 to true black as inline styles, which take precedence. */
 :root {
-	--color-gray-50: oklch(0.98 0.006 160);
-	--color-gray-100: oklch(0.94 0.01 160);
-	--color-gray-200: oklch(0.92 0.012 160);
-	--color-gray-300: oklch(0.85 0.014 160);
-	--color-gray-400: oklch(0.77 0.016 160);
-	--color-gray-500: oklch(0.69 0.018 160);
-	--color-gray-600: oklch(0.51 0.02 160);
-	--color-gray-700: oklch(0.42 0.022 160);
-	--color-gray-800: oklch(0.32 0.024 160);
-	--color-gray-850: oklch(0.27 0.024 160);
-	--color-gray-900: oklch(0.21 0.022 160);
-	--color-gray-950: oklch(0.17 0.02 160);
+	--color-gray-50: oklch(0.977 0.009 85);
+	--color-gray-100: oklch(0.942 0.02 85);
+	--color-gray-200: oklch(0.92 0.019 84);
+	--color-gray-300: oklch(0.85 0.018 82);
+	--color-gray-400: oklch(0.52 0.013 80);
+	--color-gray-500: oklch(0.475 0.012 78);
+	--color-gray-600: oklch(0.42 0.011 78);
+	--color-gray-700: oklch(0.37 0.011 262);
+	--color-gray-800: oklch(0.32 0.011 261);
+	--color-gray-850: oklch(0.272 0.01 261);
+	--color-gray-900: oklch(0.225 0.011 261);
+	--color-gray-950: oklch(0.17 0.01 261);
 
-	--color-blue-50: oklch(0.97 0.02 158);
-	--color-blue-100: oklch(0.94 0.04 158);
-	--color-blue-200: oklch(0.89 0.07 158);
-	--color-blue-300: oklch(0.82 0.11 158);
-	--color-blue-400: oklch(0.73 0.14 158);
-	--color-blue-500: oklch(0.64 0.15 158);
-	--color-blue-600: oklch(0.55 0.13 158);
-	--color-blue-700: oklch(0.47 0.11 158);
-	--color-blue-800: oklch(0.4 0.09 158);
-	--color-blue-900: oklch(0.34 0.07 158);
-	--color-blue-950: oklch(0.25 0.05 158);
+	--color-blue-50: oklch(0.972 0.014 40);
+	--color-blue-100: oklch(0.94 0.035 35);
+	--color-blue-200: oklch(0.89 0.065 32);
+	--color-blue-300: oklch(0.82 0.105 29);
+	--color-blue-400: oklch(0.747 0.153 27);
+	--color-blue-500: oklch(0.625 0.198 28);
+	--color-blue-600: oklch(0.517 0.174 28.5);
+	--color-blue-700: oklch(0.45 0.15 28.5);
+	--color-blue-800: oklch(0.38 0.12 28.5);
+	--color-blue-900: oklch(0.32 0.09 29);
+	--color-blue-950: oklch(0.24 0.06 29);
 
-	--color-sky-50: oklch(0.97 0.02 165);
-	--color-sky-100: oklch(0.94 0.04 165);
-	--color-sky-200: oklch(0.9 0.07 165);
-	--color-sky-300: oklch(0.84 0.1 165);
-	--color-sky-400: oklch(0.76 0.13 165);
-	--color-sky-500: oklch(0.67 0.14 165);
-	--color-sky-600: oklch(0.57 0.12 165);
-	--color-sky-700: oklch(0.49 0.1 165);
-	--color-sky-800: oklch(0.42 0.08 165);
-	--color-sky-900: oklch(0.36 0.06 165);
-	--color-sky-950: oklch(0.27 0.05 165);
+	--color-sky-50: var(--color-blue-50);
+	--color-sky-100: var(--color-blue-100);
+	--color-sky-200: var(--color-blue-200);
+	--color-sky-300: var(--color-blue-300);
+	--color-sky-400: var(--color-blue-400);
+	--color-sky-500: var(--color-blue-500);
+	--color-sky-600: var(--color-blue-600);
+	--color-sky-700: var(--color-blue-700);
+	--color-sky-800: var(--color-blue-800);
+	--color-sky-900: var(--color-blue-900);
+	--color-sky-950: var(--color-blue-950);
+}
+
+.dark {
+	--color-gray-400: oklch(0.77 0.015 80);
+	--color-gray-500: oklch(0.69 0.013 78);
+	--color-gray-600: oklch(0.51 0.011 78);
+	--color-gray-700: oklch(0.42 0.011 262);
+}
+
+/* Open WebUI writes the keyboard focus outline and the form placeholder colour as fixed values at
+   build time (Tailwind's theme()), so the variables above do not reach them. The :root prefix
+   outranks the app's own rule, which loads after this file. Vermilion 500 measures 3.9:1 on white,
+   3.3:1 on ivory and 4.4:1 on graphite, above the 3:1 a focus indicator needs. */
+:root :focus-visible:not(.ProseMirror):not([contenteditable='true']):not(input):not(textarea),
+:root .focus-ring:focus-visible,
+:root.high-contrast :is(input, textarea, [contenteditable='true'], .ProseMirror):focus-visible {
+	outline-color: var(--color-blue-500);
+}
+
+input::placeholder,
+textarea::placeholder {
+	color: var(--color-gray-400);
 }
 
 ::selection {
-	background: oklch(0.86 0.09 158 / 0.6);
+	background: oklch(0.89 0.065 32 / 0.7);
 }
 
 .dark ::selection {
-	background: oklch(0.45 0.09 158 / 0.65);
+	background: oklch(0.45 0.15 28.5 / 0.6);
 }
 
-/* The sign-in page draws its own backdrop (white in light mode, black in dark):
-   give it a soft green glow in each. Upstream marks it as the element after the
-   page's skip-link (#main-content) inside #auth-page. */
+/* The sign-in page draws its own backdrop (white in light mode, black in dark): give it the same
+   pool of warm light the chat welcome uses. Upstream marks it as the element after the page's
+   skip-link (#main-content) inside #auth-page. */
 #auth-page > #main-content + div {
 	background: radial-gradient(
 		120% 90% at 50% 0%,
-		oklch(0.93 0.05 158) 0%,
-		oklch(0.97 0.02 160) 55%,
-		oklch(0.99 0.005 160) 100%
+		oklch(0.95 0.035 45) 0%,
+		oklch(0.955 0.018 85) 50%,
+		oklch(0.977 0.009 85) 100%
 	);
 }
 
 .dark #auth-page > #main-content + div {
 	background: radial-gradient(
 		120% 90% at 50% 0%,
-		oklch(0.34 0.07 158) 0%,
-		oklch(0.19 0.035 160) 55%,
-		oklch(0.13 0.02 160) 100%
+		oklch(0.3 0.045 30) 0%,
+		oklch(0.225 0.011 261) 55%,
+		oklch(0.17 0.01 261) 100%
 	);
 }

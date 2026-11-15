@@ -3,32 +3,21 @@ kind: Component
 resources: [network-policy.yaml]
 images:
   # Open WebUI 0.13.3 from the workstation fork (provider-declared Model Controls, OpenMettle theme), built,
-  # scanned and signed by the webui AI-stack stage from fa1bf005570bce1db7eeb1202f45d98c3cdccae4.
+  # scanned and signed by the webui AI-stack stage from 7be5703691a278f7621d44e3d89d2197540af3f2.
   - name: registry.lan.thespry.family/local/open-webui
-    newTag: c75701350acc
-    digest: sha256:bd4e2abc0cb6a95e8910d764fa2d897a32d07d1bf63492950f6a0e00ec8f37ab
+    newTag: 411fe4974c28
+    digest: sha256:0f6dba18dc8597c373a56d43d65becc7dfeb932e91e8f9da6920b4ac2b904b00
 configMapGenerator:
   - name: webui-assistant-profile
     envs: [assistant.env]
   # pin-config.py and the tool-use system prompt it writes to the default model's record.
   - name: webui-config-pins
     files: [pin-config.py, system-prompt.md]
-  # Family AI theme (theme/README.md): stylesheet, app manifest and icons rendered
-  # from theme/logo.svg. Binary files become binaryData; the total stays well under 1 MiB.
+  # OpenMettle palette for the whole app (theme/README.md). The icons come from the fork's
+  # branding switch (OPENMETTLE_BRANDING in webui.yaml), not from this ConfigMap.
   - name: webui-theme
     files:
       - theme/custom.css
-      - theme/site.webmanifest
-      - theme/favicon.svg
-      - theme/favicon.ico
-      - theme/favicon.png
-      - theme/favicon-96x96.png
-      - theme/apple-touch-icon.png
-      - theme/web-app-manifest-192x192.png
-      - theme/web-app-manifest-512x512.png
-      - theme/logo.png
-      - theme/splash.png
-      - theme/splash-dark.png
 patches:
   - path: webui.yaml
   - path: tools.yaml

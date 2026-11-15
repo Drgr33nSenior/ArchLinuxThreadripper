@@ -7,8 +7,8 @@ patches:
 images:
   - name: registry.invalid/ai-home-lab/open-webui
     newName: registry.lan.thespry.family/local/open-webui
-    newTag: c75701350acc
-    digest: sha256:bd4e2abc0cb6a95e8910d764fa2d897a32d07d1bf63492950f6a0e00ec8f37ab
+    newTag: 411fe4974c28
+    digest: sha256:0f6dba18dc8597c373a56d43d65becc7dfeb932e91e8f9da6920b4ac2b904b00
 configMapGenerator:
   - name: webui-rag-profile
     envs: [rag.env]
