@@ -1000,13 +1000,15 @@ Open WebUI wears OpenMettle's look throughout: ivory and graphite neutrals, one 
 
 The fork carries OpenMettle's theme and identity (fork commits on
 `workstation/reasoning-controls`: `ab3186bb34e5` the chat theme, `fa1bf005570b` the
-branding switch and footer, `7be5703691a2` the art and icon rework). OpenMettle is a
+branding switch and footer, `7be5703691a2` the art and icon rework, `cf2e76e5e9ac` plain-text
+replies). OpenMettle is a
 fork of Open WebUI, and the page always says so.
 
 | Part | What the family sees | Where | Switch |
 | --- | --- | --- | --- |
 | Palette | Ivory (#F2EBDD, #FAF7F1) and graphite (#24272C, #191C21) in every view: chat, sidebar, settings, sign-in. Vermilion only for the send button, the wordmark, links, selected borders and focus outlines. Green success dots, red errors and amber warnings keep their meaning | Chat area: fork. Rest: `theme/custom.css` | Always |
 | Welcome | Above a new chat: Mettle at 128 px in a soft pool of light with a contact shadow, the OpenMettle wordmark and "Bring out the best in your AI.". When the only model wears the default icon, the small avatar beside the model name is hidden so Mettle appears once. A single 420 ms fade-and-rise, none with reduced motion | Fork | Always |
+| Replies | Assistant replies are the text alone, with the action toolbar underneath, when one model answered the whole chat. The model's avatar and name come back for an arena reply, a turn sent to several models, or a chat where replies (on any branch) came from more than one model. The name stays in the reply's timestamp tooltip and in a heading screen readers announce | Fork | `OPENMETTLE_BRANDING` |
 | Footer | Under the chat and in **Settings → About**: `OpenMettle v0.1.0-dev · a fork of Open WebUI v0.13.3 (License) · <commit>`. The commit is the fork commit the image was built from; a build without one says "dev build". Selectable for a bug report | Fork | Always |
 | Name | "Family AI (OpenMettle)" in the title, sidebar, sign-in page and install manifest, instead of "Family AI (Open WebUI)". Browser notifications end in "/ OpenMettle" | Fork | `OPENMETTLE_BRANDING` |
 | Text | Interface text that names the application says OpenMettle, for example "OpenMettle can use tools provided by any OpenAPI server." Text about the Open WebUI project keeps its name: the Open WebUI Community, translation and sponsorship notes, plugin version requirements | Fork | `OPENMETTLE_BRANDING` |
@@ -1068,7 +1070,10 @@ also leaves faint.
   welcome and footer stay.
 - Palette only: remove the `webui-theme` ConfigMap entry and mount; Open WebUI's greys and
   blue return outside the chat area.
-- Everything: pin the previous image, `open-webui:c75701350acc@sha256:bd4e2abc0cb6a95e8910d764fa2d897a32d07d1bf63492950f6a0e00ec8f37ab`
+- Plain-text replies only: pin `open-webui:411fe4974c28@sha256:0f6dba18dc8597c373a56d43d65becc7dfeb932e91e8f9da6920b4ac2b904b00`
+  (fork commit `7be5703691a2`), or set `OPENMETTLE_BRANDING` to `'false'`, which also brings
+  back Open WebUI's name and icons.
+- Everything: pin `open-webui:c75701350acc@sha256:bd4e2abc0cb6a95e8910d764fa2d897a32d07d1bf63492950f6a0e00ec8f37ab`
   (fork commit `fa1bf005570b`), in `versions.lock`, `infrastructure/ai-stack/stack.lock` and
   the two kustomizations, or revert the change that introduced it.
 
@@ -1537,12 +1542,12 @@ failed-test-to-fix cycle, interrupt and resume, and context compaction.
 ## Pinned inputs and gates
 
 The new experience pins Open WebUI **0.13.3** from the workstation fork
-(`Drgr33nSenior/open-webui`, commit `7be5703691a278f7621d44e3d89d2197540af3f2`: upstream
+(`Drgr33nSenior/open-webui`, commit `cf2e76e5e9ac698f757e88e17c3cdea1f565fead`: upstream
 `b0e6098e9409` plus provider-declared Model Controls, four dependency fixes, the
 [per-group web search confirmation](#web-search-confirmation-per-group), the
 [context wheel](#context-wheel) and the [OpenMettle theme](#openmettle-theme)), built,
 scanned and signed by the `webui` AI-stack stage as
-`registry.lan.thespry.family/local/open-webui:411fe4974c28@sha256:0f6dba18dc8597c373a56d43d65becc7dfeb932e91e8f9da6920b4ac2b904b00`.
+`registry.lan.thespry.family/local/open-webui:e586f0d59c50@sha256:f95eba78447a62624352190a78840f6f6bedfaedff2e6cd92199e1ae68af1245`.
 The legacy `service` experience retains its previous selection. The older RAG
 functional gate is evidence for its recorded image, not qualification of 0.13.3.
 Run a fresh UI/account, upload/ACL, retrieval, web-search/tool and image-return
