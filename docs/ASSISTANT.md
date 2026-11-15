@@ -994,7 +994,54 @@ retrieval and `ask_user`, and that path has not been tested with the served mode
 
 ### Theme
 
-Open WebUI shows the **Family AI** brand: a sprout-and-speech-bubble mark, a deep-green palette, a green sign-in page and the installed-app name. The files and how to change them are in [`apps/components/assistant/theme/`](../apps/components/assistant/theme/README.md). Each user's Light, Dark or OLED choice still applies, and the theme tints all three. Rebranding is allowed by Open WebUI's licence for deployments with at most 50 end users in a rolling 30 days. The title keeps Open WebUI's own " (Open WebUI)" suffix.
+Open WebUI shows the **Family AI** brand: a sprout-and-speech-bubble mark, a deep-green palette, a green sign-in page and the installed-app name. The files and how to change them are in [`apps/components/assistant/theme/`](../apps/components/assistant/theme/README.md). Each user's Light, Dark or OLED choice still applies, and the theme tints all three. Rebranding is allowed by Open WebUI's licence for deployments with at most 50 end users in a rolling 30 days. The title reads "Family AI (OpenMettle)" (see below).
+
+### OpenMettle theme
+
+The fork carries OpenMettle's chat theme and identity. OpenMettle is a fork of Open WebUI,
+and the page always says so.
+
+| Part | What the family sees | Switch |
+| --- | --- | --- |
+| Chat palette | Warm ivory and graphite in the chat area, a vermilion send button and focus ring; dark mode uses graphite and charcoal. The sidebar, settings and sign-in page keep the Family AI greens | Always |
+| Welcome | Above a new chat: Mettle the robot, the OpenMettle wordmark and "Bring out the best in your AI." | Always |
+| Footer | Under the chat and in **Settings → About**: `OpenMettle v0.1.0-dev · a fork of Open WebUI v0.13.3 (License) · <commit>`. The commit is the fork commit the image was built from (`OPEN_WEBUI_FORK_COMMIT`); a build without one says "dev build". The text can be selected and copied for a bug report | Always |
+| Name | "Family AI (OpenMettle)" in the title, sidebar, sign-in page, install manifest and notifications, instead of "Family AI (Open WebUI)" | `OPENMETTLE_BRANDING` |
+| Text | Interface text that names the application says OpenMettle, for example "OpenMettle can use tools provided by any OpenAPI server." Text about the Open WebUI project keeps its name: the Open WebUI Community, translation and sponsorship notes, plugin version requirements | `OPENMETTLE_BRANDING` |
+| Icons | OpenMettle's favicon, splash and install icons replace Open WebUI's stock files only. The Family AI theme mounts its own icons, so the family keeps the sprout | `OPENMETTLE_BRANDING` |
+| About | The community link points to github.com/OpenMettle. Open WebUI's copyright notice, its licence link and "Created by Tim J. Baek" stay | `OPENMETTLE_BRANDING` |
+
+`OPENMETTLE_BRANDING` is a fork setting, off by default so that a copy of the fork keeps
+Open WebUI's branding. This deployment turns it on in
+[`apps/components/assistant/webui.yaml`](../apps/components/assistant/webui.yaml). Open
+WebUI's licence (clause 4) allows replacing its branding only while the deployment has at
+most 50 end users in any rolling 30 days, or with the copyright holder's written permission
+or an enterprise licence. If that stops being true, set it to `'false'`. Unchanged either
+way: the page title before the app has loaded ("Open WebUI", from the static page shell),
+the server's console banner and API documentation title, and the icon Open WebUI sends to
+outside services in webhook messages.
+
+**Assets.** The fork's `static/static/openmettle/` holds the robot (224 × 224 lossless WebP
+for a 112 px welcome) and the icon set (`brand/`). All are resized from the MIT-licensed
+originals in [OpenMettle/.github](https://github.com/OpenMettle/.github) at commit
+`c643d355` (`assets/brand/current/openmettle-avatar-transparent.png` and
+`openmettle-avatar.png`, 1254 × 1254). The licence file sits beside them, and
+`provenance.json` records each original's size and sha256 and each output's sha256. The
+fork's `scripts/openmettle/render_assets.py` regenerates them with Pillow.
+
+**Contrast** (WCAG 2.x, measured on the palette): text 5.1:1 or more in light and dark mode;
+the send icon on the vermilion button 4.4:1, and the button against the composer 3.7:1
+(light) and 3.8:1 (dark), above the 3:1 required for controls; the focus outline 5.7:1 and
+6.3:1.
+
+**Reverting.**
+
+- Name, text and icons only: set `OPENMETTLE_BRANDING` to `'false'` in `webui.yaml` and
+  deploy. The title reads "Family AI (Open WebUI)" again; palette, welcome and footer stay.
+- Everything: pin the previous image, `open-webui:2367f24ee8f8@sha256:fe550dacba896cec4fe63202855e3a6c063d82924ee19014467137a93ce17aa8`
+  (fork commit `b54c6e75f719`), in `versions.lock`, `infrastructure/ai-stack/stack.lock` and
+  the two kustomizations, or revert the change that introduced it. The older image ignores
+  `OPENMETTLE_BRANDING`.
 
 ### API keys
 

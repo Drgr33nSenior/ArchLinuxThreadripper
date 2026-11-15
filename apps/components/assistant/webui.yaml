@@ -44,6 +44,11 @@ spec:
             # Explicit values override both upstream defaults and envFrom (the RAG
             # profile's init-container check still sees its own ENABLE_PERSISTENT_CONFIG=false).
             - {name: WEBUI_NAME, value: Family AI}
+            # OpenMettle branding (fork switch, default off): OpenMettle's name in place of Open WebUI's,
+            # so the title reads "Family AI (OpenMettle)"; the theme's own icons above still win.
+            # Open WebUI's licence allows this only while the deployment has at most 50 end users in
+            # any rolling 30 days. Set to 'false' (or remove) if that ever stops being true.
+            - {name: OPENMETTLE_BRANDING, value: 'true'}
             - {name: ENABLE_PERSISTENT_CONFIG, value: 'true'}
             - {name: ENABLE_SIGNUP, value: 'false'}
             - {name: DEFAULT_MODEL_PARAMS, value: '{"function_calling":"native"}'}

@@ -15,9 +15,13 @@ drives the HTTP API like the browser:
   `features.web_search_without_confirmation` (also beside a group that does not);
 - the model list keeps the gateway's `context_window` and `max_output_tokens`, also for an
   ordinary user on a stored model record: the context wheel has no other source for them.
+- with OPENMETTLE_BRANDING on (the family deployment's setting) the name, the icons and the
+  install manifest are OpenMettle's, and the built pages carry the fork credit and the commit
+  the image was built from (the footer's version line).
 
 Passwords are random and never printed; nothing leaves the container.
 """
+import hashlib
 import json
 import os
 import secrets
@@ -28,6 +32,7 @@ import time
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 MODEL = "Qwen3.8-27B-MXFP4"
 DECLARED = {
@@ -137,7 +142,38 @@ def confirmation_checks(admin, user, user_id):
           f"{status} {confirms(user)!r}")
 
 
+def fetch(path):
+    try:
+        with urllib.request.urlopen(BASE + path, timeout=60) as response:
+            return response.status, response.read()
+    except urllib.error.HTTPError as e:
+        return e.code, b""
+
+
+def branding_checks():
+    """OpenMettle branding switch on, with a custom name, as the family deployment runs it."""
+    status, body = api("GET", "/api/config")
+    body = body or {}
+    check("a signed-out browser learns the branding switch is on", (body.get("openmettle") or {}).get("branding") is True,
+          repr(body.get("openmettle")))
+    check("the custom name carries OpenMettle, not Open WebUI", body.get("name") == "Family AI (OpenMettle)",
+          repr(body.get("name")))
+    brand = Path("/app/build/static/openmettle/brand")
+    for path, name in (("/static/favicon.png", "favicon.png"), ("/favicon.png", "favicon.png"),
+                       ("/static/splash.png", "splash.png"), ("/static/logo.png", "logo.png")):
+        status, data = fetch(path)
+        expected = hashlib.sha256((brand / name).read_bytes()).hexdigest()
+        check(f"{path} is OpenMettle's", status == 200 and hashlib.sha256(data).hexdigest() == expected, str(status))
+    status, data = fetch("/manifest.json")
+    check("the install manifest names OpenMettle", status == 200 and json.loads(data or b"{}").get("name") == "Family AI (OpenMettle)")
+    commit = os.environ.get("WEBUI_BUILD_HASH", "")
+    pages = [p.read_text(errors="replace") for p in Path("/app/build/_app").rglob("*.js")]
+    check("the pages carry the fork credit footer", any("data-openmettle-footer" in page for page in pages))
+    check("and the commit the image was built from", len(commit) == 40 and any(commit in page for page in pages), commit[:12])
+
+
 def run_checks():
+    branding_checks()
     password = secrets.token_urlsafe(24)
     status, body = api("POST", "/api/v1/auths/signup", body={
         "name": "admin", "email": "admin@example.invalid", "password": password})
@@ -194,7 +230,8 @@ def main():
     env = dict(os.environ, OPENAI_API_BASE_URL="http://127.0.0.1:9000/v1", OPENAI_API_KEY="fixture",
                ENABLE_OLLAMA_API="false", OFFLINE_MODE="true", HF_HUB_OFFLINE="1",
                RAG_EMBEDDING_MODEL_AUTO_UPDATE="false", WEBUI_SECRET_KEY=secrets.token_hex(32),
-               DATA_DIR="/tmp/webui-smoke", ENABLE_WEB_SEARCH="true", ENABLE_WEB_SEARCH_CONFIRMATION="true")
+               DATA_DIR="/tmp/webui-smoke", ENABLE_WEB_SEARCH="true", ENABLE_WEB_SEARCH_CONFIRMATION="true",
+               OPENMETTLE_BRANDING="true", WEBUI_NAME="Family AI")
     os.makedirs(env["DATA_DIR"], exist_ok=True)  # a throwaway database, never the image's
     log = open("/tmp/webui-smoke.log", "wb")
     webui = subprocess.Popen(["bash", "start.sh"], cwd="/app/backend", env=env, stdout=log, stderr=subprocess.STDOUT)
