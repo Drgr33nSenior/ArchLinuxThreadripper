@@ -103,10 +103,13 @@ class RenderTests(unittest.TestCase):
         self.assertFalse(sandbox_homes.EXPORT_ROOT.startswith(storage_class["parameters"]["share"]))
         security = sandbox.policy({"image": "fixture", "egress_service_ips": {"family": "10.43.0.201"}},
                                   "family")["container_security_context"]
-        self.assertEqual((sandbox_homes.OWNER,) * 2, (security["runAsUser"], security["runAsGroup"]))
+        self.assertEqual((sandbox_homes.SANDBOX_UID,) * 2, (security["runAsUser"], security["runAsGroup"]))
 
     def test_outputs_carry_names_and_quotas_but_no_user_ids(self):
-        self.assertEqual({"microserver_sandbox_homes_enabled": True, "microserver_sandbox_homes": [
+        # The NAS squashes every write to the UID/GID the pods run as, from the same constant.
+        self.assertEqual({"microserver_sandbox_homes_enabled": True,
+                          "microserver_sandbox_uid": 2002, "microserver_sandbox_gid": 2002,
+                          "microserver_sandbox_homes": [
             {"name": "example-parent", "quota": "20G"}, {"name": "no", "quota": "50G"}]}, json.loads(self.nas))
         for output in (self.rendered, self.nas):
             self.assertNotIn("00000000", output)

@@ -356,9 +356,15 @@ children; the default is shown.
 ### Isolation and lifecycle
 
 The upstream orchestrator creates one pod per authenticated user. Chats for that
-user share a workspace. Each pod runs as UID/GID 1000 from a read-only image
-with no service-account token, host mounts or GPU, dropped capabilities, no
-privilege escalation and RuntimeDefault seccomp. Fifteen idle minutes stop and
+user share a workspace. Each pod runs as the image's non-login `sandbox`
+account, UID/GID 2002 (`SANDBOX_UID` in `lib/workstation/sandbox.py`), from a
+read-only image with no service-account token, host mounts or GPU, dropped
+capabilities, no privilege escalation and RuntimeDefault seccomp. The account is
+never 1000: on the NAS and the workstation that is the owner's admin login, and
+the NAS squashes every home write to the sandbox account, so those files would
+belong to the owner. 1001 is left for the next person's login; 2000 and 2001 are
+the NAS's `k8s-nfs` and `zot-registry` accounts. The controller runs from the
+same image as the same account; it mounts no home. Fifteen idle minutes stop and
 delete the pod; a two-hour maximum lifetime also ends active work. Background
 processes end with the pod.
 
@@ -767,7 +773,8 @@ did not change.
 
 The home in this test was a local volume, not the NAS: the NFS mount, the
 dataset quota and squashed ownership are verified by the storage work, not
-here. The scratch node is a VM with K3s defaults, not the live host with its
+here. This evidence predates the move of the sandbox account from UID/GID 1000
+to 2002 on 2026-11-15; the same check now expects a home file owned 2002:2002. The scratch node is a VM with K3s defaults, not the live host with its
 firewall; run the probe above on the live cluster after applying.
 
 **Images.** `versions.lock` records the two digests the pipeline built, scanned,

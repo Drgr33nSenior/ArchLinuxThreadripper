@@ -587,10 +587,13 @@ the quota filled in. At most 32 users are accepted.
 
 **Interface for the sandbox.** Namespace `assistant-sandbox`; one claim
 `sandbox-home-<name>` per user (`sandbox_homes.claim_name(name)`), bound to a
-retained volume of the same name; every file belongs to UID/GID 1000 whichever
-identity wrote it; the mount path is the workspace's choice. A pod needs no root
-step or init container for ownership. Set `fsGroupChangePolicy: OnRootMismatch`
-beside `fsGroup: 1000` so the kubelet skips its recursive ownership pass. The
+retained volume of the same name; every file belongs to UID/GID 2002, the
+non-login `sandbox` account (`sandbox.SANDBOX_UID`), whichever identity wrote it;
+the mount path is the workspace's choice. A pod needs no root step or init
+container for ownership. Set `fsGroupChangePolicy: OnRootMismatch` beside
+`fsGroup: 2002` so the kubelet skips its recursive ownership pass. The owner is
+never UID 1000, the owner's admin login on the NAS and the workstation: a home
+squashed to 1000 would belong to that login. The
 namespace's ResourceQuota must allow one claim per user.
 
 **Volumes.** For each user the render writes a PersistentVolume (NFS CSI driver,
@@ -614,13 +617,29 @@ kubectl --context <reviewed-context> apply -f sandbox-homes.yaml
 kubectl --context <reviewed-context> -n assistant-sandbox get pvc
 ```
 
-Neither output contains a user id. To add a person, add the entry and repeat
+Neither output contains an Open WebUI user id. The NAS variables carry the
+names, quotas and the homes' numeric owner (`microserver_sandbox_uid` and
+`_gid`, both `SANDBOX_UID`), so the NAS creates its `sandbox` account and
+squashes the exports to the UID/GID the pods run as. To add a person, add the entry and repeat
 all three steps. To change a quota, repeat them; the claim is unchanged.
 
 Removing a person from the list removes nothing by itself: delete their claim
 and volume by hand after review. `Retain` and the NAS play both leave the
 dataset and its snapshots in place until the owner destroys them on the NAS.
 Restores are NAS-side operations, described in the NAS guide.
+
+**Workstation account.** The host Ansible does not manage accounts, so reserve
+UID/GID 2002 on the workstation by hand, once, so no later login is given it and
+files the pods leave on the node (`emptyDir`, logs) show as `sandbox`. Both
+lookups must print nothing, or a `sandbox` entry with 2002; stop on anything else:
+
+```sh
+getent passwd 2002 sandbox; getent group 2002 sandbox
+printf '%s\n' 'g sandbox 2002' 'u sandbox 2002:2002 "Assistant sandbox (no login)"' |
+  sudo tee /etc/sysusers.d/sandbox.conf
+sudo systemd-sysusers /etc/sysusers.d/sandbox.conf
+getent passwd sandbox   # sandbox:x:2002:2002:...:/:/usr/bin/nologin
+```
 
 Security: as with `nas-nfs`, NFS traffic crosses the LAN unencrypted and export
 access is controlled on the NAS. A home is exported only to this node, and each

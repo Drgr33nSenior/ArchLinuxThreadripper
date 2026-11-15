@@ -13,7 +13,9 @@ RUN pip install --no-cache-dir /src/open-terminal /src/terminals playwright==${P
     && cp /src/open-terminal/LICENSE /opt/licenses/open-terminal.txt \
     && cp /src/terminals/LICENSE /opt/licenses/terminals.txt \
     && pip freeze --all > /opt/sandbox/packages.txt \
-    && useradd --uid 1000 --create-home --shell /bin/bash user
+    && groupadd --system --gid 2002 sandbox \
+    && useradd --system --uid 2002 --gid 2002 --no-log-init --home-dir /home/user --create-home \
+       --shell /bin/bash sandbox
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
 # The installer above uses the build user's cache; relocate it to a read-only image path.
 RUN mv /root/.cache/ms-playwright /opt/playwright \
@@ -22,8 +24,11 @@ RUN mv /root/.cache/ms-playwright /opt/playwright \
 COPY --chmod=0644 control.py terminal.py smoke.py /opt/sandbox/
 RUN OPEN_TERMINAL_API_KEY=build-fixture-not-a-credential python -c \
     'import json; from open_terminal.main import app; open("/opt/sandbox/openapi.json", "w").write(json.dumps(app.openapi()))'
-ENV HOME=/home/user USER=user TMPDIR=/tmp PYTHONDONTWRITEBYTECODE=1
-USER 1000:1000
+ENV HOME=/home/user USER=sandbox TMPDIR=/tmp PYTHONDONTWRITEBYTECODE=1
+# A dedicated account, never 1000: that is the owner's admin login on the NAS and the
+# workstation, and the NAS squashes every home write to this UID/GID. The home stays
+# mounted at /home/user. lib/workstation/sandbox.py SANDBOX_UID matches.
+USER 2002:2002
 WORKDIR /home/user
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["python", "/opt/sandbox/terminal.py"]

@@ -19,7 +19,8 @@ if(score===3)document.querySelector('button').disabled=true;};</script></html>''
 
 
 def main():
-    assert os.getuid() == 1000
+    # The dedicated sandbox account, never 1000 (the owner's login on the NAS and workstation).
+    assert (os.getuid(), os.getgid()) == (2002, 2002)
     assert not Path("/var/run/secrets/kubernetes.io/serviceaccount/token").exists()
     assert not Path("/dev/kfd").exists()
     try:
@@ -86,7 +87,7 @@ with sync_playwright() as p:
         print(json.dumps({"status": "passed", "native_execute": True, "playwright_chromium": True,
                           "playwright_version": importlib.metadata.version("playwright"), "native_image_read": True,
                           "game": "three clicks reach the win state", "page_errors": 0,
-                          "network": "none", "uid": os.getuid()}))
+                          "network": "none", "uid": os.getuid(), "gid": os.getgid()}))
     finally:
         process.terminate()
         process.wait(timeout=10)

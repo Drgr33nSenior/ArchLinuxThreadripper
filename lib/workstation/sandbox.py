@@ -9,6 +9,11 @@ CONTROL = "assistant-terminals"
 WORKSPACE = "assistant-workspace"
 EGRESS = "sandbox-egress"
 LABEL = "app.kubernetes.io/name"
+# The image's non-login `sandbox` account, UID and GID alike, which every sandbox pod
+# runs as. The NAS squashes each home export to it, so it owns every home file. It is
+# never 1000, the owner's admin login on the NAS and the workstation (1001 is left for
+# the next person); 2000 and 2001 are the NAS's k8s-nfs and zot-registry accounts.
+SANDBOX_UID = 2002
 # Which reviewed egress policy a workspace or proxy pod belongs to.
 EGRESS_LABEL = "workstation.ai/sandbox-egress"
 # Requests sit at measured use and limits carry the headroom (the site's policy for
@@ -38,7 +43,7 @@ EGRESS_POLICIES = Path(__file__).resolve().parents[2] / "infrastructure/service/
 # own deny list; Smokescreen refuses the same ranges by default after resolving.
 PRIVATE_CIDRS = ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16", "100.64.0.0/10", "127.0.0.0/8")
 
-# After the constants: sandbox_homes reads NAMESPACE from this module.
+# After the constants: sandbox_homes reads NAMESPACE and SANDBOX_UID from this module.
 import sandbox_homes  # noqa: E402
 
 
@@ -161,10 +166,10 @@ def policy(config, egress, home=None):
     return {"image": config["image"], "cpu_limit": WORKSPACE_RESOURCES["limits"]["cpu"],
             "memory_limit": WORKSPACE_RESOURCES["limits"]["memory"],
             "storage": "", "idle_timeout_minutes": 15, "max_lifetime_minutes": 120,
-            "restricted": True, "container_security_context": restricted(1000),
-            # OnRootMismatch: the NAS home is already owned by 1000; do not walk it on every mount.
-            "pod_security_context": {"runAsNonRoot": True, "runAsUser": 1000, "runAsGroup": 1000,
-                                     "fsGroup": 1000, "fsGroupChangePolicy": "OnRootMismatch",
+            "restricted": True, "container_security_context": restricted(SANDBOX_UID),
+            # OnRootMismatch: the NAS home is already owned by SANDBOX_UID; do not walk it on every mount.
+            "pod_security_context": {"runAsNonRoot": True, "runAsUser": SANDBOX_UID, "runAsGroup": SANDBOX_UID,
+                                     "fsGroup": SANDBOX_UID, "fsGroupChangePolicy": "OnRootMismatch",
                                      "seccompProfile": {"type": "RuntimeDefault"}},
             "env": env,
             "podTemplate": {"metadata": {"labels": {LABEL: WORKSPACE, EGRESS_LABEL: egress}}, "spec": {
@@ -209,8 +214,10 @@ def render(config, root):
            "TERMINALS_MAX_MEMORY": WORKSPACE_RESOURCES["limits"]["memory"],
            "TERMINALS_ALLOWED_IMAGES": config["image"], "TERMINALS_IMAGE": config["image"],
            "HOME": "/data", "PYTHONDONTWRITEBYTECODE": "1"}
+    # The controller runs from the same image, so it keeps the image's own account. It
+    # mounts no home: only an emptyDir and a ConfigMap, which fsGroup makes its group's.
     container = {"name": CONTROL, "image": config["image"], "imagePullPolicy": "IfNotPresent",
-                 "command": ["python", "/opt/sandbox/control.py"], "securityContext": restricted(1000),
+                 "command": ["python", "/opt/sandbox/control.py"], "securityContext": restricted(SANDBOX_UID),
                  "env": [{"name": k, "value": v} for k, v in env.items()],
                  "resources": CONTROL_RESOURCES,
                  "ports": [{"name": "http", "containerPort": 3000}],
@@ -229,7 +236,7 @@ def render(config, root):
         obj("Deployment", CONTROL, {"replicas": 0, "strategy": {"type": "Recreate"},
             "selector": {"matchLabels": labels}, "template": {"metadata": {"labels": labels}, "spec": {
                 "serviceAccountName": CONTROL, "automountServiceAccountToken": True,
-                "enableServiceLinks": False, "securityContext": {"fsGroup": 1000},
+                "enableServiceLinks": False, "securityContext": {"fsGroup": SANDBOX_UID},
                 "containers": [container], "volumes": [{"name": "data", "emptyDir": {"sizeLimit": "256Mi"}},
                     {"name": "config", "configMap": {"name": "sandbox-config"}}]}}}, api="apps/v1"),
         obj("Service", CONTROL, {"selector": labels, "ports": [{"port": 3000, "targetPort": 3000}]}),
