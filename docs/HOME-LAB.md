@@ -628,17 +628,17 @@ and volume by hand after review. `Retain` and the NAS play both leave the
 dataset and its snapshots in place until the owner destroys them on the NAS.
 Restores are NAS-side operations, described in the NAS guide.
 
-**Workstation account.** The host Ansible does not manage accounts, so reserve
-UID/GID 2002 on the workstation by hand, once, so no later login is given it and
-files the pods leave on the node (`emptyDir`, logs) show as `sandbox`. Both
-lookups must print nothing, or a `sandbox` entry with 2002; stop on anything else:
+**Workstation account.** The `arch-workstation-bridge-runtime` package reserves
+UID/GID 2002 as the `sandbox` system account through
+`/usr/lib/sysusers.d/workstation-sandbox.conf` (no login, home `/`); pacman's
+systemd-sysusers hook creates it when the package is installed or upgraded, so no
+later login is ever given 2002 and files pods leave on the node show as `sandbox`.
+If 2002 or the name were already taken, `systemd-sysusers` leaves the existing entry
+and logs a conflict; check after installing:
 
 ```sh
-getent passwd 2002 sandbox; getent group 2002 sandbox
-printf '%s\n' 'g sandbox 2002' 'u sandbox 2002:2002 "Assistant sandbox (no login)"' |
-  sudo tee /etc/sysusers.d/sandbox.conf
-sudo systemd-sysusers /etc/sysusers.d/sandbox.conf
-getent passwd sandbox   # sandbox:x:2002:2002:...:/:/usr/bin/nologin
+getent passwd sandbox   # sandbox:x:2002:2002:Assistant sandbox (no login):/:/usr/bin/nologin
+getent group sandbox    # sandbox:x:2002:
 ```
 
 Security: as with `nas-nfs`, NFS traffic crosses the LAN unencrypted and export

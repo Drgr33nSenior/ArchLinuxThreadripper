@@ -169,6 +169,7 @@ assert not result["deployment_qualified"]
     done
     [[ -f $pkgdir/usr/lib/systemd/system/workstation-telemetry.timer && -f $pkgdir/usr/lib/systemd/system/workstation-alloy.service ]]
     [[ -f $pkgdir/usr/lib/sysusers.d/workstation-telemetry.conf && " ${depends[*]} " == *' systemd '* ]]
+    grep -qx 'u sandbox 2002:2002 "Assistant sandbox (no login)" / /usr/bin/nologin' "$pkgdir/usr/lib/sysusers.d/workstation-sandbox.conf"
     # Use the packaged tree without Git; no cluster call or target discovery.
     TELEMETRY_ENABLED=true TELEMETRY_API_ADDRESS=192.168.50.10 TELEMETRY_WORKSTATION_ADDRESS=192.168.50.10 \
       bash "$payload/bin/workstationctl" telemetry render "$work/packaged-telemetry" >/dev/null

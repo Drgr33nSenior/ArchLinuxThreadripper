@@ -142,6 +142,7 @@ templates/workstation/restic/workstation-restic
 templates/workstation/restic/workstation-restic-backup.timer
 templates/workstation/restic/workstation-restic-retention.timer
 templates/workstation/restic/workstation-restic@.service
+templates/workstation/sandbox/workstation-sandbox.sysusers
 templates/workstation/workstation-linux-git.preset
 templates/workstation/zshrc
 tests/fixtures/ccache-smoke.c
