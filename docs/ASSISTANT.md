@@ -791,6 +791,14 @@ findings: it is built with Go 1.26.11 from a Smokescreen commit that vendors
 the fixed `logrus`, `golang.org/x/net` and `golang.org/x/text`. Passing the
 policy does not mean an image is vulnerability-free.
 
+On 2026-11-15 the sandbox image was rebuilt with the `sandbox` account at
+UID/GID 2002 (pipeline key `baecbd9e012f`, digest `sha256:556b91a5…cca7` in
+`versions.lock`). The pipeline smoke passed as `--user 2002:2002` and reported
+`uid` and `gid` 2002; `id` in the image prints
+`uid=2002(sandbox) gid=2002(sandbox) groups=2002(sandbox)`, and the image has no
+UID 1000. Trivy counts and the policy result are unchanged. The fake-API probe
+of the pod builder above was not repeated for this image.
+
 The earlier native-tool smoke still stands: `/execute` wrote and served **Star
 catcher**, Playwright 1.65.2 clicked three stars and observed the win state, and
 the native file tool returned the PNG ([captured screenshot](assets/sandbox-game-20261114.png)).
