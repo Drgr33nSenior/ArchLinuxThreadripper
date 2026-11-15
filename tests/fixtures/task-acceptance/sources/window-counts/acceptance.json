@@ -2,13 +2,14 @@
   "schema": 1,
   "kind": "workstation-task-acceptance-spec",
   "task_id": "window-counts-repair",
-  "version": "2026-11-15.1",
+  "version": "2026-11-15.2",
   "editable": ["windows.py"],
   "ignore": ["__pycache__"],
   "oracle": {
     "command": ["/usr/bin/python3", "-E", "-s", "-B", "-m", "unittest", "-q", "test_windows", "test_acceptance"],
     "canary": "canary",
     "seconds": 60,
+    "observations": "oracle/observations.json",
     "baseline": "fail",
     "references": [
       {"id": "trusted", "overlay": "reference", "expected": "pass"},

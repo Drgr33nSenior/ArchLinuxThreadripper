@@ -393,6 +393,13 @@ lib/workstation/task_acceptance.py
 docs/TASK-ACCEPTANCE.md
 tests/test_task_acceptance.sh
 tests/workstation/test_task_acceptance.py
+tests/fixtures/task-acceptance/cases/window-counts/always-equal/windows.py
+tests/fixtures/task-acceptance/cases/window-counts/reads-oracle/windows.py
+tests/fixtures/task-acceptance/cases/window-counts/selective-assertion/windows.py
+tests/fixtures/task-acceptance/cases/window-counts/targeted-test-repair/test_windows.py
+tests/fixtures/task-acceptance/cases/window-counts/weakened-reproducer/test_windows.py
+tests/fixtures/task-acceptance/sources/window-counts/oracle/observations.json
+tests/workstation/test_task_acceptance_linux.py
 tests/fixtures/task-acceptance/cases/record-publication/stale-link/answer.json
 tests/fixtures/task-acceptance/cases/record-publication/stale-link/state.json
 tests/fixtures/task-acceptance/cases/record-publication/stale-link/workspace/out/summary.json

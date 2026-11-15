@@ -84,6 +84,29 @@ jobs:
             test-results/ci/distribution-packages.txt
           retention-days: 7
           if-no-files-found: error
+  acceptance-isolation:
+    # Disposable distribution runner. Keep its namespace/AppArmor/seccomp policy
+    # intact: a denied bubblewrap launch fails this job, never an allowed skip.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {persist-credentials: false}
+      - name: Distribution sandbox prerequisite
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y bubblewrap
+      - name: Real default executor and ordinary command boundary
+        run: |
+          test "$(id -u)" != 1000
+          PYTHONDONTWRITEBYTECODE=1 python3 tests/workstation/test_task_acceptance_linux.py test-results/acceptance-isolation
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: acceptance-isolation-evidence
+          path: test-results/acceptance-isolation/*.json
+          retention-days: 7
+          if-no-files-found: error
   # Native gateway/database tests use disposable hosted runners only. Never
   # attach the workstation, kubeconfig, deployment identity, NAS or production keys.
   gateway-smoke:

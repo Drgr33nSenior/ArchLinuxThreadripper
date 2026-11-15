@@ -32,8 +32,8 @@ mount, link or copy it into the workspace.
 <acceptance source>/
   acceptance.json      specification
   fixture/             files the agent starts from (visible)
-  oracle/              protected tests (hidden); overlaid only for the oracle run
-  canary/              must-fail variants of files in oracle/, with the same names
+  oracle/              observation inputs and expected results (hidden from the agent)
+  canary/              legacy fixture metadata; never executed with submitted code
   reference/           trusted solution: editable files only
   mutants/<name>/      known-bug variants: editable files only
 ```
@@ -51,12 +51,40 @@ The checker enforces the following on every run:
   refused.
 - The seal must equal the pinned seal. If it does not, the checker runs nothing from the
   acceptance source and the verdict is `unavailable`.
-- Only editable files cross from the workspace into the evaluation copy. Protected files
-  are written last. A test, hook or other file that the agent added or changed is never
-  part of the oracle run.
+- Only editable files cross into the submitted process. Expected observations, protected
+  tests and evaluator code remain outside its mount namespace. The evaluator compares
+  the digest of the complete JSON output against its own expected result and requires
+  a successful process exit. An assertion patch or custom Python equality method cannot change this comparison.
+- Every registered agent route must pass a workspace read/write control and deny read
+  and non-truncating write-open access to each source file, checker and evaluator
+  configuration file. The source seal alone does not establish protection.
 
 The checker cannot stop a process that already has write access to the acceptance source
 and to the evaluator. Run the agent with write access to its workspace only.
+
+The evaluator supplies `agent_routes={name: probe}` and `protected_configuration=[...]`
+to `check_task`. A trusted probe calls the actual agent route with `(operation, absolute_path)`
+and returns `allowed`, `denied` or `unavailable`. Reads must open the target without returning
+its contents. Writes must attempt a non-truncating write-open and close it without changing
+bytes. Register every enabled file, command, browser and broker route, including routes
+that can replace or rename files. Apply the same capability policy for the whole attempt.
+The configuration list must include the pinned seal and every evaluator configuration
+file. The checker also probes itself and every file in the source.
+
+For the CLI, `--boundary-adapter <executable>` invokes the trusted evaluator adapter as
+`<executable> read|write <absolute-path>`. It must perform the operation through **all**
+enabled agent routes. Exit 0 means all denied; exit 1 means at least one allowed; exit 2
+means unavailable. The workspace control must return 1. It must not print protected
+contents. Supply configuration with repeated `--protected-configuration` arguments.
+The adapter itself is included in the access probes. Missing probes, failed controls,
+or missing configuration pins produce `unavailable`; an allowed protected access fails
+protection. Do not use an adapter that guesses from path placement or returns constant
+denials. These callbacks are trusted evaluator integration, never submitted agent code.
+
+The Linux validation fixture uses the same `coding_eval.run_task` command route for its
+ordinary agent probes and submitted code. It verifies denied absolute-path reads and
+writes under the real bubblewrap namespace. This proves that fixture capability boundary;
+it does not prove that a separate harness registered all its routes.
 
 ## Specification
 
@@ -70,8 +98,9 @@ declared check. An unknown member is refused.
 | `task_id`, `version` | Task name and specification version |
 | `editable` | Relative paths that cross from the workspace into the evaluation copy |
 | `ignore` | File or directory names that the workspace comparison skips, for example `__pycache__` |
-| `oracle.command` | Argument list that runs the protected tests. It must start with a `/usr/bin` program |
-| `oracle.canary` | Directory of must-fail variants. The canary run uses the same command and file names |
+| `oracle.command` | Legacy command metadata, validated but never used to execute protected tests with submitted code |
+| `oracle.observations` | Protected JSON file with `module`, `function`, and bounded `cases` of `args` and `expected` |
+| `oracle.canary` | Legacy canary source metadata. The evaluator now applies the must-fail expectation itself |
 | `oracle.seconds` | Time limit for each run, 1 to 300 |
 | `oracle.baseline` | `fail` when the unchanged fixture must fail the protected tests (a repair task), else `pass` |
 | `oracle.references` | `id`, `overlay` directory and `expected` (`pass` or `fail`). At least one trusted reference and one known bug are required |
@@ -79,13 +108,21 @@ declared check. An unknown member is refused.
 | `external_state.checks` | `id`, `path` and `equals`: values that the state observation must hold |
 | `deliverable.answer` | Required fields of the final answer: `id`, `path` and either `equals` or `type` |
 | `deliverable.artifacts` | Produced files: `id`, `format` (`json` or `bytes`), `path` or `answer_path`, optional `fields` |
-| `deliverable.links` | Produced URLs: `id`, `format`, `answer_path`, optional `fields` |
+| `deliverable.links` | Produced URLs: `id`, `format`, `answer_path`, optional `fields` and expected `origin` |
 | `linkage.checks` | `id`, `left`, `right`: one value from the state and one from the deliverable that must be equal |
 
 A `path` is a list of object keys and array indexes. A linkage selector is
 `{"from": "state" | "answer", "path": [...]}`,
 `{"from": "artifact" | "link", "name": "<id>", "path": [...]}` or
 `{"from": "artifact-sha256", "name": "<id>"}`.
+
+An observation expects `{"value": <JSON value>}` or `{"error": "ValueError"}`.
+The isolated child receives only call arguments and emits a JSON results array. Python
+values are serialized before they cross the process boundary; comparison uses bytes in
+the evaluator. Existing in-process oracle specifications without `observations` remain
+parseable but return `unavailable-unsafe-in-process-oracle`. They cannot be accepted.
+An answer-only specification without an oracle, external state, artifact or opened link
+returns `independent-observation-required` even when the answer claims completion.
 
 Two complete examples are in `tests/fixtures/task-acceptance/sources/`:
 `window-counts` (a repair task with protected tests) and `record-publication` (external
@@ -104,6 +141,7 @@ Preconditions:
 ```sh
 python3 lib/workstation/task_acceptance.py check <acceptance source> <new result.json> \
   --workspace <workspace> --seal <pinned seal> \
+  --boundary-adapter <trusted adapter> --protected-configuration <pin file> \
   [--answer <final answer file>] [--state <state.json>] [--allow-origin https://HOST] \
   [--claim completed|not-completed] [--guidance <feedback.json>] \
   [--run-id ID] [--attempt-id ID]
@@ -113,22 +151,24 @@ python3 lib/workstation/task_acceptance.py check <acceptance source> <new result
   JSON object in one enclosing code fence. An empty or prose answer fails the deliverable.
 - `--allow-origin` names an origin whose links the checker may open. The checker sends one
   GET request without credentials, proxy or redirect. A link on another origin is not
-  opened and stays `unavailable`.
+  opened and stays `unavailable`. If the specification supplies an expected `origin`,
+  a different origin fails with `link-origin-mismatch` before any network request.
 - `--guidance` is a JSON object with the booleans `failures` and `unavailable`, the shape
   of the coding agent's post-edit verification result.
 - The result file must be new and outside the workspace.
 
 Exit status: `0` accepted, `1` rejected, `3` unavailable, `2` input or usage error (no
-result is written).
+result is written). Workspace/artifact read failures remain component outcomes. Unreadable
+optional guidance or test evidence remains explicit without discarding the result.
 
 ## Components and verdict
 
 | Component | Passes when | Otherwise |
 | --- | --- | --- |
-| `protection` | The acceptance source is apart from the workspace and its seal equals the pinned seal | `failed`: overlap, unreadable source or seal mismatch. `unavailable`: no seal was pinned |
+| `protection` | The source seal matches and actual registered agent routes deny protected access after passing workspace controls | `failed`: overlap, unreadable source or seal mismatch. `unavailable`: missing pin, probes or working route controls |
 | `references` | The unchanged fixture, each reference and the canary on the trusted reference give the declared outcome | `failed`: a reference does not behave as declared, so the oracle is unproven |
-| `oracle` | The protected tests pass with the submitted editable files | `failed`: tests fail or time out, or an editable file is a link or not a regular file |
-| `interference` | The canary fails with the submitted editable files | `failed`: the canary passes, so the submitted files manufactured the pass |
+| `oracle` | Parent-side observations match for the submitted editable files | `failed`: tests fail or time out, or an editable file is a link or not a regular file |
+| `interference` | The parent-side must-fail expectation fails with the submitted editable files | `failed`: the canary passes, so the submitted files manufactured the pass |
 | `external_state` | Every state check holds in the evaluator's observation | `unavailable`: no observation, an unreadable one, or one inside the workspace |
 | `deliverable` | The answer has the required fields and every declared file and link opens with the required fields | `failed`: missing or wrong field, missing file, path outside the workspace, HTTP error. `unavailable`: no answer supplied, origin not allowed, origin unreachable |
 | `linkage` | Each declared pair of state value and deliverable value is equal | `failed`: a value is missing or differs, for example a link to an older revision |
@@ -167,7 +207,9 @@ expected and observed outcome of the baseline, every reference and the canary fo
 | `claim` | The completion claim. `decides_verdict` is always `false` |
 
 `workspace_suite` and `generated_tests` are `validated` when the tests pass on the trusted
-reference and fail on at least one known bug. They are `invalid` with
+reference and fail on at least one known bug. For a repair task they must also fail on
+the broken baseline; otherwise they are `invalid` with `baseline-reproducer-passed`,
+even if an unrelated mutant fails. They are `invalid` with
 `detects-no-known-bug` when they pass on every known bug: the tests are vacuous, or a test
 file or hook replaced the application under test. They are `invalid` with `fails-trusted`
 when they fail on the trusted reference. `reproducer` records the outcome on the baseline
@@ -206,14 +248,29 @@ feedback reported success and the verdict is not `accepted`.
 ## Limits
 
 - Commands run only in the network-free Linux sandbox of `coding_eval.run_task`. The
-  required CI runner has no such sandbox. The tests there run authored fixtures with the
-  test interpreter; the command line never does.
-- The submitted files run in the same process as the protected tests. The canary detects a
-  pass that the submitted files manufactured for every test. It does not detect code that
-  reads the protected test source and behaves differently for one test. For a stronger
-  boundary, make the protected tests start the application as a separate process.
+  `acceptance-isolation` CI job requires real execution and uploads complete receipts.
+  It does not skip namespace failures or relax host security policy. macOS fixture tests
+  use an injected executor with `isolated:false` and are not isolation evidence.
+- A caller with unrestricted host tools can rewrite evaluator code or configuration.
+  Such a route fails the boundary probes. The trusted evaluator must register every
+  route available to its agent, protect its own configuration, and keep that policy in
+  force during execution. Fixture success does not prove deployment integration.
 - The evaluation copy holds files of at most 2 MiB, written as regular files without
   execute permission.
 - A deleted editable file is evaluated as deleted. A new file that is not in `editable`
   never reaches the oracle run.
 - The fixtures are synthetic. They test the checker and are not model evidence.
+
+## Consumer migration
+
+The result remains schema 1, with unchanged component names, verdict rules and
+`validate_result` interface. PLAN01 run records need no format adapter. Existing saved
+receipts remain structurally valid; their checker digest identifies the old evaluator.
+New evaluations without actual route probes are unavailable.
+
+The HARNESS game can keep its oracle inapplicable: the parent browser play-through is
+the independent external-state observation, linked to the artifact SHA-256. Its parent
+must connect its actual file/command/browser permission probes through the boundary
+adapter, include its pin/configuration files, and re-pin the checker identity. Source
+placement or an old probe summary alone is insufficient. Root coordinates that consumer
+change; this repository does not change the harness.
