@@ -9,6 +9,14 @@ ws_measure_command() (
   exec "$(ws_measure_python)" "$(ws_repo_root)/lib/workstation/measurement.py" --output "$output" --timeout "$seconds" run -- "$@"
 )
 
+# One run-record-v1 attempt: the plan digest is bound before the command starts.
+ws_measure_attempt() (
+  local output=$1 seconds=$2 plan=$3 identity=$4
+  shift 4
+  exec "$(ws_measure_python)" "$(ws_repo_root)/lib/workstation/measurement.py" --output "$output" --timeout "$seconds" \
+    --run-plan "$plan" --run-identity "$identity" run -- "$@"
+)
+
 ws_serving_pod() {
   local pod=$1 mode=${2:-} document launch_spec launch_spec_sha256
   ws_session_config_validate

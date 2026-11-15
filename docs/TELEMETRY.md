@@ -193,7 +193,7 @@ reachable from outside the cluster.
 The families are defined in
 [`assistant_metrics.py`](../apps/base/shared-api/assistant_metrics.py). Every
 label takes a value from a fixed list, or `other`, so request text, passages,
-URLs and user, project or session identifiers never become labels. The
+URLs and user, project, session or run identifiers never become labels. The
 counters record tool outcomes. A successful retrieval, web, handoff or memory
 call is not evidence that the user's task succeeded, and no panel or rule
 presents it that way.
@@ -203,6 +203,52 @@ presents it that way.
 `service render --serving-profile` writes into the service-tools Deployment.
 It reports what the clients were rendered for, not what the server runs. A
 render without a serving profile leaves it unset.
+
+### Request activity of service-tools
+
+service-tools counts the requests on its work routes. A request counts from its
+first byte until its response ends, including a streamed answer and a request
+that fails or is cancelled. A request with and without a run context counts the
+same way. `/health` and `/metrics` are not work routes, so reading the count
+never changes it.
+
+| Route label | Paths |
+| --- | --- |
+| `mcp` | `/mcp` |
+| `image` | `/webui/images/generations` |
+| `web` | `/webui/search`, `/webui/fetch` |
+
+| `/metrics` | `/health` | Meaning |
+| --- | --- | --- |
+| `workstation_assistant_active_requests{route}` (gauge) | `requests.active_by_route.<route>`; `requests.active` is their sum | Requests in flight now |
+| `workstation_assistant_requests_started_total{route}` (counter) | `requests.started_total.<route>` | Requests started since the process started |
+| `workstation_assistant_process_start_time_seconds` (gauge, no label) | `process_started_unix_seconds` | Unix time, to the millisecond, at which this process created the application |
+
+The two endpoints give the same values. To establish that no request ran on the
+work routes between two readings, require all of the following:
+
+1. Every `active` value is 0 in both readings.
+2. Every `started_total` value is the same in both readings.
+3. The process start time is the same in both readings.
+
+A missing field means that the deployed service does not have this version. Then
+the result is unknown, not idle.
+
+The check does not cover:
+
+- Work without an open request: a picture or video backend that still runs
+  after a cancellation, a cancelled deep research job that is still stopping,
+  and the KV-tail timer, which calls SGLang after a quiet spell. Read
+  `image_active`, `image_recovery_required`, `video_active`, `deep_research`
+  and `kv_tail` on `/health` for these.
+- Work in other services, such as SGLang, ComfyUI, Open WebUI and the memory
+  service.
+- More than one process. The source runs one uvicorn worker and replaces the
+  pod on update (`Recreate`), and each reading describes only the process that
+  answered. The replica count is set when the service is deployed.
+
+The tests exercise this behaviour in process. It has not been observed on the
+deployed service.
 
 The memory experience's embedding service (TEI) exposes `/metrics` on a separate
 port, 9000, which only Alloy may reach (`job="embedding"`). The **Workloads**

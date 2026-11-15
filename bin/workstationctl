@@ -116,7 +116,7 @@ Commands:
   performance seal <private-bundle-directory> <kind> <target> <source-sha256>
   performance inspect <private-bundle-directory> <manifest-sha256>
   performance export <private-bundle-directory> <manifest-sha256> <new-output-directory> --target <target> --source-revision <source-sha256> --owner <actor>
-  performance run <new-output-directory> <timeout-seconds> -- <command> [arguments]
+  performance run <new-output-directory> <timeout-seconds> [--run-plan <plan.json> --run-identity <identity.json>] -- <command> [arguments]
   rocm validate <new-output-directory> [python-executable]
   rocm inference <llama-cli> <GGUF-model> <new-output-directory>
   packages snapshot <stable|experimental> <new-directory> <signing-fingerprint> <signed-packages...>
@@ -499,13 +499,22 @@ main() {
       ws_performance_export "$@"
       ;;
     performance:run)
-      (($# >= 6)) && [[ $5 == -- ]] || return 2
-      ws_require_arch
-      shift 2
-      output=$1
-      seconds=$2
-      shift 3
-      ws_measure_command "$output" "$seconds" "$@"
+      if (($# >= 10)) && [[ $5 == --run-plan && $7 == --run-identity && $9 == -- ]]; then
+        # One run-record-v1 attempt (docs/RUN-RECORDS.md).
+        ws_require_arch
+        output=$3
+        seconds=$4
+        shift 4
+        ws_measure_attempt "$output" "$seconds" "$2" "$4" "${@:6}"
+      else
+        (($# >= 6)) && [[ $5 == -- ]] || return 2
+        ws_require_arch
+        shift 2
+        output=$1
+        seconds=$2
+        shift 3
+        ws_measure_command "$output" "$seconds" "$@"
+      fi
       ;;
     rocm:validate)
       (($# == 3 || $# == 4)) || return 2

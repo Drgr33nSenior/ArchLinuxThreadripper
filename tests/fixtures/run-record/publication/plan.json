@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "kind": "run-plan",
+  "interface": "run-record-v1",
+  "run_id": "fixture-publication-run",
+  "arm_id": "fixture-arm",
+  "declared_unix_ns": 1700000000000000000,
+  "latency_targets": {
+    "task_wall_seconds": 600
+  },
+  "tasks": [
+    {
+      "task_id": "record-publication",
+      "task_version": "2026-11-15.1"
+    }
+  ]
+}

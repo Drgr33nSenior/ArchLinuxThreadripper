@@ -508,10 +508,16 @@ kernel mitigations or cluster defaults automatically.
 - `run.json` becomes successful only after the sampler completes. Failures
   retain the workload return code, error category/class and, for cancellation,
   signal number. A workload exit of zero does not override failed telemetry.
-- `run.json` also records `started_unix_ns` and an optional run-record-v1
-  `identity` (task, run, attempt, arm and causal parent). With an identity the
-  receipt joins independent acceptance and resource records; see
-  [Run records](RUN-RECORDS.md). Without one it stores `identity: null`.
+- `performance run OUT SECONDS --run-plan PLAN --run-identity IDENTITY -- COMMAND...`
+  makes the run one run-record-v1 attempt ([Run records](RUN-RECORDS.md)). It
+  refuses to start when the identity does not belong to the plan. It writes the
+  identity and the plan digest to `run-start.json` before the command starts and
+  to `run.json` afterwards, and it sets `WORKSTATION_RUN_CONTEXT` for the
+  command. Without the two options `run.json` stores `identity: null` and
+  `plan_sha256: null`, and no `run-start.json` is written.
+- `run.json` records `started_unix_ns`. Each `telemetry.jsonl` row records the
+  kernel `boot_id` with its clock pair, so that `run_record.py resources` can
+  turn the rows into PSU and GPU samples.
 - The shared runner handles SIGTERM/SIGINT even when imported by storage. It
   terminates only its owned workload group, escalates to KILL after five seconds,
   and preserves the original failure/cancellation. Storage retains a failed

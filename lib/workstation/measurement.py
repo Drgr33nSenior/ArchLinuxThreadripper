@@ -79,6 +79,7 @@ def snapshot(sys=Path("/sys"), proc=Path("/proc"), cgroup=Path("/sys/fs/cgroup")
                                  ("mem_info_vram_total", "mem_info_vram_used", "gpu_busy_percent",
                                   "current_link_speed", "current_link_width", "pp_dpm_sclk", "pp_dpm_mclk")}
     return {"unix_ns": time.time_ns(), "monotonic_ns": time.monotonic_ns(),
+            "boot_id": read(proc / "sys/kernel/random/boot_id"),
             "cpu_power": cpu_power(sys), "gpus_by_bdf": gpus, "hwmon": sensors,
             "host_memory": read(proc / "meminfo"),
             "cgroup": {key: read(cgroup / key) for key in CGROUP_FIELDS},
@@ -187,20 +188,28 @@ def interruptions():
 
 
 @interruptions()
-def run_command(command, output, timeout, identity=None):
+def run_command(command, output, timeout, identity=None, plan=None):
     """Retain failed evidence too. Never run a shell or detach surviving children.
 
-    ``identity`` is an optional run-record-v1 task/run/attempt/arm identity
-    stored in run.json so the receipt joins acceptance and resource records.
+    ``plan`` and ``identity`` (both or neither) make the run one run-record-v1
+    attempt. The plan digest is bound before the workload starts: it is written
+    to run-start.json, exported to the workload as its run context, and
+    repeated in run.json, which then joins acceptance and resource records.
     """
-    if identity is not None:
+    context = plan_sha256 = None
+    if identity is not None or plan is not None:
         # Imported only here: snapshot/pod-memory also run as a standalone script.
-        from run_record import validate_identity
-        validate_identity(identity)
+        import run_record
+        plan_sha256 = run_record.bind(plan, identity, time.time_ns())
+        context = run_record.context_value(identity, plan_sha256)
     output = Path(output)
     output.mkdir(mode=0o700)
     started_unix = time.time_ns()
     started = time.monotonic_ns()
+    if context is not None:
+        (output / "run-start.json").write_text(json.dumps({
+            "schema": 1, "kind": "attempt-start", "interface": run_record.INTERFACE, "identity": identity,
+            "plan_sha256": plan_sha256, "started_unix_ns": started_unix}, indent=2) + "\n")
     status = "failed"
     returncode = None
     process = None
@@ -210,7 +219,9 @@ def run_command(command, output, timeout, identity=None):
     phase = "workload"
     try:
         with Sampler(output / "telemetry.jsonl"), open(output / "stdout.txt", "x") as stdout, open(output / "stderr.txt", "x") as stderr:
-            process = subprocess.Popen(command, stdout=stdout, stderr=stderr, start_new_session=True)
+            # The workload forwards its run context on the requests it makes.
+            environment = None if context is None else {**os.environ, run_record.CONTEXT_ENV: context}
+            process = subprocess.Popen(command, stdout=stdout, stderr=stderr, start_new_session=True, env=environment)
             returncode = process.wait(timeout=timeout)
             phase = "telemetry"
         # Sampler.__exit__ is part of measurement success, not housekeeping.
@@ -262,7 +273,7 @@ def run_command(command, output, timeout, identity=None):
                 "interrupted_signal": interrupted_signal, "cleanup_error": cleanup_error,
                 "elapsed_seconds": (time.monotonic_ns() - started) / 1e9,
                 "started_monotonic_ns": started, "started_unix_ns": started_unix, "identity": identity,
-                "command_executable": command[0],
+                "plan_sha256": plan_sha256, "command_executable": command[0],
                 "arguments": "not retained; record non-secret workload inputs separately"}, indent=2) + "\n")
     return returncode
 
@@ -273,6 +284,8 @@ def main():
     parser.add_argument("action", choices=("snapshot", "cpu-power", "pod-memory", "run"))
     parser.add_argument("--output")
     parser.add_argument("--timeout", type=int, default=1800)
+    parser.add_argument("--run-plan", help="run-record-v1 plan file; makes the run one attempt, with --run-identity")
+    parser.add_argument("--run-identity", help="run-record-v1 identity file for this attempt")
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     if args.action == "snapshot":
@@ -290,7 +303,17 @@ def main():
         command = args.command[1:] if args.command[:1] == ["--"] else args.command
         if not command or not args.output or not 1 <= args.timeout <= 86400:
             parser.error("run requires a new output directory, bounded timeout and command after --")
-        raise SystemExit(run_command(command, args.output, args.timeout))
+        identity = plan = None
+        if args.run_plan or args.run_identity:
+            if not (args.run_plan and args.run_identity):
+                parser.error("--run-plan and --run-identity are used together")
+            try:
+                import run_record
+                plan, identity = (json.loads(Path(path).read_text()) for path in (args.run_plan, args.run_identity))
+                run_record.bind(plan, identity, time.time_ns())
+            except (OSError, ValueError) as error:
+                parser.exit(1, f"run record rejected: {error}\n")
+        raise SystemExit(run_command(command, args.output, args.timeout, identity, plan))
 
 
 if __name__ == "__main__":

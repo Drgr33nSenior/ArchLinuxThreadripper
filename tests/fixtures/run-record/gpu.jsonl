@@ -1,4 +1,4 @@
-{"device": "0000:03:00.0", "interface": "run-record-v1", "kind": "gpu-power-sample", "schema": 1, "unix_ns": 1700000020000000000, "watts": 180}
-{"device": "0000:03:00.0", "interface": "run-record-v1", "kind": "gpu-power-sample", "schema": 1, "unix_ns": 1700000040000000000, "watts": 220}
-{"device": "0000:03:00.0", "interface": "run-record-v1", "kind": "gpu-power-sample", "schema": 1, "unix_ns": 1700000220000000000, "watts": 210}
-{"device": "0000:03:00.0", "interface": "run-record-v1", "kind": "gpu-power-sample", "schema": 1, "unix_ns": 1700000350000000000, "watts": 240}
+{"device": "0000:03:00.0", "interface": "run-record-v1", "kind": "gpu-power-sample", "schema": 1, "sensor": "power1_average", "unix_ns": 1700000020000000000, "watts": 180}
+{"device": "0000:03:00.0", "interface": "run-record-v1", "kind": "gpu-power-sample", "schema": 1, "sensor": "power1_average", "unix_ns": 1700000040000000000, "watts": 220}
+{"device": "0000:03:00.0", "interface": "run-record-v1", "kind": "gpu-power-sample", "schema": 1, "sensor": "power1_average", "unix_ns": 1700000220000000000, "watts": 210}
+{"device": "0000:03:00.0", "interface": "run-record-v1", "kind": "gpu-power-sample", "schema": 1, "sensor": "power1_average", "unix_ns": 1700000350000000000, "watts": 240}
