@@ -3,8 +3,8 @@
 The acceptance source (specification, hidden oracle tests, trusted and
 known-bug references) is a directory apart from the agent workspace. The
 evaluator pins its seal, so a rewritten source is never trusted. Only the
-task's editable files cross from the workspace into a private evaluation copy;
-tests, hooks and every other file the agent wrote never become the oracle.
+task's editable files cross into a private execution copy. Expected observations
+and assertions stay in the evaluator; tests and hooks never become the oracle.
 Commands run only through coding_eval.run_task, which needs the network-free
 Linux sandbox. Without it the oracle is ``unavailable``, never passed.
 
@@ -18,10 +18,12 @@ import datetime
 import difflib
 import fnmatch
 import http.client
+import json
 import os
 from pathlib import Path
 import re
 import stat
+import subprocess
 import sys
 import tempfile
 import urllib.error
@@ -57,8 +59,8 @@ RUN_KEYS = ("status", "exit_status", "elapsed_seconds", "output_sha256", "isolat
 OUTCOMES = {"tests-passed": "pass", "tests-failed": "fail", "timeout": "fail"}
 LIMITATIONS = [
     "Commands run only in the network-free Linux sandbox; on another host the oracle is unavailable.",
-    "Submitted files share a process with the protected tests. The canary detects a manufactured pass, "
-    "not every manipulation that targets one test.",
+    "Oracle expectations stay in the evaluator; submitted processes return untrusted JSON observations.",
+    "Agent access probes cover only the routes registered by the trusted evaluator; omitted routes invalidate that integration.",
     "Agent-written tests, IDE or project feedback and the completion claim are evidence and never decide the verdict.",
 ]
 
@@ -81,8 +83,14 @@ def read_tree(root, ignore=(), strict=True):
     if not root.is_dir():
         raise ValueError("expected a directory")
     files, total = {}, 0
-    for directory, names, leaves in os.walk(root):
+
+    def unreadable(error):
+        raise error
+
+    for directory, names, leaves in os.walk(root, onerror=unreadable):
         here = Path(directory)
+        if not here.stat().st_mode & 0o444 or not here.stat().st_mode & 0o111:
+            raise PermissionError("directory unreadable")
         links = [name for name in names if (here / name).is_symlink()]
         names[:] = sorted(name for name in names if name not in ignore and name not in links)
         for leaf in sorted(links + leaves):
@@ -93,8 +101,14 @@ def read_tree(root, ignore=(), strict=True):
             meta = path.lstat()
             data = None
             if stat.S_ISREG(meta.st_mode) and meta.st_size <= MAX_FILE:
-                data = path.read_bytes()
-                total += len(data)
+                try:
+                    if not meta.st_mode & 0o444:
+                        raise PermissionError("unreadable file")
+                    data = path.read_bytes()
+                    total += len(data)
+                except OSError:
+                    if strict:
+                        raise ValueError("acceptance source file unreadable: " + name) from None
             elif strict:
                 raise ValueError("acceptance source must hold only bounded regular files: " + name)
             if len(files) >= MAX_FILES or total > MAX_TREE:
@@ -202,7 +216,22 @@ def validate_spec(spec, files):
     if _inapplicable(oracle):
         _require(not editable and "tests" not in spec, "editable files and tests need an oracle")
     else:
-        _object(oracle, ("command", "canary", "seconds", "baseline", "references"))
+        _object(oracle, ("command", "canary", "seconds", "baseline", "references"), ("observations",))
+        if "observations" in oracle:
+            observation_path = relative_path(oracle["observations"])
+            _require(observation_path in files, "observation file must exist")
+            cases = parse_object(files[observation_path].decode())
+            _object(cases, ("module", "function", "cases"))
+            _require(all(isinstance(cases[key], str) and cases[key].isidentifier()
+                         for key in ("module", "function")), "observation target is a module and function")
+            _require(isinstance(cases["cases"], list) and 1 <= len(cases["cases"]) <= 64, "bounded observation cases required")
+            for case in cases["cases"]:
+                _object(case, ("args", "expected"))
+                _require(isinstance(case["args"], list), "observation arguments are a list")
+                expected = case["expected"]
+                _require(isinstance(expected, dict) and set(expected) in ({"value"}, {"error"}),
+                         "observation expects a value or exception type")
+            _require(len(canonical(cases)) <= 32768, "observations exceed the bounded command input")
         _command(oracle["command"])
         _require(type(oracle["seconds"]) is int and 1 <= oracle["seconds"] <= 300, "seconds is 1 to 300")
         _require(oracle["baseline"] in ("pass", "fail"), "baseline is pass or fail")
@@ -243,7 +272,9 @@ def validate_spec(spec, files):
             items = deliverable.get(kind + "s", [])
             _require(isinstance(items, list) and len(items) <= 32, "artifacts and links are lists")
             for item in items:
-                _object(item, ("id", "format"), ("path", "answer_path", "fields"))
+                _object(item, ("id", "format"), ("path", "answer_path", "fields", "origin"))
+                if "origin" in item:
+                    _require(kind == "link" and isinstance(item["origin"], str) and item["origin"].startswith(("http://", "https://")), "expected origin is an HTTP link origin")
                 _identifier(item["id"], seen)
                 _require(item["format"] in ("json", "bytes") and ("fields" not in item or item["format"] == "json"),
                          "format is json or bytes; only json has fields")
@@ -287,7 +318,8 @@ def load_files(files):
     if not _inapplicable(spec["oracle"]):
         overlays = {reference["id"]: subtree(files, reference["overlay"]) for reference in spec["oracle"]["references"]}
         canary = subtree(files, spec["oracle"]["canary"])
-    return {"spec": spec, "spec_sha256": digest(files[SPEC_NAME]), "seal": sealed, "fixture": subtree(files, "fixture"),
+    observations = parse_object(files[spec["oracle"]["observations"]].decode()) if "observations" in spec["oracle"] else None
+    return {"observations": observations, "spec": spec, "spec_sha256": digest(files[SPEC_NAME]), "seal": sealed, "fixture": subtree(files, "fixture"),
             "hidden": subtree(files, "oracle"), "canary": canary, "overlays": overlays}
 
 
@@ -340,6 +372,8 @@ def bounded_file(path):
     path = Path(path)
     if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_FILE:
         raise ValueError(f"{path.name} must be a regular bounded file")
+    if not path.stat().st_mode & 0o444:
+        raise ValueError("input file unreadable")
     return path.read_bytes()
 
 
@@ -360,7 +394,12 @@ def open_file(root, name):
         return FAILED, "not-a-regular-file"
     if meta.st_size > MAX_FILE:
         return FAILED, "too-large"
-    return PASSED, path.read_bytes()
+    try:
+        if not meta.st_mode & 0o444:
+            raise PermissionError("unreadable file")
+        return PASSED, path.read_bytes()
+    except OSError:
+        return FAILED, "unreadable"
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -395,7 +434,10 @@ def read_answer(path):
     """(record, document) for the final answer: one JSON object, optionally in one fence."""
     if path is None:
         return {"status": UNAVAILABLE, "reason": "answer-not-supplied"}, (UNAVAILABLE, "answer-not-supplied")
-    data = bounded_file(path)
+    try:
+        data = bounded_file(path)
+    except (OSError, ValueError):
+        return {"status": UNAVAILABLE, "reason": "answer-unreadable"}, (UNAVAILABLE, "answer-unreadable")
     try:
         text, fenced = json_answer(data.decode().strip())
         return {"status": PASSED, "sha256": digest(data), "fenced": fenced}, (PASSED, parse_object(text))
@@ -475,7 +517,15 @@ def final_components(spec, workspace, answer, state, origins):
                     target = target if status == PASSED else "artifact-" + target
                 elif status == PASSED:
                     named["url_sha256"] = digest(target.encode())
-                    status, target = open_url(target, origins)
+                    try:
+                        parts = urllib.parse.urlsplit(target)
+                        origin = f"{parts.scheme}://{parts.netloc}"
+                    except ValueError:
+                        origin = None
+                    if "origin" in item and origin != item["origin"]:
+                        status, target = FAILED, "link-origin-mismatch"
+                    else:
+                        status, target = open_url(target, origins)
                 row, document, digests = opened(item, status, target)
                 row.update(named)
                 rows[kind + "s"].append(row)
@@ -485,6 +535,9 @@ def final_components(spec, workspace, answer, state, origins):
                 checks += [field(check, document) for check in item.get("fields", [])]
         components["deliverable"] = {"status": combine(checks + rows["artifacts"] + rows["links"]),
                                      "answer": answer_record, **rows, "checks": checks}
+    if (_inapplicable(spec["oracle"]) and _inapplicable(spec["external_state"])
+            and not spec["deliverable"].get("artifacts") and not spec["deliverable"].get("links")):
+        components["deliverable"].update(status=UNAVAILABLE, reason="independent-observation-required")
     declared = spec["linkage"]
     if _inapplicable(declared):
         components["linkage"] = {"status": NOT_APPLICABLE, "reason": declared["reason"]}
@@ -542,17 +595,33 @@ def submitted_files(workspace, editable):
 
 def oracle_components(source, workspace, run):
     """Establish the reference outcomes, then grade the submitted files and the canary."""
-    spec, fixture, hidden = source["spec"], source["fixture"], source["hidden"]
+    spec, fixture = source["spec"], source["fixture"]
     oracle = spec["oracle"]
     if _inapplicable(oracle):
         return {name: {"status": NOT_APPLICABLE, "reason": oracle["reason"]}
                 for name in ("references", "oracle", "interference")}
 
     def judge(tree, canary=False):
-        # Protected files are written last: nothing from a workspace can replace them. The canary
-        # run differs from the oracle run only in the content of protected files.
-        protected = {**hidden, **source["canary"]} if canary else hidden
-        return execute(run, {**tree, **protected}, oracle["command"], oracle["seconds"])
+        observations = source["observations"]
+        if observations is None:
+            return {"status": "unavailable-unsafe-in-process-oracle"}
+        # Only call inputs enter the child. Expectations and comparisons stay
+        # here. Never import submitted Python objects into this interpreter.
+        inputs = [case["args"] for case in observations["cases"]]
+        program = ("import sys,json,importlib\nsys.path.insert(0, '.')\nresults=[]\n"
+                   f"function = getattr(importlib.import_module({observations['module']!r}), {observations['function']!r})\n"
+                   f"for args in json.loads({json.dumps(inputs)!r}):\n"
+                   " try:\n  results.append({'value': function(*args)})\n"
+                   " except Exception as error:\n  results.append({'error': type(error).__name__})\n"
+                   "print(json.dumps({'results':results},sort_keys=True,separators=(',', ':'),ensure_ascii=False))\n")
+        record = execute(run, {name: data for name, data in tree.items() if name in spec["editable"]},
+                         ["/usr/bin/python3", "-I", "-B", "-c", program], oracle["seconds"])
+        expected = {"canary": True} if canary else {"results": [case["expected"] for case in observations["cases"]]}
+        if outcome(record) != "unavailable":
+            record["status"] = ("tests-passed" if record.get("exit_status") == 0
+                                and record.get("output_sha256") == digest(canonical(expected) + b"\n")
+                                else "tests-failed")
+        return record
 
     trees = {reference["id"]: {**fixture, **source["overlays"][reference["id"]]} for reference in oracle["references"]}
     trusted = next(reference["id"] for reference in oracle["references"] if reference["expected"] == "pass")
@@ -569,13 +638,13 @@ def oracle_components(source, workspace, run):
     files, problems = submitted_files(workspace, spec["editable"])
     evaluated = [{"path": name, "sha256": digest(files[name]) if name in files else None,
                   "changed": files.get(name) != fixture.get(name)} for name in spec["editable"]]
+    if problems:
+        return {"references": references, "oracle": {"status": FAILED, "reason": problems[0], "evaluated": evaluated},
+                "interference": {"status": UNAVAILABLE, "reason": "submitted-files-not-evaluated"}}
     if references["status"] != PASSED:
         # A reference that does not behave as declared makes the oracle itself unproven.
         blocked = {"status": UNAVAILABLE, "reason": "reference-outcomes-not-established"}
         return {"references": references, "oracle": {**blocked, "evaluated": evaluated}, "interference": blocked}
-    if problems:
-        return {"references": references, "oracle": {"status": FAILED, "reason": problems[0], "evaluated": evaluated},
-                "interference": {"status": UNAVAILABLE, "reason": "submitted-files-not-evaluated"}}
     tree = {**{name: data for name, data in fixture.items() if name not in spec["editable"]}, **files}
     post, canary = judge(tree), judge(tree, canary=True)
     graded = {"status": {"pass": PASSED, "fail": FAILED}.get(outcome(post), UNAVAILABLE), "evaluated": evaluated,
@@ -608,6 +677,8 @@ def suite(source, run, others, submitted, names):
         reasons.append("fails-trusted")
     if not any(row["expected"] == "fail" and row["observed"] == "fail" for row in known):
         reasons.append("detects-no-known-bug")
+    if oracle["baseline"] == "fail" and outcomes[0]["observed"] == "pass":
+        reasons.append("baseline-reproducer-passed")
     unavailable = any(row["observed"] == "unavailable" for row in known)
     return {"status": UNAVAILABLE if unavailable else "invalid" if reasons else "validated",
             "reasons": [] if unavailable else reasons, "files": names, "outcomes": outcomes,
@@ -635,8 +706,8 @@ def workspace_evidence(source, workspace, run):
         return {name: {"status": NOT_APPLICABLE} for name in names}
     try:
         present = read_tree(workspace, spec.get("ignore", ()), strict=False)
-    except ValueError:
-        return {name: {"status": UNAVAILABLE, "reason": "workspace-exceeds-bounds"} for name in names}
+    except (OSError, ValueError):
+        return {name: {"status": UNAVAILABLE, "reason": "workspace-unreadable-or-exceeds-bounds"} for name in names}
     protected = {name: data for name, data in source["fixture"].items() if name not in spec["editable"]}
     changed = {name: data for name, data in present.items()
                if name not in spec["editable"] and (name not in protected or protected[name] != data)}
@@ -699,7 +770,7 @@ def verify_source(source, workspace, expected_seal):
     try:
         files = read_tree(source)
         record["seal_sha256"] = seal_of(files)
-    except ValueError:
+    except (OSError, ValueError):
         return {**record, "reason": "source-unreadable"}, None
     if expected_seal is None:
         return {**record, "status": UNAVAILABLE, "reason": "no-expected-seal"}, None
@@ -707,6 +778,52 @@ def verify_source(source, workspace, expected_seal):
         return {**record, "reason": "seal-mismatch"}, None
     # The verified bytes are the ones used; the source is not read again.
     return {**record, "status": PASSED}, load_files(files)
+
+
+def verify_agent_boundary(source, workspace, expected_seal, agent_routes, protected_configuration):
+    """Probe every evaluator-registered route, including command/browser routes.
+
+    Each trusted callback performs a read-open or non-truncating write-open
+    through the actual agent capability and returns 'denied' only on access
+    denial. It must not return file contents. Missing routes/configuration are
+    unavailable, never inferred from placement, a seal, mode bits or host UID.
+    """
+    if not agent_routes or not protected_configuration:
+        return {"status": UNAVAILABLE, "reason": "agent-boundary-not-probed"}
+    targets = [path for path in source.rglob("*") if path.is_file()]
+    targets += [Path(__file__).resolve().with_name(name) for name in
+                ("task_acceptance.py", "coding_eval.py", "assistant_acceptance.py")]
+    targets += [Path(path).resolve() for path in protected_configuration]
+    if any(path == workspace or workspace in path.parents for path in targets):
+        return {"status": FAILED, "reason": "evaluator-configuration-inside-workspace"}
+    try:
+        if not any(expected_seal.encode() in bounded_file(path) for path in protected_configuration):
+            return {"status": UNAVAILABLE, "reason": "configuration-does-not-pin-seal"}
+    except (OSError, ValueError):
+        return {"status": UNAVAILABLE, "reason": "configuration-unreadable"}
+    rows = []
+    with tempfile.NamedTemporaryFile(prefix="acceptance-control-", dir=workspace) as control:
+        control.write(b"acceptance boundary control\n")
+        control.flush()
+        for route, probe in agent_routes.items():
+            for operation in ("read", "write"):
+                try:
+                    observed = probe(operation, control.name)
+                except Exception:
+                    observed = "unavailable"
+                if observed != "allowed":
+                    return {"status": UNAVAILABLE, "reason": "agent-route-control-failed"}
+    for route, probe in agent_routes.items():
+        for path in targets:
+            for operation in ("read", "write"):
+                try:
+                    observed = probe(operation, str(path))
+                except Exception:
+                    observed = "unavailable"
+                status = PASSED if observed == "denied" else FAILED if observed == "allowed" else UNAVAILABLE
+                rows.append({"route": route, "target_sha256": digest(str(path).encode()),
+                             "operation": operation, "status": status})
+    return {"status": combine(rows), "reason": "agent-access-probes", "probes": rows}
 
 
 def verdict(components):
@@ -734,7 +851,7 @@ def reasons(components):
 
 
 def check_task(source, workspace, expected_seal=None, *, answer=None, state=None, origins=(), claim=None,
-               guidance=None, run_id=None, attempt_id=None, run=run_task):
+               guidance=None, run_id=None, attempt_id=None, run=run_task, agent_routes=None, protected_configuration=()):
     """Return the acceptance result for one attempt. No option skips a declared check.
 
     ``run`` defaults to the sandboxed coding_eval.run_task. Replace it only to
@@ -749,7 +866,12 @@ def check_task(source, workspace, expected_seal=None, *, answer=None, state=None
         raise ValueError("run and attempt identifiers are short names")
     if claim is not None and type(claim) is not bool:
         raise ValueError("claim is true, false or absent")
-    evidence = {"guidance": guidance_record(guidance)}
+    try:
+        feedback = guidance_record(guidance)
+    except (OSError, ValueError):
+        feedback = {"supplied": True, "authoritative": False, "failures": False, "unavailable": True,
+                    "reason": "guidance-unreadable"}
+    evidence = {"guidance": feedback}
     protection, loaded = verify_source(source, workspace, expected_seal)
     if loaded is None:
         # An unverified source is never parsed for checks and nothing from it runs.
@@ -757,10 +879,16 @@ def check_task(source, workspace, expected_seal=None, *, answer=None, state=None
         components = {name: dict(blocked) for name in COMPONENTS[1:]}
         evidence.update({name: dict(blocked) for name in EVIDENCE[:3]})
     else:
-        # The final checks read the evaluator's inputs first, so an input error stops before any command runs.
+        # Read evaluator observations independently of submitted-code execution.
         final = final_components(loaded["spec"], workspace, answer, state, tuple(origins))
         components = {**oracle_components(loaded, workspace, run), **final}
         evidence.update(workspace_evidence(loaded, workspace, run))
+    if loaded is not None:
+        try:
+            boundary = verify_agent_boundary(source, workspace, expected_seal, agent_routes, protected_configuration)
+        except (OSError, ValueError):
+            boundary = {"status": UNAVAILABLE, "reason": "agent-boundary-probe-unavailable"}
+        protection.update(boundary)
     components = {"protection": protection, **components}
     decided = verdict(components)
     feedback = evidence["guidance"]
@@ -768,7 +896,7 @@ def check_task(source, workspace, expected_seal=None, *, answer=None, state=None
                                 and not (feedback["failures"] or feedback["unavailable"]))
     evidence["claim"] = {"completed": claim, "decides_verdict": False,
                          "contradicted": claim is True and decided != "accepted"}
-    spec = loaded["spec"] if loaded else {}
+    spec = loaded["spec"] if loaded and protection["status"] == PASSED else {}
     return {"schema": SCHEMA, "kind": RESULT_KIND, "task_id": spec.get("task_id"), "spec_version": spec.get("version"),
             "spec_sha256": loaded["spec_sha256"] if loaded else None,
             "subject": {"run_id": run_id, "attempt_id": attempt_id},
@@ -838,6 +966,8 @@ def main(arguments=None):
     command.add_argument("--guidance", help="JSON IDE or project feedback from the repair loop; recorded only")
     command.add_argument("--run-id")
     command.add_argument("--attempt-id")
+    command.add_argument("--boundary-adapter", help="trusted evaluator executable probing every actual agent route")
+    command.add_argument("--protected-configuration", action="append", default=[], help="trusted pin/configuration files to probe")
     command = commands.add_parser("validate", help="validate a result file; print its verdict")
     command.add_argument("result")
     args = parser.parse_args(arguments)
@@ -853,9 +983,22 @@ def main(arguments=None):
             if workspace == output or workspace in output.parents:
                 raise ValueError("result must be written outside the workspace")
             claim = None if args.claim is None else args.claim == "completed"
+            routes = None
+            configuration = list(args.protected_configuration)
+            if args.boundary_adapter:
+                adapter = Path(args.boundary_adapter).resolve()
+                if adapter == workspace or workspace in adapter.parents:
+                    raise ValueError("boundary adapter must be outside workspace")
+                configuration.append(str(adapter))
+                def probe(operation, path):
+                    completed = subprocess.run([str(adapter), operation, path], capture_output=True, timeout=30, check=False)
+                    # Adapter probes ALL registered routes; exit 0 means every
+                    # route denied, 1 means at least one allowed, 2 unavailable.
+                    return {0: "denied", 1: "allowed"}.get(completed.returncode, "unavailable")
+                routes = {"evaluator-adapter-all-routes": probe}
             result = check_task(args.source, workspace, args.seal, answer=args.answer, state=args.state,
                                 origins=args.allow_origin, claim=claim, guidance=args.guidance,
-                                run_id=args.run_id, attempt_id=args.attempt_id)
+                                run_id=args.run_id, attempt_id=args.attempt_id, agent_routes=routes, protected_configuration=configuration)
             write(output, result)
             print(" ".join([result["verdict"], *result["reasons"]]))
             return EXIT_STATUS[result["verdict"]]
