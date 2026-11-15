@@ -1,0 +1,4 @@
+# Assistant coding sandbox: UID/GID 2002 reserved on the node so no login account is ever given it
+# and files pods leave on the node show as `sandbox`. Must match SANDBOX_UID in lib/workstation/sandbox.py.
+g sandbox 2002
+u sandbox 2002:2002 "Assistant sandbox (no login)" / /usr/bin/nologin

@@ -158,6 +158,15 @@ class RenderTests(unittest.TestCase):
             service.capacity(NODE, composition("large", "assistant"), {"reserve_mib": 6656}, live_telemetry, "large",
                              node_pods={"kind": "PodList", "items": [node_pod("kube-system", "1", "1Pi")]})
 
+    def test_node_reserves_the_sandbox_uid_through_sysusers(self):
+        # The runtime package's sysusers drop-in must reserve exactly SANDBOX_UID, never a login.
+        conf = (ROOT / "templates/workstation/sandbox/workstation-sandbox.sysusers").read_text().splitlines()
+        entries = [line.split() for line in conf if line and not line.startswith("#")]
+        self.assertEqual(["g", "sandbox", str(sandbox.SANDBOX_UID)], entries[0])
+        self.assertEqual(["u", "sandbox", f"{sandbox.SANDBOX_UID}:{sandbox.SANDBOX_UID}"], entries[1][:3])
+        self.assertEqual("/usr/bin/nologin", entries[1][-1])
+        self.assertNotEqual(1000, sandbox.SANDBOX_UID)
+
     def test_security_idle_no_credentials_or_gpu_in_workspace(self):
         policies = sandbox.policies(self.config)
         self.assertEqual({"sandbox-family", "sandbox-parents", "home-alice", "home-kid"}, set(policies))

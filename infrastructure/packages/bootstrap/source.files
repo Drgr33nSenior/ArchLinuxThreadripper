@@ -190,6 +190,7 @@ templates/workstation/linux-git-patches/0001-drm-amdgpu-fix-TLB-invalidation-fen
 templates/workstation/packages-desktop.pacman
 templates/workstation/packages-intel.pacman
 templates/workstation/packages.pacman
+templates/workstation/sandbox/workstation-sandbox.sysusers
 templates/workstation/workstation-linux-git.preset
 templates/workstation/zshrc
 tests/fixtures/ccache-smoke.c

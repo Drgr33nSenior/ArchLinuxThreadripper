@@ -143,5 +143,9 @@ package_arch-workstation-bridge-runtime() {
   install -Dm755 "$srcdir/project/infrastructure/packages/bootstrap/launch-workstationctl" "$pkgdir/usr/bin/workstationctl"
   install -Dm644 "$srcdir/project/templates/workstation/telemetry/workstation-telemetry.sysusers" \
     "$pkgdir/usr/lib/sysusers.d/workstation-telemetry.conf"
+  # Reserves UID/GID 2002 for the assistant sandbox (lib/workstation/sandbox.py SANDBOX_UID);
+  # pacman's systemd-sysusers hook creates it on install. Never a login account.
+  install -Dm644 "$srcdir/project/templates/workstation/sandbox/workstation-sandbox.sysusers" \
+    "$pkgdir/usr/lib/sysusers.d/workstation-sandbox.conf"
   # No active configuration, executable approvals, credentials or unit activation.
 }
