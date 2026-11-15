@@ -271,6 +271,7 @@ lib/workstation/secure_boot.py
 lib/workstation/telemetry_sample.py
 lib/workstation/monitoring.py
 lib/workstation/telemetry_power.py
+lib/workstation/run_record.py
 lib/workstation/hyperloom.py
 lib/workstation/hyperloom_sglang.py
 lib/workstation/hyperloom_owner.py
@@ -454,6 +455,7 @@ docs/BRIDGE-CONTRACT.md
 docs/HYPERLOOM-REFERENCE.md
 docs/MODELS.md
 docs/PERFORMANCE-VALIDATION.md
+docs/RUN-RECORDS.md
 docs/RAG.md
 docs/README.md
 docs/STACK.md

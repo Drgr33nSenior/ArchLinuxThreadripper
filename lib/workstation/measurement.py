@@ -187,10 +187,19 @@ def interruptions():
 
 
 @interruptions()
-def run_command(command, output, timeout):
-    """Retain failed evidence too. Never run a shell or detach surviving children."""
+def run_command(command, output, timeout, identity=None):
+    """Retain failed evidence too. Never run a shell or detach surviving children.
+
+    ``identity`` is an optional run-record-v1 task/run/attempt/arm identity
+    stored in run.json so the receipt joins acceptance and resource records.
+    """
+    if identity is not None:
+        # Imported only here: snapshot/pod-memory also run as a standalone script.
+        from run_record import validate_identity
+        validate_identity(identity)
     output = Path(output)
     output.mkdir(mode=0o700)
+    started_unix = time.time_ns()
     started = time.monotonic_ns()
     status = "failed"
     returncode = None
@@ -252,7 +261,8 @@ def run_command(command, output, timeout):
                 "returncode": returncode, "error_category": error_category, "error_class": error_class,
                 "interrupted_signal": interrupted_signal, "cleanup_error": cleanup_error,
                 "elapsed_seconds": (time.monotonic_ns() - started) / 1e9,
-                "started_monotonic_ns": started, "command_executable": command[0],
+                "started_monotonic_ns": started, "started_unix_ns": started_unix, "identity": identity,
+                "command_executable": command[0],
                 "arguments": "not retained; record non-secret workload inputs separately"}, indent=2) + "\n")
     return returncode
 

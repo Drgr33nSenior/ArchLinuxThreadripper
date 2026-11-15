@@ -508,6 +508,10 @@ kernel mitigations or cluster defaults automatically.
 - `run.json` becomes successful only after the sampler completes. Failures
   retain the workload return code, error category/class and, for cancellation,
   signal number. A workload exit of zero does not override failed telemetry.
+- `run.json` also records `started_unix_ns` and an optional run-record-v1
+  `identity` (task, run, attempt, arm and causal parent). With an identity the
+  receipt joins independent acceptance and resource records; see
+  [Run records](RUN-RECORDS.md). Without one it stores `identity: null`.
 - The shared runner handles SIGTERM/SIGINT even when imported by storage. It
   terminates only its owned workload group, escalates to KILL after five seconds,
   and preserves the original failure/cancellation. Storage retains a failed
