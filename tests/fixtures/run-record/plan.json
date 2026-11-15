@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "kind": "run-plan",
+  "interface": "run-record-v1",
+  "run_id": "fixture-run-1",
+  "arm_id": "fixture-arm",
+  "declared_unix_ns": 1700000000000000000,
+  "latency_targets": {
+    "task_wall_seconds": 150
+  },
+  "tasks": [
+    {
+      "task_id": "fixture-completed",
+      "task_version": "v1"
+    },
+    {
+      "task_id": "fixture-failed",
+      "task_version": "v1"
+    },
+    {
+      "task_id": "fixture-retried",
+      "task_version": "v1"
+    }
+  ]
+}

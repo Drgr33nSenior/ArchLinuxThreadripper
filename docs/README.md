@@ -58,6 +58,7 @@ For a one-page overview of what is running, start with the [README](../README.md
 | [Security](SECURITY.md) | Trust boundaries and what is exposed where |
 | [Bridge contract](BRIDGE-CONTRACT.md) | The management bridge's session API |
 | [Performance validation](PERFORMANCE-VALIDATION.md) | How serving measurements are taken and compared |
+| [Run records](RUN-RECORDS.md) | Task, run, attempt and arm identity, failure categories, and joining independent acceptance to attempts and resources |
 | [Source register](SOURCES.md) | Primary references and when to refresh them |
 
 ## History
