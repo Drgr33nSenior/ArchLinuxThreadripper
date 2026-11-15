@@ -118,8 +118,8 @@ and adds its configuration and two PVCs. Other overlays are unchanged.
 
 - Open WebUI: **0.13.3** for every overlay (`rag`/`service` and the assistant
   overlays), built by the `webui` AI-stack stage from the workstation fork (commit
-  `7be5703691a278f7621d44e3d89d2197540af3f2`, upstream `b0e6098e9409` plus the reasoning slider, the per-group search confirmation, the context wheel and the OpenMettle theme),
-  image `registry.lan.thespry.family/local/open-webui:411fe4974c28@sha256:0f6dba18dc8597c373a56d43d65becc7dfeb932e91e8f9da6920b4ac2b904b00`,
+  `cf2e76e5e9ac698f757e88e17c3cdea1f565fead`, upstream `b0e6098e9409` plus the reasoning slider, the per-group search confirmation, the context wheel and the OpenMettle theme),
+  image `registry.lan.thespry.family/local/open-webui:e586f0d59c50@sha256:f95eba78447a62624352190a78840f6f6bedfaedff2e6cd92199e1ae68af1245`,
   recorded in `versions.lock` and digest-pinned in
   `apps/overlays/rag/kustomization.yaml` and
   `apps/components/assistant/kustomization.yaml` (13 November 2026; previously

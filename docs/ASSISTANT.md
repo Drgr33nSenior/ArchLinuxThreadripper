@@ -1070,7 +1070,10 @@ also leaves faint.
   welcome and footer stay.
 - Palette only: remove the `webui-theme` ConfigMap entry and mount; Open WebUI's greys and
   blue return outside the chat area.
-- Everything: pin the previous image, `open-webui:c75701350acc@sha256:bd4e2abc0cb6a95e8910d764fa2d897a32d07d1bf63492950f6a0e00ec8f37ab`
+- Plain-text replies only: pin `open-webui:411fe4974c28@sha256:0f6dba18dc8597c373a56d43d65becc7dfeb932e91e8f9da6920b4ac2b904b00`
+  (fork commit `7be5703691a2`), or set `OPENMETTLE_BRANDING` to `'false'`, which also brings
+  back Open WebUI's name and icons.
+- Everything: pin `open-webui:c75701350acc@sha256:bd4e2abc0cb6a95e8910d764fa2d897a32d07d1bf63492950f6a0e00ec8f37ab`
   (fork commit `fa1bf005570b`), in `versions.lock`, `infrastructure/ai-stack/stack.lock` and
   the two kustomizations, or revert the change that introduced it.
 
@@ -1539,12 +1542,12 @@ failed-test-to-fix cycle, interrupt and resume, and context compaction.
 ## Pinned inputs and gates
 
 The new experience pins Open WebUI **0.13.3** from the workstation fork
-(`Drgr33nSenior/open-webui`, commit `7be5703691a278f7621d44e3d89d2197540af3f2`: upstream
+(`Drgr33nSenior/open-webui`, commit `cf2e76e5e9ac698f757e88e17c3cdea1f565fead`: upstream
 `b0e6098e9409` plus provider-declared Model Controls, four dependency fixes, the
 [per-group web search confirmation](#web-search-confirmation-per-group), the
 [context wheel](#context-wheel) and the [OpenMettle theme](#openmettle-theme)), built,
 scanned and signed by the `webui` AI-stack stage as
-`registry.lan.thespry.family/local/open-webui:411fe4974c28@sha256:0f6dba18dc8597c373a56d43d65becc7dfeb932e91e8f9da6920b4ac2b904b00`.
+`registry.lan.thespry.family/local/open-webui:e586f0d59c50@sha256:f95eba78447a62624352190a78840f6f6bedfaedff2e6cd92199e1ae68af1245`.
 The legacy `service` experience retains its previous selection. The older RAG
 functional gate is evidence for its recorded image, not qualification of 0.13.3.
 Run a fresh UI/account, upload/ACL, retrieval, web-search/tool and image-return
