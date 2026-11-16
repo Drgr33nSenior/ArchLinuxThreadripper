@@ -84,10 +84,12 @@ For `family` and `coder` the command:
    and memory) and runs a server-side dry run of the whole render. Then it drains chat,
    waits for running pictures and videos to finish (new ones are refused while draining),
    stops every GPU workload, confirms both cards are free, applies the render, waits for
-   the gateway and other services to roll out, and starts SGLang, then the picture
-   generators in family mode.
-4. **Prints the gateway status** and the new context limit. If you use Qwen Code, refresh
-   its settings from the render's `client.conf`.
+   the gateway and other services to roll out, waits until the new gateway answers through
+   its Service address (up to 60 seconds), and starts SGLang, then the picture generators
+   in family mode. Any failed step stops the switch: see [if a switch stops](#if-a-switch-stops).
+4. **Checks and prints the gateway status**: it must be `ready` with the render's model and,
+   in family mode only, pictures on. It also prints the new context limit. If you use Qwen
+   Code, refresh its settings from the render's `client.conf`.
 
 Each render keeps its `mode-plan.json` and `apply.json` beside it, as a record of what
 was applied.
@@ -151,6 +153,56 @@ The pre-checks are: the same boot as the hardware evidence, enough CPU and memor
 pod of the mode together, and no GPU user outside the managed workloads. SGLang starts first
 so it sizes its cache before any picture memory is in use. If any step fails, the session is
 marked failed and the gateway closes for chat and pictures alike until a switch succeeds.
+
+### If a switch stops
+
+Every step of a switch must succeed, and a failed step stops it there. It never goes on to
+the next step. That covers each pre-check, each change to the gateway's admission
+(`draining`, `starting`, then `ready`, or `maintenance` for gaming and maintenance), each
+Deployment identity check, and the session state writes. After the transition has begun,
+a stop also marks the session failed and closes the gateway. The command always exits
+non-zero.
+
+| Failed step | What has happened | What has not |
+| --- | --- | --- |
+| A pre-check (boot, CPU Manager, node, GPUs, qualification, served model, capacity, dry run) or the first state write | Nothing | No workload is stopped and the gateway is untouched |
+| `draining` | Nothing; the running workloads are untouched | No workload is stopped |
+| Gateway wait or `starting` | Every GPU workload is stopped, and the render, if any, is applied | SGLang and the picture generators are not started |
+| SGLang or a picture generator was replaced while stopped (a new UID) | The Deployments before it are running | It and the ones after it are not started |
+| Gateway wait or `ready`/`maintenance` | The new mode's workloads are running | The session is not marked ready; builds stay inhibited |
+
+The error starts with `switch stopped`, or names the check that failed. A refused or
+unreachable admission call first prints `Gateway admission update failed:` with its cause,
+the gateway's phase and the recovery commands.
+
+When the switch has finished, `workstationctl mode` checks the gateway's status. In `family`
+and `coder` it must report `ready`, the render's model, and pictures on (`family`) or off
+(`coder`). In `gaming` and `maintenance` it must report `maintenance`. If the status
+differs or doesn't answer, the command fails with `the switch finished, but the gateway
+reports …`, even though the session itself is ready.
+
+**Recovery means switching forward.** Fix the cause, then rerun a mode: the same
+`workstationctl mode NAME --execute`, or the mode you were in before. A rerun renders and
+applies again, then starts the workloads in order.
+
+`workstationctl session restore` is **not** a rollback of a mode switch:
+
+- It sets the AI and game Deployments back to the replica counts recorded when the session
+  state file was first created. Those counts are never updated after a switch.
+- It never restarts the picture generators.
+- It does not re-apply the render that was live before the switch.
+
+**The gateway wait.** Applying a render replaces the gateway Pod. Kubernetes reports the
+new Pod ready a little before its Service sends traffic to it, so a call made at once can be
+refused. The gateway can also restart while SGLang loads, which can take up to 35 minutes.
+Before the `starting` call, and again before the final `ready` or `maintenance` call, the
+switch therefore asks for the gateway's `/_service/status` through the same Service address
+and port the calls use.
+
+- It retries only connection failures (refused, reset, timed out).
+- It waits 1, 2, 4, then 8 seconds between tries and prints each wait.
+- It gives up after 60 seconds in all.
+- It never retries an HTTP answer other than 200: that stops the switch at once.
 
 ## Planned
 

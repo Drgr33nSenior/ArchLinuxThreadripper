@@ -30,15 +30,30 @@ ws_mode_hardware() {
 ws_mode_gateway_status() {
   local address
   address="$(ws_session_kubectl -n "$SESSION_NAMESPACE" get service litellm -o json | jq -er .spec.clusterIP)" || return 1
-  curl --silent --max-time 5 "http://$address:4000/_service/status"
+  curl --silent --noproxy '*' --max-time 5 "http://$address:4000/_service/status"
+}
+
+# The switch's postcondition: the gateway reports the phase the session left it in and, when
+# ready, the model and picture admission of the mode. Without the shared service the
+# gateway is not session-managed and is not checked.
+ws_mode_gateway_check() {
+  local phase="$1" model="$2" images="$3" status
+  [[ ${SESSION_SERVICE_ENABLED:-false} == true ]] || return 0
+  status="$(ws_mode_gateway_status)" || ws_die 'the switch finished, but the gateway status did not answer: check the gateway before use'
+  if ! jq -e --arg phase "$phase" --arg model "$model" --argjson images "$images" \
+    '.phase == $phase and (if $phase == "ready" then .model == $model and .images == $images else true end)' <<<"$status" >/dev/null 2>&1; then
+    ws_die "the switch finished, but the gateway reports $(jq -c '{phase, model, images}' <<<"$status" 2>/dev/null || printf 'an unreadable status'); expected phase $phase$([[ $phase != ready ]] || printf ', model %s, images %s' "$model" "$images"). Rerun the switch"
+  fi
+  ws_note "gateway: $status"
 }
 
 # Every step exits explicitly on failure: callers (tests, the Bridge) may run this
-# where bash ignores `set -e`, such as inside an `if` condition. The same holds for every
-# function called as `f || exit 1` below, ws_session_switch included: `set -e` does not
-# apply inside it there, so it stops on each failure itself.
+# where bash ignores `set -e`, such as inside an `if` condition. ws_session_switch is called
+# as a plain command, so `set -e` applies inside it whenever it applies here (#258); it also
+# stops on each failure itself, for callers that disable `set -e`.
 ws_mode() (
   set -euo pipefail
+  shopt -s inherit_errexit
   local name="$1" execute="${2:-}" session_mode render_mode='' hardware dir root stamp render managed summary contract
   # Read by ws_session_service: a failed admission update names this command for recovery.
   # shellcheck disable=SC2034
@@ -62,7 +77,12 @@ ws_mode() (
       ws_note 'plan only; rerun with --execute to switch'
       exit 0
     }
-    ws_session_switch "$session_mode" "$hardware" "$dir" --execute || exit 1
+    local switched
+    ws_session_switch "$session_mode" "$hardware" "$dir" --execute
+    # Reached after a failure only where the caller disabled `set -e`: stop there too.
+    switched=$?
+    ((switched == 0)) || exit "$switched"
+    ws_mode_gateway_check maintenance none false
     exit 0
   fi
 
@@ -113,7 +133,15 @@ ws_mode() (
     exit 0
   fi
 
-  ws_session_switch "$session_mode" "$hardware" "$dir" --execute "$render/apply.json" || exit 1
-  ws_note "gateway: $(ws_mode_gateway_status || printf 'not answering')"
+  # The model the gateway must report once the switch is done, read from the render.
+  local model=none switched
+  if [[ ${SESSION_SERVICE_ENABLED:-false} == true ]]; then
+    model="$(WS_SESSION_APPLY="$render/apply.json" ws_session_service_model)" || exit 1
+  fi
+  ws_session_switch "$session_mode" "$hardware" "$dir" --execute "$render/apply.json"
+  # Reached after a failure only where the caller disabled `set -e`: stop there too.
+  switched=$?
+  ((switched == 0)) || exit "$switched"
+  ws_mode_gateway_check ready "$model" "$([[ $name == family ]] && printf true || printf false)"
   ws_note "coding clients: the context limit is now $(jq -r .context <<<"$contract") tokens; refresh Qwen Code from $render/client.conf"
 )

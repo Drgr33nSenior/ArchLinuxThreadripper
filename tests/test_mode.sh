@@ -43,7 +43,10 @@ date() {
   printf '%s' "$tick" >"$work/clock"
   printf '20261112T1200%02dZ\n' "$tick"
 }
-curl() { printf '{"phase":"ready","model":"Qwen3.8-27B-MXFP4","images":true,"active":0}'; }
+# The gateway's status after the switch (the postcondition ws_mode checks).
+gateway_status() { printf '{"phase":"%s","model":%s,"images":%s,"active":0}' "$1" "$2" "$3" >"$work/gateway-status"; }
+gateway_status ready '"Qwen3.8-27B-MXFP4"' true
+curl() { cat "$work/gateway-status"; }
 ws_session_switch() { printf '%s\n' "$*" >>"$work/switch.log"; }
 ws_session_kubectl() {
   if [[ ${1:-} == -n ]]; then shift 2; fi
@@ -68,9 +71,11 @@ if [[ \$1 == */service.py && \$2 == render ]]; then
   mkdir -p "\$4"
   jq -n --arg status "\$(cat "$work/contract-status")" '{status: \$status, contract: "fixture.UQS",
     selection: {arm: "UQS"}, budgets: {context_length: 81888, max_total_tokens: 163840}}' >"\$4/serving-contract.json"
-  for name in sglang swarmui comfyui-gpu0 litellm; do
+  # SGLang carries its served model, as a serving-contract render does.
+  printf -- '---\napiVersion: apps/v1\nkind: Deployment\nmetadata: {name: sglang, namespace: ai-home-lab}\nspec: {replicas: 0, template: {spec: {containers: [{name: sglang, args: [--served-model-name, Qwen3.8-27B-MXFP4]}]}}}\n' >"\$4/workloads.yaml"
+  for name in swarmui comfyui-gpu0 litellm; do
     printf -- '---\napiVersion: apps/v1\nkind: Deployment\nmetadata: {name: %s, namespace: ai-home-lab}\nspec: {replicas: 0}\n' "\$name"
-  done >"\$4/workloads.yaml"
+  done >>"\$4/workloads.yaml"
   exit 0
 fi
 exec python3 "\$@"
@@ -101,8 +106,10 @@ ws_mode family --execute 2>/dev/null >/dev/null
 render="$(latest_render)"
 [[ "$(tail -n 1 "$work/switch.log")" == "shared $work/hardware.json $work/state --execute $render/apply.json" ]]
 
-# coder: the large render and the ai session.
+# coder: the large render and the ai session; the gateway admits no pictures.
+gateway_status ready '"Qwen3.8-27B-MXFP4"' false
 ws_mode coder --execute 2>/dev/null >/dev/null
+gateway_status ready '"Qwen3.8-27B-MXFP4"' true
 grep -q -- '--mode large' "$work/render.log"
 [[ "$(tail -n 1 "$work/switch.log")" == "ai $work/hardware.json $work/state --execute $(latest_render)/apply.json" ]]
 
@@ -114,7 +121,10 @@ tail -n 1 "$work/render.log" | grep -q -- "--mode shared .*--sandbox-config $wor
 
 # gaming and maintenance switch the session without rendering, even with no site file.
 renders=$(wc -l <"$work/render.log")
-MODE_SERVICE_SITE='' ws_mode gaming --execute 2>/dev/null
+gateway_status maintenance null false
+MODE_SERVICE_SITE='' ws_mode gaming --execute 2>/dev/null >"$work/mode.out"
+grep -q '^gateway: {"phase":"maintenance"' "$work/mode.out"
+gateway_status ready '"Qwen3.8-27B-MXFP4"' true
 [[ "$(tail -n 1 "$work/switch.log")" == "gaming $work/hardware.json $work/state --execute" ]]
 ws_mode maintenance 2>/dev/null
 [[ "$(tail -n 1 "$work/switch.log")" == "gaming $work/hardware.json $work/state --execute" ]]
@@ -141,6 +151,7 @@ grep -q 'no hardware evidence for this boot' "$work/failure.log"
 mv "$work/hardware.moved" "$work/hardware.json"
 [[ $(wc -l <"$work/switch.log") == "$switches" ]]
 # A failed session switch fails the mode command, which then reports nothing more (#258).
+# shellcheck disable=SC2329 # called indirectly by ws_mode
 ws_session_switch() {
   printf '%s\n' "$*" >>"$work/switch.log"
   return 1
@@ -167,6 +178,35 @@ ws_session_switch shared "$work/hardware.json" "$work/state" --execute "$work/ap
 grep -q -- "--hardware $work/hardware.json --state-directory $work/state --switch shared --apply $work/apply.json\$" "$work/admission.log"
 ws_session_switch restore "$work/hardware.json" "$work/state" --execute
 grep -q -- "--state-directory $work/state --switch restore\$" "$work/admission.log"
+# The postcondition (#258): the switch exits 0 only when the gateway reports the phase, model
+# and picture admission of the mode. Each mismatch, or no answer, fails the command.
+ws_session_switch() { printf '%s\n' "$*" >>"$work/switch.log"; }
+ws_mode family --execute >"$work/mode.out" 2>&1
+grep -q '^gateway: {"phase":"ready","model":"Qwen3.8-27B-MXFP4","images":true' "$work/mode.out"
+expect_wrong_gateway() {
+  gateway_status "$@"
+  expect_failure ws_mode family --execute
+  grep -q 'the switch finished, but the gateway reports {"phase":' "$work/failure.log"
+  grep -q 'expected phase ready, model Qwen3.8-27B-MXFP4, images true' "$work/failure.log"
+}
+expect_wrong_gateway starting '"Qwen3.8-27B-MXFP4"' true
+expect_wrong_gateway ready '"Qwen3.5-9B"' true
+expect_wrong_gateway ready '"Qwen3.8-27B-MXFP4"' false
+gateway_status ready '"Qwen3.8-27B-MXFP4"' true
+expect_failure ws_mode coder --execute
+grep -q 'images false' "$work/failure.log"
+expect_failure ws_mode gaming --execute
+grep -q 'expected phase maintenance' "$work/failure.log"
+printf 'not json' >"$work/gateway-status"
+expect_failure ws_mode family --execute
+grep -q 'reports an unreadable status' "$work/failure.log"
+gateway_status ready '"Qwen3.8-27B-MXFP4"' true
+# The model is read from the render before the switch: an unqualified one is refused first.
+switches=$(wc -l <"$work/switch.log")
+ws_session_service_model() { ws_die 'unqualified service model identity'; }
+expect_failure ws_mode family --execute
+grep -q 'unqualified service model identity' "$work/failure.log"
+(($(wc -l <"$work/switch.log") == switches))
 # The boot-time evidence unit runs as a system service: it must provide HOME and ROCm's tools.
 unit="$root/templates/workstation/session/workstation-hardware-evidence.service"
 grep -qx 'Environment=HOME=/root' "$unit"
