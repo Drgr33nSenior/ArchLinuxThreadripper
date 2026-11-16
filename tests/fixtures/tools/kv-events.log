@@ -1,0 +1,7 @@
+2026-11-14T18:40:00.000000001Z [2026-11-14 18:40:00 TP0] Elastic KV tail: self-test passed
+2026-11-14T18:45:10.123456789Z [2026-11-14 18:45:10 TP0] Elastic KV tail: grew by 98304 tokens in 1.2 s
+2026-11-14T19:00:00.500000000Z [2026-11-14 19:00:00 TP0] Elastic KV tail: shrank in 0.84 s; released 6.00 GiB, moved 1200 tokens to the base, evicted 0
+2026-11-14T19:30:00.000000000Z [2026-11-14 19:30:00 TP0] Elastic KV tail: shrank in 2.50 s; released 6.00 GiB, moved 300 tokens to the base, evicted 4096
+2026-11-14T19:40:00.000000000Z [2026-11-14 19:40:00 TP0] Elastic KV tail: shrank in 1.10 s; released 6.00 GiB, moved 0 tokens to the base, evicted 512
+2026-11-14T19:45:00.000000000Z [2026-11-14 19:45:00 TP0] Elastic KV tail: refused a shrink: 2 running requests hold tail slots
+2026-11-14T20:00:00.000000000Z [2026-11-14 20:00:00 TP0] Elastic KV tail: grow deferred: fault=none, waiting for idle

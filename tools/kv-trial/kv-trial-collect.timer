@@ -1,0 +1,10 @@
+# User unit: install as ~/.config/systemd/user/kv-trial-collect.timer next to kv-trial-collect.service.
+[Unit]
+Description=Elastic KV trial: collect SGLang tail events every 5 minutes (stop after the trial)
+
+[Timer]
+OnCalendar=*:0/5
+Persistent=true
+
+[Install]
+WantedBy=timers.target
