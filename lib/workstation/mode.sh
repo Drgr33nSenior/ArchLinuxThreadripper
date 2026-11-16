@@ -38,6 +38,9 @@ ws_mode_gateway_status() {
 ws_mode() (
   set -euo pipefail
   local name="$1" execute="${2:-}" session_mode render_mode='' hardware dir root stamp render managed summary contract
+  # Read by ws_session_service: a failed admission update names this command for recovery.
+  # shellcheck disable=SC2034
+  local WS_MODE_NAME="$name"
   session_mode="$(ws_mode_session_name "$name")" || exit 1
   [[ -z "$execute" || "$execute" == --execute ]] || ws_die 'the only option is --execute'
   [[ "$name" != family ]] || render_mode=shared

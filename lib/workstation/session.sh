@@ -44,6 +44,16 @@ ws_session_service() {
     media="$(jq -er '.spec.clusterIP + ":" + (.spec.ports[0].port | tostring)' <<<"$tools")" || ws_die 'cannot resolve service-tools'
     extra+=(--media-address "$media")
   fi
+  # For the recovery commands a failed update prints: the calling ws_session_switch's
+  # mode, hardware, dir and apply, and WS_MODE_NAME when `workstationctl mode` started it.
+  [[ -z ${hardware:-} ]] || extra+=(--hardware "$hardware")
+  [[ -z ${dir:-} ]] || extra+=(--state-directory "$dir")
+  if [[ -n ${WS_MODE_NAME:-} ]]; then
+    extra+=(--mode-name "$WS_MODE_NAME")
+  elif [[ -n ${mode:-} ]]; then
+    extra+=(--switch "$mode")
+    [[ -z ${apply:-} ]] || extra+=(--apply "$apply")
+  fi
   "$(ws_measure_python)" "$(ws_repo_root)/lib/workstation/service_session.py" "$address" "$SESSION_SERVICE_CONTROL_FILE" "$phase" "$model" "${extra[@]}"
 }
 

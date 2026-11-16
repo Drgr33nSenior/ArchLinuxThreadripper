@@ -6,6 +6,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import sqlite3
 import sys
 import tempfile
@@ -610,11 +611,17 @@ class AdmissionFailureMessageTests(unittest.TestCase):
         return urllib.error.HTTPError("http://10.43.25.61:4000/_service/control", status, "refused", {},
                                       io.BytesIO(json.dumps(body).encode()))
 
+    CTL = "sudo workstationctl --config /etc/workstation/workstation.conf"
+
     def assert_failure(self, text, reason, phase="unavailable"):
-        self.assertIn(f"Gateway admission update failed: {reason}.", text)
+        self.assertIn(f"Gateway admission update failed: {reason}.\n", text)
         self.assertIn(f"Gateway phase now: {phase}.", text)
-        self.assertIn("rerun the switch (sudo workstationctl mode <name> --execute)", text)
-        self.assertIn("session restore <hardware.json> <state-directory> --execute", text)
+        self.assertIn(f"rerun the switch ({self.CTL} mode <name> --execute)", text)
+        self.assertRegex(text, r"restore the previous session \(" + re.escape(self.CTL) +
+                         r" session restore /var/lib/workstation-evidence/boot-(<id>|[0-9a-f]{32})/hardware\.json "
+                         r"/var/lib/workstation-session --execute\)")
+        # The failed step is printed before the status query runs.
+        self.assertLess(text.index("Gateway admission update failed: "), text.index("Gateway phase now: "))
 
     def test_success_prints_nothing_and_exits_zero(self):
         code, text, sent = self.run_main("ready", [{"phase": "ready", "active": 0}], argv=["--images"])
@@ -716,6 +723,117 @@ class AdmissionFailureMessageTests(unittest.TestCase):
             self.assertNotIn(self.KEY, str(caught.exception))
             with self.assertRaisesRegex(service_session.AdmissionError, r"unreadable \(No such file or directory\)"):
                 service_session.read_credential(Path(directory) / "missing")
+
+    def test_credential_content_problems_never_show_the_content(self):
+        import service_session
+        root_owned = SimpleNamespace(st_uid=0, st_mode=0o100600)
+        cases = (("short".encode(), r"is too short$"),
+                 (b"\xff" + self.KEY.encode(), r"unreadable \(UnicodeDecodeError\)$"),
+                 ((self.KEY[:24] + "\r\n" + self.KEY[24:]).encode(), "has characters a request header cannot carry$"),
+                 ((self.KEY + "é").encode(), "has characters a request header cannot carry$"))
+        with tempfile.TemporaryDirectory() as directory:
+            credential = Path(directory) / "control-key"
+            for content, message in cases:
+                credential.write_bytes(content)
+                with mock.patch.object(service_session.Path, "stat", lambda path, **kw: root_owned), \
+                        self.assertRaisesRegex(service_session.AdmissionError, message) as caught:
+                    service_session.read_credential(credential)
+                self.assertNotIn(self.KEY[:24], str(caught.exception))
+            credential.write_bytes(self.KEY.encode() + b"\n")
+            with mock.patch.object(service_session.Path, "stat", lambda path, **kw: root_owned):
+                self.assertEqual(self.KEY, service_session.read_credential(credential))
+
+    def test_answer_without_an_active_count_is_named_exactly(self):
+        code, text, _ = self.run_main("ready", [{"phase": "ready"}])
+        self.assertEqual(1, code)
+        self.assert_failure(text, "ready: control call to 10.43.25.61:4000 answered without an active request count")
+
+    def test_an_unexpected_error_is_named_by_type(self):
+        code, text, _ = self.run_main("draining", [{"phase": "draining", "active": 0}],
+                                      argv=["--media-address", "10.43.0.9:8000"], status={"phase": "draining"},
+                                      environ={"SESSION_MEDIA_DRAIN_SECONDS": "soon"})
+        self.assertEqual(1, code)
+        self.assert_failure(text, "draining: unexpected ValueError", phase="draining")
+        self.assertNotIn("soon", text)
+
+    def test_recovery_names_the_command_that_started_the_switch(self):
+        where = ["--hardware", "/var/lib/workstation-evidence/boot-ab/hardware.json",
+                 "--state-directory", "/var/lib/workstation-session"]
+        restore = (f"restore the previous session ({self.CTL} session restore "
+                   "/var/lib/workstation-evidence/boot-ab/hardware.json /var/lib/workstation-session --execute)")
+        cases = ((["--mode-name", "family"], f"({self.CTL} mode family --execute)"),
+                 (["--switch", "shared", "--apply", "/var/lib/workstation-mode/x/apply.json"],
+                  f"({self.CTL} session switch shared /var/lib/workstation-evidence/boot-ab/hardware.json "
+                  "/var/lib/workstation-session --execute --apply /var/lib/workstation-mode/x/apply.json)"),
+                 (["--switch", "maintenance"], f"({self.CTL} session switch maintenance "
+                  "/var/lib/workstation-evidence/boot-ab/hardware.json /var/lib/workstation-session --execute)"),
+                 (["--switch", "restore"], f"({self.CTL} session restore "
+                  "/var/lib/workstation-evidence/boot-ab/hardware.json /var/lib/workstation-session --execute)"))
+        for extra, rerun in cases:
+            code, text, _ = self.run_main("ready", [], euid=1000, argv=[*where, *extra])
+            self.assertEqual(1, code)
+            self.assertIn(f"To recover, fix the cause and rerun the switch {rerun}, or {restore}.", text)
+
+    def test_default_hardware_is_this_boots_evidence(self):
+        import service_session
+        with mock.patch.object(service_session.Path, "read_text", lambda path: "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0\n"):
+            self.assertEqual("/var/lib/workstation-evidence/boot-0f1e2d3c4b5a69788796a5b4c3d2e1f0/hardware.json",
+                             service_session.default_hardware())
+        with mock.patch.object(service_session.Path, "read_text", mock.Mock(side_effect=FileNotFoundError)):
+            self.assertEqual("/var/lib/workstation-evidence/boot-<id>/hardware.json", service_session.default_hardware())
+
+    def test_real_opener_against_a_loopback_gateway(self):
+        """A refusal and a non-HTTP reply from a real socket: the failure line is printed and no
+        body (both echo the key) reaches the output."""
+        import http.server
+        import threading
+        import service_session
+        key = self.KEY.encode()
+        behaviour = {}
+
+        class Gateway(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def garbage(self):
+                self.wfile.write(b"GARBAGE " + key + b"\r\n\r\n")
+                self.close_connection = True
+
+            def do_POST(self):
+                self.rfile.read(int(self.headers["Content-Length"]))
+                if behaviour["control"] == "garbage":
+                    return self.garbage()
+                body = json.dumps({"error": {"code": "invalid_control_credential"}, "echo": self.KEY}).encode()
+                self.send_response(401)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self):
+                self.garbage()
+
+        Gateway.KEY = self.KEY
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Gateway)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        port = server.server_address[1]
+        for mode, reason in (("refuse", "refused: HTTP 401 invalid_control_credential"),
+                             ("garbage", "answer malformed (BadStatusLine)")):
+            behaviour["control"] = mode
+            stderr = io.StringIO()
+            argv = ["service_session.py", "127.0.0.1", "/etc/workstation/control-key", "starting", "Qwen3.8-27B-MXFP4"]
+            with mock.patch.object(service_session, "GATEWAY_PORT", port), \
+                    mock.patch.object(service_session, "read_credential", lambda path: self.KEY), \
+                    mock.patch.object(service_session.os, "geteuid", lambda: 0), \
+                    mock.patch.object(sys, "argv", argv), mock.patch.object(sys, "stderr", stderr):
+                self.assertEqual(1, service_session.main())
+            text = stderr.getvalue()
+            self.assert_failure(text, f"starting: control call to 127.0.0.1:{port} {reason}",
+                                phase="unknown (its status did not answer)")
+            self.assertNotIn(self.KEY, text)
+            self.assertNotIn("GARBAGE", text)
+            self.assertNotIn("echo", text)
 
 
 class CandidatePlanTests(unittest.TestCase):

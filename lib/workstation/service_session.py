@@ -1,5 +1,6 @@
 """Private host-to-gateway admission control; caller holds the session lock."""
 import argparse
+import http.client
 import ipaddress
 import json
 import os
@@ -13,9 +14,11 @@ import urllib.request
 
 PHASES = ("ready", "starting", "draining", "maintenance", "unavailable")
 DRAIN_SECONDS = 180
-RECOVERY = ("To recover, fix the cause and rerun the switch (sudo workstationctl mode <name> --execute), "
-            "or restore the previous session (sudo workstationctl session restore <hardware.json> "
-            "<state-directory> --execute).")
+GATEWAY_PORT = 4000
+# `session switch` and `session restore` load no configuration by themselves and sudo
+# resets the environment, so the recovery commands name the host configuration.
+WORKSTATIONCTL = "sudo workstationctl --config /etc/workstation/workstation.conf"
+STATE_DIRECTORY = "/var/lib/workstation-session"
 
 
 class AdmissionError(ValueError):
@@ -44,7 +47,7 @@ def cause(error):
     if isinstance(error, urllib.error.HTTPError):
         try:
             code = json.loads(error.read(4096))["error"]["code"]
-        except (OSError, ValueError, TypeError, KeyError):
+        except (OSError, ValueError, TypeError, KeyError, http.client.HTTPException):
             code = None
         # Gateway refusal codes are fixed identifiers; anything else in the body is not echoed.
         suffix = f" {code}" if isinstance(code, str) and re.fullmatch(r"[a-z_]{1,64}", code) else ""
@@ -55,6 +58,7 @@ def cause(error):
         return "no answer within 5 s"
     if isinstance(error, OSError):
         return f"unreachable: {error.strerror or type(error).__name__}"
+    # A malformed reply (bad status line, bad JSON) is named by its type only, never echoed.
     return f"answer malformed ({type(error).__name__})"
 
 
@@ -70,6 +74,10 @@ def read_credential(credential):
         raise AdmissionError(f"control credential {credential} unreadable ({reason})") from None
     if len(key) < 32:
         raise AdmissionError(f"control credential {credential} is too short")
+    # Checked here so a line break or non-ASCII byte is named as a credential problem,
+    # not as a failed request.
+    if not re.fullmatch(r"[\x21-\x7e]+", key):
+        raise AdmissionError(f"control credential {credential} has characters a request header cannot carry")
     return key
 
 
@@ -77,17 +85,17 @@ def control(address, credential, phase, model=None, images=False, cancel=False):
     if not private(address):
         raise AdmissionError(f"gateway address {address} is not a private ClusterIP")
     key = read_credential(credential)
-    request = urllib.request.Request(f"http://{address}:4000/_service/control",
+    request = urllib.request.Request(f"http://{address}:{GATEWAY_PORT}/_service/control",
         data=json.dumps({"phase": phase, "model": model, "images": images, "cancel": cancel}).encode(),
         headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"})
-    call = "cancel call" if cancel else "control call"
+    call = f"{'cancel' if cancel else 'control'} call to {address}:{GATEWAY_PORT}"
     try:
         with opener().open(request, timeout=5) as response:
             answer = json.loads(response.read(8192))
-    except (OSError, ValueError) as error:
-        raise AdmissionError(f"{call} to {address}:4000 {cause(error)}") from None
+    except (OSError, ValueError, http.client.HTTPException) as error:
+        raise AdmissionError(f"{call} {cause(error)}") from None
     if not isinstance(answer, dict) or type(answer.get("active")) is not int:
-        raise AdmissionError(f"{call} to {address}:4000 answered without an active request count")
+        raise AdmissionError(f"{call} answered without an active request count")
     return answer
 
 
@@ -96,9 +104,9 @@ def gateway_phase(address):
     if not private(address):
         return None
     try:
-        with opener().open(f"http://{address}:4000/_service/status", timeout=5) as response:
+        with opener().open(f"http://{address}:{GATEWAY_PORT}/_service/status", timeout=5) as response:
             phase = json.loads(response.read(4096)).get("phase")
-    except (OSError, ValueError, AttributeError):
+    except Exception:  # Best-effort label after a failure; the reply is never echoed.
         return None
     return phase if phase in PHASES else None
 
@@ -112,7 +120,7 @@ def media_active(address):
         with opener().open(f"http://{host}:{port}/health", timeout=5) as response:
             health = json.loads(response.read(65536))
         return int(health.get("image_active", 0)) + int(bool(health.get("video_active")))
-    except (OSError, ValueError, TypeError, AttributeError) as error:
+    except (OSError, ValueError, TypeError, AttributeError, http.client.HTTPException) as error:
         raise AdmissionError(f"service-tools health at {address} {cause(error)}") from None
 
 
@@ -134,11 +142,39 @@ def wait_for_media(address, seconds):
         raise AdmissionError(f"{active} picture/video job(s) still running after {seconds} s")
 
 
-def report_failure(address, phase, reason):
-    """Name the failed step, the phase the gateway is left in, and the way back."""
-    now = gateway_phase(address)
-    print(f"Gateway admission update failed: {phase}: {reason}.", file=sys.stderr)
-    print(f"Gateway phase now: {now or 'unknown (its status did not answer)'}. {RECOVERY}", file=sys.stderr)
+def default_hardware():
+    """This boot's evidence path, as `workstationctl mode` finds it (mode.sh)."""
+    try:
+        boot = Path("/proc/sys/kernel/random/boot_id").read_text().strip().replace("-", "")
+    except OSError:
+        boot = ""
+    return f"/var/lib/workstation-evidence/boot-{boot if re.fullmatch(r'[0-9a-f]{32}', boot) else '<id>'}/hardware.json"
+
+
+def recovery(args):
+    """The commands that return to a known session, for the command that started this switch."""
+    hardware = args.hardware or default_hardware()
+    state = args.state_directory or STATE_DIRECTORY
+    restore = f"{WORKSTATIONCTL} session restore {hardware} {state} --execute"
+    if args.mode_name:
+        rerun = f"{WORKSTATIONCTL} mode {args.mode_name} --execute"
+    elif args.switch == "restore":
+        rerun = restore
+    elif args.switch:
+        rerun = f"{WORKSTATIONCTL} session switch {args.switch} {hardware} {state} --execute"
+        if args.apply:
+            rerun += f" --apply {args.apply}"
+    else:
+        rerun = f"{WORKSTATIONCTL} mode <name> --execute"
+    return f"To recover, fix the cause and rerun the switch ({rerun}), or restore the previous session ({restore})."
+
+
+def report_failure(args, reason):
+    """Name the failed step first, so it is printed whatever the status query does, then the
+    phase the gateway is left in and the way back."""
+    print(f"Gateway admission update failed: {args.phase}: {reason}.", file=sys.stderr, flush=True)
+    now = gateway_phase(args.address)
+    print(f"Gateway phase now: {now or 'unknown (its status did not answer)'}. {recovery(args)}", file=sys.stderr)
 
 
 def main():
@@ -149,6 +185,14 @@ def main():
     parser.add_argument("model", choices=("Qwen3.8-27B-FP8", "Qwen3.5-9B", "Qwen3.8-27B-MXFP4", "none"))
     parser.add_argument("--images", action="store_true")
     parser.add_argument("--media-address", help="service-tools ClusterIP:port; draining waits for its jobs")
+    # Used only for the recovery commands printed on failure.
+    parser.add_argument("--hardware", help="hardware evidence of the switch")
+    parser.add_argument("--state-directory", help="session state directory of the switch")
+    parser.add_argument("--mode-name", choices=("family", "coder", "gaming", "maintenance"),
+                        help="set when `workstationctl mode` started the switch")
+    parser.add_argument("--switch", choices=("ai", "split", "shared", "gaming", "maintenance", "restore"),
+                        help="the `session switch` mode otherwise")
+    parser.add_argument("--apply", help="the render the switch applies")
     args = parser.parse_args()
     try:
         if os.geteuid() != 0:
@@ -169,10 +213,10 @@ def main():
             if args.media_address:
                 wait_for_media(args.media_address, int(os.environ.get("SESSION_MEDIA_DRAIN_SECONDS", "1260")))
     except AdmissionError as error:
-        report_failure(args.address, args.phase, str(error))
+        report_failure(args, str(error))
         return 1
-    except (ValueError, OSError, KeyError, TypeError) as error:
-        report_failure(args.address, args.phase, f"unexpected {type(error).__name__}")
+    except (ValueError, OSError, KeyError, TypeError, http.client.HTTPException) as error:
+        report_failure(args, f"unexpected {type(error).__name__}")
         return 1
     return 0
 
