@@ -858,6 +858,18 @@ UID/GID 2002 (pipeline key `baecbd9e012f`, digest `sha256:556b91a5…cca7` in
 UID 1000. Trivy counts and the policy result are unchanged. The fake-API probe
 of the pod builder above was not repeated for this image.
 
+On 2026-11-16 both images were rebuilt from `3805d1a97c54` for the blocked-site
+status page and the tool-result hint (PR #251). The egress stage (key
+`7abee9dd9aa3`, digest `sha256:3f6bb7ce…8746`) ran `go vet` and the unit tests
+under Go 1.26.11 on Linux, where the cross-workspace subtest that connects from
+`127.0.0.2` runs and passed. Its smoke read the status page in both groups. The
+sandbox stage (key `edcc35e92216`, digest `sha256:9823c172…b17a`) passed its
+smoke as `--user 2002:2002` through the wrapped `terminal.py`. Both passed the
+Trivy policy with no exceptions; the egress image has no findings, and the
+sandbox image's critical and high counts are unchanged (newer database: 701
+medium, 973 low, 44 unknown). Both were signed, attested and verified. The
+hint inside a live Chromium workspace was not checked.
+
 The earlier native-tool smoke still stands: `/execute` wrote and served **Star
 catcher**, Playwright 1.65.2 clicked three stars and observed the win state, and
 the native file tool returned the PNG ([captured screenshot](assets/sandbox-game-20261114.png)).
