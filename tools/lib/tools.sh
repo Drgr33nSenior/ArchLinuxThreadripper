@@ -47,15 +47,16 @@ tools::load_site() {
   done
 }
 
-# tools::check_site_file FILE: stop unless FILE is a regular file owned by you and not group- or
-# world-writable.
+# tools::check_site_file FILE: stop unless FILE (after symlinks) is a regular file owned by you
+# and not group- or world-writable.
 tools::check_site_file() {
   local mode
   [[ -f $1 && -O $1 ]] || {
     printf 'STOP: %s must be a regular file owned by you\n' "$1" >&2
     exit 1
   }
-  mode=$(stat -c '%a' -- "$1" 2>/dev/null || stat -f '%Lp' -- "$1")
+  # -f and -O follow symlinks; stat -L makes the mode the target's too.
+  mode=$(stat -L -c '%a' -- "$1" 2>/dev/null || stat -L -f '%Lp' -- "$1")
   (((8#$mode & 8#022) == 0)) || {
     printf 'STOP: %s is writable by others (mode %s); chmod 600 it\n' "$1" "$mode" >&2
     exit 1

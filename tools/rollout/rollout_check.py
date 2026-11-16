@@ -11,7 +11,7 @@ Reads local files only. Exits 1 when
   - the rendered SGLang environment differs from the live one, unless EXPECT_SGLANG_ENV names every
     changed variable, or EXPECT_SGLANG_ENV names a variable the render does not change.
 
-EXPECT_CHANGED="deployment=container:memory ..."   reviewed sizing changes (requests = limits = memory)
+EXPECT_CHANGED="deployment=container:memory ..."   reviewed memory changes (init containers: init:NAME)
 EXPECT_SGLANG_ENV="NAME ..."                       reviewed SGLang environment changes
 """
 import copy
@@ -33,11 +33,12 @@ def sizing(dep):
 
 
 def parse_expected(text):
-    """EXPECT_CHANGED text -> {deployment: (container, memory)}."""
+    """EXPECT_CHANGED text -> {deployment: (container, memory)}. The memory follows the last ":",
+    so an init container is named init:NAME (sglang=init:prepare:5Gi)."""
     expected = {}
     for item in text.split():
         name, sep, rest = item.partition("=")
-        container, colon, memory = rest.partition(":")
+        container, colon, memory = rest.rpartition(":")
         if not (name and sep and container and colon and memory):
             raise ValueError(f"EXPECT_CHANGED item {item!r} is not deployment=container:memory")
         expected[name] = (container, memory)

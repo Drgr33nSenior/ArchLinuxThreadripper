@@ -36,7 +36,8 @@ a confirmation before live changes where the original asked.
 
 `rollout-main.sh` allows a reviewed sizing change only as named: with
 `EXPECT_CHANGED="deployment=container:memory"` the rendered Deployment must equal live except
-that container's memory request and limit, both set to the value given. Any other change (CPU,
+that container's memory request and limit, both set to the value given (name an init
+container `init:NAME`). Any other change (CPU,
 other resources, other containers or init containers) stops the rollout.
 
 `SHA12` names a shipped tree: `$WORKSTATION_SRC_DIR/archlinuxthreadripper-SHA12`

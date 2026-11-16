@@ -152,6 +152,20 @@ class CheckTests(unittest.TestCase):
     def test_a_render_without_sglang_stops(self):
         self.assertFalse(self.check([d for d in render() if d["metadata"]["name"] != "sglang"])[1])
 
+    def test_an_init_container_is_named_init_name(self):
+        self.assertEqual({"sglang": ("init:prepare", "5Gi")}, rollout_check.parse_expected("sglang=init:prepare:5Gi"))
+        live = copy.deepcopy(LIVE)
+        init = {"name": "prepare", "resources": {"requests": {"memory": "1Gi"}, "limits": {"memory": "1Gi"}}}
+        live[1]["spec"]["template"]["spec"]["initContainers"] = [init]
+        rendered = copy.deepcopy(live)
+        for section in ("requests", "limits"):
+            rendered[1]["spec"]["template"]["spec"]["initContainers"][0]["resources"][section]["memory"] = "5Gi"
+        allow = rollout_check.parse_expected("comfyui-gpu0=init:prepare:5Gi")
+        self.assertTrue(rollout_check.check(rendered, live, IMAGE, allow, [])[1])
+        self.assertFalse(rollout_check.check(rendered, live, IMAGE, {}, [])[1])
+        wrong = rollout_check.parse_expected("comfyui-gpu0=prepare:5Gi")  # the main container's name space
+        self.assertFalse(rollout_check.check(rendered, live, IMAGE, wrong, [])[1])
+
     def test_malformed_allowlist_items_are_refused(self):
         for text in ("comfyui-gpu0", "comfyui-gpu0=comfyui", "=c:9Gi", "d=:9Gi", "d=c:"):
             with self.subTest(text=text), self.assertRaises(ValueError):

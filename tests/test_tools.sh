@@ -90,6 +90,16 @@ chmod 600 "$work/site.env"
 mkdir "$work/site.d"
 if WORKSTATION_SITE_ENV=$work/site.d site NAS_ADDRESS >/dev/null 2>&1; then fail 'a directory was accepted as the site file'; fi
 [[ $(site NAS_ADDRESS) == NAS_ADDRESS=192.0.2.10 ]] || fail 'a 0600 site file was refused'
+# A symlinked site file is judged by its target.
+ln -s "$work/site.env" "$work/site-link.env"
+[[ $(WORKSTATION_SITE_ENV=$work/site-link.env site NAS_ADDRESS) == NAS_ADDRESS=192.0.2.10 ]] ||
+  fail 'a symlink to a 0600 site file was refused'
+chmod 620 "$work/site.env"
+if out=$(WORKSTATION_SITE_ENV=$work/site-link.env site NAS_ADDRESS 2>&1); then
+  fail 'a symlink to a group-writable site file was accepted'
+fi
+grep -q 'is writable by others (mode 620)' <<<"$out" || fail "symlinked group-writable site file: $out"
+chmod 600 "$work/site.env"
 # SSH destinations and dataset names from site values cannot carry options or shell words.
 for value in -oProxyCommand=x 'host;id' 'user@host extra' ''; do
   # shellcheck disable=SC2016 # expanded by the inner shell
