@@ -151,17 +151,24 @@ def default_hardware():
     return f"/var/lib/workstation-evidence/boot-{boot if re.fullmatch(r'[0-9a-f]{32}', boot) else '<id>'}/hardware.json"
 
 
+def word(value, placeholder):
+    """A mode name as given, when it is one plain word; otherwise the placeholder. The recovery
+    options are never validated against a fixed list: a mode added to the shell side later must
+    not make every admission call (draining included) fail its argument parsing."""
+    return value if re.fullmatch(r"[a-z]{1,32}", value or "") else placeholder
+
+
 def recovery(args):
     """The commands that return to a known session, for the command that started this switch."""
     hardware = args.hardware or default_hardware()
     state = args.state_directory or STATE_DIRECTORY
     restore = f"{WORKSTATIONCTL} session restore {hardware} {state} --execute"
     if args.mode_name:
-        rerun = f"{WORKSTATIONCTL} mode {args.mode_name} --execute"
+        rerun = f"{WORKSTATIONCTL} mode {word(args.mode_name, '<name>')} --execute"
     elif args.switch == "restore":
         rerun = restore
     elif args.switch:
-        rerun = f"{WORKSTATIONCTL} session switch {args.switch} {hardware} {state} --execute"
+        rerun = f"{WORKSTATIONCTL} session switch {word(args.switch, '<mode>')} {hardware} {state} --execute"
         if args.apply:
             rerun += f" --apply {args.apply}"
     else:
@@ -188,10 +195,8 @@ def main():
     # Used only for the recovery commands printed on failure.
     parser.add_argument("--hardware", help="hardware evidence of the switch")
     parser.add_argument("--state-directory", help="session state directory of the switch")
-    parser.add_argument("--mode-name", choices=("family", "coder", "gaming", "maintenance"),
-                        help="set when `workstationctl mode` started the switch")
-    parser.add_argument("--switch", choices=("ai", "split", "shared", "gaming", "maintenance", "restore"),
-                        help="the `session switch` mode otherwise")
+    parser.add_argument("--mode-name", help="set when `workstationctl mode` started the switch")
+    parser.add_argument("--switch", help="the `session switch` mode otherwise")
     parser.add_argument("--apply", help="the render the switch applies")
     args = parser.parse_args()
     try:

@@ -243,6 +243,7 @@ kubectl -n ai-home-lab exec deploy/litellm -c gateway -- python -c \
 | Situation | What to do |
 | --- | --- |
 | Switch between family (shared), coder (large), gaming and maintenance | `sudo workstationctl mode family` (or `coder`, `gaming`, `maintenance`); add `--execute` after checking the plan. See [service modes](MODES.md#switch-modes) |
+| A mode switch fails (`switch stopped`, `Gateway admission update failed` or `the gateway reports`) | It stopped at the failed step without going further. Fix the cause named in the message, then rerun a mode (`mode NAME --execute`). `session restore` is not a rollback. See [if a switch stops](MODES.md#if-a-switch-stops) |
 | After a reboot, a GPU pod fails with `unresolvable CDI devices` | The DRA driver lost its per-claim device files. Scale the GPU consumers to zero and back: [post-reboot CDI fix](HOME-LAB.md#4-gpu-operator-and-allocation) |
 | Pictures refused with `image_backend_needs_operator_check` | A cancelled or failed picture left a marker. Check both generators are idle, then remove it: [picture recovery](ASSISTANT.md#pinned-inputs-and-gates) |
 | A video never arrives or chat says `video_busy` | Check `comfyui-gpu0`'s queue: [short videos](ASSISTANT.md#short-videos-shared-mode) |

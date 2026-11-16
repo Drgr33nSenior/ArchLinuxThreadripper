@@ -774,6 +774,21 @@ class AdmissionFailureMessageTests(unittest.TestCase):
             self.assertEqual(1, code)
             self.assertIn(f"To recover, fix the cause and rerun the switch {rerun}, or {restore}.", text)
 
+    def test_an_unknown_or_malformed_mode_name_never_blocks_the_admission_call(self):
+        """The recovery options carry no fixed list: a mode added to the shell side later still
+        reaches the gateway, and a value that is not one plain word is not echoed."""
+        code, text, sent = self.run_main("draining", [{"phase": "draining", "active": 0}],
+                                         argv=["--mode-name", "holiday"])
+        self.assertEqual((0, ""), (code, text))
+        self.assertEqual(["draining"], [call["phase"] for call in sent])
+        for extra, rerun in ((["--mode-name", "holiday"], f"{self.CTL} mode holiday --execute"),
+                             (["--mode-name", "family; reboot"], f"{self.CTL} mode <name> --execute"),
+                             (["--switch", "Shared"], f"{self.CTL} session switch <mode> ")):
+            code, text, _ = self.run_main("ready", [], euid=1000, argv=extra)
+            self.assertEqual(1, code)
+            self.assertIn(f"rerun the switch ({rerun}", text)
+            self.assertNotIn("reboot", text)
+
     def test_default_hardware_is_this_boots_evidence(self):
         import service_session
         with mock.patch.object(service_session.Path, "read_text", lambda path: "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0\n"):

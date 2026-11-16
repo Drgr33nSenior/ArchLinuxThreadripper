@@ -13,7 +13,9 @@
 #   EXPECT_CHANGED="deployment=container:memory ..."   that container's memory request and limit;
 #                                                      all other sizing must equal live
 #   EXPECT_SGLANG_ENV="NAME ..."                       SGLang environment variables that may change
-# SGLang restarts only when its rendered pod template changed; service-tools usually restarts.
+# The re-apply is `mode family --execute`: it always drains the gateway, stops SGLang and the picture
+# generators and starts them again (chat is down while SGLang loads), whether or not their templates
+# changed; service-tools usually restarts too.
 # Optional site value CHAT_PROBE: a chat probe script (URL COUNT -> JSON) run against SGLang at the end.
 set -euo pipefail
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
