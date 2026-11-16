@@ -132,8 +132,8 @@ HERMES_AGENT_COMMIT=13fb5e1eceba51fc45a48b5d95a357e144d42689
 OPEN_TERMINAL_VERSION=0.17.9
 TERMINALS_VERSION=0.3.3
 PLAYWRIGHT_VERSION=1.65.2
-# Built, scanned, signed and pushed by the sandbox and egress pipeline stages: egress on
-# 2026-11-14, sandbox on 2026-11-15 (UID/GID 2002 account; smoke uid/gid 2002).
+# Built, scanned, signed and pushed by the sandbox and egress pipeline stages on 2026-11-16
+# from 3805d1a97c54 (PR #251: the proxy's blocked-site status page and the tool-result hint).
 # Candidates: the owner supplies the digests to --sandbox-config after review.
-ASSISTANT_SANDBOX_CANDIDATE_IMAGE=registry.lan.thespry.family/local/assistant-sandbox@sha256:556b91a52b297dfd54647e3eebe0d113807ea713112651313735b1fce557cca7
-SANDBOX_EGRESS_CANDIDATE_IMAGE=registry.lan.thespry.family/local/sandbox-egress@sha256:6b2f50ed118f960a82a5790dc31b6abfbef759d149e50a2488f6aa8f36a86c4a
+ASSISTANT_SANDBOX_CANDIDATE_IMAGE=registry.lan.thespry.family/local/assistant-sandbox@sha256:9823c172e257d6073cb47a6bf71ef1eb51f8a209e44f98c5c4600a01562eb17a
+SANDBOX_EGRESS_CANDIDATE_IMAGE=registry.lan.thespry.family/local/sandbox-egress@sha256:3f6bb7ce1511914c35c5d591892857e0a7cb71f5a99897880a85ec2743908746
