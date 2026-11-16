@@ -23,6 +23,7 @@ exists. No third-party modules.
 import argparse
 import bisect
 import collections
+from contextlib import ExitStack
 import datetime
 import hashlib
 import json
@@ -166,7 +167,7 @@ def bind(plan, identity, now_unix_ns=None):
     """Digest of the plan an attempt starts under, for the attempt's records and requests.
 
     Call it when the attempt starts. report() later refuses any attempt or
-    request-trace event whose digest differs from the plan it is given, so a
+    matched request-trace event whose digest differs from the plan it is given, so a
     target, task or arm edited after an attempt started is rejected.
     """
     digest = plan_digest(plan)
@@ -293,6 +294,42 @@ def attempt_from_receipt(receipt, deployment=None, tokens=None, tool_calls=None)
         "failure": None if succeeded else {"category": category,
                                            "source": "measurement:" + str(receipt.get("error_category") or "status")},
         "tool_calls": tool_calls, "tokens": tokens})
+
+
+def attempt_from_run_directory(directory, deployment=None, tokens=None, tool_calls=None):
+    """Read a final receipt, or retain a lost runner as failed with observed wall time only.
+
+    No final receipt means the actual end is unknown. The recovered interval
+    ends at the latest valid telemetry timestamp, or at its start when none
+    exists. It is a lower bound, not an estimate of unobserved consumed work.
+    Call only after the runner is known to have stopped; missing files alone
+    cannot distinguish a killed runner from a command still in progress.
+    """
+    directory = Path(directory)
+    try:
+        receipt = json.loads((directory / "run.json").read_text())
+    except FileNotFoundError:
+        start = json.loads((directory / "run-start.json").read_text())
+        _keys(start, ("schema", "kind", "interface", "identity", "plan_sha256", "started_unix_ns"),
+              name="attempt start")
+        _header(start, "attempt-start")
+        _ns(start["started_unix_ns"], "attempt start started_unix_ns")
+        ended = start["started_unix_ns"]
+        try:
+            for row in _telemetry_rows(directory / "telemetry.jsonl"):
+                instant = row.get("unix_ns") if isinstance(row, dict) else None
+                if type(instant) is int and ended < instant < MAX_NS:
+                    ended = instant
+        except FileNotFoundError:
+            pass
+        return validate_attempt({
+            "schema": SCHEMA, "kind": "attempt", "interface": INTERFACE,
+            "identity": start["identity"], "plan_sha256": start["plan_sha256"],
+            "deployment": dict.fromkeys(DEPLOYMENT_KEYS) if deployment is None else deployment,
+            "started_unix_ns": start["started_unix_ns"], "ended_unix_ns": ended,
+            "outcome": "failed", "failure": {"category": "environment", "source": "measurement:no-receipt"},
+            "tokens": tokens, "tool_calls": tool_calls})
+    return attempt_from_receipt(receipt, deployment, tokens, tool_calls)
 
 
 def acceptance_from_result(result):
@@ -532,12 +569,12 @@ def _traces(plan, attempts, traces, digest):
         validate_trace(trace)
         identity = trace["identity"]
         _require(identity["run_id"] == plan["run_id"], "request trace belongs to another run")
-        _require(trace["plan_sha256"] == digest,
-                 "request trace was recorded under a different plan; a plan cannot change after an attempt starts")
         attempt = by_attempt.get(identity["attempt_id"])
         if attempt is None:
             unmatched += 1
             continue
+        _require(trace["plan_sha256"] == digest,
+                 "request trace was recorded under a different plan; a plan cannot change after an attempt starts")
         _require(identity == attempt["identity"], "request trace identity differs from its attempt")
         grouped.setdefault(identity["attempt_id"], []).append(trace)
     return grouped, unmatched
@@ -568,6 +605,8 @@ def report(plan, attempts, acceptances, psu_samples=(), gpu_samples=(), traces=(
     for attempt in attempts:
         validate_attempt(attempt)
     chains = _chains(plan, attempts, digest)
+    missing_receipts = {a["identity"]["attempt_id"] for a in attempts
+                        if a["failure"] and a["failure"]["source"] == "measurement:no-receipt"}
     verdicts = {}
     by_attempt = {a["identity"]["attempt_id"]: a for a in attempts}
     for acceptance in map(acceptance_from_result, acceptances):
@@ -617,7 +656,8 @@ def report(plan, attempts, acceptances, psu_samples=(), gpu_samples=(), traces=(
                          "acceptance": verdict["verdict"] if verdict else "missing",
                          "acceptance_checker_sha256": verdict["checker_sha256"] if verdict else None,
                          "acceptance_spec_sha256": verdict["spec_sha256"] if verdict else None,
-                         "wall_seconds": wall, "tokens": attempt["tokens"], "tool_calls": attempt["tool_calls"],
+                         "wall_seconds": wall, "wall_time_complete": identity["attempt_id"] not in missing_receipts,
+                         "tokens": attempt["tokens"], "tool_calls": attempt["tool_calls"],
                          "request_trace": _trace_summary(events, attempt) if events else None,
                          "overlapping_attempts": overlapping[identity["attempt_id"]],
                          "psu_dc": psu_window(timeline, attempt["started_unix_ns"], attempt["ended_unix_ns"]),
@@ -630,7 +670,8 @@ def report(plan, attempts, acceptances, psu_samples=(), gpu_samples=(), traces=(
         else:
             final = rows[-1]["acceptance"]
             status = "rejected" if final == "rejected" else "unverified"
-        task_wall = ((accepted["ended_unix_ns"] - chain[0]["started_unix_ns"]) / 1e9) if accepted else None
+        task_wall = ((accepted["ended_unix_ns"] - chain[0]["started_unix_ns"]) / 1e9
+                     if accepted and accepted["identity"]["attempt_id"] not in missing_receipts else None)
         tasks.append({"task_id": declared["task_id"], "task_version": declared["task_version"], "status": status,
                       "attempts": len(chain), "failed_attempts": sum(1 for r in rows if r["failure_category"]),
                       "accepted_attempt_id": accepted["identity"]["attempt_id"] if accepted else None,
@@ -645,12 +686,17 @@ def report(plan, attempts, acceptances, psu_samples=(), gpu_samples=(), traces=(
     else:
         run_psu = run_gpu = None
     deployments = sorted({canonical(a["deployment"]) for a in attempts})
+    shipped_checker = hashlib.sha256(Path(task_acceptance.__file__).read_bytes()).hexdigest()
+    checkers = sorted({value["checker_sha256"] for value in verdicts.values()})
     accepted_tasks = [t for t in tasks if t["status"] == "accepted"]
     return {
         "schema": SCHEMA, "kind": "run-record-report", "interface": INTERFACE,
         "acceptance_result": {"kind": task_acceptance.RESULT_KIND, "schema": task_acceptance.SCHEMA},
+        "acceptance_checkers": {"shipped_sha256": shipped_checker, "observed_sha256": checkers,
+                                "different_from_shipped": [value for value in checkers if value != shipped_checker],
+                                "changed": len(checkers) > 1},
         "run_id": plan["run_id"], "arm_id": plan["arm_id"], "plan_sha256": digest,
-        "plan_binding": "every attempt and request-trace event carries this digest from its start",
+        "plan_binding": "every recorded attempt and matched request-trace event carries this digest from its start",
         "latency_targets": plan["latency_targets"], "latency_targets_declared_unix_ns": plan["declared_unix_ns"],
         "deployments": [json.loads(d) for d in deployments], "deployment_changed": len(deployments) > 1,
         "summary": {"tasks_declared": len(tasks), "tasks_accepted": len(accepted_tasks),
@@ -661,6 +707,7 @@ def report(plan, attempts, acceptances, psu_samples=(), gpu_samples=(), traces=(
                     **totals, "failures_by_category": failures},
         "coverage": {"attempts_with_acceptance": sum(1 for a in attempts
                                                      if a["identity"]["attempt_id"] in verdicts),
+                     "attempts_without_final_receipt": len(missing_receipts),
                      "attempts_with_tokens": totals["tokens"]["attempts_with_tokens"],
                      "attempts_with_request_trace": len(traced),
                      "request_trace_events": len(traces), "unmatched_request_trace_events": unmatched_traces,
@@ -691,6 +738,16 @@ def _jsonl(path, limit=MAX_RECORDS, name="input"):
     return [] if path is None else [json.loads(line) for line in _lines(path, limit, name)]
 
 
+def _telemetry_rows(path):
+    """Invalid or torn rows break coverage; their contents are never copied."""
+    for line in _lines(path, MAX_SAMPLES, "telemetry"):
+        try:
+            row = json.loads(line)
+        except (ValueError, RecursionError):
+            row = None
+        yield row if isinstance(row, dict) else None
+
+
 def _write_lines(path, rows):
     """Write JSON lines to a new file; never replace an existing one."""
     count = 0
@@ -703,23 +760,39 @@ def _write_lines(path, rows):
 
 def resources_from_telemetry(telemetry, psu, gpu):
     """Write PSU and GPU run-record samples from a benchmark's telemetry.jsonl; returns the counts."""
-    rows = psu_available = 0
-    gpu_rows = []
-
-    def psu_samples():
-        nonlocal rows, psu_available
-        for line in _lines(telemetry, MAX_SAMPLES, "telemetry"):
-            row = json.loads(line)
-            rows += 1
-            sample = telemetry_power.sample_from_snapshot(row)
-            psu_available += sample["watts"] is not None
-            gpu_rows.extend(gpu_samples_from_snapshot(row))
-            _require(len(gpu_rows) <= MAX_SAMPLES, "too many GPU samples")
-            yield sample
-
-    _write_lines(psu, psu_samples())
-    return {"telemetry_rows": rows, "psu_samples": rows, "psu_samples_available": psu_available,
-            "gpu_samples": _write_lines(gpu, gpu_rows)}
+    rows = invalid = psu_available = gpu_rows = 0
+    created = []
+    try:
+        with ExitStack() as stack:
+            outputs = []
+            for path in (psu, gpu):
+                output = stack.enter_context(open(path, "x"))
+                created.append((Path(path), os.fstat(output.fileno())))
+                outputs.append(output)
+            psu_output, gpu_output = outputs
+            for row in _telemetry_rows(telemetry):
+                rows += 1
+                invalid += row is None
+                sample = telemetry_power.sample_from_snapshot(row)
+                psu_available += sample["watts"] is not None
+                psu_output.write(json.dumps(sample, sort_keys=True, allow_nan=False) + "\n")
+                for sample in gpu_samples_from_snapshot(row):
+                    gpu_rows += 1
+                    _require(gpu_rows <= MAX_SAMPLES, "too many GPU samples")
+                    gpu_output.write(json.dumps(sample, sort_keys=True, allow_nan=False) + "\n")
+    except BaseException:
+        # These names were created exclusively by this call. Preserve any
+        # pre-existing file or replacement with a different identity.
+        for path, owned in created:
+            try:
+                present = path.lstat()
+                if (present.st_dev, present.st_ino) == (owned.st_dev, owned.st_ino):
+                    path.unlink()
+            except FileNotFoundError:
+                pass
+        raise
+    return {"telemetry_rows": rows, "invalid_telemetry_rows": invalid, "psu_samples": rows,
+            "psu_samples_available": psu_available, "gpu_samples": gpu_rows}
 
 
 def traces_from_logs(logs, run_id, output):
@@ -795,9 +868,8 @@ def main():
             result = {"header": CONTEXT_HEADER, "environment": CONTEXT_ENV, "plan_sha256": digest,
                       "value": context_value(identity, digest)}
         elif args.action == "attempt":
-            receipt = json.loads((Path(args.run_directory) / "run.json").read_text())
-            result = attempt_from_receipt(
-                receipt, {"serving_contract": args.serving_contract, "model": args.model,
+            result = attempt_from_run_directory(
+                args.run_directory, {"serving_contract": args.serving_contract, "model": args.model,
                           "tokenizer_sha256": args.tokenizer_sha256, "template_sha256": args.template_sha256},
                 dict(zip(("prompt", "completion"), args.tokens)) if args.tokens else None,
                 dict(zip(("succeeded", "failed"), args.tool_calls)) if args.tool_calls else None)
@@ -812,7 +884,7 @@ def main():
             for result in results:
                 acceptance_from_result(result)
             lines = [json.dumps(result, sort_keys=True, allow_nan=False) for result in results]
-    except (OSError, ValueError) as error:
+    except (OSError, ValueError, RecursionError) as error:
         parser.exit(1, f"run record rejected: {error}\n")
     if args.action == "acceptance":
         print("\n".join(lines))  # The checker's records, unchanged, one per line.
