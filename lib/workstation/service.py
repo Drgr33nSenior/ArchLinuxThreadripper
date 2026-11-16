@@ -654,6 +654,13 @@ CATALOGUE_STATES = {"candidate": False, "selected": True}
 # ~92 at 120K, measured), well inside every mode's deadline. Think (effort xhigh) is not
 # capped at the gateway: it runs to the context limit (boundary.UNCAPPED_EFFORTS).
 DEFAULT_OUTPUT_TOKENS = 12288
+# Largest output limit a request at Max (effort xhigh) may name itself (gateway
+# effort_output_tokens, advertised as maxOutputTokens on the model list's xhigh level). A
+# coding client that caps its own Max replies (the OpenMettle ACP agent) would otherwise be
+# held to DEFAULT_OUTPUT_TOKENS, which its thinking alone can use up. 32768 is that client's
+# own Max cap: a fixed figure, not a measured percentile. From DEFAULT_OUTPUT_TOKENS up to
+# half the context (render --xhigh-output-tokens); a request naming no limit stays uncapped.
+XHIGH_OUTPUT_TOKENS = 32768
 # Gateway time budgets (the route ends 10 s earlier), 2026-11-13: a streamed reply that keeps
 # producing content is not cut short, a silent one is. Before, one total deadline per mode
 # (600 s shared, 1200 s large) cut long Max-effort replies and tool turns mid-stream.
@@ -762,7 +769,8 @@ def host_resources(profile, arm_name):
 
 
 def serving_contract(profile_path=SERVING_PROFILE, arm=None, runtime_image=None,
-                     output_tokens=DEFAULT_OUTPUT_TOKENS, deadline_seconds=None, reserve_tokens=16, mode="large"):
+                     output_tokens=DEFAULT_OUTPUT_TOKENS, deadline_seconds=None, reserve_tokens=16, mode="large",
+                     xhigh_output_tokens=XHIGH_OUTPUT_TOKENS):
     """Build the serving contract from the owner's profile, catalogue and stack lock."""
     if deadline_seconds is None:
         deadline_seconds = DEADLINE_SECONDS.get(mode, 180)
@@ -846,6 +854,8 @@ def serving_contract(profile_path=SERVING_PROFILE, arm=None, runtime_image=None,
     require(CONTRACT_ID.fullmatch(identity) is not None, "contract identity is not a bounded label value")
     require(type(output_tokens) is int and 128 <= output_tokens <= numbers["context_length"] // 2,
             "output allowance must be 128..half the context")
+    require(type(xhigh_output_tokens) is int and output_tokens <= xhigh_output_tokens <= numbers["context_length"] // 2,
+            "Max-effort output ceiling must be from the output allowance up to half the context")
     request_defaults = {"chat_template_kwargs": {"enable_thinking": template_kwargs["enable_thinking"]},
                         "reasoning_effort": server_effort} if template else None
     model, draft = catalog["model"], catalog["draft"]
@@ -881,7 +891,8 @@ def serving_contract(profile_path=SERVING_PROFILE, arm=None, runtime_image=None,
                                             "serving_chat.py let a server-default effort override every request's, "
                                             "measured 2026-11-11); the gateway applies the default effort only to "
                                             "requests that name none"},
-        "budgets": {**numbers, "output_tokens": output_tokens, "reserve_tokens": reserve_tokens,
+        "budgets": {**numbers, "output_tokens": output_tokens, "xhigh_output_tokens": xhigh_output_tokens,
+                    "reserve_tokens": reserve_tokens,
                     "input_tokens": numbers["context_length"] - output_tokens - reserve_tokens},
         "concurrency": {"gateway_admission": GATEWAY_ADMISSION, "native_running": numbers["max_running_requests"]},
         "deadlines": {"gateway_seconds": deadline_seconds, "route_seconds": deadline_seconds - 10,
@@ -1037,8 +1048,13 @@ def gateway_policy(contract, rendered, mode="large"):
     # Declared only for a contract with verified request defaults that accepts the level.
     declared = CHAT_REASONING_EFFORT if reasoning["request_defaults"] and CHAT_REASONING_EFFORT in reasoning["client_efforts"] else None
     image_models = ["Qwen3.5-9B"] + (list(rendered["gateway"]["chat_models"]) if mode == "shared" else [])
+    # The Max-effort ceiling, for a template that accepts xhigh.
+    xhigh = contract["budgets"]["xhigh_output_tokens"]
+    effort_limits = ({contract["model"]["alias"]: {"xhigh": xhigh}}
+                     if "xhigh" in reasoning["client_efforts"].values() else {})
     return {"contract": contract["contract"], "status": contract["status"],
             "chat_models": {**rendered["gateway"]["chat_models"], "Qwen3.5-9B": [4096, 1024]},
+            **({"effort_output_tokens": effort_limits} if effort_limits else {}),
             "image_models": image_models,
             "reasoning_efforts": contract["reasoning"]["client_efforts"],
             "default_reasoning_effort": (contract["reasoning"]["request_defaults"] or {}).get("reasoning_effort"),
@@ -1306,7 +1322,8 @@ def render(args):
         # renders, inactive, with its missing inputs listed in evidence.json.
         contract = serving_contract(args.serving_profile, getattr(args, "arm", None),
                                     getattr(args, "runtime_image", None),
-                                    getattr(args, "output_tokens", DEFAULT_OUTPUT_TOKENS), mode=args.mode)
+                                    getattr(args, "output_tokens", DEFAULT_OUTPUT_TOKENS), mode=args.mode,
+                                    xhigh_output_tokens=getattr(args, "xhigh_output_tokens", XHIGH_OUTPUT_TOKENS))
         objects, contract_rendered, contract_checks = apply_contract(objects, contract, args.mode, experience)
     existing = {}
     if getattr(args, "existing_claims", None):
@@ -1688,6 +1705,9 @@ def main():
     p.add_argument("--runtime-image", help="serving image pinned by digest, supplied by the serving owner")
     p.add_argument("--output-tokens", type=int, default=DEFAULT_OUTPUT_TOKENS,
                    help="client output allowance, at most half the contract context; unqualified")
+    p.add_argument("--xhigh-output-tokens", type=int, default=XHIGH_OUTPUT_TOKENS,
+                   help="largest output limit a Max-effort (xhigh) request may name, from --output-tokens "
+                        "up to half the contract context; unqualified")
     p = commands.add_parser("candidate-plan", help="compare a pinned selected native candidate with assistant source; offline only")
     p.add_argument("pointer"); p.add_argument("output")
     p.add_argument("--pointer-sha256", required=True)

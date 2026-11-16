@@ -63,6 +63,12 @@ for the allowance, so a conversation is full at the difference: Open WebUI's
 [context wheel](ASSISTANT.md#context-wheel) uses that. A router-supplied `max_input_tokens`
 is left unchanged: the input budget also reserves scheduler headroom, so adding the two
 fields does not recover the full window.
+The Max level (`xhigh`) of `supportedReasoningEfforts` also carries `maxOutputTokens`
+(32,768 under a serving contract, `--xhigh-output-tokens` at render): the largest
+`max_tokens` or `max_completion_tokens` a Max request may name. A Max request that names
+no limit still runs to the context limit, and other levels stay at `max_output_tokens`.
+The gateway counts no tokens, so a client that names a large limit sizes its input to
+leave that much of the window free; otherwise SGLang refuses the request.
 Open WebUI preserves the provider fields in `/api/models`, including in its nested `openai`
 metadata. ACP clients can use them for their context usage display after a catalog refresh.
 This metadata does not raise any inference limit or bypass provider enforcement.

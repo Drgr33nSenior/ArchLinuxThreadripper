@@ -86,6 +86,8 @@ class BoundaryTests(unittest.IsolatedAsyncioTestCase):
         served, other = json.loads(body)["data"]
         self.assertEqual([("none", "Off"), ("low", "Low"), ("medium", "Medium"), ("xhigh", "Max")],
                          [(o["reasoningEffort"], o["label"]) for o in served["supportedReasoningEfforts"]])
+        # No Max-effort ceiling in the source defaults: no level advertises one.
+        self.assertTrue(all(set(o) == {"reasoningEffort", "label"} for o in served["supportedReasoningEfforts"]))
         self.assertNotIn("defaultReasoningEffort", served)  # no contract default in this fixture
         self.assertNotIn("supportedReasoningEfforts", other)
         self.assertEqual(boundary.CHAT_MODELS[served["id"]][0], served["context_window"])
@@ -456,6 +458,42 @@ class BoundaryTests(unittest.IsolatedAsyncioTestCase):
         too_many = boundary.CHAT_MODELS[self.chat["model"]][1] + 1
         result = await request(self.gateway, "/v1/chat/completions", {**bare, "reasoning_effort": "xhigh", "max_tokens": too_many})
         self.assertEqual("output_limit_exceeded", json.loads(result[-1]["body"])["error"]["code"])
+
+    async def test_max_effort_output_ceiling(self):
+        """A ceiling for xhigh lets Max name a larger limit; other efforts and an unset limit are unchanged."""
+        bare = {k: v for k, v in self.chat.items() if k not in ("max_tokens", "max_completion_tokens")}
+        model = self.chat["model"]
+        cap = boundary.CHAT_MODELS[model][1]
+        ceiling = cap * 4
+        with patch.dict(boundary.EFFORT_OUTPUT_TOKENS, {model: {"xhigh": ceiling}}):
+            for effort, field, limit in (("xhigh", "max_tokens", ceiling), ("high", "max_completion_tokens", ceiling),
+                                         ("xhigh", "max_tokens", cap)):  # cap: what an older client sends
+                with self.subTest(effort=effort, field=field, limit=limit):
+                    result = await request(self.gateway, "/v1/chat/completions",
+                                           {**bare, "reasoning_effort": effort, field: limit})
+                    self.assertEqual(200, result[0]["status"])
+                    self.assertEqual(("xhigh", limit), (self.seen[-1][1]["reasoning_effort"], self.seen[-1][1][field]))
+            count = len(self.seen)
+            for effort, limit in (("xhigh", ceiling + 1), ("medium", cap + 1), ("low", ceiling), (None, cap + 1)):
+                with self.subTest(effort=effort, limit=limit):
+                    body = {**bare, "max_tokens": limit, **({"reasoning_effort": effort} if effort else {})}
+                    result = await request(self.gateway, "/v1/chat/completions", body)
+                    self.assertEqual("output_limit_exceeded", json.loads(result[-1]["body"])["error"]["code"])
+            self.assertEqual(count, len(self.seen))
+            # Max without a limit still runs to the context limit; other efforts still get the cap.
+            await request(self.gateway, "/v1/chat/completions", {**bare, "reasoning_effort": "xhigh"})
+            self.assertNotIn("max_tokens", self.seen[-1][1])
+            await request(self.gateway, "/v1/chat/completions", {**bare, "reasoning_effort": "medium"})
+            self.assertEqual(cap, self.seen[-1][1]["max_tokens"])
+            # The model list advertises the ceiling on the xhigh level only, and only for its model.
+            async def listing(scope, receive, send):
+                await boundary.reply(send, 200, {"object": "list", "data": [{"id": model}, {"id": "Qwen3.5-9B"}]})
+            messages = await request(boundary.GatewayBoundary(listing, self.mapping, self.control), "/v1/models", None, {}, "GET")
+            served, other = json.loads(b"".join(m.get("body", b"") for m in messages[1:]))["data"]
+            self.assertEqual([("none", None), ("low", None), ("medium", None), ("xhigh", ceiling)],
+                             [(o["reasoningEffort"], o.get("maxOutputTokens")) for o in served["supportedReasoningEfforts"]])
+            self.assertEqual(cap, served["max_output_tokens"])
+            self.assertFalse(any("maxOutputTokens" in o for o in other["supportedReasoningEfforts"]))
 
     async def test_candidate_alias_tool_roundtrip_with_reasoning_and_later_turn(self):
         """Fixture backend only: proves the boundary path, not native parsing or model behaviour."""
@@ -1658,6 +1696,18 @@ class ServingContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "overrides every per-request effort"):
             service.serving_contract(self.write_profile(self.profile))
 
+    def test_max_effort_ceiling_is_bounded_by_the_allowance_and_half_the_context(self):
+        contract = service.serving_contract(self.PROFILE)
+        context = contract["budgets"]["context_length"]
+        self.assertEqual((12288, 32768), (contract["budgets"]["output_tokens"], contract["budgets"]["xhigh_output_tokens"]))
+        self.assertEqual(context // 2, service.serving_contract(self.PROFILE, xhigh_output_tokens=context // 2)
+                         ["budgets"]["xhigh_output_tokens"])
+        self.assertEqual(4096, service.serving_contract(self.PROFILE, output_tokens=4096, xhigh_output_tokens=4096)
+                         ["budgets"]["xhigh_output_tokens"])
+        for value in (context // 2 + 1, 12287, "32768", None):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "Max-effort output ceiling"):
+                service.serving_contract(self.PROFILE, xhigh_output_tokens=value)
+
     def test_a_gateway_config_change_rolls_litellm(self):
         # The rewritten config keeps its kustomize name, so the hash of its final contents
         # on LiteLLM's pod template is what makes a contract change restart the gateway.
@@ -1831,6 +1881,7 @@ class ServingContractTests(unittest.TestCase):
         policy = json.loads(gateway["data"]["gateway-policy.json"])
         self.assertEqual([budgets["context_length"], budgets["output_tokens"]], policy["chat_models"][alias])
         self.assertNotIn(service.LEGACY_ALIAS, policy["chat_models"])
+        self.assertEqual({alias: {"xhigh": budgets["xhigh_output_tokens"]}}, policy["effort_output_tokens"])
         webui = {e["name"]: e.get("value") for e in named("Deployment", "open-webui")["spec"]["template"]["spec"]["containers"][0]["env"]}
         self.assertEqual(alias, webui["DEFAULT_MODELS"])
         # pin-config.py gets the names (only) of every variable the deployment sets, env files included.
@@ -1971,7 +2022,7 @@ class GatewayPolicyTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         saved = (dict(boundary.CHAT_MODELS), dict(boundary.REASONING_EFFORTS), dict(boundary.TEMPLATE_KWARGS),
                  boundary.ADMISSION_LIMIT, set(boundary.IMAGE_MODELS), boundary.DEFAULT_REASONING_EFFORT,
-                 boundary.DECLARED_REASONING_EFFORT)
+                 boundary.DECLARED_REASONING_EFFORT, dict(boundary.EFFORT_OUTPUT_TOKENS))
         def restore():
             for target, value in zip((boundary.CHAT_MODELS, boundary.REASONING_EFFORTS, boundary.TEMPLATE_KWARGS), saved):
                 target.clear()
@@ -1981,6 +2032,8 @@ class GatewayPolicyTests(unittest.IsolatedAsyncioTestCase):
             boundary.IMAGE_MODELS.update(saved[4])
             boundary.DEFAULT_REASONING_EFFORT = saved[5]
             boundary.DECLARED_REASONING_EFFORT = saved[6]
+            boundary.EFFORT_OUTPUT_TOKENS.clear()
+            boundary.EFFORT_OUTPUT_TOKENS.update(saved[7])
         self.addCleanup(restore)
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
@@ -2009,6 +2062,36 @@ class GatewayPolicyTests(unittest.IsolatedAsyncioTestCase):
             self.path.write_text(json.dumps({**service.gateway_policy(contract, rendered), **change}))
             with self.subTest(change=change), self.assertRaises(ValueError):
                 boundary.apply_policy(self.path)
+
+    async def test_rendered_policy_carries_the_max_effort_ceiling(self):
+        contract = service.serving_contract(ServingContractTests.PROFILE)
+        context, alias = contract["budgets"]["context_length"], contract["model"]["alias"]
+        rendered = service.candidate_render(service.contract_view(contract), 12288, 180, 16)
+        policy = service.gateway_policy(contract, rendered)
+        self.assertEqual({alias: {"xhigh": service.XHIGH_OUTPUT_TOKENS}}, policy["effort_output_tokens"])
+        self.path.write_text(json.dumps(policy))
+        boundary.apply_policy(self.path)
+        self.assertEqual({alias: {"xhigh": 32768}}, boundary.EFFORT_OUTPUT_TOKENS)
+        xhigh = next(o for o in boundary.reasoning_declaration(alias)["supportedReasoningEfforts"] if o["reasoningEffort"] == "xhigh")
+        self.assertEqual(32768, xhigh["maxOutputTokens"])
+        # From the allowance up to half the context, for an admitted model and an uncapped effort it maps to.
+        for limits in ({alias: {"xhigh": context // 2 + 1}}, {alias: {"xhigh": 12287}}, {alias: {"xhigh": "32768"}},
+                       {alias: {"medium": 16384}}, {alias: {"high": 16384}}, {"other": {"xhigh": 16384}},
+                       {alias: ["xhigh"]}, [alias]):
+            self.path.write_text(json.dumps({**policy, "effort_output_tokens": limits}))
+            with self.subTest(limits=limits), self.assertRaises(ValueError):
+                boundary.apply_policy(self.path)
+        self.path.write_text(json.dumps({**policy, "effort_output_tokens": {alias: {"xhigh": 32768}},
+                                         "reasoning_efforts": {"low": "low", "medium": "medium"}}))
+        with self.assertRaises(ValueError):
+            boundary.apply_policy(self.path)  # a ceiling for a level the policy does not map to
+        # A policy rendered before the ceiling existed: an explicit Max limit keeps the allowance.
+        self.path.write_text(json.dumps({k: v for k, v in policy.items() if k != "effort_output_tokens"}))
+        boundary.apply_policy(self.path)
+        self.assertEqual({}, boundary.EFFORT_OUTPUT_TOKENS)
+        # A template without xhigh gets no ceiling.
+        no_xhigh = dict(contract, reasoning=dict(contract["reasoning"], client_efforts={"low": "low", "medium": "medium"}))
+        self.assertNotIn("effort_output_tokens", service.gateway_policy(no_xhigh, rendered))
 
     async def test_rendered_policy_carries_the_streaming_budgets(self):
         saved = (boundary.FIRST_TOKEN_TIMEOUT, boundary.IDLE_TIMEOUT)

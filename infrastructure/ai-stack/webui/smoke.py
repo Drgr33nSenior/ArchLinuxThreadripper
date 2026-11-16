@@ -15,6 +15,9 @@ drives the HTTP API like the browser:
   `features.web_search_without_confirmation` (also beside a group that does not);
 - the model list keeps the gateway's `context_window` and `max_output_tokens`, also for an
   ordinary user on a stored model record: the context wheel has no other source for them.
+- the model list keeps the Max level's `maxOutputTokens` (the largest output limit a Max request
+  may name) in `supportedReasoningEfforts`, also for that user: the ACP coding agent sizes its
+  Max replies from it. The slider options still carry labels only.
 - with OPENMETTLE_BRANDING on (the family deployment's setting) the name, the icons and the
   install manifest are OpenMettle's, and the built pages carry the fork credit and the commit
   the image was built from (the footer's version line).
@@ -39,7 +42,8 @@ DECLARED = {
     "id": MODEL, "object": "model", "owned_by": "gateway",
     "supportedReasoningEfforts": [
         {"reasoningEffort": "none", "label": "Off"}, {"reasoningEffort": "low", "label": "Low"},
-        {"reasoningEffort": "medium", "label": "Medium"}, {"reasoningEffort": "xhigh", "label": "Max"}],
+        {"reasoningEffort": "medium", "label": "Medium"},
+        {"reasoningEffort": "xhigh", "label": "Max", "maxOutputTokens": 32768}],
     "defaultReasoningEffort": "low",
     "context_window": 100768, "max_output_tokens": 12288,
 }
@@ -97,6 +101,14 @@ def listed(token):
 def context_fields(model):
     """What the context wheel reads from a listed model: the declared window and output allowance."""
     return (model or {}).get("context_window"), (model or {}).get("max_output_tokens")
+
+
+def max_ceiling(model):
+    """The Max level's advertised output ceiling, as listed and in the nested provider entry."""
+    def ceiling(entry):
+        levels = (entry or {}).get("supportedReasoningEfforts") or []
+        return next((o.get("maxOutputTokens") for o in levels if isinstance(o, dict) and o.get("reasoningEffort") == "xhigh"), None)
+    return ceiling(model), ceiling((model or {}).get("openai"))
 
 
 def chat(token, choice=None):
@@ -189,6 +201,7 @@ def run_checks():
     check("clients see labels only", all(set(o) == {"label"} for o in effort.get("options", {}).values()))
     check("model list keeps the context window and output allowance", context_fields(model) == (100768, 12288),
           repr(context_fields(model)))
+    check("model list keeps the Max level's output ceiling", max_ceiling(model) == (32768, 32768), repr(max_ceiling(model)))
     for choice, expected in (("xhigh", "xhigh"), ("none", "none"), (None, "low")):
         status, seen = chat(admin, choice)
         check(f"choice {choice!r} reaches the backend as {expected!r}", status == 200 and seen == expected, f"{status} {seen!r}")
@@ -211,6 +224,8 @@ def run_checks():
     check("an ordinary user sees the provider's slider on the stored model", user_effort.get("display") == "slider")
     stored = context_fields(listed(user) if user else None)
     check("and its context window and output allowance", stored == (100768, 12288), repr(stored))
+    ceiling = max_ceiling(listed(user) if user else None)
+    check("and the Max level's output ceiling", ceiling == (32768, 32768), repr(ceiling))
     status, seen = chat(user, "xhigh") if user else (None, None)
     check("the user's choice reaches the backend", status == 200 and seen == "xhigh", f"{status} {seen!r}")
 
