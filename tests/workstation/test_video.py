@@ -6,7 +6,9 @@ import json
 from pathlib import Path
 import sys
 import tempfile
+import time
 import unittest
+from unittest import mock
 
 import httpx
 
@@ -169,6 +171,31 @@ class VideoToolTests(unittest.IsolatedAsyncioTestCase):
         self.gate.set()
         self.assertFalse((await first).json()["result"]["isError"])
         self.assertEqual(1, len(self.submitted))
+
+    async def test_the_clip_deadline_holds_when_a_disconnect_check_swallows_the_cancellation(self):
+        # The patched is_disconnected() blocks until cancelled and absorbs that cancellation once, so the
+        # deadline can only land inside it (the test's own wait_for still gets through on a regression).
+        swallowed = []
+
+        async def swallowing(_request):
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                if swallowed:
+                    raise
+                swallowed.append(True)
+            return False
+
+        self.gate = asyncio.Event()  # history never answers, so only the deadline can end the request
+        # The budget starts after /prompt is queued; 1 s leaves room for the first poll on a slow runner.
+        self.tools.video.profile = {**self.tools.video.profile, "timeout_seconds": 1}
+        started = time.monotonic()
+        with mock.patch("starlette.requests.Request.is_disconnected", swallowing):
+            response = await asyncio.wait_for(self.call({"prompt": "a puppy"}), timeout=10)
+        self.assertLess(time.monotonic() - started, 5)
+        self.assertEqual([True], swallowed)
+        self.assertEqual(503, response.status_code)  # the existing error path for a timed-out render
+        self.assertEqual(["/prompt", "/queue", "/interrupt"], [c.url.path for c in self.calls if c.url.host == "comfy"])
 
     async def test_bad_arguments_and_bad_artifacts_are_refused(self):
         for arguments in ({}, {"prompt": ""}, {"prompt": "x", "orientation": "ultrawide"}, {"prompt": "x", "steps": 50}):
