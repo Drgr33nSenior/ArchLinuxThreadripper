@@ -186,13 +186,16 @@ class VideoToolTests(unittest.IsolatedAsyncioTestCase):
                 swallowed.append(True)
             return False
 
-        self.tools.video.profile = {**self.tools.video.profile, "timeout_seconds": 1}  # room for setup
+        self.gate = asyncio.Event()  # history never answers, so only the deadline can end the request
+        # The budget starts after /prompt is queued; 1 s leaves room for the first poll on a slow runner.
+        self.tools.video.profile = {**self.tools.video.profile, "timeout_seconds": 1}
         started = time.monotonic()
         with mock.patch("starlette.requests.Request.is_disconnected", swallowing):
             response = await asyncio.wait_for(self.call({"prompt": "a puppy"}), timeout=10)
         self.assertLess(time.monotonic() - started, 5)
         self.assertEqual([True], swallowed)
         self.assertEqual(503, response.status_code)  # the existing error path for a timed-out render
+        self.assertEqual(["/prompt", "/queue", "/interrupt"], [c.url.path for c in self.calls if c.url.host == "comfy"])
 
     async def test_bad_arguments_and_bad_artifacts_are_refused(self):
         for arguments in ({}, {"prompt": ""}, {"prompt": "x", "orientation": "ultrawide"}, {"prompt": "x", "steps": 50}):
