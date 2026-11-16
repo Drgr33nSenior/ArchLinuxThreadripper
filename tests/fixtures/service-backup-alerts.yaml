@@ -36,3 +36,18 @@ tests:
     alert_rule_test:
       - {eval_time: 49h, alertname: WorkstationLocalBackupStale, exp_alerts: []}
       - {eval_time: 49h, alertname: WorkstationLocalBackupFailed, exp_alerts: []}
+  - name: key-onboarding-repeated-failures-alert-and-one-failure-does-not
+    interval: 1m
+    input_series:
+      - {series: 'kube_pod_status_phase{namespace="ai-home-lab",pod="key-onboarding-1-a",phase="Failed"}', values: '1+0x30'}
+      - {series: 'kube_pod_status_phase{namespace="ai-home-lab",pod="key-onboarding-2-b",phase="Failed"}', values: '0x9 1+0x20'}
+      - {series: 'kube_pod_status_phase{namespace="ai-home-lab",pod="key-onboarding-3-c",phase="Failed"}', values: '0x14 1+0x15'}
+      - {series: 'kube_pod_status_phase{namespace="ai-home-lab",pod="key-onboarding-4-d",phase="Succeeded"}', values: '1+0x30'}
+      - {series: 'kube_pod_status_phase{namespace="ai-home-lab",pod="open-webui-x",phase="Failed"}', values: '1+0x30'}
+    alert_rule_test:
+      - {eval_time: 12m, alertname: WorkstationKeyOnboardingFailing, exp_alerts: []}
+      - eval_time: 16m
+        alertname: WorkstationKeyOnboardingFailing
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations: {summary: 'Family key onboarding keeps failing; read the code in ConfigMap key-onboarding-status'}

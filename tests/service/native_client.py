@@ -20,6 +20,8 @@ CHECKPOINTS = frozenset({
     "revoked-model", "draining", "maintenance", "save-keys", "result",
     "onboard-user-exists", "onboard-alias-absent", "onboard-alias-key", "onboard-alias-taken", "onboard-alias-delete",
     "onboard-alias-revoked", "onboard-key-absent",
+    "scoped-team", "scoped-admin-key", "scoped-user-new", "scoped-member-unknown", "scoped-member-known", "scoped-member-key",
+    "routed-user", "routed-key", "routed-user-new", "routed-generate", "routed-delete", "routed-refused", "onboard-live-key",
 })
 
 
@@ -188,9 +190,46 @@ def main(mode):
     expect("onboard-alias-key", issued["user_id"] == "fixture-alice" and issued["key"].startswith("sk-")
            and expires.tzinfo is not None and 89 * 86400 < expires.timestamp() - time.time() <= 90 * 86400)
     expect("onboard-alias-taken", call("onboard-alias-taken", "/key/generate", master, request)[0] != 200)
+    # The job asks whether a mapped key is still accepted with the model list: 200 while it lives, 401 once deleted.
+    expect("onboard-live-key", call("onboard-live-key", "/v1/models", issued["key"])[0] == 200)
     expect("onboard-alias-delete", call("onboard-alias-delete", "/key/delete", master, alias)[0] == 200)
-    expect("onboard-alias-revoked", call("onboard-alias-revoked", "/v1/models", issued["key"])[0] in {401, 403})
+    expect("onboard-alias-revoked", call("onboard-alias-revoked", "/v1/models", issued["key"])[0] == 401)
     expect("onboard-key-absent", call("onboard-key-absent", "/key/delete", master, {"keys": [issued["key"]]})[0] == 404)
+    # Could the job run without the master key? A team admin of a dedicated team is the narrowest LiteLLM
+    # credential that manages other users' keys. It cannot create a user row for a chosen id (the exact
+    # Open WebUI id), neither directly nor by adding a team member, and without the global setting
+    # team_admin_editable_team_fields: [create_member_keys] it cannot issue a key for another member.
+    team, onboarder = "fixture-browser-users", "fixture-onboarder"
+    expect("scoped-team", call("scoped-team", "/user/new", master, {
+        "user_id": onboarder, "user_role": "internal_user", "auto_create_key": False})[0] == 200)
+    expect("scoped-team", call("scoped-team", "/team/new", master, {
+        "team_id": team, "team_alias": team, "members_with_roles": [{"role": "admin", "user_id": onboarder}]})[0] == 200)
+    scoped = key("scoped-admin-key", onboarder)
+    expect("scoped-user-new", call("scoped-user-new", "/user/new", scoped, {
+        "user_id": "fixture-carol", "user_role": "internal_user", "auto_create_key": False})[0] in {401, 403})
+    expect("scoped-member-unknown", call("scoped-member-unknown", "/team/member_add", scoped, {
+        "team_id": team, "member": {"role": "user", "user_id": "fixture-carol"}})[0] in {401, 403})
+    expect("scoped-member-known", call("scoped-member-known", "/team/member_add", scoped, {
+        "team_id": team, "member": {"role": "user", "user_id": "fixture-bob"}})[0] == 200)
+    expect("scoped-member-key", call("scoped-member-key", "/key/generate", scoped, {
+        **request, "team_id": team, "user_id": "fixture-bob", "key_alias": "webui-fixture-bob-a"})[0] in {400, 401, 403})
+    # What does work without the master key: an admin user's key limited to the three routes the job
+    # calls. It is not scoped to a team, but it cannot read or change anything else at the gateway.
+    expect("routed-user", call("routed-user", "/user/new", master, {
+        "user_id": "fixture-issuer", "user_role": "proxy_admin", "auto_create_key": False})[0] == 200)
+    status, raw = call("routed-key", "/key/generate", master, {
+        "user_id": "fixture-issuer", "duration": "1h", "allowed_routes": ["/user/new", "/key/generate", "/key/delete"]})
+    expect("routed-key", status == 200)
+    routed = json.loads(raw)["key"]
+    expect("routed-user-new", call("routed-user-new", "/user/new", routed, {
+        "user_id": "fixture-dave", "user_role": "internal_user", "auto_create_key": False})[0] == 200)
+    dave = {**request, "user_id": "fixture-dave", "key_alias": "webui-fixture-dave-a"}
+    status, raw = call("routed-generate", "/key/generate", routed, dave)
+    expect("routed-generate", status == 200 and json.loads(raw)["user_id"] == "fixture-dave")
+    expect("routed-delete", call("routed-delete", "/key/delete", routed, {"key_aliases": [dave["key_alias"]]})[0] == 200)
+    for path, body in (("/v2/user/info?user_id=fixture-alice", None), ("/key/update", {"key_alias": "x", "rpm_limit": 1}),
+                       ("/team/new", {"team_alias": "fixture-other"}), ("/v1/chat/completions", chat)):
+        expect("routed-refused", call("routed-refused", path, routed, body)[0] in {401, 403})
     expect("draining", call("draining", "/_service/control", control, {"phase": "draining"})[0] == 200)
     expect("maintenance", call("maintenance", "/v1/chat/completions", valid, chat)[0] == 503)
     checkpoint("save-keys", "start")

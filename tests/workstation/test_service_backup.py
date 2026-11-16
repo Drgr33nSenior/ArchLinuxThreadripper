@@ -646,14 +646,61 @@ class GamingPlanTests(unittest.TestCase):
         events = []
         self.worker.scale_zero = lambda name, *args: events.append(name)
         self.worker.stopped = lambda: events.append("quiescent")
+        self.worker.suspend_cronjobs = lambda *args: events.append("cronjobs")
         self.worker.get = lambda *args: {"items": [{"metadata": {"name": "pg"}, "status": {"phase": "Running"}}]}
         def dump(argv, output, **kwargs):
             events.append(argv[argv.index("--") + 1])
             output.write(b"dump")
         with patch.object(backup, "run", dump):
             self.worker.quiesce_apps(self.root, {})
-        self.assertEqual(["parent-steam-headless", "kids-steam-headless", "open-webui", "service-tools", "litellm",
+        self.assertEqual(["cronjobs", "parent-steam-headless", "kids-steam-headless", "open-webui", "service-tools", "litellm",
                           "pg_dump", "pg_dumpall", "gateway-postgres", "quiescent"], events)
+
+    def test_cronjobs_are_suspended_and_running_jobs_awaited_before_writers_stop(self):
+        crons = [{"metadata": {"name": "key-onboarding", "uid": "cron-1"}, "spec": {"suspend": False}},
+                 {"metadata": {"name": "already-off", "uid": "cron-2"}, "spec": {"suspend": True}}]
+        polls = [[{"status": {"active": 1}}, {"status": {"succeeded": 1}}], [{"status": {"succeeded": 1}}, {"status": {}}]]
+        events = []
+        def get(*args):
+            if "cronjobs" in args:
+                return {"items": crons}
+            events.append("jobs")
+            return {"items": polls.pop(0)}
+        self.worker.get = get
+        def run(argv, **kwargs):
+            # The journal already names the CronJob when it is changed.
+            events.append((argv[argv.index("patch") + 2], argv[-1],
+                           json.loads((self.root / "journal.json").read_text())["cronjobs"]["key-onboarding"]))
+        with patch.object(backup, "run", run), patch.object(backup.time, "sleep"):
+            self.worker.suspend_cronjobs(self.root, {"open-webui": {"uid": "d", "replicas": 1}})
+        self.assertEqual([("key-onboarding", '{"spec":{"suspend":true}}', {"uid": "cron-1", "suspend": False}), "jobs", "jobs"],
+                         events)
+        journal = json.loads((self.root / "journal.json").read_text())
+        self.assertEqual({"key-onboarding": {"uid": "cron-1", "suspend": False}, "already-off": {"uid": "cron-2", "suspend": True}},
+                         journal["cronjobs"])
+        self.assertEqual({"open-webui": {"uid": "d", "replicas": 1}}, journal["deployments"])
+        # A Job that never ends refuses the capture instead of racing it.
+        self.worker.get = lambda *args: {"items": crons if "cronjobs" in args else [{"status": {"active": 1}}]}
+        with patch.object(backup, "run"), patch.object(backup.time, "sleep"), \
+                patch.object(backup.time, "monotonic", side_effect=[0, 0, 400]), \
+                self.assertRaisesRegex(ValueError, "still running"):
+            self.worker.suspend_cronjobs(self.root, {})
+
+    def test_finished_job_pods_do_not_block_the_capture_but_live_pods_and_containers_do(self):
+        finished = [{"status": {"phase": "Succeeded"}}, {"status": {"phase": "Failed"}}]
+        self.worker.get = lambda *args: {"items": finished}
+        with patch.object(backup, "run", return_value=json.dumps({"containers": []})) as cri:
+            self.worker.stopped()
+        cri.assert_called_once()
+        container = {"containers": [{"labels": {"io.kubernetes.pod.namespace": backup.NAMESPACE}}]}
+        with patch.object(backup, "run", return_value=json.dumps(container)), self.assertRaisesRegex(ValueError, "CRI still has"):
+            self.worker.stopped()
+        self.worker.get = lambda *args: {"items": finished + [{"status": {"phase": "Running"}}]}
+        with patch.object(backup, "run") as cri, patch.object(backup.time, "sleep"), \
+                patch.object(backup.time, "monotonic", side_effect=[0, 0, 200]), \
+                self.assertRaisesRegex(ValueError, "did not exit"):
+            self.worker.stopped()
+        cri.assert_not_called()
 
 
 if __name__ == "__main__":

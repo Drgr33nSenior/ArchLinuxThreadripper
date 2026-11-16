@@ -1125,13 +1125,14 @@ class BackupTests(unittest.TestCase):
         events = []
         capture.get = lambda *args: {"items": [{"metadata": {"name": "pg"}, "status": {"phase": "Running"}}]}
         capture.scale_zero = lambda name, *args: events.append(name)
+        capture.suspend_cronjobs = lambda *args: events.append("cronjobs-suspended-and-jobs-ended")
         capture.stopped = lambda: events.append("all-pods-and-cri-stopped")
         def dump(argv, output, **kwargs):
             events.append(argv[argv.index("--") + 1])
             output.write(b"synthetic database dump")
         with patch.object(service_backup, "run", dump):
             capture.quiesce_apps(self.root, {})
-        self.assertEqual(["open-webui", "service-tools", "litellm", "pg_dump", "pg_dumpall",
+        self.assertEqual(["cronjobs-suspended-and-jobs-ended", "open-webui", "service-tools", "litellm", "pg_dump", "pg_dumpall",
                           "gateway-postgres", "all-pods-and-cri-stopped"], events)
 
     def test_failed_database_dump_never_claims_quiescence(self):
@@ -1141,6 +1142,7 @@ class BackupTests(unittest.TestCase):
         events = []
         capture.get = lambda *args: {"items": [{"metadata": {"name": "pg"}, "status": {"phase": "Running"}}]}
         capture.scale_zero = lambda name, *args: events.append(name)
+        capture.suspend_cronjobs = lambda *args: None
         capture.stopped = lambda: self.fail("capture must not continue after dump failure")
         with patch.object(service_backup, "run", side_effect=ValueError("dump failed")), self.assertRaises(ValueError):
             capture.quiesce_apps(self.root, {})
@@ -1149,6 +1151,7 @@ class BackupTests(unittest.TestCase):
     def test_baseline_cannot_omit_existing_gateway_database(self):
         capture = object.__new__(service_backup.Capture)
         capture.baseline = True
+        capture.suspend_cronjobs = lambda *args: None
         capture.get = lambda *args: {"items": [{"metadata": {"name": "gateway-postgres"}}]}
         with self.assertRaisesRegex(ValueError, "pre-service"):
             capture.quiesce_apps(self.root, {})

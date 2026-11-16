@@ -213,7 +213,10 @@ a successful recovery drill and an independently retained recovery snapshot.
    The capture verifies pinned identities and preserves these hashes. It does not
    rehash excluded weights on every backup or claim their quality is qualified.
 2. Ensure all required PVs are Retain and that PostgreSQL is Running. Resolve
-   pending Jobs/other application Pods first. Run the independent observer's
+   pending Jobs/other application Pods first. The capture itself suspends every
+   CronJob in the namespace (key onboarding), records each one's previous state
+   in the journal, and waits up to five minutes for running Jobs to end; a Job
+   that does not end refuses the capture. Pods of finished Jobs do not block it. Run the independent observer's
    bounded planned-maintenance window before the whole cluster stops.
    For `baseline` scope, PostgreSQL/gateway/tools must not exist. Existing WebUI
    and image PVs alone are captured; retain and verify their bound PVs first.
@@ -234,6 +237,8 @@ a successful recovery drill and an independently retained recovery snapshot.
    resume an unresolved image. Start K3s, verify this node Ready, and inspect the
    journal's deployment UIDs against live objects. Resume the original PostgreSQL
    replica first; wait Ready; then the original gateway, WebUI and tools replicas.
+   Last, for each CronJob the journal lists with `"suspend": false`, check its UID and
+   resume it: `kubectl -n ai-home-lab patch cronjob NAME -p '{"spec":{"suspend":false}}'`.
    Never blindly scale a replacement UID. Use `session restore ... --execute` or
    an explicitly selected qualified mode for GPUs after database/app readiness.
    Recheck HTTPS and remove the external maintenance window. If capture failed

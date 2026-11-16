@@ -1,6 +1,7 @@
 """Family key onboarding: decisions against a WebUI database fixture, a fake gateway admin API and a fake
 Kubernetes API that grants only what the rendered Role grants; and the rendered CronJob, identity and flows."""
 import base64
+import http.client
 import http.server
 import importlib.util
 import io
@@ -44,22 +45,28 @@ MOTHER, CHILD, ADMIN = "11111111-aaaa-4aaa-8aaa-000000000001", "22222222-bbbb-4b
     "33333333-cccc-4ccc-8ccc-000000000003"
 
 
+def uid(number):
+    return f"{number:08d}-0000-4000-8000-000000000000"
+
+
 def encoded(document):
     return base64.b64encode(json.dumps(document).encode()).decode()
 
 
 class Fakes(http.server.BaseHTTPRequestHandler):
-    """One server: the LiteLLM admin routes the job uses, and the two Secrets and one ConfigMap of the Role."""
+    """One server: the LiteLLM routes the job uses, and the two Secrets and one ConfigMap of the Role."""
     state = None
 
     def log_message(self, *args):
         pass
 
-    def answer(self, status, value=None):
+    def answer(self, status, value=None, headers=()):
         body = json.dumps(value if value is not None else {"error": "refused"}).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
+        for name, header in headers:
+            self.send_header(name, header)
         self.end_headers()
         self.wfile.write(body)
 
@@ -73,16 +80,21 @@ class Fakes(http.server.BaseHTTPRequestHandler):
             return self.answer(403)
         current = state.objects[(kind, name)]
         if self.command == "PUT":
-            state.conflict_at -= 1
-            if state.conflict_at == 0 or body["metadata"]["resourceVersion"] != current["metadata"]["resourceVersion"]:
+            state.put_count[name] = state.put_count.get(name, 0) + 1
+            if (name, state.put_count[name]) in state.refuse_put \
+                    or body["metadata"]["resourceVersion"] != current["metadata"]["resourceVersion"]:
                 return self.answer(409)
             body["metadata"]["resourceVersion"] = str(int(current["metadata"]["resourceVersion"]) + 1)
             state.objects[(kind, name)] = current = body
+            if kind == "secrets":
+                state.events.append(("put", name, json.loads(base64.b64decode(next(iter(body["data"].values()))))))
         self.answer(200, current)
 
     def gateway(self, body):
         state = self.state
         state.gateway_calls.append((self.path, {name: value for name, value in body.items() if name != "keys"}))
+        if self.path == "/redirect":
+            return self.answer(302, headers=[("Location", "/v1/models")])
         if self.headers["Authorization"] != "Bearer " + MASTER:
             return self.answer(401)
         if self.path == "/user/new":
@@ -97,6 +109,7 @@ class Fakes(http.server.BaseHTTPRequestHandler):
             key = f"sk-fixture-{state.serial:04d}-" + "k" * 24
             expires = state.now + int(body["duration"].removesuffix("d")) * DAY
             state.keys[key] = dict(body, expires=expires)
+            state.events.append(("issue", key))
             return self.answer(200, {"key": key, "user_id": body["user_id"], "key_alias": body["key_alias"],
                                      "expires": job.datetime.datetime.fromtimestamp(
                                          expires, job.datetime.timezone.utc).isoformat().replace("+00:00", "Z")})
@@ -107,10 +120,17 @@ class Fakes(http.server.BaseHTTPRequestHandler):
                 return self.answer(500 if state.refuse_delete else 404)
             for key in found:
                 del state.keys[key]
+                state.events.append(("delete", key))
             return self.answer(200, {"deleted_keys": len(found)})
         self.answer(404)
 
     def do_GET(self):
+        if self.path == "/redirect":
+            return self.answer(302, headers=[("Location", "/v1/models")])
+        if self.path == "/v1/models":      # the gateway's cheapest authenticated call, with a user's own key
+            self.state.probes += 1
+            known = self.headers["Authorization"].removeprefix("Bearer ") in self.state.keys
+            return self.answer(self.state.models_status or (200 if known else 401), {"data": []})
         self.kubernetes(None)
 
     def do_PUT(self):
@@ -144,25 +164,25 @@ class Fixture(unittest.TestCase):
         self.webui = sqlite3.connect(self.database)
         self.addCleanup(self.webui.close)
         self.webui.execute("PRAGMA journal_mode=WAL")
-        self.webui.executescript('''
+        self.webui.executescript("""
             CREATE TABLE "user" (id TEXT PRIMARY KEY, email TEXT, role TEXT, name TEXT);
             CREATE TABLE "group" (id TEXT PRIMARY KEY, name TEXT, parent_group_id TEXT);
-            CREATE TABLE group_member (id TEXT PRIMARY KEY, group_id TEXT NOT NULL, user_id TEXT NOT NULL);''')
+            CREATE TABLE group_member (id TEXT PRIMARY KEY, group_id TEXT NOT NULL, user_id TEXT NOT NULL);""")
         self.webui.executemany('INSERT INTO "group" (id, name) VALUES (?, ?)', [(PARENTS, "Parents"), (FAMILY, "Family")])
         self.webui.commit()
         (self.root / "master-key").write_text(MASTER + "\n")
         self.state = Fakes.state = SimpleNamespace(
-            now=NOW, users=set(), keys={}, serial=0, gateway_calls=[], kube_calls=[], refuse_generate=set(),
-            refuse_delete=False, conflict_at=-1, objects={}, verbs={})
+            now=NOW, users=set(), keys={}, serial=0, gateway_calls=[], kube_calls=[], events=[], probes=0, models_status=None,
+            refuse_generate=set(), refuse_delete=False, refuse_put=set(), put_count={}, objects={}, verbs={})
         self.publish({"service_key": SERVICE_KEY, "users": {}})
         self.state.objects[("configmaps", job.STATUS_CONFIGMAP)] = {"metadata": {"resourceVersion": "1"}, "data": {}}
         self.configure(self.mode)
         self.outputs = []
 
-    def configure(self, mode, homes=()):
+    def configure(self, mode, homes=(), **settings):
         sandbox = {**SANDBOX, "users": [{"webui_user_id": user} for user in homes]}
-        config = {**onboarding.job_config(mode, sandbox, MODELS), "gateway": self.url, "database": str(self.database)}
-        (self.root / "config.json").write_text(json.dumps(config))
+        self.config = {**onboarding.job_config(mode, sandbox, MODELS, **settings), "gateway": self.url, "database": str(self.database)}
+        (self.root / "config.json").write_text(json.dumps(self.config))
         # Exactly the rendered Role, so a run that needs more is refused here as it would be in the cluster.
         role = next(o for o in self.bundle(mode) if o["kind"] == "Role")
         verbs = {"get": "GET", "update": "PUT"}
@@ -173,7 +193,8 @@ class Fixture(unittest.TestCase):
     def bundle(mode):
         webui = {"kind": "Deployment", "metadata": {"name": "open-webui"}, "spec": {"template": {"spec": {
             "nodeSelector": {"kubernetes.io/os": "linux"},
-            "containers": [{"image": "registry.example.test/open-webui@sha256:" + "c" * 64}],
+            "containers": [{"image": "registry.example.test/open-webui@sha256:" + "c" * 64,
+                            "env": [{"name": "ENABLE_SIGNUP", "value": "false"}]}],
             "volumes": [{"name": "data", "persistentVolumeClaim": {"claimName": "webui-fixture-data"}}]}}}}
         claim = {"kind": "PersistentVolumeClaim", "metadata": {"name": "webui-fixture-data"},
                  "spec": {"accessModes": ["ReadWriteOnce"]}}
@@ -183,12 +204,15 @@ class Fixture(unittest.TestCase):
         """The owner's two Secrets, as `service credentials` and `browser-bind` leave them."""
         version = str(int(self.state.objects.get(("secrets", job.MAPPING_SECRET), {"metadata": {"resourceVersion": "0"}})
                           ["metadata"]["resourceVersion"]) + 1)
-        derived = job.image_document(mapping) if isinstance(mapping, dict) and {"service_key", "users"} <= set(mapping) \
-            and isinstance(mapping["users"], dict) else {}
+        derived = {"service_key": mapping["service_key"], "users": {
+            user: {"expires_at": entry["expires_at"], "images": entry.get("images", False)}
+            for user, entry in mapping["users"].items() if isinstance(entry, dict) and "expires_at" in entry}} \
+            if isinstance(mapping, dict) and {"service_key", "users"} <= set(mapping) and isinstance(mapping["users"], dict) else {}
         for name, key, document in ((job.MAPPING_SECRET, job.MAPPING_KEY, mapping),
                                     (job.IMAGE_SECRET, job.IMAGE_KEY, derived if images is None else images)):
             self.state.objects[("secrets", name)] = {"kind": "Secret", "metadata": {"name": name, "resourceVersion": version},
                                                      "data": {key: encoded(document)}}
+        self.state.events.append(("put", job.MAPPING_SECRET, mapping))      # what the gateway reads from now on
 
     def person(self, user, *groups, role="user"):
         self.webui.execute('INSERT OR REPLACE INTO "user" (id, email, role, name) VALUES (?, ?, ?, ?)',
@@ -198,17 +222,20 @@ class Fixture(unittest.TestCase):
             self.webui.execute("INSERT INTO group_member VALUES (?, ?, ?)", (group + user, group, user))
         self.webui.commit()
 
+    def secret(self, name=None):
+        return self.state.objects[("secrets", name or job.MAPPING_SECRET)]
+
     def mapping(self):
-        return json.loads(base64.b64decode(self.state.objects[("secrets", job.MAPPING_SECRET)]["data"][job.MAPPING_KEY]))
+        return json.loads(base64.b64decode(self.secret()["data"][job.MAPPING_KEY]))
 
     def images(self):
-        return json.loads(base64.b64decode(self.state.objects[("secrets", job.IMAGE_SECRET)]["data"][job.IMAGE_KEY]))
+        return json.loads(base64.b64decode(self.secret(job.IMAGE_SECRET)["data"][job.IMAGE_KEY]))
 
-    def manual(self, days=60, images=False, **extra):
+    def manual(self, days=60, images=False, alias=None, **extra):
         """A key the owner issued by hand, known to the gateway."""
         self.state.serial += 1
         key = f"sk-manual-{self.state.serial:04d}-" + "h" * 24
-        self.state.keys[key] = {"key_alias": f"browser-{self.state.serial}", "user_id": "manual"}
+        self.state.keys[key] = {"key_alias": alias or f"browser-{self.state.serial}", "user_id": "manual"}
         return {"key": key, "expires_at": self.state.now + days * DAY, "images": images, **extra}
 
     def run_job(self, expect=0):
@@ -220,8 +247,15 @@ class Fixture(unittest.TestCase):
         self.assertEqual(expect, code, output.getvalue())
         return json.loads(output.getvalue())
 
-    def puts(self):
-        return [call for call in self.state.kube_calls if call[0] == "PUT"]
+    def puts(self, kind=None):
+        return [call for call in self.state.kube_calls if call[0] == "PUT" and kind in (None, call[1])]
+
+    def posts(self):
+        return [path for path, _ in self.state.gateway_calls]
+
+    def refuse(self, name, nth):
+        """Refuse the nth replace of a Secret from now on, as a concurrent change would."""
+        self.state.refuse_put = {(name, self.state.put_count.get(name, 0) + nth)}
 
     def tearDown(self):
         # Whatever happened: nothing a person could use leaves through stdout, the status or a recorded request.
@@ -234,6 +268,20 @@ class Fixture(unittest.TestCase):
         for text in (*self.outputs, published):
             for user in (MOTHER, CHILD, ADMIN):
                 self.assertNotIn(user, text)
+        # Whatever happened: a key is deleted at the gateway only after a published mapping stopped naming it,
+        # and the image permissions never grant what the mapping published before them does not.
+        named, pictures = set(), {}
+        for event in self.state.events:
+            if event[0] == "put" and event[1] == job.MAPPING_SECRET and isinstance(event[2], dict) \
+                    and isinstance(event[2].get("users"), dict):
+                entries = {user: entry for user, entry in event[2]["users"].items() if isinstance(entry, dict)}
+                named = {entry.get("key") for entry in entries.values()}
+                pictures = {user: entry.get("images") is True for user, entry in entries.items()}
+            elif event[0] == "put" and event[1] == job.IMAGE_SECRET:
+                for user, entry in event[2]["users"].items():
+                    self.assertTrue(not entry["images"] or pictures.get(user), "pictures granted before the mapping")
+            elif event[0] == "delete":
+                self.assertNotIn(event[1], named, "a key was deleted while the published mapping still named it")
 
 
 class ReconcileTests(Fixture):
@@ -242,6 +290,7 @@ class ReconcileTests(Fixture):
         self.person(CHILD, FAMILY)
         status = self.run_job()
         users = self.mapping()["users"]
+        self.assertEqual({"service_key", "users"}, set(self.mapping()))
         self.assertEqual({MOTHER, CHILD}, set(users))
         self.assertEqual({MOTHER, CHILD}, self.state.users)
         for user, tier in ((MOTHER, "parents"), (CHILD, "family")):
@@ -254,11 +303,11 @@ class ReconcileTests(Fixture):
         self.assertEqual({"service_key": SERVICE_KEY, "users": {
             MOTHER: {"expires_at": NOW + 90 * DAY, "images": True},
             CHILD: {"expires_at": NOW + 90 * DAY, "images": False}}}, self.images())
-        self.assertEqual(("ok", 2, 2, 0), (status["result"], status["counts"]["members"], status["counts"]["provision"],
-                                           status["counts"]["failed"]))
+        self.assertEqual(("ok", 2, 2, 0, 0), (status["result"], status["counts"]["members"], status["counts"]["provision"],
+                                              status["counts"]["failed"], status["counts"]["sweep_pending"]))
         self.assertEqual([{"user": "11111111", "action": "provision", "tier": "parents", "state": "done"},
                           {"user": "22222222", "action": "provision", "tier": "family", "state": "done"}], status["changes"])
-        self.assertEqual(90, status["earliest_expiry_days"])
+        self.assertEqual((90, "checked"), (status["earliest_expiry_days"], status["liveness"]))
         self.assertTrue(status["image_permissions_in_step"])
         published = json.loads(self.state.objects[("configmaps", job.STATUS_CONFIGMAP)]["data"][job.STATUS_KEY])
         self.assertEqual(status, published)
@@ -279,15 +328,17 @@ class ReconcileTests(Fixture):
                     boundary.browser_key(headers, "/v1/images/generations", self.images(), now=NOW, need_virtual_key=False)
                 self.assertEqual("image_permission_denied", refused.exception.code)
 
-    def test_a_settled_state_makes_no_gateway_call_and_no_write(self):
+    def test_a_settled_state_changes_nothing_at_the_gateway_and_writes_no_secret(self):
         self.person(MOTHER, PARENTS)
         self.run_job()
         before = (self.mapping(), self.images(), dict(self.state.keys))
         self.state.gateway_calls.clear()
         self.state.kube_calls.clear()
+        self.state.probes = 0
         status = self.run_job()
         self.assertEqual(before, (self.mapping(), self.images(), self.state.keys))
-        self.assertEqual([], self.state.gateway_calls)
+        # One question per mapped key (does the gateway still accept it?), nothing else.
+        self.assertEqual(([], 1), (self.state.gateway_calls, self.state.probes))
         self.assertEqual([("PUT", "configmaps", job.STATUS_CONFIGMAP)], self.puts())
         self.assertEqual((1, []), (status["counts"]["keep"], status["changes"]))
 
@@ -308,10 +359,14 @@ class ReconcileTests(Fixture):
             self.assertEqual((f"webui-{user}-b", self.state.now + 90 * DAY), (entry["alias"], entry["expires_at"]))
             # New key first, mapping second; the old key still answers while the gateway may hold the old mapping.
             self.assertIn(first[user]["key"], self.state.keys)
-        self.assertEqual({first[MOTHER]["key"], first[CHILD]["key"]}, {item["key"] for item in renewed["retired"]})
-        self.assertNotIn("retired", self.images())
-        self.assertEqual(2, status["counts"]["retired_pending"])
-        self.state.now += job.json.loads((self.root / "config.json").read_text())["retire_grace_seconds"] + 1
+        self.assertEqual({(first[MOTHER]["key"], MOTHER), (first[CHILD]["key"], CHILD)},
+                         {(item["key"], item["user"]) for item in renewed["retired"]})
+        self.assertEqual({"service_key", "users"}, set(self.images()))
+        self.assertEqual((2, 0, "ok"), (status["counts"]["retired_pending"], status["counts"]["sweep_pending"], status["result"]))
+        self.state.now += self.config["retire_grace_seconds"] - 5
+        self.run_job()
+        self.assertEqual(4, len(self.state.keys))   # still inside the grace
+        self.state.now += 6
         status = self.run_job()
         self.assertEqual({renewed["users"][MOTHER]["key"], renewed["users"][CHILD]["key"]}, set(self.state.keys))
         self.assertNotIn("retired", self.mapping())
@@ -328,7 +383,7 @@ class ReconcileTests(Fixture):
         self.assertEqual(NOW + 90 * DAY, self.mapping()["users"][CHILD]["expires_at"])
 
     def test_leaving_both_groups_deletion_and_a_pending_role_revoke_the_key(self):
-        removed, deleted, pending = "44444444-removed", "55555555-deleted", "66666666-pending"
+        removed, deleted, pending = uid(4), uid(5), uid(6)
         for user in (MOTHER, removed, deleted, pending):
             self.person(user, FAMILY)
         self.run_job()
@@ -341,8 +396,49 @@ class ReconcileTests(Fixture):
         self.assertEqual({MOTHER}, set(self.mapping()["users"]))
         self.assertEqual({MOTHER}, set(self.images()["users"]))
         self.assertEqual({keys[MOTHER]}, set(self.state.keys))
-        self.assertEqual((3, 0, "ok"), (status["counts"]["revoke"], status["counts"]["retired_pending"], status["result"]))
+        self.assertEqual((3, 0, 0, "ok"), (status["counts"]["revoke"], status["counts"]["retired_pending"],
+                                           status["counts"]["sweep_pending"], status["result"]))
         self.assertEqual({"revoke"}, {change["action"] for change in status["changes"]})
+        self.assertEqual({"service_key", "users"}, set(self.mapping()))
+
+    def test_the_last_member_leaving_is_revoked_too(self):
+        self.configure("live", admin_policy="unmanaged")
+        self.person(ADMIN, role="admin")
+        self.person(CHILD, FAMILY)
+        self.run_job()
+        self.person(CHILD)          # both groups are empty now; the groups and the user table are still there
+        status = self.run_job()
+        self.assertEqual(("ok", 1, 0), (status["result"], status["counts"]["revoke"], status["counts"]["members"]))
+        self.assertEqual(({}, {}, {}), (self.mapping()["users"], self.images()["users"], self.state.keys))
+
+    def test_removal_also_deletes_keys_the_mapping_never_named_and_keys_in_their_grace(self):
+        self.person(MOTHER, PARENTS)
+        self.person(CHILD, FAMILY)
+        self.run_job()
+        mother = self.mapping()["users"][MOTHER]["key"]
+        # A renewal leaves the previous key valid for ten minutes; the account is removed inside them.
+        self.state.now += 61 * DAY
+        self.run_job()
+        self.assertEqual(4, len(self.state.keys))
+        self.state.now += 60
+        self.person(CHILD)
+        status = self.run_job()
+        self.assertEqual(("ok", 1), (status["result"], status["counts"]["retired_pending"]))   # the mother's, in its grace
+        self.assertEqual({mother, self.mapping()["users"][MOTHER]["key"]}, set(self.state.keys))
+        # A key issued for an account whose mapping write then failed, and the account is removed before the retry.
+        other = uid(7)
+        self.person(other, FAMILY)
+        self.refuse(job.MAPPING_SECRET, 2)
+        self.assertEqual("kubernetes_conflict", self.run_job(expect=1)["code"])
+        orphan = [key for key, record in self.state.keys.items() if record["user_id"] == other]
+        self.assertEqual((1, [other]), (len(orphan), self.mapping()["sweep"]))
+        self.assertNotIn(other, self.mapping()["users"])
+        self.person(other)
+        self.state.now += job.CLAIM_SECONDS
+        status = self.run_job()
+        self.assertEqual(("ok", 0, []), (status["result"], status["counts"]["sweep_pending"], status["changes"]))
+        self.assertNotIn(orphan[0], self.state.keys)
+        self.assertNotIn("sweep", self.mapping())
 
     def test_a_revocation_the_gateway_refuses_is_kept_and_retried(self):
         self.person(MOTHER, PARENTS)
@@ -353,39 +449,54 @@ class ReconcileTests(Fixture):
         self.state.refuse_delete = True
         status = self.run_job(expect=1)
         # Already out of the mapping, so the gateway refuses the user; the key deletion is still owed.
-        self.assertEqual(("partial", 1), (status["result"], status["counts"]["retired_pending"]))
+        self.assertEqual(("partial", 1, 1), (status["result"], status["counts"]["retired_pending"], status["counts"]["sweep_pending"]))
         self.assertNotIn(CHILD, self.mapping()["users"])
+        self.assertNotIn(CHILD, self.images()["users"])
         self.assertIn(key, self.state.keys)
+        self.assertNotIn(job.CLAIM, self.secret()["metadata"]["annotations"])
         self.state.refuse_delete = False
-        self.assertEqual(0, self.run_job()["counts"]["retired_pending"])
+        status = self.run_job()
+        self.assertEqual((0, 0), (status["counts"]["retired_pending"], status["counts"]["sweep_pending"]))
         self.assertNotIn(key, self.state.keys)
         # Deleting a key that is already gone (404) settles too.
         self.publish({**self.mapping(), "retired": [{"key": "sk-manual-gone-" + "g" * 24, "after": NOW - 1}]})
         self.assertEqual(("ok", 0), (lambda s: (s["result"], s["counts"]["retired_pending"]))(self.run_job()))
 
-    def test_the_administrator_is_left_alone_unless_in_a_group(self):
+    def test_the_administrator_gets_the_parents_policy_and_renewal_without_any_group(self):
+        bound = self.manual(days=10, images=False)
+        self.publish({"service_key": SERVICE_KEY, "users": {ADMIN: bound}})
+        self.person(ADMIN, role="admin")
+        status = self.run_job()
+        entry = self.mapping()["users"][ADMIN]
+        self.assertEqual(("renew", "parents", True, NOW + 90 * DAY, 0),
+                         (status["changes"][0]["action"], entry["policy"], entry["images"], entry["expires_at"],
+                          status["counts"]["unmanaged"]))
+        self.assertEqual(onboarding.POLICIES["parents"]["rpm"], self.state.keys[entry["key"]]["rpm_limit"])
+        # And a key where there was none.
+        other = uid(8)
+        self.person(other, role="admin")
+        self.run_job()
+        self.assertEqual("parents", self.mapping()["users"][other]["policy"])
+
+    def test_with_admin_policy_unmanaged_the_administrator_is_left_alone_unless_in_a_group(self):
+        self.configure("live", admin_policy="unmanaged")
         bound = self.manual(days=10, images=True)
         self.publish({"service_key": SERVICE_KEY, "users": {ADMIN: bound}})
         self.person(ADMIN, role="admin")
+        self.person(uid(8), role="admin")       # no key, no group: none is issued
         self.person(MOTHER, PARENTS)
         status = self.run_job()
-        self.assertEqual(bound, self.mapping()["users"][ADMIN])
+        self.assertEqual({ADMIN: bound, MOTHER: self.mapping()["users"][MOTHER]}, self.mapping()["users"])
         self.assertIn(bound["key"], self.state.keys)
         # Its hand-bound key is inside the renewal window and nothing will renew it: say so.
         self.assertEqual((1, 1, 1), (status["counts"]["unmanaged"], status["unmanaged_expiring"], status["counts"]["members"]))
-        self.assertNotIn(ADMIN, self.state.users)
+        self.assertEqual({MOTHER}, self.state.users)
         # In a group, even Family only, the administrator is managed, with pictures (Admin and Parents).
         self.person(ADMIN, FAMILY, role="admin")
         status = self.run_job()
         entry = self.mapping()["users"][ADMIN]
         self.assertEqual(("renew", True, "parents", 0), (status["changes"][0]["action"], entry["images"], entry["policy"],
                                                          status["unmanaged_expiring"]))
-
-    def test_an_administrator_without_a_key_and_without_a_group_gets_none(self):
-        self.person(ADMIN, role="admin")
-        self.person(MOTHER, PARENTS)
-        self.run_job()
-        self.assertEqual({MOTHER}, set(self.mapping()["users"]))
 
     def test_group_changes_move_the_picture_permission_and_the_limits(self):
         self.person(CHILD, FAMILY)
@@ -395,15 +506,13 @@ class ReconcileTests(Fixture):
         status = self.run_job()
         entry = self.mapping()["users"][CHILD]
         self.assertEqual("policy", status["changes"][0]["action"])
-        self.assertEqual((True, "parents", 2), (entry["images"], entry["policy"],
-                                                self.state.keys[entry["key"]]["max_parallel_requests"]))
+        self.assertEqual((True, "parents", 60), (entry["images"], entry["policy"], self.state.keys[entry["key"]]["rpm_limit"]))
         self.assertNotEqual(family_key, entry["key"])
         self.assertTrue(self.images()["users"][CHILD]["images"])
         self.person(CHILD, FAMILY)
         self.run_job()
         entry = self.mapping()["users"][CHILD]
-        self.assertEqual((False, "family", 1), (entry["images"], entry["policy"],
-                                                self.state.keys[entry["key"]]["max_parallel_requests"]))
+        self.assertEqual((False, "family", 30), (entry["images"], entry["policy"], self.state.keys[entry["key"]]["rpm_limit"]))
         self.assertFalse(self.images()["users"][CHILD]["images"])
 
     def test_a_hand_bound_key_keeps_its_key_and_follows_the_group_for_pictures(self):
@@ -419,6 +528,82 @@ class ReconcileTests(Fixture):
         self.assertEqual([], self.state.gateway_calls)
         self.assertEqual({MOTHER: True, CHILD: False}, {u: e["images"] for u, e in self.images()["users"].items()})
 
+    def test_a_child_never_keeps_pictures_because_a_key_could_not_be_issued(self):
+        # A hand-bound --images key inside the renewal window, and a parent moved to Family only.
+        demoted = uid(9)
+        self.person(MOTHER, PARENTS)
+        self.person(demoted, PARENTS)
+        self.run_job()
+        self.assertTrue(self.images()["users"][demoted]["images"])
+        child = self.manual(days=10, images=True)
+        self.publish({**self.mapping(), "users": {**self.mapping()["users"], CHILD: child}})
+        self.assertTrue(self.images()["users"][CHILD]["images"])
+        self.person(CHILD, FAMILY)
+        self.person(demoted, FAMILY)
+        self.state.refuse_generate = {CHILD, demoted}
+        for _ in range(2):
+            status = self.run_job(expect=1)
+            self.assertEqual(("partial", 2), (status["result"], status["counts"]["failed"]))
+            for user in (CHILD, demoted):
+                self.assertIs(False, self.mapping()["users"][user]["images"])
+                self.assertIs(False, self.images()["users"][user]["images"])
+            self.assertEqual(child["key"], self.mapping()["users"][CHILD]["key"])    # chat keeps working meanwhile
+            self.assertTrue(self.images()["users"][MOTHER]["images"])
+            self.state.now += 300
+
+    def test_pictures_are_denied_before_the_mapping_changes_and_granted_only_after_it(self):
+        gone, demoted, promoted = uid(4), uid(5), uid(6)
+        self.person(MOTHER, PARENTS)
+        self.person(gone, PARENTS)
+        self.person(demoted, PARENTS)
+        self.person(promoted, FAMILY)
+        self.run_job()
+        self.person(gone)
+        self.person(demoted, FAMILY)
+        self.person(promoted, PARENTS)
+        self.state.events.clear()
+        # The first replace of the mapping fails, as on a concurrent change: the denials are already published.
+        self.refuse(job.MAPPING_SECRET, 1)
+        self.assertEqual("kubernetes_conflict", self.run_job(expect=1)["code"])
+        self.assertEqual([("put", job.IMAGE_SECRET)], [event[:2] for event in self.state.events])
+        pictures = {user: entry["images"] for user, entry in self.images()["users"].items()}
+        self.assertEqual({MOTHER: True, demoted: False, promoted: False}, pictures)
+        self.assertTrue(self.mapping()["users"][gone]["images"])      # the mapping itself did not change
+        # The next run completes; the grant appears in the image permissions only after the mapping carries it.
+        self.state.events.clear()
+        self.assertEqual("ok", self.run_job()["result"])
+        self.assertEqual({MOTHER: True, demoted: False, promoted: True},
+                         {user: entry["images"] for user, entry in self.images()["users"].items()})
+        puts = [event for event in self.state.events if event[0] == "put"]
+        granted = next(i for i, e in enumerate(puts) if e[1] == job.IMAGE_SECRET and e[2]["users"][promoted]["images"])
+        carried = next(i for i, e in enumerate(puts) if e[1] == job.MAPPING_SECRET
+                       and e[2]["users"].get(promoted, {}).get("images") is True)
+        self.assertLess(carried, granted)
+
+    def test_a_failed_image_write_leaves_pictures_denied_not_granted(self):
+        self.person(MOTHER, PARENTS)
+        self.person(CHILD, FAMILY)
+        self.run_job()
+        self.person(CHILD, PARENTS)
+        self.refuse(job.IMAGE_SECRET, 1)        # the grant itself fails after the mapping was published
+        self.assertEqual("kubernetes_conflict", self.run_job(expect=1)["code"])
+        self.assertEqual((True, False), (self.mapping()["users"][CHILD]["images"], self.images()["users"][CHILD]["images"]))
+        self.state.now += job.CLAIM_SECONDS
+        self.run_job()
+        self.assertTrue(self.images()["users"][CHILD]["images"])
+
+    def test_an_unusable_entry_never_carries_pictures(self):
+        entry = {"key": "short", "expires_at": NOW + 60 * DAY, "images": True}
+        mapping = {"service_key": SERVICE_KEY, "users": {CHILD: entry, MOTHER: {"key": "sk-" + "v" * 30, "expires_at": NOW + 5,
+                                                                              "images": "yes"}}}
+        self.assertEqual({MOTHER: {"expires_at": NOW + 5, "images": False}}, job.image_document(mapping)["users"])
+        self.publish(mapping)
+        self.person(CHILD, FAMILY)
+        self.state.refuse_generate = {CHILD}
+        self.run_job(expect=1)
+        self.assertIs(False, self.mapping()["users"][CHILD]["images"])
+        self.assertNotIn(CHILD, self.images()["users"])
+
     def test_malformed_entries_are_replaced_or_removed_and_malformed_ids_get_nothing(self):
         stale = self.manual()
         self.publish({"service_key": SERVICE_KEY, "users": {
@@ -426,46 +611,56 @@ class ReconcileTests(Fixture):
             "77777777-gone": {"key": 7}, "88888888-gone": stale}})
         self.person(MOTHER, PARENTS)
         self.person(CHILD, FAMILY)
-        self.person("bad id/../x", FAMILY)
-        self.person("x" * 65, FAMILY)
+        for malformed in ("bad id/../x", "x" * 36, MOTHER.upper(), "44444444-not-a-uuid"):
+            self.person(malformed, FAMILY)
         status = self.run_job()
         users = self.mapping()["users"]
         self.assertEqual({MOTHER, CHILD}, set(users))
         self.assertTrue(all(job.valid_entry(entry) for entry in users.values()))
-        self.assertEqual((2, 2, 2), (status["counts"]["provision"], status["counts"]["revoke"],
+        self.assertEqual((2, 2, 4), (status["counts"]["provision"], status["counts"]["revoke"],
                                      status["counts"]["malformed_members"]))
         self.assertNotIn(stale["key"], self.state.keys)
         self.assertEqual({MOTHER, CHILD}, self.state.users)
+        # No alias is ever built from an id that is not a UUID.
+        self.assertTrue(all(alias.startswith(("webui-" + MOTHER, "webui-" + CHILD)) for path, body in self.state.gateway_calls
+                            for alias in body.get("key_aliases", [])))
 
     def test_an_unreadable_mapping_is_never_replaced(self):
         self.person(MOTHER, PARENTS)
+        good = {"service_key": SERVICE_KEY, "users": {}}
         for broken in ([], {"users": {}}, {"service_key": SERVICE_KEY, "users": []}, {"service_key": "short", "users": {}},
-                       {"service_key": SERVICE_KEY, "users": {}, "retired": [{"key": 1}]}):
+                       {**good, "retired": [{"key": 1}]}, {**good, "retired": [{"key": "not-a-key", "after": 0}]},
+                       {**good, "retired": [{"key": "sk-" + "r" * 30}]}, {**good, "retired": [{"key": "sk-" + "r" * 30, "after": 0, "user": 3}]},
+                       {**good, "sweep": ["not-a-uuid"]}, {**good, "sweep": MOTHER}):
             self.publish(broken)
             status = self.run_job(expect=1)
             self.assertEqual(("stopped", "mapping_invalid"), (status["result"], status["code"]))
             self.assertEqual([], self.state.gateway_calls)
             self.assertEqual([("PUT", "configmaps", job.STATUS_CONFIGMAP)], self.puts()[-1:])
-            self.assertNotIn(("PUT", "secrets", job.MAPPING_SECRET), self.puts())
+            self.assertEqual([], self.puts("secrets"))
             self.assertEqual(broken, self.mapping())
-        self.state.objects[("secrets", job.MAPPING_SECRET)]["data"] = {job.MAPPING_KEY: "not base64 json"}
+        self.secret()["data"] = {job.MAPPING_KEY: "not base64 json"}
         self.assertEqual("mapping_invalid", self.run_job(expect=1)["code"])
-        self.publish({"service_key": SERVICE_KEY, "users": {}})
+        self.publish(good)
 
     def test_image_permissions_that_drifted_are_restored_from_the_mapping(self):
         self.person(MOTHER, PARENTS)
+        self.person(CHILD, FAMILY)
         self.run_job()
-        for drifted in ({"service_key": SERVICE_KEY, "users": {}}, "unreadable"):
+        expected = {MOTHER: {"expires_at": NOW + 90 * DAY, "images": True}, CHILD: {"expires_at": NOW + 90 * DAY, "images": False}}
+        for drifted in ({"service_key": SERVICE_KEY, "users": {}}, "unreadable",
+                        {"service_key": SERVICE_KEY, "users": {CHILD: {"expires_at": NOW + 900 * DAY, "images": True},
+                                                               uid(4): {"expires_at": NOW + DAY, "images": True}}}):
             self.publish(self.mapping(), images=drifted)
             self.run_job()
-            self.assertEqual({MOTHER: {"expires_at": NOW + 90 * DAY, "images": True}}, self.images()["users"])
+            self.assertEqual(expected, self.images()["users"])
 
     def test_a_read_that_looks_broken_changes_nothing(self):
         bound = self.manual()
         self.publish({"service_key": SERVICE_KEY, "users": {MOTHER: bound}})
         cases = {"no_users": lambda: None,
-                 "no_eligible_members": lambda: self.person(MOTHER),
-                 "group_missing": lambda: (self.webui.execute('DELETE FROM "group" WHERE id = ?', (FAMILY,)), self.webui.commit()),
+                 "group_missing": lambda: (self.person(MOTHER), self.webui.execute('DELETE FROM "group" WHERE id = ?', (FAMILY,)),
+                                           self.webui.commit()),
                  "webui_db_unavailable": lambda: (self.webui.execute("DROP TABLE group_member"), self.webui.commit())}
         for code, change in cases.items():
             change()
@@ -473,11 +668,11 @@ class ReconcileTests(Fixture):
             self.assertEqual(("stopped", code), (status["result"], status["code"]))
             self.assertEqual({MOTHER: bound}, self.mapping()["users"])
             self.assertIn(bound["key"], self.state.keys)
-            self.assertEqual([], self.state.gateway_calls)
+            self.assertEqual(([], []), (self.state.gateway_calls, self.puts("secrets")))
 
     def test_more_members_than_the_bound_stops_before_any_key(self):
         for number in range(onboarding.MAX_USERS + 1):
-            self.person(f"member-{number:02d}", FAMILY)
+            self.person(uid(100 + number), FAMILY)
         self.assertEqual("too_many_users", self.run_job(expect=1)["code"])
         self.assertEqual(({}, []), (self.state.keys, self.state.gateway_calls))
 
@@ -491,34 +686,72 @@ class ReconcileTests(Fixture):
         self.state.refuse_generate = set()
         self.assertEqual("ok", self.run_job()["result"])
         self.assertEqual({MOTHER, CHILD}, set(self.mapping()["users"]))
+        self.assertEqual(2, len(self.state.keys))
 
-    def test_a_second_run_stops_while_another_holds_the_claim_and_proceeds_once_it_is_stale(self):
+    def test_a_mapped_key_the_gateway_no_longer_accepts_is_replaced(self):
         self.person(MOTHER, PARENTS)
-        secret = self.state.objects[("secrets", job.MAPPING_SECRET)]
-        secret["metadata"]["annotations"] = {job.CLAIM: str(NOW - 30), "kept": "yes"}
+        self.person(CHILD, FAMILY)
+        self.run_job()
+        dead = self.mapping()["users"][CHILD]["key"]
+        del self.state.keys[dead]           # deleted at the gateway behind the mapping's back (a stale mapping republished)
+        status = self.run_job()
+        self.assertEqual(("ok", 1, [{"user": "22222222", "action": "dead", "tier": "family", "state": "done"}]),
+                         (status["result"], status["counts"]["dead"], status["changes"]))
+        replaced = self.mapping()["users"][CHILD]["key"]
+        self.assertNotEqual(dead, replaced)
+        self.assertIn(replaced, self.state.keys)
+        # While it cannot be replaced, the run fails, which is what the alert watches.
+        del self.state.keys[replaced]
+        self.state.refuse_generate = {CHILD}
+        self.assertEqual(("partial", 1), (lambda s: (s["result"], s["counts"]["failed"]))(self.run_job(expect=1)))
+        self.state.refuse_generate = set()
+        self.state.now += 300
+        self.run_job()
+        # A gateway that does not answer the question (maintenance, restart) proves nothing: no key is replaced.
+        before = self.mapping()
+        self.state.models_status = 503
+        self.state.keys.clear()
+        status = self.run_job()
+        self.assertEqual((0, before), (status["counts"]["dead"], self.mapping()))
+
+    def test_a_second_run_leaves_the_gateway_alone_while_another_holds_the_claim(self):
+        self.person(MOTHER, PARENTS)
+        self.person(CHILD, PARENTS)
+        self.run_job()
+        self.person(CHILD, FAMILY)          # a demotion is waiting
+        self.person(uid(4), FAMILY)         # and a new member
+        self.secret()["metadata"]["annotations"] = {job.CLAIM: str(NOW - 30), "kept": "yes"}
+        self.state.gateway_calls.clear()
+        self.state.kube_calls.clear()
+        before = dict(self.state.keys)
         status = self.run_job(expect=1)
         self.assertEqual(("stopped", "another_run_active"), (status["result"], status["code"]))
-        self.assertEqual(([], {}, []), (self.state.gateway_calls, self.state.keys,
-                                        [call for call in self.puts() if call[1] == "secrets"]))
-        # A run that died keeps its mark; it is ignored once older than any run can be.
+        self.assertEqual(([], before), (self.state.gateway_calls, self.state.keys))
+        # The mark does not hold up a denial: the image permissions already refuse the demoted account.
+        self.assertEqual([("PUT", "secrets", job.IMAGE_SECRET)], self.puts("secrets"))
+        self.assertIs(False, self.images()["users"][CHILD]["images"])
+        # A run that died keeps its mark. The next schedule, even a few seconds early, is not held up by it.
         cron = next(o for o in self.bundle("live") if o["kind"] == "CronJob")
         self.assertLess(cron["spec"]["jobTemplate"]["spec"]["activeDeadlineSeconds"], job.CLAIM_SECONDS)
-        secret["metadata"]["annotations"][job.CLAIM] = str(NOW - job.CLAIM_SECONDS)
+        self.assertLess(job.CLAIM_SECONDS + 15, 300)
+        self.assertEqual("*/5 * * * *", cron["spec"]["schedule"])
+        self.secret()["metadata"]["annotations"][job.CLAIM] = str(NOW)
+        self.state.now = NOW + 298
         self.assertEqual("ok", self.run_job()["result"])
-        self.assertEqual({MOTHER}, set(self.mapping()["users"]))
-        self.assertEqual({"kept": "yes"}, self.state.objects[("secrets", job.MAPPING_SECRET)]["metadata"]["annotations"])
+        self.assertEqual({MOTHER, CHILD, uid(4)}, set(self.mapping()["users"]))
+        self.assertEqual({"kept": "yes"}, self.secret()["metadata"]["annotations"])
 
     def test_the_claim_is_taken_before_any_gateway_change_and_released_with_the_last_write(self):
         self.person(MOTHER, PARENTS)
-        self.state.conflict_at = 1           # the owner changed the Secret between this run's read and its claim
+        self.refuse(job.MAPPING_SECRET, 1)   # the owner changed the Secret between this run's read and its claim
         status = self.run_job(expect=1)
         self.assertEqual(("kubernetes_conflict", [], {}), (status["code"], self.state.gateway_calls, self.state.keys))
         self.run_job()
-        self.assertNotIn(job.CLAIM, self.state.objects[("secrets", job.MAPPING_SECRET)]["metadata"].get("annotations", {}))
+        self.assertNotIn(job.CLAIM, self.secret()["metadata"].get("annotations", {}))
 
     def test_a_concurrent_secret_change_is_refused_and_the_orphaned_key_is_cleaned_up(self):
         self.person(MOTHER, PARENTS)
-        self.state.conflict_at = 2           # after the claim and the key, at the publish
+        self.refuse(job.MAPPING_SECRET, 2)   # after the claim and the key, at the publish
         status = self.run_job(expect=1)
         self.assertEqual(("stopped", "kubernetes_conflict", {}), (status["result"], status["code"], self.mapping()["users"]))
         orphan = set(self.state.keys)
@@ -527,21 +760,21 @@ class ReconcileTests(Fixture):
         self.assertEqual("ok", self.run_job()["result"])
         self.assertEqual({self.mapping()["users"][MOTHER]["key"]}, set(self.state.keys))
         self.assertFalse(orphan & set(self.state.keys))
+        self.assertEqual({"service_key", "users"}, set(self.mapping()))
 
     def test_a_wrong_master_key_changes_nothing(self):
         self.person(MOTHER, PARENTS)
         (self.root / "master-key").write_text("sk-wrong-" + "w" * 40)
         status = self.run_job(expect=1)
         self.assertEqual(("partial", 1, {}), (status["result"], status["counts"]["failed"], self.mapping()["users"]))
-        # Only the claim and its release reached the Secret; the documents are as they were.
-        secret = self.state.objects[("secrets", job.MAPPING_SECRET)]
-        self.assertEqual(({"service_key": SERVICE_KEY, "users": {}}, {}), (self.mapping(), secret["metadata"]["annotations"]))
-        self.assertNotIn(("PUT", "secrets", job.IMAGE_SECRET), self.puts())
+        # Only the claim and its release reached the Secret; no key and no picture permission appeared.
+        self.assertEqual(({}, {}), (self.secret()["metadata"]["annotations"], self.state.keys))
+        self.assertEqual([], [call for call in self.puts("secrets") if call[2] == job.IMAGE_SECRET])
         (self.root / "master-key").write_text(MASTER)
 
     def test_a_gateway_answer_for_another_user_or_expiry_is_not_bound(self):
         self.person(MOTHER, PARENTS)
-        reconciler = job.Reconciler(json.loads((self.root / "config.json").read_text()), None, None, now=NOW)
+        reconciler = job.Reconciler(self.config, None, None, now=NOW)
         good = {"key": "sk-fixture-9999-" + "k" * 24, "user_id": MOTHER, "expires": "2027-02-11T02:40:00+00:00"}
         for answer in ({**good, "user_id": CHILD}, {**good, "key": "plain"}, {**good, "expires": "2027-02-11T02:40:00"},
                        {**good, "expires": "2030-01-01T00:00:00Z"}, {**good, "expires": "2020-01-01T00:00:00Z"},
@@ -572,10 +805,74 @@ class ReconcileTests(Fixture):
             self.webui.rollback()
         self.assertEqual(({MOTHER: "user"}, {PARENTS, FAMILY}, {PARENTS: {MOTHER}}), (read["users"], read["groups"], read["members"]))
         self.assertEqual(sorted(modes), sorted((self.database.parent, *self.database.parent.iterdir())))
+
+    def test_the_database_is_opened_read_only_and_never_created_or_written(self):
+        # A missing file in a writable directory: a read-write open would create it.
+        (self.root / "empty").mkdir()
         with mock.patch.object(job.time, "sleep") as slept, self.assertRaises(job.Stop) as stopped:
-            job.read_webui(self.root / "absent/webui.db")
+            job.read_webui(self.root / "empty/webui.db")
         self.assertEqual(("webui_db_unavailable", 4), (stopped.exception.code, slept.call_count))
-        self.assertFalse((self.root / "absent").exists())
+        self.assertEqual([], list((self.root / "empty").iterdir()))
+        # The connection itself refuses writes before the first query.
+        statements, connect = [], sqlite3.connect
+
+        class Recorded:
+            def __init__(self, connection):
+                self.connection = connection
+
+            def execute(self, statement, *args):
+                if statement.startswith("SELECT"):
+                    with self.assertRaises(sqlite3.OperationalError):
+                        self.connection.execute('DELETE FROM "user"')
+                statements.append(statement)
+                return self.connection.execute(statement, *args)
+
+            def close(self):
+                self.connection.close()
+        Recorded.assertRaises = self.assertRaises
+        self.person(MOTHER, PARENTS)
+        with mock.patch.object(job.sqlite3, "connect", lambda *args, **kwargs: Recorded(connect(*args, **kwargs))):
+            self.assertEqual({MOTHER: "user"}, job.read_webui(self.database)["users"])
+        self.assertEqual(3, sum(statement.startswith("SELECT") for statement in statements))
+        self.assertLess(statements.index("PRAGMA query_only = ON"), min(i for i, s in enumerate(statements) if s.startswith("SELECT")))
+        self.assertEqual(MOTHER, self.webui.execute('SELECT id FROM "user"').fetchone()[0])
+
+    def test_a_credential_never_follows_a_redirect_and_transport_errors_are_a_plain_failure(self):
+        opener = job._opener()
+        # urllib would follow both of these, and send the Authorization header along.
+        self.assertEqual((302, None), job._call(opener, "POST", self.url + "/redirect", MASTER, {"keys": ["sk-" + "x" * 30]}))
+        self.assertEqual((302, None), job._call(opener, "GET", self.url + "/redirect", MASTER))
+        self.assertEqual((["/redirect"], 0), (self.posts(), self.state.probes))
+        self.assertIsNone(job.Gateway(self.url + "/redirect#", MASTER).accepts("sk-" + "x" * 30))
+        for error in (http.client.RemoteDisconnected("sk-in-the-error-text"), http.client.IncompleteRead(b"sk-partial"),
+                      OSError("sk-socket"), ValueError("sk-json")):
+            with mock.patch.object(opener, "open", side_effect=error):
+                self.assertEqual((0, None), job._call(opener, "POST", self.url + "/key/generate", MASTER, {}))
+
+    def test_an_unexpected_error_leaves_only_its_class_name(self):
+        self.person(MOTHER, PARENTS)
+        secret = "sk-in-an-exception-" + "e" * 24
+        with mock.patch.object(job, "read_webui", side_effect=RuntimeError(f"could not use {secret} for {MOTHER}")):
+            status = self.run_job(expect=1)
+        self.assertEqual(("stopped", "internal_error", "RuntimeError"), (status["result"], status["code"], status["exception"]))
+        self.assertEqual({"schema", "mode", "result", "code", "exception"}, set(status))
+        published = self.state.objects[("configmaps", job.STATUS_CONFIGMAP)]["data"][job.STATUS_KEY]
+        for text in (published, self.outputs[-1]):
+            self.assertNotIn("could not use", text)
+            self.assertNotIn(secret, text)
+
+    def test_hand_provisioning_cannot_take_an_onboarding_alias(self):
+        master = self.root / "master-key"
+        master.chmod(0o600)
+        request = {"user_id": MOTHER, "client": f"webui-{MOTHER[:8]}-a", "models": MODELS[:1], "rpm": 1, "tpm": 1,
+                   "concurrency": 1, "days": 1}
+        (self.root / "request.json").write_text(json.dumps(request))
+        args = SimpleNamespace(master_file=master, request=self.root / "request.json", output=self.root / "out",
+                               base_url="http://127.0.0.1:9", existing_user=False)
+        with mock.patch.object(service, "admin_request") as sent, self.assertRaisesRegex(ValueError, "reserved for onboarding"):
+            service.provision(args)
+        sent.assert_not_called()
+        self.assertFalse((self.root / "out").exists())
 
 
 class DryRunTests(Fixture):
@@ -583,7 +880,7 @@ class DryRunTests(Fixture):
 
     def test_dry_run_reports_the_plan_and_writes_nothing_anywhere(self):
         expiring, leaving = self.manual(days=5), self.manual()
-        self.publish({"service_key": SERVICE_KEY, "users": {MOTHER: expiring, "99999999-left": leaving}})
+        self.publish({"service_key": SERVICE_KEY, "users": {MOTHER: expiring, uid(99999999): leaving}})
         self.person(MOTHER, PARENTS)
         self.person(CHILD, FAMILY)
         before = repr(self.state.objects), dict(self.state.keys)
@@ -591,12 +888,13 @@ class DryRunTests(Fixture):
         (self.root / "master-key").unlink()
         status = self.run_job()
         self.assertEqual(before, (repr(self.state.objects), self.state.keys))
-        self.assertEqual(([], []), (self.state.gateway_calls, self.puts()))
+        self.assertEqual(([], [], 0), (self.state.gateway_calls, self.puts(), self.state.probes))
         self.assertEqual({("GET", "secrets", job.MAPPING_SECRET), ("GET", "secrets", job.IMAGE_SECRET)}, set(self.state.kube_calls))
         self.assertEqual([{"user": "11111111", "action": "renew", "tier": "parents", "state": "planned"},
                           {"user": "22222222", "action": "provision", "tier": "family", "state": "planned"},
                           {"user": "99999999", "action": "revoke", "tier": None, "state": "planned"}], status["changes"])
-        self.assertEqual(("dry-run", "ok", ["11111111", "22222222"]), (status["mode"], status["result"], status["homes_needed"]))
+        self.assertEqual(("dry-run", "ok", ["11111111", "22222222"], "not_checked"),
+                         (status["mode"], status["result"], status["homes_needed"], status["liveness"]))
 
     def test_the_dry_run_role_cannot_write_even_if_the_job_tried(self):
         kube = job.Kube("ai-home-lab", base=self.url, token=TOKEN)
@@ -759,9 +1057,55 @@ class RenderTests(unittest.TestCase):
             with self.assertRaises(job.Stop):
                 job.read_config(path)
 
+    def test_the_site_file_sets_the_policies_and_the_administrator_rule(self):
+        self.assertEqual({**service.KEY_LIMITS, "days": 90}, onboarding.BOUNDS)
+        # Defaults: parents at the adult bounds; family lower, without pictures, and two requests at once
+        # (Open WebUI's follow-up, title and tag calls share the key with the next message).
+        self.assertEqual({"parents": {"rpm": 60, "tpm": 2000000, "concurrency": 2, "days": 90, "images": True},
+                          "family": {"rpm": 30, "tpm": 1000000, "concurrency": 2, "days": 90, "images": False}},
+                         onboarding.policies({}))
+        site = self.root / "site-policies.json"
+        site.write_text(json.dumps({**SITE, "key_onboarding": "live", "admin_policy": "unmanaged",
+                                    "key_policies": {"family": {"rpm": 10, "concurrency": 1, "days": 45}, "parents": {"tpm": 500000}}}))
+        output = self.root / "render-policies"
+        service.render(SimpleNamespace(site=site, output=output, mode="shared", experience="assistant-memory",
+                                       serving_profile=PROFILE, sandbox_config=self.root / "sandbox.json"))
+        rendered = next(o for o in service.load_objects((output / "onboarding.yaml").read_text())
+                        if o["kind"] == "ConfigMap" and o["metadata"]["name"] == "key-onboarding")
+        path = self.root / "config-policies.json"
+        path.write_text(rendered["data"]["config.json"])
+        config = job.read_config(path)
+        self.assertEqual("unmanaged", config["admin_policy"])
+        self.assertEqual({"rpm": 10, "tpm": 1000000, "concurrency": 1, "days": 45, "images": False},
+                         {k: v for k, v in config["policies"]["family"].items() if k != "models"})
+        self.assertEqual({"rpm": 60, "tpm": 500000, "concurrency": 2, "days": 90, "images": True},
+                         {k: v for k, v in config["policies"]["parents"].items() if k != "models"})
+        self.assertEqual("parents", json.loads(self.named("live", "ConfigMap")["data"]["config.json"])["admin_policy"])
+        # A wrong value is refused at the site file, whether or not onboarding is on.
+        for wrong in ({"key_policies": {"children": {}}}, {"key_policies": {"family": {"models": ["x"]}}},
+                      {"key_policies": {"family": {"rpm": 61}}}, {"key_policies": {"family": {"tpm": 0}}},
+                      {"key_policies": {"parents": {"concurrency": 3}}}, {"key_policies": {"parents": {"days": 91}}},
+                      {"key_policies": {"parents": {"days": 30}}}, {"key_policies": {"family": {"images": "no"}}},
+                      {"key_policies": {"family": {"rpm": 1.5}}}, {"key_policies": []}, {"key_policies": {"family": []}},
+                      {"admin_policy": "family"}):
+            site.write_text(json.dumps({**SITE, **wrong}))
+            with self.assertRaises(ValueError, msg=wrong):
+                service.site_values(site)
+
+    def test_finished_jobs_are_removed_so_that_failed_pods_mean_recent_failures(self):
+        spec = self.named("live", "CronJob")["spec"]["jobTemplate"]["spec"]
+        self.assertEqual(1200, spec["ttlSecondsAfterFinished"])
+        rules = service.yaml.safe_load((ROOT / "infrastructure/service/alerts.yaml").read_text())["groups"][0]["rules"]
+        alert = next(rule for rule in rules if rule["alert"] == "WorkstationKeyOnboardingFailing")
+        self.assertIn('pod=~"key-onboarding-.*"', alert["expr"])
+        self.assertIn('phase="Failed"', alert["expr"])
+        # The metric the rule reads is one kube-state-metrics is allowed to export here.
+        self.assertIn("^kube_pod_status_phase$", (ROOT / "infrastructure/observability/host-metrics.yaml").read_text())
+
     def test_a_claim_that_cannot_be_shared_or_an_unpinned_image_is_refused(self):
         webui = {"kind": "Deployment", "metadata": {"name": "open-webui"}, "spec": {"template": {"spec": {
-            "containers": [{"image": "registry.example.test/open-webui@sha256:" + "c" * 64}],
+            "containers": [{"image": "registry.example.test/open-webui@sha256:" + "c" * 64,
+                            "env": [{"name": "ENABLE_SIGNUP", "value": "false"}]}],
             "volumes": [{"name": "data", "persistentVolumeClaim": {"claimName": "data"}}]}}}}
         claim = {"kind": "PersistentVolumeClaim", "metadata": {"name": "data"}, "spec": {"accessModes": ["ReadWriteOncePod"]}}
         sandbox = {**SANDBOX, "users": []}
@@ -773,6 +1117,14 @@ class RenderTests(unittest.TestCase):
             onboarding.render("live", sandbox, [webui, claim], MODELS, ROOT)
         with self.assertRaisesRegex(ValueError, "off, dry-run or live"):
             onboarding.render("on", sandbox, [webui, claim], MODELS, ROOT)
+        # Membership issues keys by itself, so open sign-up is refused.
+        webui["spec"]["template"]["spec"]["containers"][0]["image"] = "registry.example.test/open-webui@sha256:" + "c" * 64
+        self.assertTrue(onboarding.render("dry-run", sandbox, [webui, claim], MODELS, ROOT))
+        for env in ([{"name": "ENABLE_SIGNUP", "value": "true"}], []):
+            webui["spec"]["template"]["spec"]["containers"][0]["env"] = env
+            with self.assertRaisesRegex(ValueError, "sign-up closed"):
+                onboarding.render("dry-run", sandbox, [webui, claim], MODELS, ROOT)
+        self.assertEqual([], onboarding.render("off", sandbox, [webui, claim], MODELS, ROOT))
 
 
 if __name__ == "__main__":

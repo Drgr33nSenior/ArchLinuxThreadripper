@@ -18,22 +18,52 @@ RENEW_DAYS = 30
 RETIRE_GRACE_SECONDS = 600
 # The same bound as the sandbox home mapping.
 MAX_USERS = 32
-# One policy per tier, inside service.KEY_LIMITS. Parents (and an administrator in either
-# group) run agents: the adult bounds of docs/AI-SERVICE.md step 6. Family is the
-# children: one request at a time, half the token rate, no pictures.
+# Default key policy per tier; the site file may replace any value (`key_policies`).
+# Parents (and administrators) run agents: the adult bounds of docs/AI-SERVICE.md step 6.
+# Family is the children: half the request and token rate, no pictures. Two requests at
+# once, not one: after each answer Open WebUI makes its follow-up, title and tag calls
+# with the same key, one after another, and a child who sends the next message while
+# they run would be refused with 429 at a limit of one.
 POLICIES = {"parents": {"rpm": 60, "tpm": 2000000, "concurrency": 2, "days": 90, "images": True},
-            "family": {"rpm": 30, "tpm": 1000000, "concurrency": 1, "days": 90, "images": False}}
+            "family": {"rpm": 30, "tpm": 1000000, "concurrency": 2, "days": 90, "images": False}}
+# The gateway's bounds for any virtual key (service.KEY_LIMITS and the 90-day maximum; a test keeps them in step).
+BOUNDS = {"rpm": 60, "tpm": 2000000, "concurrency": 2, "days": 90}
+ADMIN_POLICIES = ("parents", "unmanaged")
 # Unmeasured: a short standard-library Python process. Not counted by `service plan`.
 RESOURCES = {"requests": {"cpu": "20m", "memory": "64Mi"}, "limits": {"cpu": "250m", "memory": "256Mi"}}
 SECRETS = ["gateway-browser-keys", "gateway-image-permissions"]
 STATUS = "key-onboarding-status"
 
 
-def job_config(mode, sandbox, models):
+def policies(overrides):
+    """The two key policies: the defaults with the site's `key_policies` laid over them."""
+    if not isinstance(overrides, dict) or set(overrides) - set(POLICIES):
+        raise ValueError("key_policies may name parents and family only")
+    result = {}
+    for tier, default in POLICIES.items():
+        change = overrides.get(tier, {})
+        if not isinstance(change, dict) or set(change) - set(default):
+            raise ValueError(f"key_policies.{tier} may set rpm, tpm, concurrency, days and images only")
+        policy = {**default, **change}
+        for name, bound in BOUNDS.items():
+            if type(policy[name]) is not int or not 1 <= policy[name] <= bound:
+                raise ValueError(f"key_policies.{tier}.{name} must be a whole number from 1 to {bound}")
+        if type(policy["images"]) is not bool:
+            raise ValueError(f"key_policies.{tier}.images must be true or false")
+        if policy["days"] <= RENEW_DAYS:
+            raise ValueError(f"key_policies.{tier}.days must be more than the {RENEW_DAYS}-day renewal window")
+        result[tier] = policy
+    return result
+
+
+def job_config(mode, sandbox, models, key_policies=None, admin_policy="parents"):
     """What the job needs: group ids, key policies and who already has a home. No credential."""
+    if admin_policy not in ADMIN_POLICIES:
+        raise ValueError("admin_policy must be parents or unmanaged")
     return {"mode": mode, "namespace": NAMESPACE, "gateway": "http://litellm:4000", "database": "/webui/webui.db",
             "parents_group_id": sandbox["parents_group_id"], "family_group_id": sandbox["family_group_id"],
-            "policies": {tier: {"models": sorted(models), **policy} for tier, policy in POLICIES.items()},
+            "admin_policy": admin_policy,
+            "policies": {tier: {"models": sorted(models), **policy} for tier, policy in policies(key_policies or {}).items()},
             "renew_days": RENEW_DAYS, "retire_grace_seconds": RETIRE_GRACE_SECONDS, "max_users": MAX_USERS,
             "home_user_ids": sorted(user["webui_user_id"] for user in sandbox["users"]),
             # Who gets a workspace at all: Parents always, Family when the sandbox admits them.
@@ -44,7 +74,7 @@ def obj(kind, name, api="v1", **fields):
     return {"apiVersion": api, "kind": kind, "metadata": {"name": name, "namespace": NAMESPACE}, **fields}
 
 
-def render(mode, sandbox, objects, models, root):
+def render(mode, sandbox, objects, models, root, key_policies=None, admin_policy="parents"):
     """The onboarding bundle for a rendered assistant composition; empty when off.
 
     `dry-run` carries no admin credential and no write permission at all: it reads the
@@ -54,6 +84,9 @@ def render(mode, sandbox, objects, models, root):
     """
     if mode not in MODES:
         raise ValueError("key_onboarding must be off, dry-run or live")
+    policies(key_policies or {})    # a wrong site value is refused whether or not the job is on
+    if admin_policy not in ADMIN_POLICIES:
+        raise ValueError("admin_policy must be parents or unmanaged")
     if mode == "off":
         return []
     live = mode == "live"
@@ -62,6 +95,9 @@ def render(mode, sandbox, objects, models, root):
     # The job runs from the Open WebUI image, as its user: the same SQLite library as the
     # database's only writer, already on the node. Nothing of Open WebUI itself is started.
     image = spec["containers"][0]["image"]
+    # Group membership issues a key with no further step, so only the owner may create accounts.
+    if {"name": "ENABLE_SIGNUP", "value": "false"} not in spec["containers"][0].get("env", []):
+        raise ValueError("key onboarding needs Open WebUI sign-up closed (ENABLE_SIGNUP=false)")
     if "@sha256:" not in image:
         raise ValueError("key onboarding needs the Open WebUI image pinned by digest")
     claim = next(v["persistentVolumeClaim"]["claimName"] for v in spec["volumes"] if v["name"] == "data")
@@ -112,7 +148,7 @@ def render(mode, sandbox, objects, models, root):
         obj("RoleBinding", NAME, "rbac.authorization.k8s.io/v1",
             roleRef={"apiGroup": "rbac.authorization.k8s.io", "kind": "Role", "name": NAME},
             subjects=[{"kind": "ServiceAccount", "name": NAME, "namespace": NAMESPACE}]),
-        obj("ConfigMap", NAME, data={"config.json": json.dumps(job_config(mode, sandbox, models), indent=2) + "\n",
+        obj("ConfigMap", NAME, data={"config.json": json.dumps(job_config(mode, sandbox, models, key_policies, admin_policy), indent=2) + "\n",
                                      "key_onboarding.py": (root / "infrastructure/service/key_onboarding.py").read_text()}),
         obj("NetworkPolicy", NAME, "networking.k8s.io/v1", spec={
             "podSelector": {"matchLabels": labels}, "policyTypes": ["Ingress", "Egress"], "ingress": [], "egress": egress}),
@@ -120,6 +156,9 @@ def render(mode, sandbox, objects, models, root):
         obj("CronJob", NAME, "batch/v1", spec={
             "schedule": SCHEDULE, "concurrencyPolicy": "Forbid", "startingDeadlineSeconds": 120,
             "successfulJobsHistoryLimit": 1, "failedJobsHistoryLimit": 3,
-            "jobTemplate": {"spec": {"backoffLimit": 0, "activeDeadlineSeconds": 240, "template": {
+            # Finished Jobs go after 20 minutes, so the Failed pods that exist at any moment are
+            # recent failures: what the WorkstationKeyOnboardingFailing alert counts.
+            "jobTemplate": {"spec": {"backoffLimit": 0, "activeDeadlineSeconds": 240, "ttlSecondsAfterFinished": 1200,
+                                     "template": {
                 "metadata": {"labels": labels}, "spec": pod}}}}),
     ]

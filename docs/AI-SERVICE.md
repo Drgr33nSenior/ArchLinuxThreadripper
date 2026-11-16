@@ -181,6 +181,8 @@ context, node and new output paths; placeholders are not site values.
    | `tls_secret` | `ai-home-lab-tls` |
    | `webui_default_group` | Optional. The UUID of the Open WebUI group every new account joins (`DEFAULT_GROUP_ID`); empty or absent leaves it unset. |
    | `key_onboarding` | Optional. `off` (default), `dry-run` or `live`: [automatic family onboarding](#automatic-family-onboarding). |
+   | `admin_policy` | Optional, for onboarding. `parents` (default): every account with the `admin` role gets a parents key, in a group or not. `unmanaged`: an administrator outside both groups is left alone. |
+   | `key_policies` | Optional, for onboarding. Replaces values of the `parents` and `family` [key policies](#what-each-run-decides), for example `{"family": {"rpm": 20, "days": 60}}`. |
 
    **Model visibility.** Open WebUI 0.12 shows a gateway model without an Open
    WebUI model entry to admins only. As admin, create a group (for example
@@ -462,10 +464,18 @@ and pictures if the group has them. Keys are renewed before they expire and revo
 when the account leaves both groups or is deleted. It is off unless the site file
 sets `key_onboarding`.
 
+Because membership now grants a key without any other step, sign-up must stay
+closed (`ENABLE_SIGNUP=false`, the base Deployment's setting): only the owner
+creates accounts. An account gets a key when it is in a group or has the `admin`
+role. Where the site file sets `webui_default_group` to the Family group, every
+account the owner creates joins it and so gets a family key without a further
+step; leave it unset to decide per account.
+
 ```mermaid
 flowchart LR
   DB[("Open WebUI database<br/>read-only mount")] --> J["key-onboarding CronJob<br/>every 5 minutes"]
   J -- "user, key: create and delete<br/>(master key)" --> G["LiteLLM admin API"]
+  J -- "is this key still accepted?<br/>(the user's own key)" --> G
   J -- "get, update" --> M["Secret gateway-browser-keys"]
   J -- "get, update" --> I["Secret gateway-image-permissions"]
   J -- "update" --> S["ConfigMap key-onboarding-status"]
@@ -484,51 +494,86 @@ The job is `infrastructure/service/key_onboarding.py`, rendered by
 | --- | --- |
 | Member of Parents, or of both groups | Key with the parents policy; pictures on. The most permissive group wins, as for Open WebUI permissions |
 | Member of Family only | Key with the family policy; pictures off |
-| Administrator in either group | Parents policy (pictures are for Admin and Parents) |
-| Administrator in neither group | Left alone: no key issued, and a key bound by hand is neither renewed nor revoked. `unmanaged_expiring` in the status counts such keys inside the renewal window |
-| Was in a group, now in neither; deleted; or role `pending` | Removed from both mappings, then the key is deleted at the gateway |
+| Role `admin`, in a group or not | Parents policy, renewed like any other (`admin_policy: parents`, the default). With `admin_policy: unmanaged`, an administrator in a group still gets the parents policy, and one in neither group is left alone: no key issued, a hand-bound key neither renewed nor revoked, counted by `unmanaged_expiring` when inside the renewal window |
+| Was in a group, now in neither; deleted; or role `pending` | Pictures denied and the account removed from both mappings first; then its key, both of its alias slots and any key of its still in the renewal grace are deleted at the gateway. This includes the last member of a group: empty groups are a valid state |
 | Member with a valid key and more than 30 days left | Nothing. A key bound by hand keeps its key and limits; only its picture flag follows the group |
 | Member whose key has under 30 days left, or has expired | New key, mapping updated, old key deleted ten minutes later |
 | Member whose group changed between Family and Parents | Picture flag at once. A key this job issued is replaced so the limits follow; a key bound by hand keeps its limits until renewal |
-| Mapping entry that is not a usable record | Replaced for a member, removed for anyone else |
+| Member whose mapped key the gateway no longer accepts (`dead`) | New key. Each live run asks the gateway's model list with every mapped key; only a clear refusal (401) counts, never a gateway that is restarting or in maintenance |
+| Mapping entry that is not a usable record | Replaced for a member, removed for anyone else; it never carries pictures |
+
+**Pictures follow the group before anything else.** Every run first sets each
+member's picture flag to the policy's and publishes the denials, whether or not a
+key can be issued. A child whose renewal fails keeps chatting on the old key but
+does not keep a picture permission bound by hand or left from the Parents group.
 
 Only direct members count: a member of a child group of Family or Parents is not
-a member here. A user id that is not 1 to 64 letters, digits, `-` or `_` gets no
-key and is counted as `malformed_members`.
+a member here. A user id that is not a lower-case UUID, which is what Open WebUI
+assigns, gets no key and is counted as `malformed_members`.
 
 | Policy | Requests/min | Tokens/min | At once | Pictures | Lifetime |
 | --- | --- | --- | --- | --- | --- |
 | parents | 60 | 2,000,000 | 2 | yes | 90 days |
-| family | 30 | 1,000,000 | 1 | no | 90 days |
+| family | 30 | 1,000,000 | 2 | no | 90 days |
 
-Both list every supported model alias, so a mode switch needs no new key. The
-values are `POLICIES` in `lib/workstation/onboarding.py`, inside the bounds of
-step 6. The family values are a first choice, not a measurement: change them
-there and apply again; existing keys take the new limits at their next renewal,
-or use `service limits` on the alias `webui-<user id>-a` (or `-b`).
+Both list every supported model alias, so a mode switch needs no new key. These
+are the defaults (`POLICIES` in `lib/workstation/onboarding.py`). The site file's
+`key_policies` replaces any of `rpm`, `tpm`, `concurrency`, `days` and `images`
+per policy, inside the bounds of step 6 and with `days` above the 30-day renewal
+window; a value outside them stops the render. Existing keys take new limits at
+their next renewal, or at once with `service limits` on the alias
+`webui-<user id>-a` (or `-b`).
+
+The family default allows two requests at once, not one. After each answer Open
+WebUI makes up to three more calls with the same key, one after another
+(follow-up suggestions, the chat title, tags; `background_tasks_handler` in the
+pinned fork). A child who sends the next message while those run would get `429`
+at a limit of one. The family rates are a first choice, not a measurement.
 
 **Keys and aliases.** Each key is issued for the exact Open WebUI user id, with the
 alias `webui-<user id>-a` or `-b`. A renewal uses the other alias. Before issuing,
-the job deletes whatever holds the alias it is about to use: that can only be a key
-from a run that stopped before the mapping was written, whose value nobody holds.
-The job never lists keys and never touches a key it cannot name from the mapping or
-from these two aliases, so IDE and agent keys are out of its reach by construction.
+the job deletes whatever holds the alias it is about to use: that should only be a
+key from a run that stopped before the mapping was written, whose value nobody
+holds. The job never lists keys. What it deletes is what it can name: a key in
+the mapping (the current one of a replaced or removed account, by value), a key in
+the mapping's `retired` list, and the two aliases of a user id. `service provision`
+refuses client names that start with `webui-`, so a key issued by hand cannot take
+one of those aliases from now on; a key that already has such an alias would be
+deleted at that user's next renewal. With the master key the gateway itself does
+not stop the job from deleting any key, so this is a property of the code, not of
+the credential ([threat model](#threat-model)).
 
-**Order of a change.** A run that has something to change first marks
-`gateway-browser-keys` with the annotation `workstation.ai/key-onboarding-claim`;
-a second run that finds a mark younger than five minutes stops
-(`another_run_active`), so a Job started by hand beside the schedule cannot delete
-a key the other run has just issued. Then: new key, `gateway-browser-keys`,
-`gateway-image-permissions` (derived from the first, without keys), deletion
-of old keys, and the mark is removed with the last write. A replaced key is kept for ten minutes in a `retired` list inside
-`mapping.json`, because the gateway may hold the previous file until the kubelet
-refreshes the projected Secret (up to about a minute and a half). A revoked
-account's key is deleted in the same run. Each Secret is replaced at the
-`resourceVersion` it was read at, so a concurrent change by the owner is refused,
-not overwritten, and the next run starts again from the new state. A run that
-stops after its mark leaves it behind; later runs wait until it is five minutes old. The two Secrets
-cannot change in one transaction: if the second write fails, the next run restores
-the image permissions from the mapping.
+**Order of a change.**
+
+1. Pictures the plan denies are denied: `gateway-image-permissions` loses them
+   before anything else is written, also when another run holds the mark.
+2. A run that will call the gateway marks `gateway-browser-keys` with the
+   annotation `workstation.ai/key-onboarding-claim`. The same write removes
+   revoked accounts from the mapping and records, in a `sweep` list, the users who
+   may be about to get a key the mapping does not name yet. A second run that
+   finds a mark younger than 270 seconds leaves the gateway alone
+   (`another_run_active`), so a Job started by hand beside the schedule cannot
+   delete a key the other run has just issued. 270 seconds is longer than a run
+   may take (240) and shorter than the schedule, so a run that died does not hold
+   up the next one.
+3. New keys are issued.
+4. `gateway-browser-keys` is published, then the picture grants in
+   `gateway-image-permissions`.
+5. Only then are keys deleted: replaced keys whose ten-minute grace is over
+   (kept in a `retired` list inside `mapping.json`, because the gateway may hold
+   the previous file until the kubelet refreshes the projected Secret, up to about
+   a minute and a half), keys of removed accounts at once, and the alias slots of
+   every user in `sweep` that the mapping does not name.
+6. The mark is removed with the last write.
+
+Each Secret is replaced at the `resourceVersion` it was read at, so a concurrent
+change by the owner is refused, not overwritten, and the next run starts again
+from the new state. The two Secrets cannot change in one transaction, and the
+gateway and the image adapter see them through separate file refreshes. The order
+makes every in-between state the safe one: the image permissions never grant what
+the published mapping does not, and a failure between two writes leaves pictures
+denied until the next run. An entry of `retired` must be a well-formed key record
+or the run stops (`mapping_invalid`).
 
 **No restart.** The gateway and service-tools read their mapping file on every
 request (`secret_json` in `boundary.py`), and both mount the whole Secret, not a
@@ -536,10 +581,9 @@ request (`secret_json` in `boundary.py`), and both mount the whole Secret, not a
 
 **When a read looks wrong, nothing changes.** The run stops, with a code in the
 status, when the database cannot be read after five tries, the user table is
-empty, either group is missing, more than 32 members are found, both groups are
-empty while keys would be revoked, or the mapping Secret is not the expected
-document. A person can therefore not be removed as the last member automatically;
-revoke that key by hand.
+empty, either group is missing, more than 32 accounts are eligible, or the mapping
+Secret is not the expected document. Both groups present but empty is not a wrong
+read: the last member left, and is revoked.
 
 ### Reading Open WebUI
 
@@ -557,9 +601,12 @@ only writer, and nothing of Open WebUI is started.
 
 The claim is `ReadWriteOnce` on the one node, which allows a second pod on that
 node; the render refuses another access mode. Open WebUI keeps the database in
-WAL mode. Through a read-only mount SQLite can read it only while Open WebUI has
-it open, so with Open WebUI stopped the run stops with `webui_db_unavailable`
-and changes nothing. A read during a write sees the last committed state.
+WAL mode. Through a read-only mount SQLite can read it only while the WAL index
+exists, which Open WebUI removes when it stops cleanly: the run then stops with
+`webui_db_unavailable` and changes nothing. After a crash the index can remain
+and the last committed state stays readable; the job does not check that Open
+WebUI is running. A read during a write sees the last committed state. This is
+tested with a second connection in one process, not yet with two pods.
 
 ### Status
 
@@ -573,10 +620,19 @@ kubectl --context "$SERVICE_CONTEXT" -n ai-home-lab logs job/"$(kubectl --contex
 
 It holds counts per action, `changes` (the first eight characters of the user id,
 the action, the tier and `planned`, `done` or `failed`), `homes_needed`,
-`earliest_expiry_days`, `unmanaged_expiring`, `retired_pending` and, when a run
-stopped, a fixed `code`. It never holds a key, a full user id, a name or an
-address. A run that is `partial` or `stopped` exits 1, so the Job shows as Failed;
-the next run retries. There is no alert on this yet.
+`earliest_expiry_days`, `unmanaged_expiring`, `retired_pending`, `sweep_pending`,
+`liveness` (`checked` in a live run, `not_checked` in a dry run, which has no
+route to the gateway) and, when a run stopped, a fixed `code`. It never holds a
+key, a full user id, a name or an address. A run that is `partial` or `stopped`
+exits 1, so the Job shows as Failed; the next run retries.
+
+**Alert.** `WorkstationKeyOnboardingFailing` (`infrastructure/service/alerts.yaml`)
+fires when three onboarding pods are in phase Failed. Finished Jobs are removed
+after 20 minutes, so that is three failures among the last four runs. It reads
+`kube_pod_status_phase`, which kube-state-metrics already exports for this
+namespace. A mapped key the gateway refuses is replaced by the same run; if it
+cannot be replaced the run fails and counts toward the alert. The rule reaches
+Prometheus with the other service rules (`service notifications`).
 
 **Sandbox homes.** A home on the NAS is still created by the owner
 ([sandbox homes](HOME-LAB.md#sandbox-homes-per-user-nas-volumes)). `homes_needed`
@@ -604,17 +660,23 @@ applies `workloads.yaml` only and never changes it.
    ```
 
 3. Read the plan. Expect `keep` for every account that already has a key,
-   `provision` only for accounts that have none, no `revoke` you do not intend,
-   and `images` only where a hand-bound picture flag differs from the group. The
-   administrator account, in neither group, shows as `unmanaged`: put it in
-   Parents if its key should be renewed for it. Resolve anything unexpected in
-   Open WebUI's groups first.
+   `provision` only for accounts that have none, and `images` only where a
+   hand-bound picture flag differs from the group. **Read every `revoke`:** the
+   first live run removes each mapped account that is in neither group and is
+   not an administrator, and deletes its hand-bound key at the gateway. An
+   administrator's hand-bound key shows as `renew` once it is inside the 30-day
+   window. A dry run cannot ask the gateway whether mapped keys are still
+   accepted (`liveness: not_checked`). Resolve anything unexpected in Open
+   WebUI's groups first.
 4. Set `"key_onboarding": "live"`, render, review the diff of `onboarding.yaml`
    (the master-key volume, `update` on the two Secrets and the status ConfigMap,
    the gateway flow) and apply. Watch the first run, then sign in as a new
    account and send a message.
 5. Take a fresh `service` capture: the Secrets in the cluster are now the only
-   copy of the newly issued keys.
+   copy of the newly issued keys. The capture suspends the CronJob and waits for
+   a running Job before it stops the writers; the journal records the CronJob so
+   the [resume](SERVICE-RECOVERY.md#owner-run-capture-and-resume) can turn it
+   back on.
 
 To stop it: `kubectl -n ai-home-lab patch cronjob key-onboarding -p '{"spec":{"suspend":true}}'`.
 To remove it: set `key_onboarding` to `off` and
@@ -629,10 +691,13 @@ one run (the key is revoked), and add it back.
 The job only ever reads the Secrets in the cluster; a local `mapping.json` from
 before is out of date and publishing it would undo issued keys (the job would
 then issue them again, and the orphaned ones would stay until they expire).
-Suspend the CronJob, export both Secret keys to protected files, run
-`browser-bind` or `revoke --mapping` against that export, publish both, and
-resume. `browser-bind` and `revoke` rewrite only the entry they are given and
-keep everything else in the document, including the job's `retired` list.
+Suspend the CronJob and wait until no onboarding Job is active (suspending does
+not stop a run in progress; `kubectl -n ai-home-lab get jobs`), export both
+Secret keys to protected files, run `browser-bind` or `revoke --mapping` against
+that export, publish both, and resume. `browser-bind` and `revoke` rewrite only the entry they are given and
+keep everything else in the document, including the job's `retired` and `sweep`
+lists. If a mapping is published whose key the gateway no longer has, the next
+live run replaces that key (`dead`).
 
 ### Identity and flows
 
@@ -642,7 +707,7 @@ keep everything else in the document, including the job's `retired` list.
 | Role `key-onboarding` | `get`, `update` on Secrets `gateway-browser-keys` and `gateway-image-permissions` by name; `get`, `update` on ConfigMap `key-onboarding-status` by name. No `list`, `watch`, `create`, `delete` or `patch`; nothing cluster-wide. In `dry-run`: `get` on the two Secrets only |
 | Secret volume | `master-key` alone from `gateway-credentials`; not the database URL, salt or control key. Absent in `dry-run` |
 | Claim | Open WebUI's data claim, read-only |
-| NetworkPolicy `key-onboarding` | No ingress. Egress to the API server address and to `litellm:4000` only (plus the namespace's DNS rule). `dry-run`: API server only |
+| NetworkPolicy `key-onboarding` | No ingress. Egress to the API server address and to `litellm:4000`. The namespace's `allow-cluster-dns` policy applies to this pod as to every other, so it can also query the cluster's DNS. `dry-run`: API server and DNS only |
 | NetworkPolicy `litellm-key-onboarding-ingress` | The gateway accepts the job on 4000. Absent in `dry-run` |
 | Pod | Non-root (1000), read-only root filesystem, no capabilities, `RuntimeDefault` seccomp, no environment credentials; 20m CPU and 64 MiB requested (unmeasured, not counted by `service plan`) |
 
@@ -655,7 +720,7 @@ ServiceAccount that can replace the two mapping Secrets.
 
 | If this is compromised | It can | It cannot |
 | --- | --- | --- |
-| The job's code or image (the Open WebUI image, pinned by digest) | Use the master key: issue, change and delete any gateway key, read spend, change gateway settings. Read every browser key and the application `service_key` from the mapping. Give any Open WebUI user id any key or picture permission. Read the whole Open WebUI data volume: chats, uploads, password hashes | Write to Open WebUI's data. Read other Secrets (database URL, salt, control key, session secret, TLS). Reach anything but the API server and the gateway; in particular nothing outside the cluster, so what it reads has no direct way out. Start pods or change workloads |
+| The job's code or image (the Open WebUI image, pinned by digest) | Use the master key: issue, change and delete any gateway key, read spend, change gateway settings. Read every browser key and the application `service_key` from the mapping. Give any Open WebUI user id any key or picture permission. Read the whole Open WebUI data volume: chats, uploads, password hashes. Send what it read out through DNS: the pod may query the cluster's resolver, which resolves public names, so data can leave encoded in lookups of a domain the attacker controls | Write to Open WebUI's data. Read other Secrets (database URL, salt, control key, session secret, TLS). Open a connection to anything but the API server, the gateway and the cluster DNS. Start pods or change workloads |
 | The ServiceAccount token alone | Replace the two Secrets and the status ConfigMap from wherever the API server is reachable | Use the master key or read the database |
 | Open WebUI's database (someone who can write group membership) | Get a family or parents key issued for an account they control, within the fixed policies | Get a key outside those policies, or for an id that is not an Open WebUI user |
 | An Open WebUI administrator | The same as today: they already decide who has an account. Group membership now also grants gateway access and pictures without the owner's CLI step | |
@@ -665,9 +730,9 @@ Why that is acceptable here:
 - The gateway pod already holds the master key all the time, in the same
   namespace. The job is a second, short-lived holder with far less code: one
   reviewed standard-library file, no listener, no inbound flow.
-- The master key is LiteLLM's admin credential; LiteLLM OSS has no narrower
-  credential that can create keys for other users. The exposure is bounded by
-  what the job can reach, not by the credential.
+- The job still holds the master key, because the narrower credential the owner
+  asked for cannot do the job in LiteLLM 1.109.1 (below). The exposure is bounded
+  by what the job's code does and can reach, not by the credential.
 - The decision the owner made by hand (who is family, who is a parent) is still
   made by the owner, in Open WebUI, which only an administrator can change.
   Sign-up is closed. The step that was easy to forget is what is automated.
@@ -678,9 +743,30 @@ Why that is acceptable here:
 
 What stays weaker than the manual flow: the master key is used unattended, so a
 compromise of the Open WebUI image build or of that node's kubelet reaches it
-without the owner present; and a mistaken group change takes effect in five
-minutes. `dry-run` first, the fixed policies and the 32-account bound are the
-limits on that.
+without the owner present; what the job reads could leave through DNS; and a
+mistaken group change, or giving an account the `admin` role, takes effect in
+five minutes. `dry-run` first, the bounded policies and the 32-account bound are
+the limits on that.
+
+**Why not a scoped LiteLLM credential.** The owner's preference was a team-admin
+key for a dedicated "browser users" team that could only create and delete that
+team's keys. Checked in the LiteLLM 1.109.1 source and against the real gateway in
+the CI smoke (`scoped-*` checkpoints in `tests/service/native_client.py`):
+
+| The job needs | A team admin's key in 1.109.1 |
+| --- | --- |
+| Create the gateway user for the exact Open WebUI id | **No.** `/user/new` is refused, and `/team/member_add` refuses a `user_id` that has no user row yet ("Only proxy admins can add a user_id that does not exist yet"). A team admin can only invite by e-mail, and the gateway then chooses the id |
+| Issue a key for another member, with alias, user id and expiry | Only for a member who already exists, and only after a proxy admin adds `create_member_keys` to the global `team_admin_editable_team_fields`; refused without it |
+| Delete by alias and by key | Team keys only (by source; not reached in the smoke because no member key can be issued). It could not delete the hand-bound keys it replaces, which belong to no team |
+
+So the master key stays, as decided for this case. What would work without it, and
+is proven in the same smoke (`routed-*` checkpoints): a key of a gateway user with
+the `proxy_admin` role, limited with `allowed_routes` to `/user/new`,
+`/key/generate` and `/key/delete`. It is not scoped to a team (it could still
+issue or delete any key), but it cannot read spend, list keys, change settings,
+models, teams or other keys' limits, and it can be rotated without touching the
+master key. It is not wired in: it needs an owner decision, a command to mint it
+and its own Secret.
 
 ## Image package and lifecycle
 
