@@ -14,8 +14,8 @@ environment, then the site file; tools/README.md). --dir defaults to ~/ai-stack/
 import argparse
 import datetime as dt
 import json
-import os
 import re
+import subprocess
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -29,22 +29,18 @@ BUCKETS = (1000, 2000, 5000, 10000, 20000, 40000, 100000)
 KEYS = ("requests", "large", "recomputed", "prompt", "cached")
 
 
-def site_file():
-    default = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "workstation" / "site.env"
-    return Path(os.environ.get("WORKSTATION_SITE_ENV") or default)
+TOOLS_LIB = Path(__file__).resolve().parents[1] / "lib" / "tools.sh"
 
 
-def site_value(name, path):
-    """NAME from the environment, else from the KEY=VALUE site file (never evaluated), else None."""
-    if os.environ.get(name):
-        return os.environ[name]
-    if not path.is_file():
-        return None
-    for line in path.read_text().splitlines():
-        key, sep, value = line.partition("=")
-        if sep and key == name and not line.startswith("#"):
-            return value or None
-    return None
+def site_value(name):
+    """NAME from the environment, else from the site file, through the tools' own loader
+    (tools/lib/tools.sh: ownership and mode checks, allowlisted keys, values never evaluated)."""
+    script = 'source "$1"; tools::load_site; printf "%s" "${!2:-}"'
+    result = subprocess.run(["bash", "-c", script, "site", str(TOOLS_LIB), name],
+                            capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        raise SystemExit(result.stderr.strip() or f"STOP: the site loader failed ({result.returncode})")
+    return result.stdout or None
 
 
 def when(stamp):
@@ -131,9 +127,10 @@ def main():
     ap.add_argument("--prometheus")
     ap.add_argument("--dir", type=Path, default=Path.home() / "ai-stack" / "kv-trial")
     args = ap.parse_args()
-    base = args.prometheus or site_value("PROMETHEUS_URL", site_file())
+    base = args.prometheus or site_value("PROMETHEUS_URL")
     if not base:
-        raise SystemExit(f"STOP: set PROMETHEUS_URL in the environment or in {site_file()}, or pass --prometheus")
+        raise SystemExit("STOP: set PROMETHEUS_URL in the environment or the site file (tools/README.md), "
+                         "or pass --prometheus")
     lines = (args.dir / "events.log").read_text().splitlines()
     since = dt.datetime.fromisoformat(args.since) if args.since else first_event(lines)
     if since is None:

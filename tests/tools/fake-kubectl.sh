@@ -11,7 +11,7 @@ case "$*" in
     exit 1
     ;;
   "-n default get endpointslices -l kubernetes.io/service-name=kubernetes -o json")
-    echo '{"items":[{"addressType":"IPv4","endpoints":[{"addresses":["10.0.30.11"]}],"ports":[{"name":"https","port":6443}]}]}'
+    echo '{"items":[{"addressType":"IPv4","endpoints":[{"addresses":["192.0.2.11"]}],"ports":[{"name":"https","port":6443}]}]}'
     ;;
   *)
     echo "fake kubectl: refusing $*" >&2

@@ -28,9 +28,16 @@ CI never run them against a live system; `tests/test_tools.sh` checks them offli
 | [`kv-trial/collect.sh`](kv-trial/collect.sh) | Workstation, user timer | Appends SGLang's elastic KV tail lines to `~/ai-stack/kv-trial/events.log` | None |
 | [`kv-trial/kv_trial_report.py`](kv-trial/kv_trial_report.py) | Anywhere Prometheus answers | Hand-backs against SGLang's cache counters | None |
 
-Each script keeps its safety checks: the resource and image diff before an apply, idle
-checks that stop when a picture, video or research run is in flight, a `STOP: ...` line and
-exit 1 on any failed check, and a confirmation before live changes where the original asked.
+Each script keeps its safety checks: the resource, image and SGLang environment diff before
+an apply, idle checks before live changes (pictures and video in every tool that touches the
+AI service; deep research too in `rollout-main.sh` and `sandbox-golive.sh`, whose changes
+restart service-tools or Open WebUI), a `STOP: ...` line and exit 1 on any failed check, and
+a confirmation before live changes where the original asked.
+
+`rollout-main.sh` allows a reviewed sizing change only as named: with
+`EXPECT_CHANGED="deployment=container:memory"` the rendered Deployment must equal live except
+that container's memory request and limit, both set to the value given. Any other change (CPU,
+other resources, other containers or init containers) stops the rollout.
 
 `SHA12` names a shipped tree: `$WORKSTATION_SRC_DIR/archlinuxthreadripper-SHA12`
 (default `~/src`). Output stays where it was: `~/build/workstation-runtime-SHA12/` for
@@ -46,9 +53,13 @@ ${WORKSTATION_SITE_ENV:-${XDG_CONFIG_HOME:-$HOME/.config}/workstation/site.env}
 ```
 
 The file holds `KEY=VALUE` lines and `#` comments. It is parsed, never run as shell
-([`lib/common.sh`](../lib/common.sh) `common::load_config`): values are literal, and an
-unknown or repeated key stops the tool. A tool that needs a missing value stops with
-`STOP: set NAME in the environment or in <site file>`.
+([`lib/common.sh`](../lib/common.sh) `common::load_config`), and an unknown or repeated key
+stops the tool. Values are literal: write `NAME=value`, not `NAME="value"`, because quotes
+become part of the value. The file must be a regular file owned by you and writable by nobody
+else (`chmod 600`): its values choose scripts and package trees that the tools run, some
+with `sudo`. A tool that needs a missing value stops with
+`STOP: set NAME in the environment or in <site file>`. SSH destinations must be plain
+`[user@]host` and dataset names plain ZFS names; anything else stops the tool.
 
 | Name | Used by | Value |
 | --- | --- | --- |
@@ -57,7 +68,7 @@ unknown or repeated key stops the tool. A tool that needs a missing value stops 
 | `WORKSTATION_LAN_ADDRESS` | `sandbox-golive.sh`, `validate-on-workstation.sh` | The workstation's LAN address; the network probe checks workspaces cannot reach it |
 | `GATEWAY_KEY_ALIASES` | `key-limits.sh` | Gateway key aliases to change, separated by spaces |
 | `PROMETHEUS_URL` | `kv_trial_report.py` | Prometheus base URL (or pass `--prometheus`) |
-| `CHAT_PROBE` | `rollout-main.sh`, `soak.sh` (optional) | Path of a chat probe script taking `URL COUNT` and printing JSON with `decode_tok_per_s`; unset skips the chat check |
+| `CHAT_PROBE` | `rollout-main.sh`, `soak.sh` (optional) | Path of a chat probe script taking `URL COUNT` and printing JSON with `decode_tok_per_s`; unset skips the chat check. No probe ships in this repository: point it at the owner's existing `chat_probe.py` |
 | `NAS_SSH` | `home-test.sh` (optional) | SSH destination on the NAS with passwordless `sudo -n zfs`; unset skips the snapshot listing |
 | `NAS_SANDBOX_DATASET` | `home-test.sh` (optional), `nas-homes.sh` | Parent ZFS dataset of the sandbox homes, as the NAS repository creates it |
 | `WORKSTATION_SSH` | `nas-homes.sh` | SSH destination of the workstation from the Mac |
@@ -78,8 +89,8 @@ Example, on the workstation (placeholders; use your own values):
 ```sh
 install -d -m 700 ~/.config/workstation
 cat >~/.config/workstation/site.env <<'EOF'
-NAS_ADDRESS=10.0.30.10
-WORKSTATION_LAN_ADDRESS=10.0.1.40
+NAS_ADDRESS=192.0.2.10
+WORKSTATION_LAN_ADDRESS=198.51.100.40
 GATEWAY_KEY_ALIASES=browser ide
 PROMETHEUS_URL=https://prometheus.example.invalid
 EOF
@@ -108,9 +119,11 @@ tree. Results, logs and `events.log` stay where they are.
    - `key-limits.sh SHA12 TPM` takes the limit as an argument and the aliases from
      `GATEWAY_KEY_ALIASES`.
    - `nas-homes.sh NAS_COMMIT WORKSTATION_COMMIT` runs from the Mac clone of this
-     repository, with a site file on the Mac.
+     repository, with a site file on the Mac. It fetches both clones and stops unless
+     each commit is on `origin/main`.
    - `rollout-main.sh` stops when the render changes any SGLang environment variable;
-     list reviewed ones in `EXPECT_SGLANG_ENV`. Set `CHAT_PROBE` to keep the chat check.
+     list reviewed ones in `EXPECT_SGLANG_ENV`. It also stops while a deep-research run
+     is active. `EXPECT_CHANGED` now allows only the named container's memory.
    - `kv_trial_report.py` reads `--since` from the first logged event unless given.
 5. Elastic KV trial timer: install the units, which run `collect.sh` through the link.
 
@@ -122,7 +135,9 @@ tree. Results, logs and `events.log` stay where they are.
    systemctl --user list-timers kv-trial-collect.timer
    ```
 
-6. Keep the old copies until each replacement has run once, then retire them.
+6. Keep the old copies until each replacement has run once, then retire them, except
+   `chat_probe.py`: it is not in this repository, so keep the owner's copy and set
+   `CHAT_PROBE` to its path to keep the chat check in `rollout-main.sh` and `soak.sh`.
 
 ## Tests
 

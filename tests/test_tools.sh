@@ -3,6 +3,7 @@
 # unit tests and the offline make-sandbox-config test. Nothing here contacts a cluster, the
 # workstation or the NAS. shellcheck and shfmt cover tools/ through `make shellcheck shfmt`.
 set -euo pipefail
+umask 077
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 : "${HOME_LAB_PYTHON:?select the prepared validation Python}"
 # The tools call python3; use the validation Python, as CI puts it first on PATH.
@@ -51,8 +52,8 @@ site() { # KEY... : print each loaded value after sourcing the helpers
   bash -c 'set -euo pipefail; source "$1"; shift; tools::load_site; for k; do printf "%s=%s\n" "$k" "${!k:-}"; done' \
     site "$root/tools/lib/tools.sh" "$@"
 }
-printf '# site file\nNAS_ADDRESS=10.0.30.10\nPROMETHEUS_URL=https://prometheus.example.invalid\n' >"$work/site.env"
-[[ $(site NAS_ADDRESS PROMETHEUS_URL NAS_SSH) == $'NAS_ADDRESS=10.0.30.10\nPROMETHEUS_URL=https://prometheus.example.invalid\nNAS_SSH=' ]] ||
+printf '# site file\nNAS_ADDRESS=192.0.2.10\nPROMETHEUS_URL=https://prometheus.example.invalid\n' >"$work/site.env"
+[[ $(site NAS_ADDRESS PROMETHEUS_URL NAS_SSH) == $'NAS_ADDRESS=192.0.2.10\nPROMETHEUS_URL=https://prometheus.example.invalid\nNAS_SSH=' ]] ||
   fail "site file values: $(site NAS_ADDRESS PROMETHEUS_URL NAS_SSH)"
 [[ $(NAS_ADDRESS=10.9.9.9 site NAS_ADDRESS) == NAS_ADDRESS=10.9.9.9 ]] || fail 'the environment did not win over the site file'
 [[ $(WORKSTATION_SITE_ENV=$work/absent.env site NAS_ADDRESS) == NAS_ADDRESS= ]] || fail 'a missing site file is not optional'
@@ -76,14 +77,48 @@ for bad in ../x 0123456789AB ''; do
   fi
 done
 if out=$(bash "$root/tools/sandbox/sandbox-golive.sh" --plan-only 0123456789ab 2>&1 </dev/null); then
-  fail 'sandbox-golive.sh ran without NAS_ADDRESS'
+  fail 'sandbox-golive.sh ran without WORKSTATION_LAN_ADDRESS'
 fi
 grep -q 'STOP: set WORKSTATION_LAN_ADDRESS' <<<"$out" || fail "sandbox-golive.sh: $out"
+# The site file must be yours and writable by nobody else.
+chmod 620 "$work/site.env"
+if out=$(site NAS_ADDRESS 2>&1); then fail 'a group-writable site file was accepted'; fi
+grep -q 'is writable by others (mode 620)' <<<"$out" || fail "group-writable site file: $out"
+chmod 602 "$work/site.env"
+if site NAS_ADDRESS >/dev/null 2>&1; then fail 'a world-writable site file was accepted'; fi
+chmod 600 "$work/site.env"
+mkdir "$work/site.d"
+if WORKSTATION_SITE_ENV=$work/site.d site NAS_ADDRESS >/dev/null 2>&1; then fail 'a directory was accepted as the site file'; fi
+[[ $(site NAS_ADDRESS) == NAS_ADDRESS=192.0.2.10 ]] || fail 'a 0600 site file was refused'
+# SSH destinations and dataset names from site values cannot carry options or shell words.
+for value in -oProxyCommand=x 'host;id' 'user@host extra' ''; do
+  # shellcheck disable=SC2016 # expanded by the inner shell
+  if WORKSTATION_SSH=$value bash -c 'source "$1"; tools::require_ssh_destination WORKSTATION_SSH' site \
+    "$root/tools/lib/tools.sh" >/dev/null 2>&1; then
+    fail "accepted SSH destination '$value'"
+  fi
+done
+# shellcheck disable=SC2016 # expanded by the inner shell
+WORKSTATION_SSH=owner@nas-1.example.invalid bash -c 'source "$1"; tools::require_ssh_destination WORKSTATION_SSH' site \
+  "$root/tools/lib/tools.sh" || fail 'refused a plain SSH destination'
+if out=$(NAS_SSH=-oProxyCommand=x bash "$root/tools/sandbox/home-test.sh" kid 2>&1 </dev/null); then
+  fail 'home-test.sh accepted an option as NAS_SSH'
+fi
+grep -q 'STOP: NAS_SSH is not an SSH destination' <<<"$out" || fail "home-test.sh NAS_SSH: $out"
+# shellcheck disable=SC2016 # a literal command substitution the check must refuse
+for value in 'pool/k8s; reboot' '-r' 'pool/$(id)'; do
+  if out=$(NAS_SANDBOX_DATASET=$value bash "$root/tools/sandbox/home-test.sh" kid 2>&1 </dev/null); then
+    fail "home-test.sh accepted dataset '$value'"
+  fi
+  grep -q 'STOP: NAS_SANDBOX_DATASET is not a ZFS dataset name' <<<"$out" || fail "home-test.sh dataset: $out"
+done
 
-# 4. No site literals in the tools: addresses and home paths come from site values.
-# /home/user is the workspace's home inside the sandbox image.
-if rg -n '192\.168\.|/Users/|/home/[a-z]' "$root/tools" | grep -v '/home/user\b'; then
-  fail 'a site literal is in tools/'
+# 4. No site literals in the tools or their tests: addresses and home paths come from site
+# values; examples use RFC 5737 addresses. /home/user is the workspace's home inside the
+# sandbox image.
+if rg -n '192\.168\.|10\.0\.30\.|10\.0\.1\.|/Users/|/home/[a-z]' "$root/tools" "$root/tests/tools" \
+  "$root/tests/fixtures/tools" | grep -v '/home/user\b'; then
+  fail 'a site literal is in tools/ or its tests'
 fi
 
 # 5. Python helpers.

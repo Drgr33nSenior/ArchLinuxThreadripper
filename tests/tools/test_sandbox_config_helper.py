@@ -120,8 +120,8 @@ class AddressTests(unittest.TestCase):
                     helper.api_endpoint(path)
                 return out.getvalue().strip()
 
-        self.assertEqual("10.0.30.11:6443", endpoint(["10.0.30.11"]))
-        for addresses in (["10.0.30.11", "10.0.30.12"], ["8.8.8.8"], []):
+        self.assertEqual("192.0.2.11:6443", endpoint(["192.0.2.11"]))
+        for addresses in (["192.0.2.11", "192.0.2.12"], ["8.8.8.8"], []):
             with self.subTest(addresses=addresses), self.assertRaises(SystemExit):
                 endpoint(addresses)
 

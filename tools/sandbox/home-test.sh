@@ -24,6 +24,8 @@ name=${1:?usage: home-test.sh HOME_NAME (--help for details)}
   exit 1
 }
 tools::load_site
+[[ -z ${NAS_SSH:-} ]] || tools::require_ssh_destination NAS_SSH
+[[ -z ${NAS_SANDBOX_DATASET:-} ]] || tools::require_dataset NAS_SANDBOX_DATASET
 ns=assistant-sandbox
 claim=sandbox-home-$name
 pod=home-test-$name

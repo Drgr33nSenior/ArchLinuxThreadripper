@@ -66,8 +66,8 @@ if [[ $force == false ]]; then
     [[ ! -e $f ]] || stop "$f exists; rerun with --force to replace it (the old file is kept as a .bak copy)"
   done
 fi
-image=$(sed -n 's/^ASSISTANT_SANDBOX_CANDIDATE_IMAGE=//p' "$src/versions.lock")
-egress_image=$(sed -n 's/^SANDBOX_EGRESS_CANDIDATE_IMAGE=//p' "$src/versions.lock")
+image=$(common::lock_get "$src/versions.lock" ASSISTANT_SANDBOX_CANDIDATE_IMAGE)
+egress_image=$(common::lock_get "$src/versions.lock" SANDBOX_EGRESS_CANDIDATE_IMAGE)
 [[ $image == *@sha256:* && $egress_image == *@sha256:* ]] || stop "$src/versions.lock does not pin both sandbox images by digest"
 [[ -z ${SANDBOX_IMAGE:-} || $SANDBOX_IMAGE == "$image" ]] || stop 'the sandbox image is not the one versions.lock records'
 [[ -z ${SANDBOX_EGRESS_IMAGE:-} || $SANDBOX_EGRESS_IMAGE == "$egress_image" ]] || stop 'the egress image is not the one versions.lock records'

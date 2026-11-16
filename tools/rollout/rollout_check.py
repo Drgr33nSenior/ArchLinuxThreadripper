@@ -3,8 +3,10 @@
 Usage: rollout_check.py WORKLOADS_YAML LIVE_DEPLOYMENTS_JSON LIVE_SGLANG_IMAGE
 
 Reads local files only. Exits 1 when
-  - a Deployment's container sizing (requests, limits) would change, unless EXPECT_CHANGED allows
-    exactly that change, or EXPECT_CHANGED lists a change the render does not make;
+  - a Deployment's container or init container sizing (requests, limits) would change, unless
+    EXPECT_CHANGED allows exactly that change: one container's memory request and limit set to the
+    reviewed value, everything else (CPU, other resources, other containers) as live; or
+    EXPECT_CHANGED lists a change the render does not make;
   - the rendered SGLang image differs from LIVE_SGLANG_IMAGE;
   - the rendered SGLang environment differs from the live one, unless EXPECT_SGLANG_ENV names every
     changed variable, or EXPECT_SGLANG_ENV names a variable the render does not change.
@@ -12,6 +14,7 @@ Reads local files only. Exits 1 when
 EXPECT_CHANGED="deployment=container:memory ..."   reviewed sizing changes (requests = limits = memory)
 EXPECT_SGLANG_ENV="NAME ..."                       reviewed SGLang environment changes
 """
+import copy
 import json
 import os
 import sys
@@ -20,8 +23,13 @@ import yaml
 
 
 def sizing(dep):
-    return {c["name"]: {k: c.get("resources", {}).get(k) for k in ("requests", "limits")}
-            for c in dep["spec"]["template"]["spec"]["containers"]}
+    """{container: {requests, limits}} for the containers and (prefixed init:) the init containers."""
+    spec = dep["spec"]["template"]["spec"]
+    out = {}
+    for prefix, key in (("", "containers"), ("init:", "initContainers")):
+        for c in spec.get(key) or []:
+            out[prefix + c["name"]] = {k: (c.get("resources") or {}).get(k) for k in ("requests", "limits")}
+    return out
 
 
 def parse_expected(text):
@@ -36,9 +44,20 @@ def parse_expected(text):
     return expected
 
 
+def env_value(entry):
+    """One env entry with the API server's defaults filled, so a live object compares equal to its render."""
+    if "valueFrom" not in entry:
+        return entry.get("value") or ""
+    source = copy.deepcopy(entry["valueFrom"])
+    if "fieldRef" in source:
+        source["fieldRef"].setdefault("apiVersion", "v1")
+    if "resourceFieldRef" in source:
+        source["resourceFieldRef"].setdefault("divisor", "0")
+    return json.dumps(source, sort_keys=True)
+
+
 def environment(container):
-    return {e["name"]: e.get("value", json.dumps(e.get("valueFrom"), sort_keys=True))
-            for e in container.get("env", [])}
+    return {e["name"]: env_value(e) for e in container.get("env") or []}
 
 
 def check(rendered, live, live_image, expected, expected_env):
@@ -52,9 +71,14 @@ def check(rendered, live, live_image, expected, expected_env):
         lines.append(f"  {n}: live {live_sizing[n]} -> rendered {sizing(docs[n])}")
 
     def as_expected(n):
+        # Live sizing with only the reviewed container's memory request and limit replaced.
         container, memory = expected[n]
-        want = sizing(docs[n]).get(container, {})
-        return all((want.get(k) or {}).get("memory") == memory for k in ("requests", "limits"))
+        want = copy.deepcopy(live_sizing[n])
+        if container not in want:
+            return False
+        for k in ("requests", "limits"):
+            want[container][k] = {**(want[container][k] or {}), "memory": memory}
+        return sizing(docs[n]) == want
 
     bad = [n for n in changed if n not in expected or not as_expected(n)]
     missing = [n for n in expected if n not in changed]

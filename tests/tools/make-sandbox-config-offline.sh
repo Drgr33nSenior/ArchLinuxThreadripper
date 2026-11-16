@@ -66,7 +66,7 @@ raw = json.load(open(sys.argv[2]))
 assert set(raw) == {"image", "egress_image", "parents_group_id", "family_group_id", "family_enabled", "group_resolution",
                     "egress_service_ips", "api_server_cidr", "api_server_port", "homes", "family_dns"}, raw.keys()
 assert raw["egress_service_ips"] == {"family": "10.43.0.201", "parents": "10.43.0.202"}, raw["egress_service_ips"]
-assert raw["api_server_cidr"] == "10.0.30.11/32" and raw["api_server_port"] == 6443
+assert raw["api_server_cidr"] == "192.0.2.11/32" and raw["api_server_port"] == 6443
 lock = dict(line.split("=", 1) for line in open(sys.argv[1] + "/../../versions.lock").read().splitlines()
             if "=" in line and not line.startswith("#"))
 assert raw["image"] == lock["ASSISTANT_SANDBOX_CANDIDATE_IMAGE"] and raw["egress_image"] == lock["SANDBOX_EGRESS_CANDIDATE_IMAGE"]
@@ -101,4 +101,18 @@ if SANDBOX_IMAGE=example.invalid/other@sha256:0000 bash "$tool" --review "$work/
 fi
 grep -q 'not the one versions.lock records' "$work/pin.log" || fail "wrong refusal: $(cat "$work/pin.log")"
 [[ -z $(ls "$work/private") ]] || fail 'files written after a refused pin'
+
+# 7. A versions.lock with a repeated or missing image pin is refused.
+mkdir -p "$work/tree/lib"
+ln -s "$src/lib/workstation" "$work/tree/lib/workstation"
+for case in repeated missing; do
+  if [[ $case == repeated ]]; then
+    { cat "$src/versions.lock" && grep '^ASSISTANT_SANDBOX_CANDIDATE_IMAGE=' "$src/versions.lock"; } >"$work/tree/versions.lock"
+  else
+    grep -v '^SANDBOX_EGRESS_CANDIDATE_IMAGE=' "$src/versions.lock" >"$work/tree/versions.lock"
+  fi
+  if bash "$tool" --review "$work/good.tsv" "$work/tree" >"$work/lock.log" 2>&1; then fail "accepted a $case image pin"; fi
+  grep -q 'Missing or duplicate lock value' "$work/lock.log" || fail "$case pin: $(cat "$work/lock.log")"
+  [[ -z $(ls "$work/private") ]] || fail "files written after a $case pin"
+done
 echo 'make-sandbox-config offline test: PASS'

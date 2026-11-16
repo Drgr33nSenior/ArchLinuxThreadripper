@@ -22,8 +22,8 @@ EGRESS = "registry.example.invalid/sandbox-egress@sha256:" + "b" * 64
 CONFIG = {"image": IMAGE, "egress_image": EGRESS, "parents_group_id": "gp", "family_group_id": "gf",
           "family_enabled": True, "group_resolution": "most-permissive",
           "egress_service_ips": {"family": "10.43.0.201", "parents": "10.43.0.202"},
-          "api_server_cidr": "10.0.30.11/32", "api_server_port": 6443, "family_dns": ["1.1.1.3", "1.0.0.3"]}
-SITE = {"NAS_ADDRESS": "10.0.30.10", "WORKSTATION_LAN_ADDRESS": "10.0.1.40"}
+          "api_server_cidr": "192.0.2.11/32", "api_server_port": 6443, "family_dns": ["1.1.1.3", "1.0.0.3"]}
+SITE = {"NAS_ADDRESS": "192.0.2.10", "WORKSTATION_LAN_ADDRESS": "198.51.100.40"}
 
 
 def quiet(function, *args):
@@ -216,13 +216,13 @@ class ProbeTests(unittest.TestCase):
     def test_the_spec_uses_the_site_addresses(self):
         with mock.patch.dict(os.environ, SITE):
             family, parents = self.probe("family", "10.42.0.99"), self.probe("parents")
-        self.assertEqual(["10.0.30.10", 2049], family["closed"]["NAS"])
-        self.assertEqual(["10.0.1.40", 22], family["closed"]["LAN"])
-        self.assertEqual(["10.0.30.11", 6443], family["closed"]["node API"])
+        self.assertEqual(["192.0.2.10", 2049], family["closed"]["NAS"])
+        self.assertEqual(["198.51.100.40", 22], family["closed"]["LAN"])
+        self.assertEqual(["192.0.2.11", 6443], family["closed"]["node API"])
         self.assertEqual(["10.43.0.202", 4750], family["closed"]["parents proxy"])
         self.assertEqual(["10.42.0.99", 8000], family["closed"]["other user's workspace"])
         self.assertEqual({"own proxy": ["10.43.0.201", 4750]}, family["open"])
-        self.assertIn("10.0.1.40.nip.io:22", family["denied"])
+        self.assertIn("198.51.100.40.nip.io:22", family["denied"])
         self.assertIn("nudity.testcategory.com", family["denied"])
         self.assertIn("nudity.testcategory.com", parents["allowed"])
         self.assertEqual({"own proxy": ["10.43.0.202", 4750]}, parents["open"])

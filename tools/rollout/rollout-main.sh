@@ -7,10 +7,11 @@
 # SHA12 names the shipped tree $WORKSTATION_SRC_DIR/archlinuxthreadripper-SHA12 (default ~/src). Logs and
 # copies of the render: ~/build/workstation-runtime-SHA12/.
 #
-# Stops (STOP: ...) before any change when a picture or video is in flight, and before the re-apply when
-# the render would change a Deployment's container sizing, the SGLang image or the SGLang environment
-# (rollout_check.py). Reviewed changes are allowed explicitly:
-#   EXPECT_CHANGED="deployment=container:memory ..."   sizing changes (requests = limits = memory)
+# Stops (STOP: ...) before any change when a picture, video or deep-research run is in flight, and before
+# the re-apply when the render would change a Deployment's container sizing, the SGLang image or the
+# SGLang environment (rollout_check.py). Reviewed changes are allowed explicitly:
+#   EXPECT_CHANGED="deployment=container:memory ..."   that container's memory request and limit;
+#                                                      all other sizing must equal live
 #   EXPECT_SGLANG_ENV="NAME ..."                       SGLang environment variables that may change
 # SGLang restarts only when its rendered pod template changed; service-tools usually restarts.
 # Optional site value CHAT_PROBE: a chat probe script (URL COUNT -> JSON) run against SGLang at the end.
@@ -40,6 +41,8 @@ tools=$(kubectl -n $ns get svc service-tools -o jsonpath='{.spec.clusterIP}')
 health=$(curl -s -m 5 "http://$tools:8000/health")
 grep -q '"image_active": *0' <<<"$health" || stop 'a picture is in flight'
 grep -q '"video_active": *false' <<<"$health" || stop 'a video is in flight'
+# The rollout restarts service-tools, which ends a deep-research run.
+jq -e '.deep_research.active == 0' <<<"$health" >/dev/null || stop 'a deep-research run is in flight'
 live_sglang=$(kubectl -n $ns get deploy sglang -o jsonpath='{.spec.template.spec.containers[0].image}')
 
 log "== runtime package from $sha"

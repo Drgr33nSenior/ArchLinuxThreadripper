@@ -64,6 +64,55 @@ class CheckTests(unittest.TestCase):
         self.assertFalse(self.check(rendered, "comfyui-gpu0=comfyui-gpu0:10Gi")[1])
         self.assertFalse(self.check(rendered, "comfyui-gpu0=other:9Gi")[1])
 
+    def test_a_reviewed_memory_change_does_not_cover_other_sizing(self):
+        allow = "comfyui-gpu0=comfyui-gpu0:9Gi"
+        # CPU changed together with the reviewed memory.
+        rendered = render(**{"comfyui-gpu0": {"memory": "9Gi"}})
+        container = rendered[1]["spec"]["template"]["spec"]["containers"][0]
+        container["resources"]["limits"]["cpu"] = "24"
+        self.assertFalse(self.check(rendered, allow)[1])
+        # Another resource of the same container.
+        rendered = render(**{"comfyui-gpu0": {"memory": "9Gi"}})
+        rendered[1]["spec"]["template"]["spec"]["containers"][0]["resources"]["requests"]["ephemeral-storage"] = "1Gi"
+        self.assertFalse(self.check(rendered, allow)[1])
+
+    def test_a_reviewed_memory_change_needs_request_and_limit(self):
+        allow = "comfyui-gpu0=comfyui-gpu0:9Gi"
+        for changed in ("requests", "limits"):
+            rendered = render()
+            rendered[1]["spec"]["template"]["spec"]["containers"][0]["resources"][changed]["memory"] = "9Gi"
+            with self.subTest(changed=changed):
+                self.assertFalse(self.check(rendered, allow)[1])
+
+    def test_a_reviewed_change_does_not_cover_other_containers(self):
+        sidecar = {"name": "sidecar", "image": "x", "resources": {"requests": {"cpu": "1", "memory": "1Gi"},
+                                                                  "limits": {"cpu": "1", "memory": "1Gi"}}}
+        init = {"name": "prepare", "image": "x", "resources": {"limits": {"cpu": "1", "memory": "1Gi"}}}
+        live = copy.deepcopy(LIVE)
+        live[1]["spec"]["template"]["spec"]["containers"].append(copy.deepcopy(sidecar))
+        live[1]["spec"]["template"]["spec"]["initContainers"] = [copy.deepcopy(init)]
+        allow = rollout_check.parse_expected("comfyui-gpu0=comfyui-gpu0:9Gi")
+
+        def rendered_with(change):
+            docs = copy.deepcopy(live)
+            for section in ("requests", "limits"):
+                docs[1]["spec"]["template"]["spec"]["containers"][0]["resources"][section]["memory"] = "9Gi"
+            change(docs[1]["spec"]["template"]["spec"])
+            return docs
+
+        def check(docs):
+            return rollout_check.check(docs, live, IMAGE, allow, [])[1]
+
+        self.assertTrue(check(rendered_with(lambda spec: None)))
+        self.assertFalse(check(rendered_with(
+            lambda spec: spec["containers"][1]["resources"]["limits"].update(cpu="8"))))
+        self.assertFalse(check(rendered_with(
+            lambda spec: spec["initContainers"][0]["resources"]["limits"].update(memory="4Gi"))))
+        # An init container change alone is a sizing change too.
+        docs = copy.deepcopy(live)
+        docs[1]["spec"]["template"]["spec"]["initContainers"][0]["resources"]["limits"]["cpu"] = "4"
+        self.assertFalse(rollout_check.check(docs, live, IMAGE, {}, [])[1])
+
     def test_a_reviewed_change_the_render_does_not_make_stops(self):
         lines, ok = self.check(render(), "open-webui=open-webui:6Gi")
         self.assertFalse(ok)
@@ -83,6 +132,22 @@ class CheckTests(unittest.TestCase):
         added = render(sglang={"env": SGLANG_ENV + [{"name": "NEW", "valueFrom": {"secretKeyRef": {"name": "s"}}}]})
         self.assertFalse(self.check(added)[1])
         self.assertTrue(self.check(added, expected_env=["NEW"])[1])
+
+    def test_api_server_env_defaults_are_not_changes(self):
+        live = copy.deepcopy(LIVE)
+        env = live[0]["spec"]["template"]["spec"]["containers"][0]["env"]
+        env.append({"name": "POD_IP", "valueFrom": {"fieldRef": {"apiVersion": "v1", "fieldPath": "status.podIP"}}})
+        env.append({"name": "CPUS", "valueFrom": {"resourceFieldRef": {"resource": "limits.cpu", "divisor": "0"}}})
+        env.append({"name": "EMPTY"})
+        rendered = copy.deepcopy(LIVE)
+        env = rendered[0]["spec"]["template"]["spec"]["containers"][0]["env"]
+        env.append({"name": "POD_IP", "valueFrom": {"fieldRef": {"fieldPath": "status.podIP"}}})
+        env.append({"name": "CPUS", "valueFrom": {"resourceFieldRef": {"resource": "limits.cpu"}}})
+        env.append({"name": "EMPTY", "value": ""})
+        lines, ok = rollout_check.check(rendered, live, IMAGE, {}, [])
+        self.assertTrue(ok, lines)
+        env[-3]["valueFrom"]["fieldRef"]["fieldPath"] = "status.hostIP"
+        self.assertFalse(rollout_check.check(rendered, live, IMAGE, {}, [])[1])
 
     def test_a_render_without_sglang_stops(self):
         self.assertFalse(self.check([d for d in render() if d["metadata"]["name"] != "sglang"])[1])

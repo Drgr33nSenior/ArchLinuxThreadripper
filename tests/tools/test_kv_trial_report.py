@@ -62,23 +62,34 @@ class WindowTests(unittest.TestCase):
 
 
 class SiteValueTests(unittest.TestCase):
-    def test_environment_wins_then_the_file_then_none(self):
+    """site_value goes through tools/lib/tools.sh, so the shell loader's rules apply."""
+
+    def site(self, text, mode=0o600, **env):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "site.env"
-            path.write_text("# comment\nPROMETHEUS_URL=https://prometheus.example.invalid\nOTHER=x\n")
-            with mock.patch.dict(os.environ, {"PROMETHEUS_URL": ""}):
-                self.assertEqual("https://prometheus.example.invalid", report.site_value("PROMETHEUS_URL", path))
-            with mock.patch.dict(os.environ, {"PROMETHEUS_URL": "http://env.example.invalid"}):
-                self.assertEqual("http://env.example.invalid", report.site_value("PROMETHEUS_URL", path))
-            with mock.patch.dict(os.environ, {"PROMETHEUS_URL": ""}):
-                self.assertIsNone(report.site_value("MISSING", path))
-                self.assertIsNone(report.site_value("PROMETHEUS_URL", Path(directory) / "absent.env"))
+            path.write_text(text)
+            path.chmod(mode)
+            environment = {"WORKSTATION_SITE_ENV": str(path), "PROMETHEUS_URL": "", **env}
+            with mock.patch.dict(os.environ, environment):
+                return report.site_value("PROMETHEUS_URL")
 
-    def test_site_file_location(self):
-        with mock.patch.dict(os.environ, {"WORKSTATION_SITE_ENV": "/elsewhere/site.env"}):
-            self.assertEqual(Path("/elsewhere/site.env"), report.site_file())
-        with mock.patch.dict(os.environ, {"WORKSTATION_SITE_ENV": "", "XDG_CONFIG_HOME": "/config"}):
-            self.assertEqual(Path("/config/workstation/site.env"), report.site_file())
+    def test_environment_wins_then_the_file_then_none(self):
+        text = "# comment\r\nPROMETHEUS_URL=https://prometheus.example.invalid\r\n"
+        self.assertEqual("https://prometheus.example.invalid", self.site(text))
+        self.assertEqual("http://env.example.invalid",
+                         self.site(text, PROMETHEUS_URL="http://env.example.invalid"))
+        self.assertIsNone(self.site("NAS_ADDRESS=192.0.2.10\n"))
+
+    def test_the_loader_rules_apply(self):
+        for text, mode, message in (("PROMETHEUS_URL=a\nPROMETHEUS_URL=b\n", 0o600, "Duplicate key"),
+                                    ("PROMETEUS_URL=typo\n", 0o600, "Unknown key"),
+                                    ("PROMETHEUS_URL=a\n", 0o620, "writable by others")):
+            with self.subTest(message), self.assertRaises(SystemExit) as caught:
+                self.site(text, mode)
+            self.assertIn(message, str(caught.exception))
+
+    def test_values_are_literal(self):
+        self.assertEqual('"$(id)"', self.site('PROMETHEUS_URL="$(id)"\n'))
 
 
 if __name__ == "__main__":

@@ -7,7 +7,8 @@
 #
 # 1. Exports NAS_COMMIT of the NAS repository and lib/workstation/sandbox{,_homes}.py of
 #    WORKSTATION_COMMIT from your local clones into a fresh run directory under the NAS repo's
-#    test-results/. Both commits must be reviewed and merged; git fetch first.
+#    test-results/. Both commits must be merged: each must be on origin/main of its clone, which
+#    the script fetches first.
 # 2. Copies ~/ai-stack/private/sandbox-users.json from the workstation over ssh into a 0600
 #    temporary file, prints `sandbox_homes.py nas-vars` (names, quotas and the homes' owner
 #    UID/GID 2002) and deletes the copy. Account ids never reach the run directory or the terminal.
@@ -43,6 +44,8 @@ for commit in "$nas_commit" "$ws_commit"; do
 done
 tools::load_site
 tools::require_site WORKSTATION_SSH NAS_REPO NAS_COMMISSIONING_DIR NAS_OWNER_PROFILE NAS_SANDBOX_DATASET
+tools::require_ssh_destination WORKSTATION_SSH
+tools::require_dataset NAS_SANDBOX_DATASET
 # The site values are assigned by tools::load_site (an allowlisted KEY=VALUE loader).
 # shellcheck disable=SC2153
 nas_repo=$NAS_REPO
@@ -57,8 +60,13 @@ venv=${NAS_ANSIBLE_VENV:-$HOME/.venvs/nas-ansible}/bin
 for f in "$commissioning/controller.inventory.ini" "$commissioning/controller.config.yml" "$profile"; do
   [[ -f $f ]] || stop "missing $f"
 done
-git -C "$nas_repo" cat-file -e "$nas_commit^{commit}" 2>/dev/null || stop "NAS commit $nas_commit is not in $nas_repo (git fetch origin)"
-git -C "$ws_repo" cat-file -e "$ws_commit^{commit}" 2>/dev/null || stop "workstation commit $ws_commit is not in $ws_repo (git fetch origin)"
+# Both commits must be merged: on origin/main of their repository, freshly fetched.
+git -C "$nas_repo" fetch -q origin || stop "cannot fetch origin in $nas_repo"
+git -C "$ws_repo" fetch -q origin || stop "cannot fetch origin in $ws_repo"
+git -C "$nas_repo" cat-file -e "$nas_commit^{commit}" 2>/dev/null || stop "NAS commit $nas_commit is not in $nas_repo"
+git -C "$ws_repo" cat-file -e "$ws_commit^{commit}" 2>/dev/null || stop "workstation commit $ws_commit is not in $ws_repo"
+git -C "$nas_repo" merge-base --is-ancestor "$nas_commit" origin/main || stop "NAS commit $nas_commit is not merged (not on origin/main)"
+git -C "$ws_repo" merge-base --is-ancestor "$ws_commit" origin/main || stop "workstation commit $ws_commit is not merged (not on origin/main)"
 nas_commit=$(git -C "$nas_repo" rev-parse --verify "$nas_commit^{commit}")
 ws_commit=$(git -C "$ws_repo" rev-parse --verify "$ws_commit^{commit}")
 python3 -I - "$profile" <<'PY' || stop 'the owner profile lacks the commissioned NAS and Kubernetes storage settings'

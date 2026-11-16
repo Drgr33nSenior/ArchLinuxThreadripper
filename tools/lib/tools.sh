@@ -5,7 +5,9 @@
 # reads them from the environment first, then from the site file
 #   ${WORKSTATION_SITE_ENV:-${XDG_CONFIG_HOME:-$HOME/.config}/workstation/site.env}
 # which holds strict KEY=VALUE lines (lib/common.sh common::load_config: never evaluated as
-# shell, unknown or repeated keys refused). A missing value stops the tool with its name.
+# shell, unknown or repeated keys refused). The file must be yours and writable by nobody else:
+# its values choose scripts and package trees the tools run, some with sudo. A missing value
+# stops the tool with its name.
 
 tools_lib_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 tools_repo_root=$(cd -- "$tools_lib_dir/../.." && pwd -P)
@@ -36,11 +38,50 @@ tools::load_site() {
   for key in "${TOOLS_SITE_KEYS[@]}"; do
     [[ -z ${!key:-} ]] || saved+=("$key=${!key}")
   done
-  if [[ -f $tools_site_file ]]; then
+  if [[ -e $tools_site_file ]]; then
+    tools::check_site_file "$tools_site_file"
     common::load_config "$tools_site_file" "${TOOLS_SITE_KEYS[@]}"
   fi
   for pair in ${saved[@]+"${saved[@]}"}; do
     printf -v "${pair%%=*}" '%s' "${pair#*=}"
+  done
+}
+
+# tools::check_site_file FILE: stop unless FILE is a regular file owned by you and not group- or
+# world-writable.
+tools::check_site_file() {
+  local mode
+  [[ -f $1 && -O $1 ]] || {
+    printf 'STOP: %s must be a regular file owned by you\n' "$1" >&2
+    exit 1
+  }
+  mode=$(stat -c '%a' -- "$1" 2>/dev/null || stat -f '%Lp' -- "$1")
+  (((8#$mode & 8#022) == 0)) || {
+    printf 'STOP: %s is writable by others (mode %s); chmod 600 it\n' "$1" "$mode" >&2
+    exit 1
+  }
+}
+
+# tools::require_ssh_destination KEY...: stop unless each named value is a plain SSH destination
+# (no leading "-", which ssh would read as an option; no spaces).
+tools::require_ssh_destination() {
+  local key
+  for key in "$@"; do
+    [[ ${!key:-} =~ ^[A-Za-z0-9_.@:%-]+$ && ${!key} != -* ]] || {
+      printf 'STOP: %s is not an SSH destination ([user@]host)\n' "$key" >&2
+      exit 1
+    }
+  done
+}
+
+# tools::require_dataset KEY...: stop unless each named value is a plain ZFS dataset name.
+tools::require_dataset() {
+  local key
+  for key in "$@"; do
+    [[ ${!key:-} =~ ^[A-Za-z0-9_./:-]+$ && ${!key} != -* ]] || {
+      printf 'STOP: %s is not a ZFS dataset name\n' "$key" >&2
+      exit 1
+    }
   done
 }
 
