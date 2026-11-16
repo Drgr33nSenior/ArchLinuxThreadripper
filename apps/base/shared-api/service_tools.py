@@ -847,7 +847,7 @@ class ServiceTools:
                         raise Refusal(499, "image_request_cancelled")
                     # Starlette's is_disconnected() polls inside an anyio CancelScope that can swallow
                     # the deadline's cancellation when it lands there, leaving this loop to poll forever.
-                    if deadline.expired() or (request_deadline and request_deadline.expired()):
+                    if deadline.expired() or (request_deadline is not None and request_deadline.expired()):
                         raise TimeoutError
                     entry = (await self.upstream_json("GET", comfy + "/history/" + prompt_id, timeout=10)).get(prompt_id)
                     status = (entry or {}).get("status", {})
