@@ -9,13 +9,20 @@ question and CONNECT requests, never credentials or content. Exits 1 on any surp
     {"closed": {"node API": ["10.0.2.15", 6443], ...},      direct connects that must fail
      "open":   {"own proxy": ["10.43.0.201", 4750]},        direct connects that must succeed
      "dns": "10.43.0.10",                                   a resolver that must not answer
-     "allowed": ["pypi.org"], "denied": ["192.168.1.40:22", ...]}   CONNECT host[:port] through the proxy
+     "allowed": ["pypi.org"], "denied": ["192.168.1.40:22", ...],   CONNECT host[:port] through the proxy
+     "unlisted": ["other-user.example"]}                    names this workspace's status page must not show
+
+Every denial answered with a 403 must then appear, with its reason, on the proxy's
+status page for this workspace (http://sandbox-egress.invalid/blocked).
 """
 import json
 import os
 import socket
 import sys
 import urllib.parse
+import urllib.request
+
+STATUS = "http://sandbox-egress.invalid/blocked"
 
 
 def connects(host, port, seconds=4):
@@ -55,6 +62,15 @@ def proxy_status(target):
         return 0
 
 
+def refusals():
+    """{host: reason} from this workspace's status page, read through its proxy; {} if unreadable."""
+    try:
+        with urllib.request.urlopen(STATUS, timeout=10) as response:
+            return {entry["host"]: entry["reason"] for entry in json.load(response)["blocked"]}
+    except (OSError, ValueError, KeyError, TypeError):
+        return {}
+
+
 def main():
     spec = json.loads(sys.argv[1])
     rows = []
@@ -71,10 +87,19 @@ def main():
         rows.append(("name resolution in the workspace", "fails", "fails"))
     for target in spec.get("allowed", []):
         rows.append((f"proxy {target}", "200", str(proxy_status(target))))
+    refused = []
     for target in spec.get("denied", []):
         status = proxy_status(target)
         # 403 is the proxy's refusal; anything but a 2xx tunnel is a denial.
         rows.append((f"proxy {target} ({status})", "refused", "refused" if not 200 <= status < 300 else "TUNNEL"))
+        if status == 403:
+            refused.append(target.partition(":")[0].lower())
+    if refused or spec.get("unlisted"):
+        listed = refusals()
+        for host in refused:
+            rows.append((f"status page names {host}", "with a reason", "with a reason" if listed.get(host) else "missing"))
+        for host in spec.get("unlisted", []):
+            rows.append((f"status page omits {host}", "omitted", "shown" if host in listed else "omitted"))
     failed = 0
     for name, want, got in rows:
         ok = want == got

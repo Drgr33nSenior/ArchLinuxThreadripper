@@ -11,6 +11,9 @@
 //   - optional filtering resolvers, so the family group's names are resolved by a
 //     family DNS service and a filtered answer is a refusal;
 //   - refusals as a plain 403 with a short reason;
+//   - a status page, http://sandbox-egress.invalid/blocked, where a workspace reads
+//     its own recent refusals: Chromium shows only ERR_TUNNEL_CONNECTION_FAILED for a
+//     refused HTTPS tunnel, never the reason;
 //   - a log that carries nothing but the group, the domain and the decision.
 //
 // Built inside Smokescreen's own module (cmd/sandbox-egress) from its vendored
@@ -35,6 +38,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -49,6 +53,19 @@ const (
 	reasonLiteral   = "address literals are not allowed for this group"
 	reasonPrivate   = "private address"
 	reasonOther     = "refused by the sandbox proxy"
+	// The proxy's own status page. A .invalid name never resolves (RFC 6761), so it
+	// shadows no real site. The proxy answers it itself: it is never dialled, logged
+	// or counted.
+	statusHost = "sandbox-egress.invalid"
+	statusPath = "/blocked"
+	statusURL  = "http://" + statusHost + statusPath
+	// The decision that routes a request to the status page; never shown to a client.
+	reasonStatus    = "sandbox proxy status page"
+	reasonStatusTLS = "the proxy status page is plain HTTP: " + statusURL
+	// What a workspace can read back about its own refusals: the newest few, briefly.
+	denialWindow     = 5 * time.Minute
+	denialsPerClient = 20
+	denialClients    = 256
 	// A list larger than this is not a list this proxy should hold in memory.
 	maxListBytes = 32 << 20
 )
@@ -236,6 +253,9 @@ func normalize(host string) string {
 
 func (p *policy) reason(host string) string {
 	host = normalize(host)
+	if host == statusHost {
+		return reasonStatus
+	}
 	if net.ParseIP(host) != nil {
 		if p.denyLiterals {
 			return reasonLiteral
@@ -303,6 +323,10 @@ func (d *decisions) Format(entry *logrus.Entry) ([]byte, error) {
 		line, err := json.Marshal(map[string]string{"group": d.group, "fatal": entry.Message})
 		return append(line, '\n'), err
 	}
+	host := domain(entry.Data[smokescreen.LogFieldRequestedHost])
+	if host == statusHost {
+		return nil, nil
+	}
 	decision := "deny"
 	if allow, _ := entry.Data[smokescreen.LogFieldAllow].(bool); allow {
 		decision = "allow"
@@ -310,9 +334,177 @@ func (d *decisions) Format(entry *logrus.Entry) ([]byte, error) {
 	} else {
 		d.denied.Add(1)
 	}
-	line, err := json.Marshal(map[string]string{"group": d.group, "decision": decision,
-		"domain": domain(entry.Data[smokescreen.LogFieldRequestedHost])})
+	line, err := json.Marshal(map[string]string{"group": d.group, "decision": decision, "domain": host})
 	return append(line, '\n'), err
+}
+
+// denials remembers each workspace's recent refusals so that it can ask why a request
+// failed. A workspace is known by its pod address, the source of its connections to
+// the proxy, and is only ever shown its own entries. An entry is the logged domain and
+// the short reason; entries expire after denialWindow and live in memory only.
+type denial struct {
+	host, reason string
+	at           time.Time
+}
+
+type denials struct {
+	mu      sync.Mutex
+	now     func() time.Time
+	clients map[string][]denial // newest first
+}
+
+func newDenials() *denials {
+	return &denials{now: time.Now, clients: map[string][]denial{}}
+}
+
+// client is the address a request came from, without its port; "" if there is none.
+func client(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil || net.ParseIP(host) == nil {
+		return ""
+	}
+	return host
+}
+
+func (d *denials) add(client, host, reason string) {
+	if client == "" {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	now := d.now()
+	if _, known := d.clients[client]; !known && len(d.clients) >= denialClients {
+		d.evict(now)
+	}
+	kept := []denial{{host, reason, now}}
+	for _, e := range d.clients[client] {
+		if len(kept) == denialsPerClient || now.Sub(e.at) >= denialWindow {
+			break
+		}
+		if e.host != host {
+			kept = append(kept, e)
+		}
+	}
+	d.clients[client] = kept
+}
+
+// evict drops the clients with nothing current and then, if the table is still full,
+// the client whose newest entry is the oldest.
+func (d *denials) evict(now time.Time) {
+	oldest, at := "", now
+	for c, entries := range d.clients {
+		if now.Sub(entries[0].at) >= denialWindow {
+			delete(d.clients, c)
+		} else if oldest == "" || entries[0].at.Before(at) {
+			oldest, at = c, entries[0].at
+		}
+	}
+	if len(d.clients) >= denialClients {
+		delete(d.clients, oldest)
+	}
+}
+
+type denialEntry struct {
+	Host       string `json:"host"`
+	Reason     string `json:"reason"`
+	SecondsAgo int64  `json:"seconds_ago"`
+}
+
+// recent lists one client's current entries, newest first, optionally for one host.
+func (d *denials) recent(client, host string) []denialEntry {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	now := d.now()
+	result := []denialEntry{}
+	if client == "" {
+		return result
+	}
+	for _, e := range d.clients[client] {
+		if now.Sub(e.at) >= denialWindow {
+			break
+		}
+		if host == "" || e.host == host {
+			result = append(result, denialEntry{e.host, e.reason, int64(now.Sub(e.at) / time.Second)})
+		}
+	}
+	return result
+}
+
+// reply replaces a refusal response with the proxy's own answer.
+func reply(response *http.Response, code int, header http.Header, text string) {
+	response.StatusCode, response.Status = code, fmt.Sprintf("%d %s", code, http.StatusText(code))
+	response.Header = header
+	response.Body = io.NopCloser(strings.NewReader(text))
+	response.ContentLength = int64(len(text))
+}
+
+// answer serves the status page: the requesting workspace's refusals, never another's.
+// It is plain HTTP only; the proxy terminates no TLS, so a CONNECT to it is refused.
+func (d *denials) answer(proxyType string, response *http.Response) {
+	request := response.Request
+	text := "text/plain; charset=utf-8"
+	if proxyType == "connect" || request == nil || request.URL == nil {
+		reply(response, http.StatusForbidden, http.Header{"Content-Type": {text}, "X-Sandbox-Blocked": {reasonStatusTLS}},
+			"Blocked by the sandbox proxy: "+reasonStatusTLS+".\n")
+		return
+	}
+	if request.URL.Path != statusPath {
+		reply(response, http.StatusNotFound, http.Header{"Content-Type": {text}},
+			"Not found. This workspace's recent refusals are at "+statusURL+"\n")
+		return
+	}
+	if request.Method != http.MethodGet {
+		reply(response, http.StatusMethodNotAllowed, http.Header{"Content-Type": {text}, "Allow": {http.MethodGet}},
+			"Use GET "+statusURL+"\n")
+		return
+	}
+	host := ""
+	if value := request.URL.Query().Get("host"); value != "" {
+		if target, err := url.Parse(value); err == nil && target.Host != "" {
+			value = target.Host
+		}
+		host = domain(value)
+	}
+	body, err := json.Marshal(map[string]interface{}{
+		"blocked":        d.recent(client(request), host),
+		"window_seconds": int(denialWindow / time.Second),
+		"about": "Requests from this workspace that the sandbox egress proxy refused, newest first. " +
+			"The reasons are the sandbox's policy; retrying will not help. Add ?host=NAME to ask about one site.",
+	})
+	if err != nil {
+		body = []byte(`{"blocked":[]}`)
+	}
+	reply(response, http.StatusOK, http.Header{"Content-Type": {"application/json"}, "Cache-Control": {"no-store"}},
+		string(body)+"\n")
+}
+
+// reject turns Smokescreen's refusal into a plain 403 with one short reason, and
+// remembers it for the client's status page. Smokescreen's own text names the
+// addresses a host resolved to, and its 407 reads as a login prompt to browsers.
+func reject(filtered bool, recent *denials) func(*smokescreen.SmokescreenContext, *http.Response) {
+	return func(sctx *smokescreen.SmokescreenContext, response *http.Response) {
+		if response.StatusCode != http.StatusProxyAuthRequired {
+			return
+		}
+		reason, host := reasonOther, ""
+		if sctx != nil {
+			host = sctx.RequestedHost
+			if sctx.Decision != nil {
+				if sctx.Decision.Reason == reasonStatus {
+					recent.answer(sctx.ProxyType, response)
+					return
+				}
+				reason = refusal(sctx.Decision.Reason, filtered)
+			}
+		}
+		recent.add(client(response.Request), domain(host), reason)
+		reply(response, http.StatusForbidden,
+			http.Header{"Content-Type": {"text/plain; charset=utf-8"}, "X-Sandbox-Blocked": {reason}},
+			"Blocked by the sandbox proxy: "+reason+".\n")
+	}
 }
 
 func metrics(d *decisions, sources []*source) http.HandlerFunc {
@@ -418,22 +610,8 @@ func main() {
 		logger.Fatalf("invalid limits: %v", err)
 	}
 	conf.MaxConcurrentConnectTunnels = *maxConcurrent
-	// A refusal is a plain 403 with one short reason. Smokescreen's own text names the
-	// addresses a host resolved to, and its 407 reads as a login prompt to browsers.
-	conf.RejectResponseHandlerWithCtx = func(sctx *smokescreen.SmokescreenContext, response *http.Response) {
-		if response.StatusCode != http.StatusProxyAuthRequired {
-			return
-		}
-		reason := reasonOther
-		if sctx != nil && sctx.Decision != nil {
-			reason = refusal(sctx.Decision.Reason, filtered)
-		}
-		text := "Blocked by the sandbox proxy: " + reason + ".\n"
-		response.StatusCode, response.Status = http.StatusForbidden, "403 Forbidden"
-		response.Header = http.Header{"Content-Type": {"text/plain; charset=utf-8"}, "X-Sandbox-Blocked": {reason}}
-		response.Body = io.NopCloser(strings.NewReader(text))
-		response.ContentLength = int64(len(text))
-	}
+	// A refusal is a plain 403 with one short reason; the status page answers in its place.
+	conf.RejectResponseHandlerWithCtx = reject(filtered, newDenials())
 
 	if len(rules.sources) > 0 && *refresh > 0 {
 		client := refreshClient(resolver)

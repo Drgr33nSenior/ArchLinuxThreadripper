@@ -1,13 +1,17 @@
 """Native sandbox render, capacity, network-policy union and group boundaries."""
+import asyncio
+import http.server
 import importlib.util
 import json
 import os
 from pathlib import Path
 import sys
 import tempfile
+import threading
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
+import urllib.request
 
 import httpx
 
@@ -21,6 +25,9 @@ from telemetry import quantity
 module = importlib.util.spec_from_file_location("sandbox_control", ROOT / "infrastructure/ai-stack/sandbox/control.py")
 control = importlib.util.module_from_spec(module)
 module.loader.exec_module(control)
+module = importlib.util.spec_from_file_location("sandbox_terminal", ROOT / "infrastructure/ai-stack/sandbox/terminal.py")
+terminal = importlib.util.module_from_spec(module)
+module.loader.exec_module(terminal)
 CONFIG = {"image": "registry.example.test/sandbox@sha256:" + "a" * 64,
           "egress_image": "registry.example.test/sandbox-egress@sha256:" + "b" * 64,
           "parents_group_id": "parents-fixture", "family_group_id": "family-fixture",
@@ -491,6 +498,156 @@ class GateTests(unittest.IsolatedAsyncioTestCase):
                     self.assertNotIn("alice", metrics)
                     self.assertNotIn("PRIVATE-CODE", metrics)
                     self.assertEqual(4, len(forwarded))
+
+
+class FakeEgressProxy(http.server.ThreadingHTTPServer):
+    """Stands in for the egress proxy: refuses CONNECT to listed names with the reason
+    header, and serves the status page with the refusals of the asking address only."""
+    LISTED = {"adult.example": "blocked by the family filter"}
+
+    def __init__(self):
+        self.refused, self.requests = {}, []
+        server = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def do_CONNECT(self):
+                host = self.path.rsplit(":", 1)[0]
+                server.requests.append(self.requestline)
+                reason = server.LISTED.get(host, "")
+                server.refused.setdefault(self.client_address[0], []).insert(0, {"host": host, "reason": reason, "seconds_ago": 0})
+                self.send_response(403)
+                self.send_header("X-Sandbox-Blocked", reason)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            def do_GET(self):
+                server.requests.append(self.requestline)
+                body = json.dumps({"blocked": server.refused.get(self.client_address[0], [])}).encode()
+                code = 200 if self.path == terminal.STATUS_URL else 404
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        super().__init__(("127.0.0.1", 0), Handler)
+
+
+def tool(results):
+    """A stand-in for Open Terminal: answers each call with the next canned JSON result."""
+    calls = []
+    async def app(scope, receive, send):
+        body = b""
+        while True:
+            message = await receive()
+            body += message.get("body", b"")
+            if not message.get("more_body"):
+                break
+        calls.append(body)
+        status, value, content_type = results.pop(0)
+        payload = value if isinstance(value, bytes) else json.dumps(value).encode()
+        await send({"type": "http.response.start", "status": status,
+                    "headers": [(b"content-type", content_type), (b"content-length", str(len(payload)).encode())]})
+        await send({"type": "http.response.body", "body": payload})
+    return app, calls
+
+
+class BlockedReasonTests(unittest.IsolatedAsyncioTestCase):
+    """The workspace's tool results name the proxy's reason for a refused tunnel."""
+    FAILED = {"detail": {"completed_actions": 0, "failed_action_index": 0, "error": "net::ERR_TUNNEL_CONNECTION_FAILED"}}
+
+    async def call(self, middleware, method, path, payload=None):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=middleware), base_url="http://terminal") as client:
+            return await client.request(method, path, json=payload)
+
+    async def test_browser_navigation_names_the_proxy_reason(self):
+        lookups = []
+        def lookup():
+            lookups.append(1)
+            return [{"host": "adult.example", "reason": "blocked by the family filter", "seconds_ago": 1},
+                    {"host": "earlier.example", "reason": "blocked by the sandbox blocklist", "seconds_ago": 200}]
+        app, calls = tool([(502, self.FAILED, b"application/json")])
+        response = await self.call(terminal.BlockedReason(app, lookup), "POST", "/browser/action",
+                                   {"actions": [{"action": "navigate", "url": "https://adult.example/"}]})
+        self.assertEqual(502, response.status_code)
+        self.assertEqual(int(response.headers["content-length"]), len(response.content))
+        value = response.json()
+        # Upstream's result is kept whole; the reason is added beside it.
+        self.assertEqual(self.FAILED["detail"], value["detail"])
+        self.assertEqual([{"host": "adult.example", "reason": "blocked by the family filter", "seconds_ago": 1}],
+                         value["sandbox_egress"]["refused"])
+        self.assertIn("retrying will not help", value["sandbox_egress"]["note"])
+        self.assertEqual("curl -s http://sandbox-egress.invalid/blocked", value["sandbox_egress"]["check"])
+        self.assertEqual(1, len(lookups))
+        self.assertIn(b"adult.example", calls[0])
+
+    async def test_a_click_into_a_refused_site_shows_the_latest_refusal(self):
+        snapshot = {"url": "https://example.org/", "snapshot": 'heading "This site can\'t be reached" ERR_TUNNEL_CONNECTION_FAILED'}
+        blocked = [{"host": "adult.example", "reason": "blocked by the family filter", "seconds_ago": 3},
+                   {"host": "old.example", "reason": "private address", "seconds_ago": 240}]
+        app, _ = tool([(200, snapshot, b"application/json")])
+        value = (await self.call(terminal.BlockedReason(app, lambda: blocked), "GET", "/browser/snapshot")).json()
+        self.assertEqual(snapshot["snapshot"], value["snapshot"])
+        self.assertEqual(["adult.example"], [entry["host"] for entry in value["sandbox_egress"]["refused"]])
+
+    async def test_unrelated_results_pass_through_unchanged(self):
+        lookups = []
+        def lookup():
+            lookups.append(1)
+            return []
+        ok = {"status": "done", "exit_code": 0, "output": [{"type": "output", "data": "fine"}]}
+        app, _ = tool([(200, ok, b"application/json"), (502, self.FAILED, b"application/json"),
+                       (200, b"ERR_TUNNEL_CONNECTION_FAILED", b"text/plain"),
+                       (200, ["ERR_TUNNEL_CONNECTION_FAILED"], b"application/json")])
+        middleware = terminal.BlockedReason(app, lookup)
+        self.assertEqual(json.dumps(ok).encode(), (await self.call(middleware, "POST", "/execute", {"command": "true"})).content)
+        # Not a command or browser result: never read.
+        self.assertEqual(self.FAILED, (await self.call(middleware, "GET", "/files/read")).json())
+        self.assertEqual(b"ERR_TUNNEL_CONNECTION_FAILED", (await self.call(middleware, "POST", "/execute", {})).content)
+        self.assertEqual(["ERR_TUNNEL_CONNECTION_FAILED"], (await self.call(middleware, "POST", "/execute", {})).json())
+        self.assertEqual([], lookups)
+
+    async def test_no_record_or_no_answer_still_says_where_to_look(self):
+        app, _ = tool([(502, self.FAILED, b"application/json"), (502, self.FAILED, b"application/json")])
+        value = (await self.call(terminal.BlockedReason(app, lambda: []), "POST", "/browser/action",
+                                 {"actions": [{"action": "navigate", "url": "https://missing.example/"}]})).json()
+        self.assertIn("something else", value["sandbox_egress"]["note"])
+        self.assertNotIn("refused", value["sandbox_egress"])
+        def unreachable():
+            raise OSError("proxy unreachable")
+        value = (await self.call(terminal.BlockedReason(app, unreachable), "POST", "/browser/action",
+                                 {"actions": [{"action": "navigate", "url": "https://adult.example/"}]})).json()
+        self.assertIn("could not be asked", value["sandbox_egress"]["note"])
+        self.assertEqual("curl -s http://sandbox-egress.invalid/blocked", value["sandbox_egress"]["check"])
+
+    async def test_command_output_through_a_fake_proxy(self):
+        """An HTTP library through the proxy sees the 403 unchanged; the tool result gains the reason."""
+        proxy = FakeEgressProxy()
+        threading.Thread(target=proxy.serve_forever, daemon=True).start()
+        address = f"http://127.0.0.1:{proxy.server_address[1]}"
+        try:
+            with patch.dict(os.environ, {"http_proxy": address, "https_proxy": address, "HTTP_PROXY": address,
+                                         "HTTPS_PROXY": address, "no_proxy": "localhost", "NO_PROXY": "localhost"}):
+                # The HTTP-library behaviour is the proxy's 403: unchanged by this work.
+                with self.assertRaises(OSError) as raised:
+                    await asyncio.to_thread(urllib.request.build_opener().open, "https://adult.example/", timeout=5)
+                self.assertIn("Tunnel connection failed: 403", str(raised.exception))
+                result = {"status": "done", "exit_code": 1, "output": [{"type": "output", "data": str(raised.exception)}]}
+                app, _ = tool([(200, result, b"application/json")])
+                response = await self.call(terminal.BlockedReason(app), "POST", "/execute",
+                                           {"command": "python fetch.py https://adult.example/"})
+            value = response.json()
+            self.assertEqual(result["output"], value["output"])
+            self.assertEqual([{"host": "adult.example", "reason": "blocked by the family filter", "seconds_ago": 0}],
+                             value["sandbox_egress"]["refused"])
+            # The lookup went through the workspace's proxy to the status name, never direct.
+            self.assertIn("GET http://sandbox-egress.invalid/blocked HTTP/1.1", proxy.requests)
+        finally:
+            proxy.shutdown()
+            proxy.server_close()
 
 
 if __name__ == "__main__":

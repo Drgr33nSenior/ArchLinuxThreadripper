@@ -458,7 +458,8 @@ protection:
   not rest on the proxy alone, and no other port is reachable.
 - It logs one line per request with the group, the domain and `allow` or
   `deny`. It does not log paths, queries, headers, client addresses, sizes or
-  content, and it does not terminate TLS. Alloy scrapes
+  content, and it does not terminate TLS. Requests for its status page (below)
+  are not logged. Alloy scrapes
   `workstation_sandbox_egress_requests_total{group,decision}`; domains stay in
   the pod log.
 - Each proxy serves at most 256 requests and tunnels at once and 100 new
@@ -472,6 +473,43 @@ protection:
 clients show it. Chromium does not show a proxy's reply to a refused HTTPS
 tunnel; it reports `ERR_TUNNEL_CONNECTION_FAILED`. A name that does not exist
 gets a 502.
+
+**Why a site failed.** The proxy keeps each workspace's recent refusals and
+serves them at `http://sandbox-egress.invalid/blocked`, a name it answers
+itself (`.invalid` never resolves, so no real site is shadowed). A workspace
+reaches it through its proxy settings, for example `curl -s
+http://sandbox-egress.invalid/blocked`; `?host=NAME` asks about one site. The
+answer is JSON: `blocked` lists `host`, `reason` and `seconds_ago`, newest
+first. Over HTTPS (CONNECT) the page is refused, because the proxy terminates
+no TLS. Refusals themselves are unchanged: the same 403, header and body.
+
+The workspace's command and browser tools add the reason to their own results.
+[`terminal.py`](../infrastructure/ai-stack/sandbox/terminal.py) wraps Open
+Terminal. When the JSON result of `run_command`, `browser_action` or
+`browser_snapshot` contains
+`ERR_TUNNEL_CONNECTION_FAILED`, curl's `CONNECT tunnel failed, response 403` or
+Python's `Tunnel connection failed: 403`, it asks the status page and adds a
+`sandbox_egress` object to the result. The object holds the refusals whose host
+appears in the call or its result, or else those of the last minute, and a
+note that the refusal is the sandbox's policy and that retrying will not help.
+With no refusal on record it says the failure is something else, such as a
+name that does not exist. Other results pass through unchanged.
+
+*Privacy.* The proxy identifies a workspace by the source address of its
+connections, which is its pod's address: one pod per account, and each group's
+proxy only accepts its own group's workspaces. The page lists only refusals
+from the asking address, so a child's workspace never sees another account's
+names. Entries hold the logged domain and the short reason, never a path,
+query or header. They live in the proxy's memory only, at most 20 per
+workspace for 5 minutes and 256 workspaces, and a proxy restart clears them.
+Requests for the page are neither logged nor counted. Two assumptions hold
+this boundary. First, traffic from a pod to the proxy's ClusterIP Service keeps
+the pod's address; kube-proxy masquerades only traffic from outside the pod
+range and a pod reaching itself. If it did not, every workspace of a group
+would share one address. The live probe below checks this. Second, a pod
+address is not reused within the 5 minutes: K3s's `host-local` IP allocation
+hands out the next free address in turn, so an address returns only after the
+node's pod range has cycled. This is not checked live.
 
 **The family filter** has two independent parts.
 
@@ -648,8 +686,9 @@ with no network at all. For the Family group a stand-in resolver answers
 `0.0.0.0` for one name; the test requires the family-filter refusal for that
 name and for names on the baked lists, the private-address refusal for names
 that resolve to LAN, cluster and loopback addresses, and an open path for
-everything else. It then checks that the proxy's whole output holds only group,
-domain and decision.
+everything else. It reads the status page, which must list the refused names
+with their reasons and must not count as a request. It then checks that the
+proxy's whole output holds only group, domain and decision.
 
 Open Terminal is MIT; Terminals has the Open WebUI Enterprise licence with a
 personal, non-commercial-use exception. This image is for the owner's family
@@ -725,6 +764,12 @@ kubectl -n assistant-sandbox exec -i POD -- python -I - '{
   "denied": ["nudity.testcategory.com", "192.168.1.40.nip.io:22", "192.168.1.40:22",
              "10.43.0.1", "1.1.1.1"]}' < tests/workstation/probe_sandbox_network.py
 ```
+
+Every denial answered with a 403 must also appear, with its reason, on the
+workspace's status page. To check that one workspace never sees another's
+refusals, run the probe in a second account's workspace of the same group with
+`"unlisted": ["NAME"]`, where `NAME` is a refused name only the first workspace
+tried in the last five minutes.
 
 `nudity.testcategory.com` is Cloudflare's test name for its adult category and
 is on none of the lists, so it checks the DNS filter alone. Add a name from the
