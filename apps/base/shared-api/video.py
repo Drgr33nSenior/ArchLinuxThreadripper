@@ -140,11 +140,15 @@ class VideoTool:
             raise Refusal(502, "video_generation_failed")
         done = False
         try:
-            async with asyncio.timeout(self.profile["timeout_seconds"]):
+            async with asyncio.timeout(self.profile["timeout_seconds"]) as deadline:
                 while True:
                     await asyncio.sleep(self.poll_seconds)
                     if await is_disconnected():
                         raise Refusal(499, "video_request_cancelled")
+                    # Starlette's is_disconnected() polls inside an anyio CancelScope that can swallow
+                    # the deadline's cancellation when it lands there, leaving this loop to poll forever.
+                    if deadline.expired():
+                        raise TimeoutError
                     entry = (await self.upstream_json("GET", self.comfy + "/history/" + prompt_id, timeout=10)).get(prompt_id)
                     status = (entry or {}).get("status", {})
                     if status.get("completed") is not None:
