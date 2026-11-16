@@ -53,7 +53,9 @@ cleanup() {
           tpm-key | tpm-first | tpm-limit | concurrency-slow | concurrency-overlap | \
           concurrency-complete | disconnect-stream | cancel-backend | cancel-admission | \
           cancel-complete | backend-unavailable | backend-no-retry | revoke-key | \
-          revoked-model | draining | maintenance | save-keys | result) ;;
+          revoked-model | draining | maintenance | save-keys | result | \
+          onboard-user-exists | onboard-alias-absent | onboard-alias-key | onboard-alias-taken | onboard-alias-delete | \
+          onboard-alias-revoked | onboard-key-absent) ;;
         *) continue ;;
       esac
       case $value in

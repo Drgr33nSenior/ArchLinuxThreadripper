@@ -27,7 +27,9 @@ It runs in **shared mode** today. [Service modes](MODES.md) explains the alterna
 **Accounts and groups.** Each person has their own Open WebUI account; sign-up is closed.
 Parents are in the `Parents` group and the children in `Family`; everyone can set Reasoning
 Effort in Chat Controls. Picture permission is granted per account, to the Admin and Parents
-accounts. The tools server (video, memory, search, documents through MCP) refuses every call
+accounts. With [automatic family onboarding](AI-SERVICE.md#automatic-family-onboarding) on, the
+two groups also decide who has a gateway key and pictures; nothing else is needed after
+creating the account. The tools server (video, memory, search, documents through MCP) refuses every call
 from an account with Open WebUI's `admin` role, so the owner uses a daily account for those;
 the admin account is for administration and pictures.
 
@@ -401,7 +403,9 @@ cannot create one.
 An account without a mapping entry still gets a workspace, with a disposable
 home, as before. Access is decided by group membership alone; refusing unmapped
 accounts would make a group change wait for a storage change. Tell users whose
-home is disposable to download wanted files before teardown.
+home is disposable to download wanted files before teardown. Automatic family
+onboarding does not create homes; its status lists the members still without
+one (`homes_needed`).
 
 A persistent home also keeps whatever a prompt-injected command wrote there,
 including shell start-up files. A later workspace starts with those files.
@@ -1360,7 +1364,8 @@ image, so each mode's contract is `active`:
 - The rendered gateway policy lists the contract model in `image_models`, so the gateway
   accepts `ready <model> --images` for it. Other modes keep images on the 9B split profile.
 - Image access stays per user: bind the Admin and Parents accounts with
-  `service browser-bind --images`. Video uses the same permission, but as an MCP tool it
+  `service browser-bind --images`, or let
+  [automatic family onboarding](AI-SERVICE.md#automatic-family-onboarding) set it from the groups. Video uses the same permission, but as an MCP tool it
   also refuses the `admin` role, so videos need a daily account.
 - Shared mode needs the `assistant` or `assistant-memory` experience and a serving
   profile.

@@ -17,6 +17,7 @@ import urllib.parse
 import urllib.request
 
 import yaml
+import onboarding
 import sandbox
 
 
@@ -1173,13 +1174,15 @@ def site_values(path):
     # "environment" is no longer used; older private site files may still carry it.
     # "webui_default_group" is optional: the Open WebUI group new accounts join.
     # "streaming_client_cidrs" is optional: Moonlight client networks; none admits no stream.
-    require(set(site) - {"environment", "webui_default_group", "streaming_client_cidrs"} == {"context", "node", "node_address", "management_cidr",
+    # "key_onboarding" is optional: off (default), dry-run or live; see onboarding.py.
+    require(set(site) - {"environment", "webui_default_group", "streaming_client_cidrs", "key_onboarding"} == {"context", "node", "node_address", "management_cidr",
                                                                    "client_cidrs", "webui_host", "api_host", "tls_secret"},
             "unexpected/missing site keys")
     group = site.setdefault("webui_default_group", "")
     require(isinstance(group, str) and (group == "" or re.fullmatch(
         r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", group) is not None),
         "webui_default_group must be an Open WebUI group UUID or empty")
+    require(site.setdefault("key_onboarding", "off") in onboarding.MODES, "key_onboarding must be off, dry-run or live")
     address = ipaddress.ip_address(site["node_address"])
     management = ipaddress.ip_network(site["management_cidr"])
     private = [ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")]
@@ -1291,6 +1294,8 @@ def render(args):
             getattr(args, "serving_profile", None) and experience.startswith("assistant")),
             "sandbox requires an assistant serving contract in large or shared mode")
     sandbox_objects = sandbox.render(sandbox_config, ROOT) if sandbox_config else []
+    # The group ids and the API server endpoint come from the sandbox config.
+    require(site["key_onboarding"] == "off" or sandbox_config, "key_onboarding needs --sandbox-config")
     contract = None
     if getattr(args, "serving_profile", None):
         # Every consumer comes from one contract; an incomplete contract still
@@ -1343,9 +1348,12 @@ def render(args):
         sandbox.configure_webui(objects, sandbox_config)
         webui = next(o for o in objects if o["kind"] == "Deployment" and o["metadata"]["name"] == "open-webui")
         pin_webui_settings(webui["spec"]["template"]["spec"]["containers"][0], objects)
+    onboarding_objects = onboarding.render(site["key_onboarding"], sandbox_config, objects, MODELS, ROOT)
     output = new_directory(args.output)
     (output / "workloads.yaml").write_text(kube_yaml_all(objects))
     (output / "sandbox.yaml").write_text(kube_yaml_all(sandbox_objects))
+    # Applied by the owner, separately: a mode switch applies workloads.yaml only.
+    (output / "onboarding.yaml").write_text(kube_yaml_all(onboarding_objects))
     (output / "gaming.yaml").write_text(kube_yaml_all(gaming))
     (output / "traefik.yaml").write_text(traefik_config(site))
     for name, certificate in certificates(site).items():
@@ -1377,7 +1385,7 @@ def render(args):
             # Handoff tools follow the rendered service: offered only when it serves them.
             client.write(f'AGENT_HANDOFF_ENABLED={"true" if tools_env.get("HANDOFF_ENABLED") == "true" else "false"}\n')
     files = ["workloads.yaml", "gaming.yaml", "traefik.yaml", "certificate-staging.yaml", "certificate.yaml", "migration.yaml",
-             "site.json", "client.conf", "sandbox.yaml"]
+             "site.json", "client.conf", "sandbox.yaml", "onboarding.yaml"]
     if contract:
         (output / "serving-contract.json").write_text(json.dumps(public_contract(contract), indent=2) + "\n")
         files.append("serving-contract.json")
@@ -1389,6 +1397,7 @@ def render(args):
                     "group_resolution": sandbox_config["group_resolution"] if sandbox_config else None,
                     "persistent_homes": len(sandbox_config["users"]) if sandbox_config else 0,
                     "workspace_retention": "mapped users: home persists, scratch until teardown; others: until teardown"},
+        "key_onboarding": {"mode": site["key_onboarding"], "qualified": False},
         "existing_claims": existing,
         "serving_contract": ({"contract": contract["contract"], "status": contract["status"],
                               "missing_inputs": contract["missing_inputs"], "checks": contract_checks}

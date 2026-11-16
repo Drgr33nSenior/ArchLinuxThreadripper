@@ -13,7 +13,8 @@ missing=$(
     git ls-files 'infrastructure/ai-stack/serving/*.py' 'infrastructure/ai-stack/serving/*.json'
     printf '%s\n' infrastructure/ai-stack/k8s/models.yaml infrastructure/ai-stack/models/cache.py \
       infrastructure/ai-stack/models/fetch.py infrastructure/ai-stack/models/qwen3.8-27b-mxfp4.json \
-      infrastructure/ai-stack/stack.lock infrastructure/service/traefik.yaml
+      infrastructure/ai-stack/stack.lock infrastructure/service/traefik.yaml \
+      infrastructure/service/key_onboarding.py
   } | sort -u | comm -23 - <(sort "$list")
 )
 [[ -z $missing ]] || {
