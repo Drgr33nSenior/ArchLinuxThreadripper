@@ -612,6 +612,37 @@ class BlockedReasonTests(unittest.IsolatedAsyncioTestCase):
                      b"curl https://ample.com:443/", b"refused ample.com."):
             self.assertEqual(refused, terminal.explanation(refused, text)["refused"], text)
 
+    async def test_a_host_at_the_start_of_an_output_line_is_named(self):
+        # JSON escapes the line break as backslash-n; the host follows a letter in the raw bytes.
+        blocked = [{"host": "adult.example", "reason": "blocked by the family filter", "seconds_ago": 200}]
+        result = {"status": "done", "output": [{"type": "output", "data": "curl: (56) CONNECT tunnel failed, response 403\n"
+                                                "blocked:\nadult.example\tfailed"}]}
+        self.assertIn(b"\\nadult.example", json.dumps(result).encode())
+        app, _ = tool([(200, result, b"application/json")])
+        value = (await self.call(terminal.BlockedReason(app, lambda: blocked), "POST", "/execute",
+                                 {"command": "./fetch-all.sh"})).json()
+        self.assertEqual(result["output"], value["output"])
+        self.assertEqual(blocked, value["sandbox_egress"]["refused"])
+
+    async def test_node_core_https_tunnel_refusal_needs_the_403(self):
+        blocked = [{"host": "adult.example", "reason": "blocked by the family filter", "seconds_ago": 1}]
+        refused = ("Error: Failed to establish tunnel to adult.example:443 via http://10.43.0.201:4750: "
+                   "HTTP/1.1 403 Forbidden")
+        other = ("Error: Failed to establish tunnel to missing.example:443 via http://10.43.0.201:4750: "
+                 "HTTP/1.1 502 Bad Gateway")
+        lookups = []
+        def lookup():
+            lookups.append(1)
+            return blocked
+        app, _ = tool([(200, {"output": [{"data": refused}]}, b"application/json"),
+                       (200, {"output": [{"data": other}]}, b"application/json")])
+        middleware = terminal.BlockedReason(app, lookup)
+        value = (await self.call(middleware, "POST", "/execute", {"command": "node fetch.js"})).json()
+        self.assertEqual(blocked, value["sandbox_egress"]["refused"])
+        value = (await self.call(middleware, "POST", "/execute", {"command": "node fetch.js"})).json()
+        self.assertNotIn("sandbox_egress", value)
+        self.assertEqual(1, len(lookups))
+
     async def test_polled_command_output_and_node_and_wget_errors_are_explained(self):
         blocked = [{"host": "adult.example", "reason": "blocked by the family filter", "seconds_ago": 2}]
         outputs = ["Error: Proxy response (403) !== 200 when HTTP Tunneling (https://adult.example/)",

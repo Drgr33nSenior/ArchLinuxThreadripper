@@ -490,10 +490,13 @@ Terminal. It reads the JSON results of `run_command`, `get_process_status`,
 error, it asks the status page and adds a `sandbox_egress` object to the
 result. The errors are Chromium's `ERR_TUNNEL_CONNECTION_FAILED`, curl's
 `CONNECT tunnel failed, response 403`, Python's
-`Tunnel connection failed: 403`, wget's `Proxy tunneling failed: Forbidden`
-and Node's `Proxy response (403) !== 200 when HTTP Tunneling`.
+`Tunnel connection failed: 403`, wget's `Proxy tunneling failed: Forbidden`,
+Node's fetch (undici) `Proxy response (403) !== 200 when HTTP Tunneling` and
+Node's core https client
+`Failed to establish tunnel to HOST via PROXY: HTTP/1.1 403 Forbidden`.
 
-- If the call or its result names a refused host as a whole name, the object
+- If the call or its result names a refused host as a whole name (in the
+  decoded JSON text, so a host at the start of an output line counts), the object
   lists it under `refused`. Its note says this is the sandbox's policy and
   that retrying will not help.
 - Otherwise it lists refusals from the last minute under `possibly_related`.

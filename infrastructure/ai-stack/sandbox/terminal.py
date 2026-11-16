@@ -12,9 +12,11 @@ import urllib.request
 # clients report a 403 without the reason header unless asked. Chromium also reports a
 # 502 (a name that does not exist) that way, so the marker alone is not a refusal.
 STATUS_URL = "http://sandbox-egress.invalid/blocked"
-REFUSED = (b"ERR_TUNNEL_CONNECTION_FAILED", b"CONNECT tunnel failed, response 403",
-           b"Tunnel connection failed: 403", b"Proxy tunneling failed: Forbidden",
-           b"(403) !== 200 when HTTP Tunneling")
+# Chromium; curl; Python; wget; Node's fetch (undici); Node's core https client.
+REFUSED = re.compile(rb"ERR_TUNNEL_CONNECTION_FAILED|CONNECT tunnel failed, response 403"
+                     rb"|Tunnel connection failed: 403|Proxy tunneling failed: Forbidden"
+                     rb"|\(403\) !== 200 when HTTP Tunneling"
+                     rb"|Failed to establish tunnel to \S+ via \S+: HTTP/1\.[01] 403")
 # Tool calls whose JSON result can carry a browser or command error.
 EXPLAINED = re.compile(r"(POST /execute|GET /execute/[^/]+/status|POST /browser/action|GET /browser/snapshot)")
 LIMIT = 4 << 20  # larger results pass through untouched
@@ -69,6 +71,25 @@ def explanation(blocked, text):
             "check": check}
 
 
+def strings(value):
+    """Every string in a decoded JSON value, keys included, one per line."""
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [text for key, item in value.items() for text in strings(key) + strings(item)]
+    if isinstance(value, list):
+        return [text for item in value for text in strings(item)]
+    return []
+
+
+def decoded(raw):
+    """The text of a JSON document, its escapes decoded, or the raw bytes if it is not JSON."""
+    try:
+        return "\n".join(strings(json.loads(raw))).encode()
+    except (ValueError, RecursionError):
+        return raw
+
+
 class BlockedReason:
     """Adds the proxy's reason to a tool result that shows only a refused tunnel.
 
@@ -113,7 +134,7 @@ class BlockedReason:
             if message.get("more_body"):
                 return None
             body = b"".join(chunks)
-            if any(marker in body for marker in REFUSED):
+            if REFUSED.search(body):
                 body = await self.explain(body, b"".join(request))
             headers = [(k, v) for k, v in start.get("headers", []) if k.lower() != b"content-length"]
             await send({**start, "headers": headers + [(b"content-length", str(len(body)).encode())]})
@@ -132,7 +153,8 @@ class BlockedReason:
             blocked = await asyncio.wait_for(asyncio.to_thread(self.lookup), timeout=5)
         except Exception:  # noqa: BLE001 - any failure falls back to telling the model where to look
             blocked = None
-        value["sandbox_egress"] = explanation(blocked, call + b"\n" + body)
+        # Matched in decoded strings: an escaped newline before a name is a line break.
+        value["sandbox_egress"] = explanation(blocked, decoded(call) + b"\n" + decoded(body))
         return json.dumps(value).encode()
 
 
