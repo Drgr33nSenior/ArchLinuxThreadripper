@@ -154,6 +154,9 @@ class VideoTool:
                     if status.get("completed") is not None:
                         break
             done = True
+        except TimeoutError:
+            # A tool result the model can explain, not the catch-all's HTTP 503 retrieval_unavailable.
+            raise Refusal(504, "video_timed_out") from None
         finally:
             if not done:
                 # Drop it from the queue, or stop it if it is the job running now; a picture on the

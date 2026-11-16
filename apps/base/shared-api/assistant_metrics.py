@@ -50,7 +50,7 @@ FAMILIES = {
         {"op": ("recall", "remember", "forget", "inspect", "mode"), "client": CLIENTS, "outcome": OUTCOMES_STORE}),
     "workstation_assistant_video_requests_total": (
         "counter", "Video tool calls (generate_video) by outcome.",
-        {"client": CLIENTS, "outcome": ("ok", "denied", "busy", "not_ready", "cancelled", "failed", "invalid", "unavailable")}),
+        {"client": CLIENTS, "outcome": ("ok", "denied", "busy", "not_ready", "cancelled", "failed", "timeout", "invalid", "unavailable")}),
     "workstation_assistant_deep_research_total": (
         "counter", "Deep research calls (deep_research) by outcome (needs_confirmation = the person is asked first, "
                    "nothing searched; partial = notes without a written report). Its web requests also count above.",

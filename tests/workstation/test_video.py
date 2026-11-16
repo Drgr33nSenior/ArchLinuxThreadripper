@@ -15,6 +15,7 @@ import httpx
 ROOT = Path(__file__).resolve().parents[2]
 API = ROOT / "apps/base/shared-api"
 sys.path.insert(0, str(API))
+from assistant_metrics import METRICS
 from service_tools import ServiceTools
 import video
 
@@ -194,8 +195,22 @@ class VideoToolTests(unittest.IsolatedAsyncioTestCase):
             response = await asyncio.wait_for(self.call({"prompt": "a puppy"}), timeout=10)
         self.assertLess(time.monotonic() - started, 5)
         self.assertEqual([True], swallowed)
-        self.assertEqual(503, response.status_code)  # the existing error path for a timed-out render
-        self.assertEqual(["/prompt", "/queue", "/interrupt"], [c.url.path for c in self.calls if c.url.host == "comfy"])
+        self.assert_timed_out(response)
+
+    def assert_timed_out(self, response):
+        self.assertEqual(200, response.status_code)  # a tool result, not HTTP 503 retrieval_unavailable
+        result = response.json()["result"]
+        self.assertTrue(result["isError"])
+        body = json.loads(result["content"][0]["text"])
+        self.assertEqual("video_timed_out", body["error"])
+        self.assertIn("try a shorter", body["note"])
+        self.assertRegex(METRICS.render(), r'(?m)^workstation_assistant_video_requests_total\{[^}]*outcome="timeout"\} [1-9]')
+        self.assertEqual(["/prompt", "/queue", "/interrupt"], [c.url.path for c in self.calls if c.url.host == "comfy" and not c.url.path.startswith("/history/")])
+
+    async def test_a_clip_past_its_budget_is_a_timeout_tool_result(self):
+        self.gate = asyncio.Event()  # history never answers
+        self.tools.video.profile = {**self.tools.video.profile, "timeout_seconds": 1}
+        self.assert_timed_out(await asyncio.wait_for(self.call({"prompt": "a puppy"}), timeout=10))
 
     async def test_bad_arguments_and_bad_artifacts_are_refused(self):
         for arguments in ({}, {"prompt": ""}, {"prompt": "x", "orientation": "ultrawide"}, {"prompt": "x", "steps": 50}):
