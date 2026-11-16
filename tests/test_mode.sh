@@ -140,6 +140,25 @@ expect_failure ws_mode family --execute
 grep -q 'no hardware evidence for this boot' "$work/failure.log"
 mv "$work/hardware.moved" "$work/hardware.json"
 [[ $(wc -l <"$work/switch.log") == "$switches" ]]
+# A failed admission update names the command that started the switch in its recovery
+# hint: `mode NAME` from ws_mode, otherwise `session switch` with its own arguments.
+cat >"$work/admission-python" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"$work/admission.log"
+EOF
+chmod 755 "$work/admission-python"
+ws_session_switch() (
+  # shellcheck disable=SC2034 # read by ws_session_service, as from the real switch
+  local mode="$1" hardware="$2" dir="$3" apply="${5:-}"
+  ws_measure_python() { printf '%s\n' "$work/admission-python"; }
+  ws_session_service ready Qwen3.8-27B-MXFP4 true
+)
+ws_mode family --execute >/dev/null
+grep -q -- "/service_session.py 10.0.0.9 /fixture/gateway-control-key ready Qwen3.8-27B-MXFP4 --images --hardware $work/hardware.json --state-directory $work/state --mode-name family\$" "$work/admission.log"
+ws_session_switch shared "$work/hardware.json" "$work/state" --execute "$work/apply.json"
+grep -q -- "--hardware $work/hardware.json --state-directory $work/state --switch shared --apply $work/apply.json\$" "$work/admission.log"
+ws_session_switch restore "$work/hardware.json" "$work/state" --execute
+grep -q -- "--state-directory $work/state --switch restore\$" "$work/admission.log"
 # The boot-time evidence unit runs as a system service: it must provide HOME and ROCm's tools.
 unit="$root/templates/workstation/session/workstation-hardware-evidence.service"
 grep -qx 'Environment=HOME=/root' "$unit"
