@@ -53,6 +53,11 @@ MCP_METHODS = {"initialize": "mcp:initialize", "ping": "mcp:ping", "tools/list":
                "notifications/initialized": "mcp:notification"}
 TRACE_DETAIL = "workstation.request"  # ASGI scope key: what the handler learned about the request
 # Project-folder scope refusals the model can correct, so they are tool results, not HTTP errors.
+VIDEO_NOTES = {
+    "video_timed_out": "the clip took longer than the time allowed and was stopped; tell the user kindly "
+                       "that it could not be finished this time and they can try a shorter, simpler idea",
+}
+
 FOLDER_SCOPE_NOTES = {
     "project_set_by_chat_folder": "this chat is in a project folder, which sets the memory scope; call again without project",
     "no_project_folder": "this chat is not in a project folder",
@@ -181,7 +186,7 @@ def metered_web(tool, client, call):
 def video_outcome(exc):
     if exc.code == "chat_memory_busy":
         return "busy"
-    return {403: "denied", 429: "busy", 499: "cancelled", 400: "invalid"}.get(
+    return {403: "denied", 429: "busy", 499: "cancelled", 400: "invalid", 504: "timeout"}.get(
         exc.status, "not_ready" if exc.code == "video_requires_ready_image_mode" else "failed")
 
 
@@ -688,7 +693,8 @@ class ServiceTools:
                     # explain, as for handoffs and web tools. Malformed arguments stay HTTP 400.
                     if exc.status == 400:
                         raise
-                    result = {"content": [{"type": "text", "text": json.dumps({"error": exc.code})}], "isError": True}
+                    body = {"error": exc.code, **({"note": VIDEO_NOTES[exc.code]} if exc.code in VIDEO_NOTES else {})}
+                    result = {"content": [{"type": "text", "text": json.dumps(body)}], "isError": True}
             elif method == "tools/call" and params.get("name") == RESEARCH_TOOL:
                 if not self.research:
                     raise Refusal(404, "deep_research_disabled")
