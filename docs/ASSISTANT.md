@@ -1076,7 +1076,7 @@ Open WebUI wears OpenMettle's look throughout: ivory and graphite neutrals, one 
 The fork carries OpenMettle's theme and identity (fork commits on
 `workstation/reasoning-controls`: `ab3186bb34e5` the chat theme, `fa1bf005570b` the
 branding switch and footer, `7be5703691a2` the art and icon rework, `cf2e76e5e9ac` plain-text
-replies). OpenMettle is a
+replies, `e42bed1d97fe` the message for accounts the gateway has not set up). OpenMettle is a
 fork of Open WebUI, and the page always says so.
 
 | Part | What the family sees | Where | Switch |
@@ -1138,6 +1138,17 @@ stylesheet at build time, so `custom.css` sets those two explicitly. Not raised:
 settings fields that use `placeholder:text-gray-300`, and disabled controls, which upstream
 also leaves faint.
 
+**Accounts the gateway has not set up.** A chat account with no gateway key gets HTTP 403
+`browser_user_not_provisioned` from the gateway's `/webui/v1` route, on its model list and on chat
+calls. The fork remembers that refusal per user for five minutes, only for the connection whose
+URL ends in `/webui/v1`. A chat message from that account then fails with "This account isn't set
+up for chat yet — please ask a parent.", whether or not another user has already filled the shared
+model list; title generation is skipped without an error; and Open WebUI's log records the gateway
+code (never headers or keys). Other gateway refusals keep their upstream error, for example 401
+`invalid_application_credential` (Open WebUI's own key is wrong for everyone), which is logged as
+an error. Other providers keep Open WebUI's messages, which now name the model. The fix is to add
+the account to the gateway's browser mapping.
+
 **Reverting.**
 
 - Name, text and icons only: set `OPENMETTLE_BRANDING` to `'false'` in `webui.yaml` and
@@ -1145,6 +1156,8 @@ also leaves faint.
   welcome and footer stay.
 - Palette only: remove the `webui-theme` ConfigMap entry and mount; Open WebUI's greys and
   blue return outside the chat area.
+- Unprovisioned-account message only: pin `open-webui:e586f0d59c50@sha256:f95eba78447a62624352190a78840f6f6bedfaedff2e6cd92199e1ae68af1245`
+  (fork commit `cf2e76e5e9ac`); those accounts see "Model '' was not found" again.
 - Plain-text replies only: pin `open-webui:411fe4974c28@sha256:0f6dba18dc8597c373a56d43d65becc7dfeb932e91e8f9da6920b4ac2b904b00`
   (fork commit `7be5703691a2`), or set `OPENMETTLE_BRANDING` to `'false'`, which also brings
   back Open WebUI's name and icons.
@@ -1618,12 +1631,13 @@ failed-test-to-fix cycle, interrupt and resume, and context compaction.
 ## Pinned inputs and gates
 
 The new experience pins Open WebUI **0.13.3** from the workstation fork
-(`Drgr33nSenior/open-webui`, commit `cf2e76e5e9ac698f757e88e17c3cdea1f565fead`: upstream
+(`Drgr33nSenior/open-webui`, commit `e42bed1d97fe8066340ec6eb3542ae5510e67fae`: upstream
 `b0e6098e9409` plus provider-declared Model Controls, four dependency fixes, the
 [per-group web search confirmation](#web-search-confirmation-per-group), the
-[context wheel](#context-wheel) and the [OpenMettle theme](#openmettle-theme)), built,
+[context wheel](#context-wheel), the [OpenMettle theme](#openmettle-theme) and the message for accounts the
+[gateway has not set up](#openmettle-theme)), built,
 scanned and signed by the `webui` AI-stack stage as
-`registry.lan.thespry.family/local/open-webui:e586f0d59c50@sha256:f95eba78447a62624352190a78840f6f6bedfaedff2e6cd92199e1ae68af1245`.
+`registry.lan.thespry.family/local/open-webui:ae0a56a00c2d@sha256:a4249f6de80af53ab11192d8994db06898b4fe469cc054ee7958f61604913dfa`.
 The legacy `service` experience retains its previous selection. The older RAG
 functional gate is evidence for its recorded image, not qualification of 0.13.3.
 Run a fresh UI/account, upload/ACL, retrieval, web-search/tool and image-return
