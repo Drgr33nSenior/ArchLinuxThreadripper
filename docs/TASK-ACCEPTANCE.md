@@ -23,68 +23,117 @@ The checker calls no model and changes no external system. It is contract versio
 | Component | One independent check group that decides the verdict |
 | Evidence | Recorded observations that do not decide the verdict |
 
-## Protect the acceptance source
+## Establish trust before the attempt
 
-Keep the acceptance source outside every path that the agent can read or edit. Do not
-mount, link or copy it into the workspace.
+Start the evaluator before enabling the agent's tools. The evaluator retains the source,
+expected seal, checker identities and registered observations in memory. It never reloads
+a replacement pin or source as the authority for that attempt. The capability policy must
+remain fixed until the evaluator has finished. A check started only after the attempt
+cannot establish that lifetime and returns `attempt-lifetime-not-established`.
 
-```text
-<acceptance source>/
-  acceptance.json      specification
-  fixture/             files the agent starts from (visible)
-  oracle/              observation inputs and expected results (hidden from the agent)
-  canary/              legacy fixture metadata; never executed with submitted code
-  reference/           trusted solution: editable files only
-  mutants/<name>/      known-bug variants: editable files only
+The Python API is:
+
+```python
+attempt = begin_attempt(
+    source, workspace, expected_seal,
+    agent_routes=routes,
+    protected_configuration=config_paths,
+    state=optional_existing_observation_path,
+    expected_checker=trusted_checker_manifest,
+)
+# Enable the agent only after attempt.before["status"] == "passed".
+# Keep the same capability policy and evaluator process alive.
+# After the agent finishes, observe the external system through the parent:
+attempt.observe(parent_observation)
+result = check_task(source, workspace, expected_seal, attempt=attempt,
+                    answer=answer_path, run_id=run_id, attempt_id=attempt_id)
 ```
 
-1. Print the seal: `python3 lib/workstation/task_acceptance.py seal <acceptance source>`.
-2. Pin the seal in the evaluator's own code or configuration. Do not store it in the
-   acceptance source or in the workspace.
-3. Give the agent a copy of `fixture/` only:
-   `python3 lib/workstation/task_acceptance.py workspace <acceptance source> <new workspace>`.
+`expected_seal` and `trusted_checker_manifest` come from the trusted parent before the
+attempt. They must not be reloaded from an agent-writable pin. An existing `state` file
+is automatically included in protection targets and snapshotted before the attempt.
+Later file changes cannot replace its contents in the evaluator. For state produced after
+the attempt, use a fresh parent observation in memory. Do not pass an agent's completion
+report as an observation. A snapshot taken before a task changes external state does not
+prove the resulting state; the parent must observe it again.
 
-The checker enforces the following on every run:
+`Attempt.loaded` and `Attempt.snapshot` return copies. The retained source and observation
+have no aliases to caller dictionaries. Source, configuration, observation and checker
+identities are checked again at completion; replacement produces failed protection.
+The loaded evaluator tree must also be trusted before importing its modules. Use the
+private session entry point below for a consumer running in another process.
 
-- The acceptance source and the workspace must not contain each other.
-- The acceptance source must hold only regular files of at most 2 MiB. A symbolic link is
-  refused.
-- The seal must equal the pinned seal. If it does not, the checker runs nothing from the
-  acceptance source and the verdict is `unavailable`.
-- Only editable files cross into the submitted process. Expected observations, protected
-  tests and evaluator code remain outside its mount namespace. The evaluator compares
-  the digest of the complete JSON output against its own expected result and requires
-  a successful process exit. An assertion patch or custom Python equality method cannot change this comparison.
-- Every registered agent route must pass a workspace read/write control and deny read
-  and non-truncating write-open access to each source file, checker and evaluator
-  configuration file. The source seal alone does not establish protection.
+Every registered route is exercised before and after the attempt:
 
-The checker cannot stop a process that already has write access to the acceptance source
-and to the evaluator. Run the agent with write access to its workspace only.
+- Read and non-truncating write-open probes target source files, automatically registered
+  observation files, configuration and every Python file in the checker tree.
+- Create, rename and unlink probes target **owned sacrificial directories** beside
+  protected files and in their evaluator-writable ancestors. Real source directories,
+  checker installations, pin files and user data are never renamed or deleted.
+- Workspace controls exercise the same operations. Non-sensitive controls permit another
+  UID with mode 0666 for files and 0777 for their owned directories. The caller must still
+  provide a workspace and path mapping accessible to its actual agent identity.
+- A route returns `allowed`, `denied`, `unavailable` or `unsupported`. `unsupported` means
+  that the capability is not exposed by that route; it is recorded as not applicable.
+  A tool failure is not a denial or an unsupported capability. Each route must have a
+  working control for at least one supported operation.
 
-The evaluator supplies `agent_routes={name: probe}` and `protected_configuration=[...]`
-to `check_task`. A trusted probe calls the actual agent route with `(operation, absolute_path)`
-and returns `allowed`, `denied` or `unavailable`. Reads must open the target without returning
-its contents. Writes must attempt a non-truncating write-open and close it without changing
-bytes. Register every enabled file, command, browser and broker route, including routes
-that can replace or rename files. Apply the same capability policy for the whole attempt.
-The configuration list must include the pinned seal and every evaluator configuration
-file. The checker also probes itself and every file in the source.
+Callbacks are trusted evaluator integration: they must invoke the actual file, command,
+browser or broker routes with their real permissions. The unit-test placement guards are
+stand-ins and are not deployment evidence. Pre/post probes alone cannot prove that an
+arbitrary external broker kept its policy fixed between probes. That lifetime guarantee
+belongs to the parent capability lease. The Linux fixture uses the unchanged, network-free
+`coding_eval.run_task` sandbox for every command, so submitted processes cannot change that
+policy or reach evaluator memory. No separate-UID deployment has been qualified here.
 
-For the CLI, `--boundary-adapter <executable>` invokes the trusted evaluator adapter as
-`<executable> read|write <absolute-path>`. It must perform the operation through **all**
-enabled agent routes. Exit 0 means all denied; exit 1 means at least one allowed; exit 2
-means unavailable. The workspace control must return 1. It must not print protected
-contents. Supply configuration with repeated `--protected-configuration` arguments.
-The adapter itself is included in the access probes. Missing probes, failed controls,
-or missing configuration pins produce `unavailable`; an allowed protected access fails
-protection. Do not use an adapter that guesses from path placement or returns constant
-denials. These callbacks are trusted evaluator integration, never submitted agent code.
+Some ancestors are not writable by the evaluator, so sacrificial entries cannot be
+allocated there without privilege. They are not reported as tested. Trust in the source,
+pin and loaded code rests on the retained snapshots, not on these original directory
+names. If an integration allows a renamed ancestor to expose hidden inputs through a
+new route, it has not established the required capability boundary and must stay unavailable.
 
-The Linux validation fixture uses the same `coding_eval.run_task` command route for its
-ordinary agent probes and submitted code. It verifies denied absolute-path reads and
-writes under the real bubblewrap namespace. This proves that fixture capability boundary;
-it does not prove that a separate harness registered all its routes.
+## Private session protocol for parent harnesses
+
+Run `python3 -I -B lib/workstation/task_acceptance_session.py` before starting the agent.
+The parent must pin and protect this bootstrap before launch. It sends newline-delimited
+JSON over private stdin and reads stdout. Never give these pipes to agent tools or record
+the probe transcript in the agent context. Submitted commands receive `/dev/null` as stdin.
+
+The first message contains:
+
+- `source`, `workspace`, `seal`: the selected task and its parent-held expected seal.
+- `checker`: a map of every relative `*.py` path in the checker directory to its trusted
+  SHA-256 digest. `checker_identity()` returns this shape, but a deployment must pin it
+  before the agent can run. The bootstrap validates all bytes before importing checker
+  modules. Its import loader compiles those captured bytes, including later imports;
+  a filesystem module swap cannot become the running evaluator.
+- `configuration`: non-secret evaluator configuration/pin paths to protect.
+- Optional `state_path`: an existing observation to protect and snapshot automatically.
+- `routes`: names of all actual enabled route groups.
+- `capability_lease`: the parent's fixed-policy handle, retained for the whole attempt.
+- Optional `run_id`, `attempt_id`: unchanged result identifiers.
+
+The evaluator emits `{"probe": OP, "path": PATH, "route": NAME, "capability_lease": LEASE}`.
+The parent performs the operation through that actual route and replies with
+`{"outcome": OUTCOME, "capability_lease": LEASE}`. Operations are `read`, `write`, `create`,
+`rename` and `unlink`. The last three receive only an owned sacrificial directory:
+create `PATH/created`, rename `PATH` to `PATH.moved`, or unlink `PATH/entry`. The evaluator
+cleans up its own controls. Read/write probes open and close the file without returning
+contents or changing bytes.
+
+When setup completes, the evaluator emits `{"ready": BOOL, "protection": RECORD,
+"capability_lease": LEASE}`. Enable the agent only when `ready` is true. After the attempt,
+the parent sends the same lease and optionally `observation` (a fresh independently observed
+JSON object), `answer` (a file path), `origins` (allowed origins), and boolean `claim`.
+The evaluator performs final probes and emits `{"result": RESULT}`. A changed lease or
+missing protocol message is unavailable. Exit codes remain 0 accepted, 1 rejected and
+3 unavailable. The parent persists the result outside agent paths and may pass it directly
+to `validate_result` or the run-record consumer.
+
+The source keeps its existing layout: `acceptance.json`, visible `fixture/`, protected
+`oracle/`, trusted `reference/` and known-bug `mutants/`. A legacy `canary/` directory may
+remain sealed as historical fixture data, but it is not executed or represented as a
+runtime-patching detector.
 
 ## Specification
 
@@ -98,9 +147,9 @@ declared check. An unknown member is refused.
 | `task_id`, `version` | Task name and specification version |
 | `editable` | Relative paths that cross from the workspace into the evaluation copy |
 | `ignore` | File or directory names that the workspace comparison skips, for example `__pycache__` |
-| `oracle.command` | Legacy command metadata, validated but never used to execute protected tests with submitted code |
+| `oracle.command` | Optional legacy metadata; never executes assertions beside submitted code |
 | `oracle.observations` | Protected JSON file with `module`, `function`, and bounded `cases` of `args` and `expected` |
-| `oracle.canary` | Legacy canary source metadata. The evaluator now applies the must-fail expectation itself |
+| `oracle.canary` | Optional legacy metadata; no duplicated canary run or detection claim |
 | `oracle.seconds` | Time limit for each run, 1 to 300 |
 | `oracle.baseline` | `fail` when the unchanged fixture must fail the protected tests (a repair task), else `pass` |
 | `oracle.references` | `id`, `overlay` directory and `expected` (`pass` or `fail`). At least one trusted reference and one known bug are required |
@@ -116,11 +165,14 @@ A `path` is a list of object keys and array indexes. A linkage selector is
 `{"from": "artifact" | "link", "name": "<id>", "path": [...]}` or
 `{"from": "artifact-sha256", "name": "<id>"}`.
 
-An observation expects `{"value": <JSON value>}` or `{"error": "ValueError"}`.
+An observation file under `oracle/` expects `{"value": <JSON value>}` or `{"error": "ValueError"}`.
 The isolated child receives only call arguments and emits a JSON results array. Python
 values are serialized before they cross the process boundary; comparison uses bytes in
 the evaluator. Existing in-process oracle specifications without `observations` remain
 parseable but return `unavailable-unsafe-in-process-oracle`. They cannot be accepted.
+Migrate Python call tasks to observations. For another application protocol, use an
+independent parent observer with external-state/artifact linkage. Arbitrary legacy
+command-oracle execution has not been qualified as protected and is not silently enabled.
 An answer-only specification without an oracle, external state, artifact or opened link
 returns `independent-observation-required` even when the answer claims completion.
 
@@ -128,47 +180,33 @@ Two complete examples are in `tests/fixtures/task-acceptance/sources/`:
 `window-counts` (a repair task with protected tests) and `record-publication` (external
 state, answer fields, a produced file and a link).
 
-## Check an attempt
+## Diagnostic commands
 
-Preconditions:
+`seal`, `workspace` and `validate` retain their existing interfaces. The one-shot `check`
+command can still emit a schema-1 diagnostic receipt, but it cannot prove an attempt
+lifetime and cannot return accepted. The old `--boundary-adapter` option does not turn a
+post-hoc check into a lifetime session. Consumers requiring acceptance must use the
+session protocol or hold a Python `Attempt` from before the agent starts.
 
-- The attempt is finished. The evaluator has the pinned seal.
-- For a task with an oracle: a Linux host with `/usr/bin/bwrap`, `/usr/bin/timeout` and
-  `/usr/bin/prlimit`. On another host the oracle is `unavailable`.
-- For a task with external state: a JSON object that the evaluator observed itself, in a
-  file outside the workspace.
+The final checker opens artifacts and allowed HTTP links itself. It sends no credentials,
+uses no proxy and follows no redirects. Origins normalize scheme/host case, default ports
+and a root slash; credentials, query strings and non-root paths are invalid origin values.
+A declared expected origin mismatch fails before a request. An origin that the evaluator
+has not authorized remains unavailable.
 
-```sh
-python3 lib/workstation/task_acceptance.py check <acceptance source> <new result.json> \
-  --workspace <workspace> --seal <pinned seal> \
-  --boundary-adapter <trusted adapter> --protected-configuration <pin file> \
-  [--answer <final answer file>] [--state <state.json>] [--allow-origin https://HOST] \
-  [--claim completed|not-completed] [--guidance <feedback.json>] \
-  [--run-id ID] [--attempt-id ID]
-```
-
-- `--answer` is the final answer exactly as the agent returned it: one JSON object, or one
-  JSON object in one enclosing code fence. An empty or prose answer fails the deliverable.
-- `--allow-origin` names an origin whose links the checker may open. The checker sends one
-  GET request without credentials, proxy or redirect. A link on another origin is not
-  opened and stays `unavailable`. If the specification supplies an expected `origin`,
-  a different origin fails with `link-origin-mismatch` before any network request.
-- `--guidance` is a JSON object with the booleans `failures` and `unavailable`, the shape
-  of the coding agent's post-edit verification result.
-- The result file must be new and outside the workspace.
-
-Exit status: `0` accepted, `1` rejected, `3` unavailable, `2` input or usage error (no
-result is written). Workspace/artifact read failures remain component outcomes. Unreadable
-optional guidance or test evidence remains explicit without discarding the result.
+Workspace/artifact read errors preserve the receipt. Structurally invalid files fail;
+evaluator inability to read a file is unavailable. An unreadable directory contributes an
+explicit unreadable entry without erasing known sibling diffs or invalid-test outcomes.
+A failed answer remains failed even when no independent observation is available.
 
 ## Components and verdict
 
 | Component | Passes when | Otherwise |
 | --- | --- | --- |
 | `protection` | The source seal matches and actual registered agent routes deny protected access after passing workspace controls | `failed`: overlap, unreadable source or seal mismatch. `unavailable`: missing pin, probes or working route controls |
-| `references` | The unchanged fixture, each reference and the canary on the trusted reference give the declared outcome | `failed`: a reference does not behave as declared, so the oracle is unproven |
+| `references` | The unchanged fixture and each reference give the declared outcome | `failed`: a reference does not behave as declared, so the oracle is unproven |
 | `oracle` | Parent-side observations match for the submitted editable files | `failed`: tests fail or time out, or an editable file is a link or not a regular file |
-| `interference` | The parent-side must-fail expectation fails with the submitted editable files | `failed`: the canary passes, so the submitted files manufactured the pass |
+| `interference` | Not applicable for observation oracles: assertions are outside the submitted process | Records the prevention mechanism and explicitly does not claim runtime-patch detection |
 | `external_state` | Every state check holds in the evaluator's observation | `unavailable`: no observation, an unreadable one, or one inside the workspace |
 | `deliverable` | The answer has the required fields and every declared file and link opens with the required fields | `failed`: missing or wrong field, missing file, path outside the workspace, HTTP error. `unavailable`: no answer supplied, origin not allowed, origin unreachable |
 | `linkage` | Each declared pair of state value and deliverable value is equal | `failed`: a value is missing or differs, for example a link to an older revision |
@@ -189,12 +227,15 @@ check to make two runs comparable; report the unavailable result.
 
 `reasons` lists a stable code for every component that did not pass:
 `<component>:<check id or reason>`, for example `oracle:post-change-failed`,
-`interference:oracle-canary-passed`, `protection:seal-mismatch`,
+`protection:attempt-trust-input-changed`, `protection:seal-mismatch`,
 `external_state:record-closed` or `linkage:link-revision-current`.
 
 For a repair task the result records the reproducer: `components.oracle.baseline` (`fail`)
 and `components.oracle.post_change` (`pass`). `components.references.outcomes` keeps the
-expected and observed outcome of the baseline, every reference and the canary for each run.
+expected and observed outcome of the baseline and every reference. There is no duplicated
+canary run. The parent compares semantic stdout and successful exit status; stderr has a
+separate diagnostic digest. Trusted non-editable fixture helpers remain available to the
+application. Hidden expectations and assertions never enter that process.
 
 ## Evidence
 
@@ -228,7 +269,7 @@ feedback reported success and the verdict is not `accepted`.
 | Specification kind | `workstation-task-acceptance-spec` |
 | Result kind | `workstation-task-acceptance-result` |
 | Location | `lib/workstation/task_acceptance.py`; examples in `tests/fixtures/task-acceptance/` |
-| Python functions | `seal`, `prepare_workspace`, `check_task`, `verdict`, `validate_result`, `load_result` |
+| Python functions | `seal`, `prepare_workspace`, `begin_attempt`, `checker_identity`, `check_task`, `verdict`, `validate_result`, `load_result` |
 | Constants | `COMPONENTS`, `STATUSES`, `VERDICTS`, `EXIT_STATUS` |
 | Commands | `seal`, `workspace`, `check`, `validate` |
 
@@ -266,11 +307,12 @@ feedback reported success and the verdict is not `accepted`.
 The result remains schema 1, with unchanged component names, verdict rules and
 `validate_result` interface. PLAN01 run records need no format adapter. Existing saved
 receipts remain structurally valid; their checker digest identifies the old evaluator.
-New evaluations without actual route probes are unavailable.
+New evaluations without a pre-attempt lifetime handle and actual route probes are unavailable.
 
 The HARNESS game can keep its oracle inapplicable: the parent browser play-through is
 the independent external-state observation, linked to the artifact SHA-256. Its parent
-must connect its actual file/command/browser permission probes through the boundary
-adapter, include its pin/configuration files, and re-pin the checker identity. Source
-placement or an old probe summary alone is insufficient. Root coordinates that consumer
+must start the private session before enabling its actual file/command/browser routes,
+retain the fixed capability lease, supply its browser observation over the private pipe,
+and pin the complete checker manifest and bootstrap. Source
+placement, a post-hoc adapter or an old probe summary alone is insufficient. Root coordinates that consumer
 change; this repository does not change the harness.

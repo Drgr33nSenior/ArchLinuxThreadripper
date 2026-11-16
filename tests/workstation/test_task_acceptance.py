@@ -59,18 +59,18 @@ def checked_task(source, workspace, expected_seal=None, **options):
         path = Path(name).resolve()
         if Path(workspace).resolve() not in path.parents:
             return "denied"
-        try:
-            fd = os.open(path, os.O_RDONLY if operation == "read" else os.O_WRONLY | os.O_APPEND)
-            os.close(fd)
-            return "allowed"
-        except PermissionError:
-            return "denied"
+        return task_acceptance.perform_probe(operation, name)
     with tempfile.TemporaryDirectory() as temporary:
         pin = Path(temporary) / "evaluator-pin"
         pin.write_text(expected_seal or "")
         options.setdefault("agent_routes", {"fixture-file-tools": scoped_file_route})
         options.setdefault("protected_configuration", [pin])
-        return task_acceptance.check_task(source, workspace, expected_seal, **options)
+        attempt = task_acceptance.begin_attempt(source, workspace, expected_seal,
+                                                agent_routes=options.pop("agent_routes"),
+                                                protected_configuration=options.pop("protected_configuration"),
+                                                state=options.pop("state", None),
+                                                expected_checker=task_acceptance.checker_identity())
+        return task_acceptance.check_task(source, workspace, expected_seal, attempt=attempt, **options)
 
 
 def statuses(result, names=task_acceptance.COMPONENTS):
@@ -189,10 +189,10 @@ class ProtectionTests(Case):
         result = checked_task(REPAIR, workspace, REPAIR_SEAL, run=recording)
         self.assertEqual("accepted", result["verdict"])  # the repair is real; the agent's test files change nothing
         judged = [tree for command, tree in seen if "-I" in command]
-        self.assertEqual(7, len(judged))
+        self.assertEqual(5, len(judged))
         for tree in judged:
-            self.assertEqual({"windows.py"}, set(tree))
-        self.assertEqual([(workspace / "windows.py").read_bytes()] * 2, [tree["windows.py"] for tree in judged[-2:]])
+            self.assertEqual({"windows.py", "test_windows.py"}, set(tree))
+        self.assertEqual((workspace / "windows.py").read_bytes(), judged[-1]["windows.py"])
         agent_side = [tree for command, tree in seen if command == VISIBLE_TESTS]
         self.assertEqual(len(seen) - len(judged), len(agent_side))
         for tree in agent_side:
@@ -218,7 +218,7 @@ class OracleTests(Case):
         self.assertEqual(("window-counts-repair", {"run_id": "run-1", "attempt_id": "attempt-2"}),
                          (result["task_id"], result["subject"]))
         self.assertEqual([("baseline", "fail", "fail"), ("trusted", "pass", "pass"), ("closed-boundary", "fail", "fail"),
-                          ("unvalidated-width", "fail", "fail"), ("canary", "fail", "fail")],
+                          ("unvalidated-width", "fail", "fail")],
                          [(row["id"], row["expected"], row["observed"])
                           for row in result["components"]["references"]["outcomes"]])
         oracle = result["components"]["oracle"]
@@ -265,7 +265,7 @@ class OracleTests(Case):
         for case in ("patched-runner", "forced-exit", "rewrites-protected-test"):
             with self.subTest(case=case):
                 result = self.repair(case)
-                self.assertEqual(("failed", "passed"), statuses(result, ("oracle", "interference")))
+                self.assertEqual(("failed", "not-applicable"), statuses(result, ("oracle", "interference")))
                 self.assertEqual(("rejected", ["oracle:post-change-failed"]), (result["verdict"], result["reasons"]))
 
     def test_submitted_code_cannot_rewrite_the_acceptance_source_while_it_runs(self):
@@ -356,7 +356,7 @@ class OracleTests(Case):
             result = checked_task(REPAIR, self.repair_workspace("valid-repair"), REPAIR_SEAL)
         # Every stand-in run fails, so the trusted reference does not pass and the oracle stays unproven.
         self.assertEqual(("unavailable", "references:trusted"), (result["verdict"], result["reasons"][0]))
-        self.assertEqual(15, len(seen))  # five reference runs, then five for each agent-side suite
+        self.assertEqual(14, len(seen))  # four references, then five for each agent-side suite
         for argv in seen:
             self.assertEqual(["/usr/bin/timeout", "/usr/bin/bwrap"], [argv[0], argv[4]])
             self.assertIn("--unshare-all", argv)
@@ -377,13 +377,11 @@ class CorrectionTests(Case):
         result = task_acceptance.check_task(REPAIR, self.repair_workspace(), REPAIR_SEAL, run=host_run)
         task_acceptance.validate_result(result)
         self.assertEqual("unavailable", result["verdict"])
-        self.assertEqual("agent-boundary-not-probed", result["components"]["protection"]["reason"])
+        self.assertEqual("attempt-lifetime-not-established", result["components"]["protection"]["reason"])
 
     def test_actual_unrestricted_file_route_fails_protection(self):
         def unrestricted(operation, path):
-            fd = os.open(path, os.O_RDONLY if operation == "read" else os.O_WRONLY | os.O_APPEND)
-            os.close(fd)
-            return "allowed"
+            return task_acceptance.perform_probe(operation, path)
         result = self.repair("valid-repair", agent_routes={"unrestricted-file-tool": unrestricted})
         self.assertEqual("unavailable", result["verdict"])
         self.assertEqual("failed", result["components"]["protection"]["status"])
@@ -417,8 +415,8 @@ class CorrectionTests(Case):
                 with patch.object(Path, "read_bytes", read):
                     result = checked_task(REPAIR, workspace, REPAIR_SEAL, run=host_run)
                 task_acceptance.validate_result(result)
-                self.assertEqual("rejected", result["verdict"])
-                self.assertEqual("failed", result["components"]["oracle"]["status"])
+                self.assertEqual("unavailable" if case in ("mode000", "read-error") else "rejected", result["verdict"])
+                self.assertEqual("unavailable" if case in ("mode000", "read-error") else "failed", result["components"]["oracle"]["status"])
                 self.assertEqual("passed", result["components"]["references"]["status"])
                 if case in ("extra-unreadable", "unreadable-directory"):
                     self.assertEqual("unavailable", result["evidence"]["workspace_suite"]["status"])
@@ -609,44 +607,18 @@ class FinalCheckTests(Case):
         result = self.publication("valid", answer=f"```json\n{fenced}```\n")
         self.assertEqual(("accepted", True), (result["verdict"], result["components"]["deliverable"]["answer"]["fenced"]))
 
-    def test_command_line_reports_the_verdict_by_exit_status(self):
+    def test_one_shot_cli_cannot_establish_attempt_lifetime(self):
         workspace, options = self.inputs("valid")
-        adapter = self.fresh("adapter")
-        adapter.write_text("#!" + sys.executable + "\nimport os,sys\nfrom pathlib import Path\n"
-                           + "root = Path(" + repr(str(workspace)) + ")\n"
-                           + "path = Path(sys.argv[2]).resolve()\n"
-                           + "if root not in path.parents: raise SystemExit(0)\n"
-                           + "fd=os.open(path, os.O_RDONLY if sys.argv[1]=='read' else os.O_WRONLY|os.O_APPEND)\n"
-                           + "os.close(fd)\nraise SystemExit(1)\n")
-        adapter.chmod(0o700)
-        pin = self.fresh("pin")
-        pin.write_text(PUBLICATION_SEAL)
-        check = ("check", PUBLICATION, "--workspace", workspace, "--seal", PUBLICATION_SEAL, "--answer", options["answer"],
-                 "--boundary-adapter", adapter, "--protected-configuration", pin)
-        state = ("--state", options["state"])
-        accepted = self.fresh("result.json")
-        status, printed, _ = self.run_cli(*check[:2], accepted, *check[2:], *state, "--allow-origin", self.origin,
-                                          "--run-id", "run-7", "--attempt-id", "attempt-1")
-        self.assertEqual((0, "accepted"), (status, printed))
-        self.assertEqual({"run_id": "run-7", "attempt_id": "attempt-1"}, task_acceptance.load_result(accepted)["subject"])
-        self.assertEqual((0, "accepted", ""), self.run_cli("validate", accepted))
-        # The link's origin is not allowed, so the link stays unopened: unavailable, whatever the model claims.
-        unopened = self.fresh("result.json")
-        self.assertEqual(3, self.run_cli(*check[:2], unopened, *check[2:], *state, "--claim", "completed")[0])
-        result = task_acceptance.load_result(unopened)
-        self.assertEqual(("unavailable", True), (result["verdict"], result["evidence"]["claim"]["contradicted"]))
-        wrong = FIXTURES / "cases/record-publication/wrong-state/state.json"
-        status, printed, _ = self.run_cli(*check[:2], self.fresh("result.json"), *check[2:], "--state", wrong,
-                                          "--allow-origin", self.origin, "--claim", "completed")
-        self.assertEqual((1, "rejected external_state:record-closed external_state:resolution-fixed"), (status, printed))
-        # Input errors never look like a verdict, and no option removes a check.
-        self.assertEqual(2, self.run_cli(*check[:2], workspace / "result.json", *check[2:], *state)[0])
-        self.assertFalse((workspace / "result.json").exists())
-        self.assertEqual(2, self.run_cli(*check[:2], accepted, *check[2:], *state)[0])  # never overwrites a result
-        self.assertEqual(2, self.run_cli(*check[:2], self.fresh("result.json"), *check[2:4], *state)[0])  # no pinned seal
-        for option in ("--skip-oracle", "--no-canary", "--accept"):
-            self.assertEqual(2, self.run_cli(*check[:2], self.fresh("result.json"), *check[2:], *state, option)[0])
-        self.assertEqual(2, self.run_cli("validate", options["state"])[0])
+        output = self.fresh("result.json")
+        status, printed, error = self.run_cli("check", PUBLICATION, output, "--workspace", workspace,
+                                              "--seal", PUBLICATION_SEAL, "--state", options["state"],
+                                              "--answer", options["answer"], "--allow-origin", self.origin)
+        self.assertEqual(3, status)
+        result = task_acceptance.load_result(output)
+        self.assertEqual("unavailable", result["verdict"])
+        self.assertIn("protection:attempt-lifetime-not-established", result["reasons"])
+        self.assertEqual((0, "unavailable", ""), self.run_cli("validate", output))
+        self.assertEqual("", error)
 
     def test_unreadable_artifact_preserves_external_state_and_rejection(self):
         workspace, options = self.inputs("wrong-state")
@@ -654,7 +626,7 @@ class FinalCheckTests(Case):
         result = checked_task(PUBLICATION, workspace, PUBLICATION_SEAL, **options)
         task_acceptance.validate_result(result)
         self.assertEqual("rejected", result["verdict"])
-        self.assertEqual(("failed", "failed", "failed"), statuses(result, self.FINAL))
+        self.assertEqual(("failed", "unavailable", "unavailable"), statuses(result, self.FINAL))
         self.assertEqual("artifact-unreadable", result["components"]["deliverable"]["artifacts"][0]["reason"])
 
     def test_expected_link_origin_mismatch_is_rejected_without_fetch(self):
@@ -777,7 +749,7 @@ class ContractTests(Case):
             "escaping editable": (repair, lambda spec: spec.update(editable=["../windows.py"])),
             "editable without oracle": (publication, lambda spec: spec.update(editable=["windows.py"])),
             "host command": (repair, lambda spec: spec["oracle"].update(command=["python3", "-m", "unittest"])),
-            "no canary": (repair, lambda spec: spec["oracle"].pop("canary")),
+            "invalid legacy canary": (repair, lambda spec: spec["oracle"].update(canary="absent")),
             "canary beside the oracle": (repair, lambda spec: spec["oracle"].update(canary="reference")),
             "unbounded time": (repair, lambda spec: spec["oracle"].update(seconds=3600)),
             "no trusted reference": (repair, lambda spec: spec["oracle"].update(references=spec["oracle"]["references"][1:])),
