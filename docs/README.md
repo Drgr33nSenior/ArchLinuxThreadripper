@@ -24,6 +24,7 @@ For a one-page overview of what is running, start with the [README](../README.md
 | Document | What it covers |
 | --- | --- |
 | [Operations](OPERATIONS.md) | Day-to-day host and AI-service tasks: status, updates, power cap, restarts |
+| [Owner tools](../tools/README.md) | Rollout, sandbox go-live, measurement and KV-trial scripts the owner runs from a shipped tree; their site values |
 | [Service recovery](SERVICE-RECOVERY.md) | Backups of the AI service's data and how to restore them |
 | [Host maintenance](HOST-MAINTENANCE.md) | SMART and hardware-error monitoring, advisory reports, package cache and the report-only build retention inventory |
 | [Host upgrade plan](HOST-UPGRADE-PLAN.md) | Moving off the installation package snapshot: policy options, risks, procedure and rollback |

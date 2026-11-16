@@ -1,0 +1,8 @@
+# User unit: install as ~/.config/systemd/user/kv-trial-collect.service (tools/README.md, "Elastic KV
+# trial"). %h/.local/share/workstation-tools is a symlink to the tools/ directory of a shipped tree.
+[Unit]
+Description=Elastic KV trial: keep SGLang tail events
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/share/workstation-tools/kv-trial/collect.sh
