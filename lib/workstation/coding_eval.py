@@ -96,7 +96,7 @@ def run_task(fixture, files, command, seconds=120, allowed=(), sandbox=True):
             environment["HOME"] = temporary
         started = time.monotonic()
         try:
-            completed = subprocess.run(argv, cwd=work, env=environment, capture_output=True,
+            completed = subprocess.run(argv, cwd=work, env=environment, stdin=subprocess.DEVNULL, capture_output=True,
                                        timeout=seconds + 10, check=False)
         except subprocess.TimeoutExpired:
             return {"status": "timeout", "elapsed_seconds": round(time.monotonic() - started, 3)}
@@ -104,6 +104,7 @@ def run_task(fixture, files, command, seconds=120, allowed=(), sandbox=True):
         timed_out = completed.returncode in (124, 137)
         return {"status": "timeout" if timed_out and sandbox else "tests-passed" if completed.returncode == 0 else "tests-failed",
                 "exit_status": completed.returncode, "elapsed_seconds": round(time.monotonic() - started, 3),
+                "stdout_sha256": digest(completed.stdout), "stderr_sha256": digest(completed.stderr),
                 "output_sha256": digest(output), "output_tail": output[-OUTPUT_TAIL:].decode(errors="replace"),
                 "isolated": sandbox, "argv_sha256": digest(canonical(command))}
 

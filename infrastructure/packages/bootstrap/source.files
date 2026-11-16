@@ -390,9 +390,11 @@ infrastructure/sglang/assistant-tasks/terraform-compat/fixture/main.tf
 infrastructure/sglang/assistant-tasks/terraform-compat/reference/main.tf
 tests/workstation/test_assistant_acceptance.py
 lib/workstation/task_acceptance.py
+lib/workstation/task_acceptance_session.py
 docs/TASK-ACCEPTANCE.md
 tests/test_task_acceptance.sh
 tests/workstation/test_task_acceptance.py
+tests/workstation/test_task_acceptance_lifetime.py
 tests/fixtures/task-acceptance/cases/window-counts/always-equal/windows.py
 tests/fixtures/task-acceptance/cases/window-counts/reads-oracle/windows.py
 tests/fixtures/task-acceptance/cases/window-counts/selective-assertion/windows.py

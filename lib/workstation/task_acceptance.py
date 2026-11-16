@@ -14,6 +14,8 @@ claim, IDE or project feedback and agent-written tests are recorded as
 evidence and never decide the verdict. docs/TASK-ACCEPTANCE.md is the contract.
 """
 import argparse
+import copy
+import shutil
 import datetime
 import difflib
 import fnmatch
@@ -55,7 +57,7 @@ IDENT = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}\Z")
 SUBJECT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 SEAL = re.compile(r"[0-9a-f]{64}\Z")
 TYPES = {"string": str, "integer": int, "number": (int, float), "boolean": bool, "object": dict, "array": list}
-RUN_KEYS = ("status", "exit_status", "elapsed_seconds", "output_sha256", "isolated", "reason")
+RUN_KEYS = ("status", "exit_status", "elapsed_seconds", "output_sha256", "stdout_sha256", "stderr_sha256", "isolated", "reason")
 OUTCOMES = {"tests-passed": "pass", "tests-failed": "fail", "timeout": "fail"}
 LIMITATIONS = [
     "Commands run only in the network-free Linux sandbox; on another host the oracle is unavailable.",
@@ -84,13 +86,20 @@ def read_tree(root, ignore=(), strict=True):
         raise ValueError("expected a directory")
     files, total = {}, 0
 
-    def unreadable(error):
-        raise error
+    def walking_error(error):
+        if strict:
+            raise error
+        name = Path(error.filename).relative_to(root).as_posix()
+        files[name] = None
 
-    for directory, names, leaves in os.walk(root, onerror=unreadable):
+    for directory, names, leaves in os.walk(root, onerror=walking_error):
         here = Path(directory)
         if not here.stat().st_mode & 0o444 or not here.stat().st_mode & 0o111:
-            raise PermissionError("directory unreadable")
+            if strict:
+                raise PermissionError("directory unreadable")
+            files[here.relative_to(root).as_posix()] = None
+            names[:] = []
+            continue
         links = [name for name in names if (here / name).is_symlink()]
         names[:] = sorted(name for name in names if name not in ignore and name not in links)
         for leaf in sorted(links + leaves):
@@ -98,7 +107,13 @@ def read_tree(root, ignore=(), strict=True):
                 continue
             path = here / leaf
             name = path.relative_to(root).as_posix()
-            meta = path.lstat()
+            try:
+                meta = path.lstat()
+            except OSError:
+                if strict:
+                    raise
+                files[name] = None
+                continue
             data = None
             if stat.S_ISREG(meta.st_mode) and meta.st_size <= MAX_FILE:
                 try:
@@ -216,10 +231,11 @@ def validate_spec(spec, files):
     if _inapplicable(oracle):
         _require(not editable and "tests" not in spec, "editable files and tests need an oracle")
     else:
-        _object(oracle, ("command", "canary", "seconds", "baseline", "references"), ("observations",))
+        _object(oracle, ("seconds", "baseline", "references"), ("observations", "command", "canary"))
         if "observations" in oracle:
             observation_path = relative_path(oracle["observations"])
-            _require(observation_path in files, "observation file must exist")
+            _require(observation_path.startswith("oracle/") and observation_path in files,
+                     "observations must be protected under oracle/")
             cases = parse_object(files[observation_path].decode())
             _object(cases, ("module", "function", "cases"))
             _require(all(isinstance(cases[key], str) and cases[key].isidentifier()
@@ -232,15 +248,17 @@ def validate_spec(spec, files):
                 _require(isinstance(expected, dict) and set(expected) in ({"value"}, {"error"}),
                          "observation expects a value or exception type")
             _require(len(canonical(cases)) <= 32768, "observations exceed the bounded command input")
-        _command(oracle["command"])
+        if "command" in oracle:
+            _command(oracle["command"])
         _require(type(oracle["seconds"]) is int and 1 <= oracle["seconds"] <= 300, "seconds is 1 to 300")
         _require(oracle["baseline"] in ("pass", "fail"), "baseline is pass or fail")
         _require(editable, "an oracle needs at least one editable file")
         fixture, hidden = subtree(files, "fixture"), subtree(files, "oracle")
         _require(hidden and not set(hidden) & (set(fixture) | set(editable)),
                  "oracle/ holds protected files that no workspace path shadows")
-        canary = subtree(files, relative_path(oracle["canary"]))
-        _require(canary and set(canary) <= set(hidden), "the canary replaces protected files of the same name")
+        if "canary" in oracle:
+            canary = subtree(files, relative_path(oracle["canary"]))
+            _require(canary and set(canary) <= set(hidden), "the legacy canary replaces protected files of the same name")
         references = oracle["references"]
         _require(isinstance(references, list) and 1 <= len(references) <= 16, "references is a list")
         names = {"baseline", "canary", "post-change"}
@@ -274,7 +292,8 @@ def validate_spec(spec, files):
             for item in items:
                 _object(item, ("id", "format"), ("path", "answer_path", "fields", "origin"))
                 if "origin" in item:
-                    _require(kind == "link" and isinstance(item["origin"], str) and item["origin"].startswith(("http://", "https://")), "expected origin is an HTTP link origin")
+                    _require(kind == "link", "only a link has an origin")
+                    normalized_origin(item["origin"])
                 _identifier(item["id"], seen)
                 _require(item["format"] in ("json", "bytes") and ("fields" not in item or item["format"] == "json"),
                          "format is json or bytes; only json has fields")
@@ -317,7 +336,7 @@ def load_files(files):
     overlays, canary = {}, {}
     if not _inapplicable(spec["oracle"]):
         overlays = {reference["id"]: subtree(files, reference["overlay"]) for reference in spec["oracle"]["references"]}
-        canary = subtree(files, spec["oracle"]["canary"])
+        canary = subtree(files, spec["oracle"]["canary"]) if "canary" in spec["oracle"] else {}
     observations = parse_object(files[spec["oracle"]["observations"]].decode()) if "observations" in spec["oracle"] else None
     return {"observations": observations, "spec": spec, "spec_sha256": digest(files[SPEC_NAME]), "seal": sealed, "fixture": subtree(files, "fixture"),
             "hidden": subtree(files, "oracle"), "canary": canary, "overlays": overlays}
@@ -399,12 +418,31 @@ def open_file(root, name):
             raise PermissionError("unreadable file")
         return PASSED, path.read_bytes()
     except OSError:
-        return FAILED, "unreadable"
+        return UNAVAILABLE, "unreadable"
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *arguments, **options):
         return None
+
+
+def normalized_origin(value, *, link=False):
+    try:
+        if not isinstance(value, str) or any(ord(char) < 33 or ord(char) == 127 for char in value):
+            raise ValueError("invalid HTTP origin")
+        parts = urllib.parse.urlsplit(value)
+        scheme, host, port = parts.scheme.lower(), parts.hostname, parts.port
+        if (scheme not in ("http", "https") or not host or parts.username is not None or parts.password is not None
+                or (not link and (parts.path not in ("", "/") or parts.query or parts.fragment))):
+            raise ValueError("invalid HTTP origin")
+        host = host.lower()
+        if ":" not in host:
+            host = host.encode("idna").decode("ascii")
+        host = "[" + host + "]" if ":" in host else host
+        suffix = "" if port is None or (scheme, port) in (("http", 80), ("https", 443)) else ":" + str(port)
+        return scheme + "://" + host + suffix
+    except (TypeError, AttributeError, ValueError):
+        raise ValueError("invalid HTTP origin") from None
 
 
 def open_url(url, origins, timeout=10):
@@ -415,8 +453,12 @@ def open_url(url, origins, timeout=10):
         return FAILED, "link-not-a-url"
     if parts.scheme not in ("http", "https") or not parts.netloc or len(url) > 2048:
         return FAILED, "link-not-a-url"
-    if f"{parts.scheme}://{parts.netloc}" not in origins:
-        return UNAVAILABLE, "link-origin-not-allowed"
+    try:
+        allowed = {normalized_origin(value) for value in origins}
+        if normalized_origin(url, link=True) not in allowed:
+            return UNAVAILABLE, "link-origin-not-allowed"
+    except ValueError:
+        return FAILED, "link-not-a-url"
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
     try:
         with opener.open(urllib.request.Request(url), timeout=timeout) as response:
@@ -490,10 +532,14 @@ def opened(item, status, data):
     return row, (status, data), (status, data)
 
 
-def final_components(spec, workspace, answer, state, origins):
+def final_components(spec, workspace, answer, state, origins, observation=None, observation_record=None):
     """Grade external state, the deliverable and their linkage as three separate components."""
     answer_record, answer_document = read_answer(answer)
-    state_record, state_document = read_state(state, workspace)
+    state_record, state_document = read_state(state, workspace) if observation is None else (
+        {"status": PASSED, "sha256": digest(canonical(observation)), "source": "evaluator-memory"}, (PASSED, observation))
+    if observation_record is not None:
+        state_record = observation_record
+        state_document = (state_record["status"], observation if state_record["status"] == PASSED else state_record["reason"])
     documents = {"answer": answer_document, "state": state_document}
     components = {}
     declared = spec["external_state"]
@@ -518,11 +564,10 @@ def final_components(spec, workspace, answer, state, origins):
                 elif status == PASSED:
                     named["url_sha256"] = digest(target.encode())
                     try:
-                        parts = urllib.parse.urlsplit(target)
-                        origin = f"{parts.scheme}://{parts.netloc}"
+                        origin = normalized_origin(target, link=True)
                     except ValueError:
                         origin = None
-                    if "origin" in item and origin != item["origin"]:
+                    if "origin" in item and origin != normalized_origin(item["origin"]):
                         status, target = FAILED, "link-origin-mismatch"
                     else:
                         status, target = open_url(target, origins)
@@ -535,7 +580,8 @@ def final_components(spec, workspace, answer, state, origins):
                 checks += [field(check, document) for check in item.get("fields", [])]
         components["deliverable"] = {"status": combine(checks + rows["artifacts"] + rows["links"]),
                                      "answer": answer_record, **rows, "checks": checks}
-    if (_inapplicable(spec["oracle"]) and _inapplicable(spec["external_state"])
+    if (components["deliverable"]["status"] != FAILED
+            and _inapplicable(spec["oracle"]) and _inapplicable(spec["external_state"])
             and not spec["deliverable"].get("artifacts") and not spec["deliverable"].get("links")):
         components["deliverable"].update(status=UNAVAILABLE, reason="independent-observation-required")
     declared = spec["linkage"]
@@ -601,7 +647,7 @@ def oracle_components(source, workspace, run):
         return {name: {"status": NOT_APPLICABLE, "reason": oracle["reason"]}
                 for name in ("references", "oracle", "interference")}
 
-    def judge(tree, canary=False):
+    def judge(tree):
         observations = source["observations"]
         if observations is None:
             return {"status": "unavailable-unsafe-in-process-oracle"}
@@ -614,23 +660,21 @@ def oracle_components(source, workspace, run):
                    " try:\n  results.append({'value': function(*args)})\n"
                    " except Exception as error:\n  results.append({'error': type(error).__name__})\n"
                    "print(json.dumps({'results':results},sort_keys=True,separators=(',', ':'),ensure_ascii=False))\n")
-        record = execute(run, {name: data for name, data in tree.items() if name in spec["editable"]},
+        record = execute(run, tree,
                          ["/usr/bin/python3", "-I", "-B", "-c", program], oracle["seconds"])
-        expected = {"canary": True} if canary else {"results": [case["expected"] for case in observations["cases"]]}
+        expected = {"results": [case["expected"] for case in observations["cases"]]}
         if outcome(record) != "unavailable":
             record["status"] = ("tests-passed" if record.get("exit_status") == 0
-                                and record.get("output_sha256") == digest(canonical(expected) + b"\n")
+                                and record.get("stdout_sha256") == digest(canonical(expected) + b"\n")
                                 else "tests-failed")
         return record
 
     trees = {reference["id"]: {**fixture, **source["overlays"][reference["id"]]} for reference in oracle["references"]}
-    trusted = next(reference["id"] for reference in oracle["references"] if reference["expected"] == "pass")
     rows = [("baseline", oracle["baseline"], fixture)]
     rows += [(reference["id"], reference["expected"], trees[reference["id"]]) for reference in oracle["references"]]
-    rows.append(("canary", "fail", trees[trusted]))
     outcomes = []
     for name, expected, tree in rows:
-        record = judge(tree, canary=name == "canary")
+        record = judge(tree)
         observed = outcome(record)
         outcomes.append({"id": name, "expected": expected, "observed": observed, "run": record,
                          "status": PASSED if observed == expected else UNAVAILABLE if observed == "unavailable" else FAILED})
@@ -639,22 +683,21 @@ def oracle_components(source, workspace, run):
     evaluated = [{"path": name, "sha256": digest(files[name]) if name in files else None,
                   "changed": files.get(name) != fixture.get(name)} for name in spec["editable"]]
     if problems:
-        return {"references": references, "oracle": {"status": FAILED, "reason": problems[0], "evaluated": evaluated},
+        return {"references": references, "oracle": {"status": UNAVAILABLE if "editable-unreadable" in problems else FAILED, "reason": problems[0], "evaluated": evaluated},
                 "interference": {"status": UNAVAILABLE, "reason": "submitted-files-not-evaluated"}}
     if references["status"] != PASSED:
         # A reference that does not behave as declared makes the oracle itself unproven.
         blocked = {"status": UNAVAILABLE, "reason": "reference-outcomes-not-established"}
         return {"references": references, "oracle": {**blocked, "evaluated": evaluated}, "interference": blocked}
     tree = {**{name: data for name, data in fixture.items() if name not in spec["editable"]}, **files}
-    post, canary = judge(tree), judge(tree, canary=True)
+    post = judge(tree)
     graded = {"status": {"pass": PASSED, "fail": FAILED}.get(outcome(post), UNAVAILABLE), "evaluated": evaluated,
               "baseline": outcomes[0]["observed"], "post_change": outcome(post), "run": post}
     if graded["status"] != PASSED:
         graded["reason"] = "post-change-failed" if graded["status"] == FAILED else post["status"]
-    # The canary fails for every honest implementation; a pass was manufactured by the submitted files.
-    interference = {"status": {"fail": PASSED, "pass": FAILED}.get(outcome(canary), UNAVAILABLE), "canary": canary}
-    if interference["status"] != PASSED:
-        interference["reason"] = "oracle-canary-passed" if interference["status"] == FAILED else canary["status"]
+    interference = {"status": NOT_APPLICABLE, "reason": "assertions-outside-submitted-process",
+                    "mechanism": "parent compares serialized observations; runtime patches cannot alter its assertions",
+                    "runtime_patch_detection": "not-claimed"}
     return {"references": references, "oracle": graded, "interference": interference}
 
 
@@ -725,15 +768,15 @@ def workspace_evidence(source, workspace, run):
         status = {"status": "not-declared"}
     elif not entries:
         status = {"status": "none"}
-    elif None in changed.values():
-        status = {"status": UNAVAILABLE, "reason": "unreadable-workspace-file"}
     else:
         status = None
     if status is not None:
         return {**evidence, "workspace_suite": status, "generated_tests": status}
     files, problems = submitted_files(workspace, spec["editable"])
     submitted = None if problems else files
-    visible = {**{name: data for name, data in protected.items() if name in present}, **changed}
+    unreadable = sorted(name for name, data in changed.items() if data is None)
+    visible = {**{name: data for name, data in protected.items() if name in present},
+               **{name: data for name, data in changed.items() if data is not None}}
 
     def is_test(name):
         return any(fnmatch.fnmatchcase(name.rsplit("/", 1)[-1], pattern) for pattern in spec["tests"]["patterns"])
@@ -744,6 +787,12 @@ def workspace_evidence(source, workspace, run):
     # Agent-written tests alone, without the unchanged visible tests that would mask a vacuous test.
     alone = {name: data for name, data in visible.items() if name in changed or not is_test(name)}
     evidence["generated_tests"] = suite(source, run, alone, submitted, authored) if authored else {"status": "none"}
+    if unreadable:
+        evidence["test_diff"]["unreadable"] = unreadable
+        for key in ("workspace_suite", "generated_tests"):
+            evidence[key]["unreadable"] = unreadable
+            if evidence[key]["status"] not in ("invalid", UNAVAILABLE):
+                evidence[key].update(status=UNAVAILABLE, reason="partial-workspace-evidence")
     return evidence
 
 
@@ -780,50 +829,228 @@ def verify_source(source, workspace, expected_seal):
     return {**record, "status": PASSED}, load_files(files)
 
 
-def verify_agent_boundary(source, workspace, expected_seal, agent_routes, protected_configuration):
-    """Probe every evaluator-registered route, including command/browser routes.
+def perform_probe(operation, name):
+    """Actual file operations for evaluator-owned controls only; never return data.
 
-    Each trusted callback performs a read-open or non-truncating write-open
-    through the actual agent capability and returns 'denied' only on access
-    denial. It must not return file contents. Missing routes/configuration are
-    unavailable, never inferred from placement, a seal, mode bits or host UID.
+    create/rename/unlink MUST receive an owned sacrificial directory. The
+    checker never sends a real source, installation or pin to these operations.
     """
-    if not agent_routes or not protected_configuration:
+    path = Path(name)
+    try:
+        if operation in ("read", "write"):
+            fd = os.open(path, os.O_RDONLY if operation == "read" else os.O_WRONLY | os.O_APPEND)
+            os.close(fd)
+        elif operation == "create":
+            (path / "created").mkdir()
+        elif operation == "rename":
+            path.rename(str(path) + ".moved")
+        elif operation == "unlink":
+            (path / "entry").unlink()
+        else:
+            return "unavailable"
+        return "allowed"
+    except (PermissionError, FileNotFoundError):
+        return "denied"
+    except OSError:
+        return "unavailable"
+
+
+def checker_identity():
+    """Digest every Python source in the trusted checker tree, not three modules."""
+    root = Path(__file__).resolve().parent
+    paths = [path for path in sorted(root.rglob("*.py")) if "__pycache__" not in path.parts]
+    if any(path.is_symlink() for path in paths):
+        raise ValueError("checker source links are not trusted")
+    return {path.relative_to(root).as_posix(): digest(path.read_bytes()) for path in paths}
+
+
+def verify_agent_boundary(source, workspace, expected_seal, agent_routes, protected_configuration):
+    """Exercise actual routes before/after an attempt. Mutations use owned controls.
+
+    This is diagnostic evidence about registered routes, not a replacement for
+    the evaluator's fixed capability policy or the immutable in-memory anchors.
+    """
+    if not agent_routes:
         return {"status": UNAVAILABLE, "reason": "agent-boundary-not-probed"}
     targets = [path for path in source.rglob("*") if path.is_file()]
-    targets += [Path(__file__).resolve().with_name(name) for name in
-                ("task_acceptance.py", "coding_eval.py", "assistant_acceptance.py")]
+    targets += list(Path(__file__).resolve().parent.rglob("*.py"))
     targets += [Path(path).resolve() for path in protected_configuration]
     if any(path == workspace or workspace in path.parents for path in targets):
-        return {"status": FAILED, "reason": "evaluator-configuration-inside-workspace"}
-    try:
-        if not any(expected_seal.encode() in bounded_file(path) for path in protected_configuration):
-            return {"status": UNAVAILABLE, "reason": "configuration-does-not-pin-seal"}
-    except (OSError, ValueError):
-        return {"status": UNAVAILABLE, "reason": "configuration-unreadable"}
+        return {"status": FAILED, "reason": "evaluator-evidence-inside-workspace"}
     rows = []
+
+    def call(probe, operation, path):
+        try:
+            return probe(operation, str(path))
+        except Exception:
+            return "unavailable"
+
+    def mutation(probe, operation, parent):
+        # Same containing directory as the protected target. Never rename,
+        # unlink or truncate actual trusted files or user directories.
+        owned = Path(tempfile.mkdtemp(prefix="acceptance-probe-", dir=parent))
+        moved = Path(str(owned) + ".moved")
+        owned.chmod(0o777)
+        (owned / "entry").write_bytes(b"owned sacrificial entry\n")
+        (owned / "entry").chmod(0o666)
+        try:
+            observed = call(probe, operation, owned)
+            changed = moved.exists() or not (owned / "entry").exists() or (owned / "created").exists()
+            if changed:
+                observed = "allowed"
+            return observed
+        finally:
+            # Only paths created by this function; never follow route-created links.
+            for path in (owned, moved):
+                if path.is_symlink():
+                    path.unlink()
+                elif path.exists():
+                    shutil.rmtree(path)
+
+    operations = ("read", "write", "create", "rename", "unlink")
+    supported, controls = {}, []
+    # Non-sensitive controls deliberately permit a separate agent UID. Actual
+    # workspace traversal/mapping must still work through the agent's route.
     with tempfile.NamedTemporaryFile(prefix="acceptance-control-", dir=workspace) as control:
-        control.write(b"acceptance boundary control\n")
+        control.write(b"acceptance control\n")
         control.flush()
+        os.chmod(control.name, 0o666)
         for route, probe in agent_routes.items():
-            for operation in ("read", "write"):
-                try:
-                    observed = probe(operation, control.name)
-                except Exception:
-                    observed = "unavailable"
+            supported[route] = set()
+            for operation in operations:
+                observed = (call(probe, operation, control.name) if operation in ("read", "write")
+                            else mutation(probe, operation, workspace))
+                if observed == "unsupported":
+                    controls.append({"route": route, "operation": operation, "status": NOT_APPLICABLE,
+                                     "reason": "capability-not-exposed-by-route"})
+                    continue
                 if observed != "allowed":
-                    return {"status": UNAVAILABLE, "reason": "agent-route-control-failed"}
+                    return {"status": UNAVAILABLE, "reason": "agent-route-control-failed", "route": route,
+                            "operation": operation}
+                supported[route].add(operation)
+                controls.append({"route": route, "operation": operation, "status": PASSED})
+            if not supported[route]:
+                return {"status": UNAVAILABLE, "reason": "agent-route-no-capability-control", "route": route}
+    parents = set()
+    for path in targets:
+        for parent in path.parents:
+            # Outside writable ancestors, the evaluator cannot safely allocate
+            # probes. Snapshot trust never depends on those original paths.
+            if not os.access(parent, os.W_OK):
+                break
+            parents.add(parent)
     for route, probe in agent_routes.items():
         for path in targets:
             for operation in ("read", "write"):
-                try:
-                    observed = probe(operation, str(path))
-                except Exception:
-                    observed = "unavailable"
+                if operation not in supported[route]:
+                    continue
+                observed = call(probe, operation, path)
                 status = PASSED if observed == "denied" else FAILED if observed == "allowed" else UNAVAILABLE
                 rows.append({"route": route, "target_sha256": digest(str(path).encode()),
                              "operation": operation, "status": status})
-    return {"status": combine(rows), "reason": "agent-access-probes", "probes": rows}
+        for parent in sorted(parents):
+            for operation in ("create", "rename", "unlink"):
+                if operation not in supported[route]:
+                    continue
+                observed = mutation(probe, operation, parent)
+                status = PASSED if observed == "denied" else FAILED if observed == "allowed" else UNAVAILABLE
+                rows.append({"route": route, "target_sha256": digest(str(parent).encode()),
+                             "operation": operation, "status": status})
+    return {"status": combine(rows), "reason": "agent-access-probes", "probes": rows, "controls": controls,
+            "scope": "registered routes and owned sacrificial targets; immutable snapshots anchor trust"}
+
+
+class Attempt:
+    """Evaluator-owned lifetime handle. Create BEFORE exposing tools to the agent.
+
+    The parent retains this object and its immutable bytes, not a writable pin
+    file. Parent observations may be supplied in memory after the attempt.
+    Never deserialize an Attempt from agent output or reload its anchors.
+    """
+    def __init__(self, source, workspace, expected_seal, *, agent_routes, protected_configuration,
+                 state=None, expected_checker=None):
+        self.source, self.workspace = Path(source).resolve(), Path(workspace).resolve()
+        self.expected_seal = expected_seal
+        self.routes = dict(agent_routes or {})
+        self.configuration = tuple(Path(path).resolve() for path in protected_configuration)
+        self.state_path = Path(state).resolve() if state is not None else None
+        if self.state_path is not None:
+            self.configuration += (self.state_path,)
+        self.protection, loaded = verify_source(self.source, self.workspace, expected_seal)
+        self._loaded = copy.deepcopy(loaded)
+        self.identities = checker_identity()
+        self.closed = False
+        self._snapshot_bytes = None
+        self.state_record = {"status": UNAVAILABLE, "reason": "state-unresolved"}
+        self.anchors = {}
+        if expected_checker is None or self.identities != expected_checker:
+            self.protection.update(status=UNAVAILABLE, reason="checker-identity-not-pinned")
+        if loaded is not None and self.protection["status"] == PASSED:
+            try:
+                self.anchors = {path: bounded_file(path) for path in self.configuration}
+                self.protection.update(verify_agent_boundary(self.source, self.workspace, expected_seal,
+                                                            self.routes, self.configuration))
+                if self.state_path is not None:
+                    if self.workspace == self.state_path or self.workspace in self.state_path.parents:
+                        self.state_record = {"status": UNAVAILABLE, "reason": "state-inside-workspace"}
+                    elif self.protection["status"] != PASSED:
+                        self.state_record = {"status": UNAVAILABLE, "reason": "state-not-protected"}
+                    else:
+                        self._snapshot_bytes = canonical(parse_object(self.anchors[self.state_path].decode()))
+                        self.state_record = {"status": PASSED, "sha256": digest(self.anchors[self.state_path]),
+                                             "snapshot_sha256": digest(canonical(self.snapshot)), "source": "evaluator-memory"}
+            except (OSError, ValueError):
+                self.protection.update(status=UNAVAILABLE, reason="attempt-evidence-unreadable")
+                self.state_record = {"status": UNAVAILABLE, "reason": "state-unreadable"}
+        self.before = copy.deepcopy(self.protection)
+
+    @property
+    def loaded(self):
+        return copy.deepcopy(self._loaded)
+
+    @property
+    def snapshot(self):
+        return parse_object(self._snapshot_bytes.decode()) if self._snapshot_bytes is not None else None
+
+    def observe(self, value):
+        """Parent-owned fresh observation over a private capability, never agent self-report."""
+        if self.closed:
+            raise ValueError("attempt already closed")
+        # Canonical bytes discard caller aliases; later file/dict edits cannot change it.
+        encoded = canonical(value)
+        if len(encoded) > MAX_FILE:
+            raise ValueError("observation exceeds the input bound")
+        self._snapshot_bytes = canonical(parse_object(encoded.decode()))
+        self.state_record = {"status": PASSED, "sha256": digest(canonical(self.snapshot)), "source": "parent-observer-memory"}
+
+    def finish(self):
+        if self.closed:
+            return {**self.protection, "status": UNAVAILABLE, "reason": "attempt-already-closed"}
+        self.closed = True
+        result = copy.deepcopy(self.before)
+        result["checker_tree_sha256"] = digest(canonical(self.identities))
+        result["checker_files"] = dict(self.identities)
+        if self.loaded is None:
+            return result
+        try:
+            after = verify_agent_boundary(self.source, self.workspace, self.expected_seal,
+                                          self.routes, self.configuration)
+            changed = (seal(self.source) != self.expected_seal or checker_identity() != self.identities
+                       or (self.before.get("controls") is not None and self.before["controls"] != after.get("controls"))
+                       or any(bounded_file(path) != data for path, data in self.anchors.items()))
+            result["status"] = combine([self.before, after])
+            result["before"] = self.before
+            result["after"] = after
+            if changed:
+                result.update(status=FAILED, reason="attempt-trust-input-changed")
+            result["lifetime"] = "evaluator-held snapshots from before attempt; capability policy must remain fixed"
+        except (OSError, ValueError):
+            result.update(status=UNAVAILABLE, reason="attempt-integrity-unavailable")
+        return result
+
+
+def begin_attempt(source, workspace, expected_seal, **options):
+    return Attempt(source, workspace, expected_seal, **options)
 
 
 def verdict(components):
@@ -851,7 +1078,7 @@ def reasons(components):
 
 
 def check_task(source, workspace, expected_seal=None, *, answer=None, state=None, origins=(), claim=None,
-               guidance=None, run_id=None, attempt_id=None, run=run_task, agent_routes=None, protected_configuration=()):
+               guidance=None, run_id=None, attempt_id=None, run=run_task, agent_routes=None, protected_configuration=(), attempt=None):
     """Return the acceptance result for one attempt. No option skips a declared check.
 
     ``run`` defaults to the sandboxed coding_eval.run_task. Replace it only to
@@ -872,7 +1099,19 @@ def check_task(source, workspace, expected_seal=None, *, answer=None, state=None
         feedback = {"supplied": True, "authoritative": False, "failures": False, "unavailable": True,
                     "reason": "guidance-unreadable"}
     evidence = {"guidance": feedback}
-    protection, loaded = verify_source(source, workspace, expected_seal)
+    if attempt is not None:
+        if (attempt.source, attempt.workspace, attempt.expected_seal) != (source, workspace, expected_seal):
+            raise ValueError("attempt identity differs from evaluation")
+        if state is not None and Path(state).resolve() != attempt.state_path:
+            raise ValueError("state file was not registered before the attempt")
+        protection, loaded = copy.deepcopy(attempt.before), attempt.loaded
+        if attempt.closed:
+            protection.update(status=UNAVAILABLE, reason="attempt-already-closed")
+            loaded = None
+    else:
+        protection, loaded = verify_source(source, workspace, expected_seal)
+        if loaded is not None:
+            protection.update(status=UNAVAILABLE, reason="attempt-lifetime-not-established")
     if loaded is None:
         # An unverified source is never parsed for checks and nothing from it runs.
         blocked = {"status": UNAVAILABLE, "reason": "acceptance-source-not-verified"}
@@ -880,15 +1119,13 @@ def check_task(source, workspace, expected_seal=None, *, answer=None, state=None
         evidence.update({name: dict(blocked) for name in EVIDENCE[:3]})
     else:
         # Read evaluator observations independently of submitted-code execution.
-        final = final_components(loaded["spec"], workspace, answer, state, tuple(origins))
+        final = final_components(loaded["spec"], workspace, answer, None, tuple(origins),
+                                 observation=attempt.snapshot if attempt is not None else None,
+                                 observation_record=attempt.state_record if attempt is not None else None)
         components = {**oracle_components(loaded, workspace, run), **final}
         evidence.update(workspace_evidence(loaded, workspace, run))
-    if loaded is not None:
-        try:
-            boundary = verify_agent_boundary(source, workspace, expected_seal, agent_routes, protected_configuration)
-        except (OSError, ValueError):
-            boundary = {"status": UNAVAILABLE, "reason": "agent-boundary-probe-unavailable"}
-        protection.update(boundary)
+    if attempt is not None:
+        protection = attempt.finish()
     components = {"protection": protection, **components}
     decided = verdict(components)
     feedback = evidence["guidance"]
@@ -901,7 +1138,8 @@ def check_task(source, workspace, expected_seal=None, *, answer=None, state=None
             "spec_sha256": loaded["spec_sha256"] if loaded else None,
             "subject": {"run_id": run_id, "attempt_id": attempt_id},
             "created_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            "checker_sha256": digest(Path(__file__).read_bytes()),
+            "checker_sha256": (attempt.identities.get("task_acceptance.py") if attempt is not None
+                               else digest(Path(__file__).read_bytes())),
             "verdict": decided, "reasons": reasons(components),
             "components": {name: components[name] for name in COMPONENTS},
             "evidence": {name: evidence[name] for name in EVIDENCE}, "limitations": LIMITATIONS}

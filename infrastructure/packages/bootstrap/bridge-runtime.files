@@ -254,6 +254,7 @@ infrastructure/sglang/assistant-quality.json
 lib/workstation/assistant_api.py
 lib/workstation/assistant_acceptance.py
 lib/workstation/task_acceptance.py
+lib/workstation/task_acceptance_session.py
 infrastructure/sglang/assistant-tasks/ansible-compat/fixture/inventory.ini
 infrastructure/sglang/assistant-tasks/ansible-compat/fixture/site.yml
 infrastructure/sglang/assistant-tasks/ansible-compat/fixture/tasks/service.yml
