@@ -104,8 +104,8 @@ SUNSHINE_ARCH_SHA256=17eb8c4d823a2693038f40aeeab56943ef0d5d6ace8ac90b3693905b0ac
 # CPU-only RAG pilot inputs reviewed 2026-11-01. Registry config revision matches
 # the source commit; runtime, first-admin bootstrap and retrieval remain unqualified.
 OPEN_WEBUI_VERSION=0.13.3
-OPEN_WEBUI_COMMIT=4c508b79f8af4e3c71cf721a49786ad8baedccb3
-OPEN_WEBUI_IMAGE=registry.lan.thespry.family/local/open-webui:21083f4dcc09@sha256:55fb517539a35de3751ce9930ddb3481b1ba0411f86bac72b2bf1d3cf4b13e8f
+OPEN_WEBUI_COMMIT=e42bed1d97fe8066340ec6eb3542ae5510e67fae
+OPEN_WEBUI_IMAGE=registry.lan.thespry.family/local/open-webui:ae0a56a00c2d@sha256:a4249f6de80af53ab11192d8994db06898b4fe469cc054ee7958f61604913dfa
 RAG_EMBEDDING_REPOSITORY=Qwen/Qwen3-Embedding-0.6B
 RAG_EMBEDDING_REVISION=97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3
 # Per-file SHA-256 inputs: apps/overlays/rag/SHA256SUMS (safetensors, no pickle).

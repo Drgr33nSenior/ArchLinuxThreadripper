@@ -3,10 +3,10 @@ kind: Component
 resources: [network-policy.yaml]
 images:
   # Open WebUI 0.13.3 from the workstation fork (provider-declared Model Controls, OpenMettle theme), built,
-  # scanned and signed by the webui AI-stack stage from 4c508b79f8af4e3c71cf721a49786ad8baedccb3.
+  # scanned and signed by the webui AI-stack stage from e42bed1d97fe8066340ec6eb3542ae5510e67fae.
   - name: registry.lan.thespry.family/local/open-webui
-    newTag: 21083f4dcc09
-    digest: sha256:55fb517539a35de3751ce9930ddb3481b1ba0411f86bac72b2bf1d3cf4b13e8f
+    newTag: ae0a56a00c2d
+    digest: sha256:a4249f6de80af53ab11192d8994db06898b4fe469cc054ee7958f61604913dfa
 configMapGenerator:
   - name: webui-assistant-profile
     envs: [assistant.env]
