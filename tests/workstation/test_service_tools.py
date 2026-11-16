@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -321,6 +322,31 @@ class ToolsTests(unittest.IsolatedAsyncioTestCase):
         with mock.patch("starlette.requests.Request.is_disconnected", swallowing):
             response = await asyncio.wait_for(
                 self.client.post("/webui/images/generations", headers=self.headers, json=self.image), timeout=10)
+        self.assertEqual(503, response.status_code)
+        self.assertEqual("image_backend_unavailable", response.json()["error"]["code"])
+
+    async def test_the_outer_request_deadline_holds_when_a_disconnect_check_swallows_the_cancellation(self):
+        # The picture budget is long here, so only the outer request deadline can end the wait.
+        # The patched is_disconnected() blocks until cancelled and absorbs that cancellation once, so the
+        # deadline can only land inside it (the test's own wait_for still gets through on a regression).
+        swallowed = []
+        async def swallowing(_request):
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                if swallowed:
+                    raise
+                swallowed.append(True)
+            return False
+        self.slow = True
+        self.tools.image_timeout = 60
+        self.tools.request_timeout = 1  # room for setup on a slow runner before the first disconnect check
+        started = time.monotonic()
+        with mock.patch("starlette.requests.Request.is_disconnected", swallowing):
+            response = await asyncio.wait_for(
+                self.client.post("/webui/images/generations", headers=self.headers, json=self.image), timeout=10)
+        self.assertLess(time.monotonic() - started, 5)
+        self.assertEqual([True], swallowed)
         self.assertEqual(503, response.status_code)
         self.assertEqual("image_backend_unavailable", response.json()["error"]["code"])
 
