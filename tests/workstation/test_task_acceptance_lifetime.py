@@ -177,6 +177,21 @@ class LifetimeTests(Case):
         self.assertEqual('accepted', result['verdict'])  # authored HOST control, deliberately not isolation proof
         self.assertFalse(result['components']['oracle']['run']['isolated'])
 
+    def test_unreadable_editable_does_not_erase_a_known_invalid_editable(self):
+        source = self.fresh('source')
+        shutil.copytree(REPAIR, source)
+        spec_path = source / 'acceptance.json'
+        spec = json.loads(spec_path.read_text())
+        spec['editable'].append('additional.py')
+        spec_path.write_text(json.dumps(spec))
+        workspace = self.repair_workspace('valid-repair')
+        (workspace / 'windows.py').chmod(0)
+        (workspace / 'additional.py').mkdir()
+        result = checked_task(source, workspace, task_acceptance.seal(source), run=host_run)
+        self.assertEqual('rejected', result['verdict'])
+        self.assertEqual('failed', result['components']['oracle']['status'])
+        self.assertEqual('editable-not-a-regular-file', result['components']['oracle']['reason'])
+
     def test_stderr_is_diagnostic_and_fixture_helpers_are_available(self):
         source = self.fresh('source')
         shutil.copytree(REPAIR, source)

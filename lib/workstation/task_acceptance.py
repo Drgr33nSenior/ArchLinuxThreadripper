@@ -683,7 +683,9 @@ def oracle_components(source, workspace, run):
     evaluated = [{"path": name, "sha256": digest(files[name]) if name in files else None,
                   "changed": files.get(name) != fixture.get(name)} for name in spec["editable"]]
     if problems:
-        return {"references": references, "oracle": {"status": UNAVAILABLE if "editable-unreadable" in problems else FAILED, "reason": problems[0], "evaluated": evaluated},
+        failures = [problem for problem in problems if problem != "editable-unreadable"]
+        return {"references": references, "oracle": {"status": FAILED if failures else UNAVAILABLE,
+                "reason": (failures or problems)[0], "evaluated": evaluated},
                 "interference": {"status": UNAVAILABLE, "reason": "submitted-files-not-evaluated"}}
     if references["status"] != PASSED:
         # A reference that does not behave as declared makes the oracle itself unproven.
