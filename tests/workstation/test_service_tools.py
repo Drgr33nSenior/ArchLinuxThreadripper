@@ -324,6 +324,28 @@ class ToolsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(503, response.status_code)
         self.assertEqual("image_backend_unavailable", response.json()["error"]["code"])
 
+    async def test_the_outer_request_deadline_holds_when_a_disconnect_check_swallows_the_cancellation(self):
+        # The picture budget is long here, so only the outer request deadline can end the wait.
+        # is_disconnected() absorbs its cancellation once (the test's own wait_for still gets through).
+        swallowed = []
+        async def swallowing(_request):
+            try:
+                await asyncio.sleep(0.1)
+            except asyncio.CancelledError:
+                if swallowed:
+                    raise
+                swallowed.append(True)
+            return False
+        self.slow = True
+        self.tools.image_timeout = 60
+        self.tools.request_timeout = 0.05
+        with mock.patch("starlette.requests.Request.is_disconnected", swallowing):
+            response = await asyncio.wait_for(
+                self.client.post("/webui/images/generations", headers=self.headers, json=self.image), timeout=10)
+        self.assertEqual([True], swallowed)
+        self.assertEqual(503, response.status_code)
+        self.assertEqual("image_backend_unavailable", response.json()["error"]["code"])
+
     async def test_two_slots_run_two_images_at_once_and_refuse_a_third(self):
         tools = ServiceTools(self.upstream, "http://webui", ("http://comfy1", "http://comfy0"), "http://gateway",
                              self.mapping, self.root / "state2", image_timeout=5, image_slots=2)

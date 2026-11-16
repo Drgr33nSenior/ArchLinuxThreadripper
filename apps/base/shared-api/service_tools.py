@@ -324,6 +324,7 @@ class ServiceTools:
         if type(image_slots) is not int or not 1 <= image_slots <= min(MAX_IMAGE_SLOTS, len(self.image_comfy)):
             raise ValueError("image_slots must be 1 or 2, one per picture ComfyUI")
         self.poll_seconds = 0.5
+        self.request_timeout = 270  # whole picture request: kv-tail release, picture budget, cleanup
         self.image_slots = image_slots
         # Elastic KV tail hand-over (kv_tail.py), or None when chat runs without a tail.
         self.kv_tail = kv_tail
@@ -803,7 +804,7 @@ class ServiceTools:
             except httpx.HTTPError:
                 pass
 
-    async def generate(self, request, prompt, size, slot=0):
+    async def generate(self, request, prompt, size, slot=0, request_deadline=None):
         marker = self.marker(slot)
         comfy = self.image_comfy[slot]
         prompt_id = None
@@ -846,7 +847,7 @@ class ServiceTools:
                         raise Refusal(499, "image_request_cancelled")
                     # Starlette's is_disconnected() polls inside an anyio CancelScope that can swallow
                     # the deadline's cancellation when it lands there, leaving this loop to poll forever.
-                    if deadline.expired():
+                    if deadline.expired() or (request_deadline and request_deadline.expired()):
                         raise TimeoutError
                     entry = (await self.upstream_json("GET", comfy + "/history/" + prompt_id, timeout=10)).get(prompt_id)
                     status = (entry or {}).get("status", {})
@@ -910,10 +911,10 @@ class ServiceTools:
                 # Qwen-Image 1328² (14 Nov): 50-74 s warm, 86-88 s from a cold page cache, 74 s each with
                 # both cards at once. The 240 s picture budget plus session and cleanup stays inside this,
                 # and this inside Open WebUI's 300 s client timeout.
-                async with asyncio.timeout(270):
+                async with asyncio.timeout(self.request_timeout) as request_deadline:
                     # Chat releases its KV tail first (at most 20 s); the rest fits the 240 s picture budget.
                     async with self.kv_tail.media() if self.kv_tail else contextlib.nullcontext():
-                        result = await self.generate(request, prompt, size, slot)
+                        result = await self.generate(request, prompt, size, slot, request_deadline)
             finally:
                 self.active.discard(slot)
             return JSONResponse(result, headers={"Cache-Control": "no-store"})
