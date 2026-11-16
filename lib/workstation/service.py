@@ -1174,8 +1174,10 @@ def site_values(path):
     # "environment" is no longer used; older private site files may still carry it.
     # "webui_default_group" is optional: the Open WebUI group new accounts join.
     # "streaming_client_cidrs" is optional: Moonlight client networks; none admits no stream.
-    # "key_onboarding" is optional: off (default), dry-run or live; see onboarding.py.
-    require(set(site) - {"environment", "webui_default_group", "streaming_client_cidrs", "key_onboarding"} == {"context", "node", "node_address", "management_cidr",
+    # "key_onboarding" is optional: off (default), dry-run or live; "key_policies" and
+    # "admin_policy" are its optional settings; see onboarding.py.
+    require(set(site) - {"environment", "webui_default_group", "streaming_client_cidrs", "key_onboarding", "key_policies",
+                         "admin_policy"} == {"context", "node", "node_address", "management_cidr",
                                                                    "client_cidrs", "webui_host", "api_host", "tls_secret"},
             "unexpected/missing site keys")
     group = site.setdefault("webui_default_group", "")
@@ -1183,6 +1185,8 @@ def site_values(path):
         r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", group) is not None),
         "webui_default_group must be an Open WebUI group UUID or empty")
     require(site.setdefault("key_onboarding", "off") in onboarding.MODES, "key_onboarding must be off, dry-run or live")
+    require(site.setdefault("admin_policy", "parents") in onboarding.ADMIN_POLICIES, "admin_policy must be parents or unmanaged")
+    onboarding.policies(site.setdefault("key_policies", {}))
     address = ipaddress.ip_address(site["node_address"])
     management = ipaddress.ip_network(site["management_cidr"])
     private = [ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")]
@@ -1348,7 +1352,8 @@ def render(args):
         sandbox.configure_webui(objects, sandbox_config)
         webui = next(o for o in objects if o["kind"] == "Deployment" and o["metadata"]["name"] == "open-webui")
         pin_webui_settings(webui["spec"]["template"]["spec"]["containers"][0], objects)
-    onboarding_objects = onboarding.render(site["key_onboarding"], sandbox_config, objects, MODELS, ROOT)
+    onboarding_objects = onboarding.render(site["key_onboarding"], sandbox_config, objects, MODELS, ROOT,
+                                           site["key_policies"], site["admin_policy"])
     output = new_directory(args.output)
     (output / "workloads.yaml").write_text(kube_yaml_all(objects))
     (output / "sandbox.yaml").write_text(kube_yaml_all(sandbox_objects))
@@ -1557,6 +1562,9 @@ def provision(args):
     require(set(request) == {"user_id", "client", "models", "rpm", "tpm", "concurrency", "days"}, "invalid provisioning request")
     require(re.fullmatch(r"[A-Za-z0-9_-]{1,100}", request["user_id"]), "invalid user id")
     require(re.fullmatch(r"[A-Za-z0-9_-]{1,60}", request["client"]), "invalid client name")
+    # The client name is the key's alias. Automatic family onboarding owns this prefix and
+    # deletes whatever holds one of its aliases (infrastructure/service/key_onboarding.py).
+    require(not request["client"].startswith("webui-"), "client names starting with webui- are reserved for onboarding")
     require(isinstance(request["models"], list) and request["models"] and set(request["models"]) <= MODELS,
             "explicit supported model allowlist required")
     for field, maximum in (*KEY_LIMITS.items(), ("days", 90)):

@@ -55,7 +55,10 @@ cleanup() {
           cancel-complete | backend-unavailable | backend-no-retry | revoke-key | \
           revoked-model | draining | maintenance | save-keys | result | \
           onboard-user-exists | onboard-alias-absent | onboard-alias-key | onboard-alias-taken | onboard-alias-delete | \
-          onboard-alias-revoked | onboard-key-absent) ;;
+          onboard-alias-revoked | onboard-key-absent | onboard-live-key | \
+          scoped-team | scoped-admin-key | scoped-user-new | scoped-member-unknown | scoped-member-known | \
+          scoped-member-key | routed-user | routed-key | routed-user-new | routed-generate | routed-delete | \
+          routed-refused) ;;
         *) continue ;;
       esac
       case $value in

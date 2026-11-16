@@ -591,10 +591,36 @@ class Capture:
                         controller[0]["uid"] in owners, "unmanaged gaming-home Pod writer")
         return tuple(sorted(managed.values()))
 
+    def suspend_cronjobs(self, output, journal):
+        """Keep scheduled Jobs from starting during the capture, then wait for running Jobs to end.
+
+        A CronJob (key onboarding) would otherwise start a Pod while writers are stopped,
+        or change Secrets between the application capture and the K3s database copy. The
+        journal records what each CronJob was, for the explicit resume.
+        """
+        self.cronjobs = {}
+        for cron in self.get("-n", NAMESPACE, "get", "cronjobs")["items"]:
+            name, suspended = cron["metadata"]["name"], bool(cron["spec"].get("suspend", False))
+            self.cronjobs[name] = {"uid": cron["metadata"]["uid"], "suspend": suspended}
+            # Persist the original state BEFORE the mutation, as for Deployments.
+            (output / "journal.json").write_text(json.dumps({"phase": "quiescing", "deployments": journal,
+                                                            "cronjobs": self.cronjobs}))
+            if not suspended:
+                run(self.kube + ["-n", NAMESPACE, "patch", "cronjob", name, "--type=merge",
+                                 "-p", '{"spec":{"suspend":true}}'])
+        # Suspension does not stop a Job that already runs. The longest scheduled Job has a 240 s deadline.
+        deadline = time.monotonic() + 300
+        while any(job.get("status", {}).get("active") for job in self.get("-n", NAMESPACE, "get", "jobs")["items"]):
+            require(time.monotonic() < deadline, "a Job is still running; capture refused")
+            time.sleep(2)
+
     def stopped(self):
         deadline = time.monotonic() + 180
         while time.monotonic() < deadline:
-            if not self.get("-n", NAMESPACE, "get", "pods")["items"]:
+            # A finished Job leaves its Pod behind (Succeeded or Failed) with no container
+            # running; the CRI check below still proves that nothing of the namespace runs.
+            if not [pod for pod in self.get("-n", NAMESPACE, "get", "pods")["items"]
+                    if pod.get("status", {}).get("phase") not in ("Succeeded", "Failed")]:
                 break
             time.sleep(2)
         else:
@@ -612,7 +638,8 @@ class Capture:
             journal[name] = {"uid": document["metadata"]["uid"], "replicas": document["spec"]["replicas"]}
         # Persist the original identity BEFORE a mutation. A failed Pod wait must
         # not lose the information needed to resume this deployment safely.
-        (output / "journal.json").write_text(json.dumps({"phase": "quiescing", "deployments": journal}))
+        (output / "journal.json").write_text(json.dumps({"phase": "quiescing", "deployments": journal,
+                                                        "cronjobs": getattr(self, "cronjobs", {})}))
         run(self.kube + ["-n", NAMESPACE, "scale", "deployment/" + name,
             "--resource-version=" + document["metadata"]["resourceVersion"],
             "--current-replicas=" + str(document["spec"]["replicas"]), "--replicas=0"])
@@ -624,6 +651,7 @@ class Capture:
             time.sleep(2)
 
     def quiesce_apps(self, output, journal):
+        self.suspend_cronjobs(output, journal)
         writers = WRITERS
         if self.baseline:
             deployments = self.get("-n", NAMESPACE, "get", "deployments")["items"]
@@ -750,6 +778,7 @@ class Capture:
             next_command = [str(ROOT / "bin/workstationctl"), "service-backup", "replicate", self.policy_path,
                             str(output), "--execute"] if local else []
             (output / "journal.json").write_text(json.dumps({"phase": "captured-stopped", "deployments": journal,
+                    "cronjobs": getattr(self, "cronjobs", {}),
                     "volumes": volumes, "resume": "explicit-owner-only",
                     "next": "verify deployment UIDs, explicitly resume and verify services, then replicate" if local else
                             "verify deployment UIDs and explicitly resume services",

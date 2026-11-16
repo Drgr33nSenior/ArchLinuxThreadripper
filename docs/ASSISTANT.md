@@ -28,8 +28,8 @@ It runs in **shared mode** today. [Service modes](MODES.md) explains the alterna
 Parents are in the `Parents` group and the children in `Family`; everyone can set Reasoning
 Effort in Chat Controls. Picture permission is granted per account, to the Admin and Parents
 accounts. With [automatic family onboarding](AI-SERVICE.md#automatic-family-onboarding) on, the
-two groups also decide who has a gateway key and pictures; nothing else is needed after
-creating the account. The tools server (video, memory, search, documents through MCP) refuses every call
+two groups also decide who has a gateway key and pictures, and the `admin` role gets a
+parents key without a group; nothing else is needed after creating the account. The tools server (video, memory, search, documents through MCP) refuses every call
 from an account with Open WebUI's `admin` role, so the owner uses a daily account for those;
 the admin account is for administration and pictures.
 

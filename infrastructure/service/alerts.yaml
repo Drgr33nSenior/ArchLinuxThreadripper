@@ -55,3 +55,10 @@ groups:
         for: 1m
         labels: {severity: warning}
         annotations: {summary: 'A request exceeded the gateway deadline; inspect cancellation cleanup'}
+      # Finished onboarding Jobs are removed after 20 minutes (ttlSecondsAfterFinished), so three
+      # Failed pods are three failures among the last four runs. A run fails when it could not issue,
+      # renew or revoke a key, when a mapped key is dead and could not be replaced, or when it stopped.
+      - alert: WorkstationKeyOnboardingFailing
+        expr: 'sum(kube_pod_status_phase{namespace="ai-home-lab",pod=~"key-onboarding-.*",phase="Failed"}) >= 3'
+        labels: {severity: warning}
+        annotations: {summary: 'Family key onboarding keeps failing; read the code in ConfigMap key-onboarding-status'}

@@ -11,6 +11,7 @@ a Secret document, a response body or exception text.
 """
 import base64
 import datetime
+import http.client
 import json
 import os
 from pathlib import Path
@@ -24,19 +25,22 @@ import urllib.parse
 import urllib.request
 
 SCHEMA = "workstation-key-onboarding/1"
-USER_ID = re.compile(r"[A-Za-z0-9_-]{1,64}\Z")
+# Open WebUI's user ids are lower-case UUIDs. Anything else gets no key and no alias.
+USER_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z")
 TIERS = ("parents", "family")
 MAPPING_SECRET, MAPPING_KEY = "gateway-browser-keys", "mapping.json"
 IMAGE_SECRET, IMAGE_KEY = "gateway-image-permissions", "image-users.json"
 STATUS_CONFIGMAP, STATUS_KEY = "key-onboarding-status", "status.json"
 MAX_BODY = 1 << 20
 # A run that changes anything first marks the mapping Secret; another run that finds a
-# mark younger than this stops. Longer than the Job's activeDeadlineSeconds, so a run
-# that died holds nobody up for more than one schedule.
-CLAIM, CLAIM_SECONDS = "workstation.ai/key-onboarding-claim", 300
+# mark younger than this leaves the gateway alone. Longer than the Job's
+# activeDeadlineSeconds (240) and shorter than the schedule (300), so a run that died
+# does not hold up the next one.
+CLAIM, CLAIM_SECONDS = "workstation.ai/key-onboarding-claim", 270
 DAY = 86400
-# Actions that issue a key: no usable key, a key near expiry, a key issued for another tier.
-ISSUE = ("provision", "renew", "policy")
+# Actions that issue a key: no usable key, a key near expiry, a key issued for another
+# tier, a mapped key the gateway no longer accepts.
+ISSUE = ("provision", "renew", "policy", "dead")
 
 
 class Stop(Exception):
@@ -49,11 +53,12 @@ class Stop(Exception):
 
 def read_config(path):
     config = json.loads(Path(path).read_text())
-    keys = {"mode", "namespace", "gateway", "database", "parents_group_id", "family_group_id", "policies",
+    keys = {"mode", "namespace", "gateway", "database", "parents_group_id", "family_group_id", "admin_policy", "policies",
             "renew_days", "retire_grace_seconds", "max_users", "home_user_ids", "home_tiers"}
     if not isinstance(config, dict) or set(config) != keys or config["mode"] not in ("dry-run", "live"):
         raise Stop("config_invalid")
-    if set(config["policies"]) != set(TIERS) or config["parents_group_id"] == config["family_group_id"]:
+    if set(config["policies"]) != set(TIERS) or config["parents_group_id"] == config["family_group_id"] \
+            or config["admin_policy"] not in ("parents", "unmanaged"):
         raise Stop("config_invalid")
     for policy in config["policies"].values():
         if set(policy) != {"models", "rpm", "tpm", "concurrency", "days", "images"} or type(policy["images"]) is not bool \
@@ -67,8 +72,8 @@ def read_webui(path, attempts=5, delay=2.0):
 
     Open WebUI keeps the database in WAL mode and stays the only writer. The read-only
     URI plus `query_only` cannot change the file; a busy or mid-checkpoint database is
-    retried. With Open WebUI stopped there is no WAL index to read through a read-only
-    mount, so the run stops without changing anything.
+    retried. With Open WebUI stopped cleanly there is no WAL index to read through a
+    read-only mount, so the run stops without changing anything.
     """
     uri = "file:" + urllib.parse.quote(str(path)) + "?mode=ro"
     for attempt in range(attempts):
@@ -93,16 +98,18 @@ def read_webui(path, attempts=5, delay=2.0):
 
 
 def eligible(config, webui):
-    """{user id: tier} for active members; the most permissive group wins.
+    """{user id: tier} for active accounts; the most permissive rule wins.
 
-    Parents, and an administrator who is in either group, get the parents tier (pictures
-    are for Admin and Parents). A member of Family only gets the family tier. A `pending`
-    account cannot sign in, so it gets no key.
+    Parents get the parents tier and a member of Family only the family tier. An
+    administrator gets the parents tier: in any group, and with `admin_policy: parents`
+    in no group at all. A `pending` account cannot sign in, so it gets no key. Only
+    direct members count.
     """
     parents = webui["members"].get(config["parents_group_id"], set())
     family = webui["members"].get(config["family_group_id"], set())
+    admins = {user for user, role in webui["users"].items() if role == "admin"} if config["admin_policy"] == "parents" else set()
     result, malformed = {}, 0
-    for user in parents | family:
+    for user in parents | family | admins:
         role = webui["users"].get(user)
         if role not in ("user", "admin"):
             continue
@@ -113,16 +120,22 @@ def eligible(config, webui):
     return result, malformed
 
 
+def valid_key(key):
+    return isinstance(key, str) and key.startswith("sk-") and len(key) >= 24
+
+
 def valid_entry(entry):
-    return (isinstance(entry, dict) and isinstance(entry.get("key"), str) and entry["key"].startswith("sk-")
-            and len(entry["key"]) >= 24 and type(entry.get("expires_at")) in (int, float))
+    return isinstance(entry, dict) and valid_key(entry.get("key")) and type(entry.get("expires_at")) in (int, float)
 
 
 def plan(config, webui, mapping, now):
     """The decision alone: ({user id: (action, tier)}, malformed member ids). Nothing is called.
 
-    Actions: keep, provision, renew, policy, images, revoke, unmanaged.
+    Actions: keep, provision, renew, policy, images, revoke, unmanaged. (`dead` is added
+    by the live run, which can ask the gateway.)
     """
+    # A read that cannot be right stops here. Both groups and the user table present
+    # with nobody in the groups is a valid state: the last member left, and is revoked.
     for group in ("parents_group_id", "family_group_id"):
         if config[group] not in webui["groups"]:
             raise Stop("group_missing")
@@ -147,20 +160,48 @@ def plan(config, webui, mapping, now):
         actions[user] = (action, tier)
     for user in mapping["users"]:
         if user not in members:
-            # An administrator outside both groups keeps whatever the owner bound by hand.
+            # With `admin_policy: unmanaged`, an administrator outside both groups keeps what the owner bound by hand.
             actions[user] = ("unmanaged" if webui["users"].get(user) == "admin" else "revoke", None)
-    revoked = sum(action == "revoke" for action, _ in actions.values())
-    if revoked and not members:
-        # Empty groups with keys to revoke look like a broken read more than a decision.
-        raise Stop("no_eligible_members")
     return actions, malformed
 
 
+def restrict(config, mapping, actions):
+    """Take away what the plan no longer allows, without asking the gateway for anything.
+
+    Runs before, and whether or not, a key is issued: a member's picture flag is set to
+    the tier's, and a revoked account leaves the mapping. Returns the removed entries.
+    """
+    removed = {}
+    for user, (action, tier) in actions.items():
+        entry = mapping["users"].get(user)
+        if action == "revoke":
+            removed[user] = mapping["users"].pop(user)
+        elif tier is not None and isinstance(entry, dict):
+            entry["images"] = config["policies"][tier]["images"] if valid_entry(entry) else False
+    return removed
+
+
 def image_document(mapping):
-    """What the image adapter may know: each user's expiry and picture permission, no key."""
+    """What the image adapter may know: each usable entry's expiry and picture permission, no key."""
     return {"service_key": mapping["service_key"], "users": {user: {
-        "expires_at": entry["expires_at"], "images": entry.get("images", False)}
-        for user, entry in mapping["users"].items() if isinstance(entry, dict) and "expires_at" in entry}}
+        "expires_at": entry["expires_at"], "images": entry.get("images") is True}
+        for user, entry in mapping["users"].items() if valid_entry(entry)}}
+
+
+def narrowed(current, final):
+    """The image document on the way to `final` that grants nothing `current` does not.
+
+    Published before the mapping, so that a denial is never waiting behind a write
+    that may fail. Grants arrive with the last write, after the mapping.
+    """
+    before = current.get("users") if isinstance(current, dict) and isinstance(current.get("users"), dict) else {}
+    users = {}
+    for user, entry in final["users"].items():
+        old = before.get(user)
+        if isinstance(old, dict) and type(old.get("expires_at")) in (int, float):
+            users[user] = {"expires_at": min(entry["expires_at"], old["expires_at"]),
+                           "images": entry["images"] and old.get("images") is True}
+    return {"service_key": final["service_key"], "users": users}
 
 
 def check_mapping(mapping):
@@ -168,10 +209,14 @@ def check_mapping(mapping):
     if not isinstance(mapping, dict) or not isinstance(mapping.get("service_key"), str) \
             or len(mapping["service_key"]) < 32 or not isinstance(mapping.get("users"), dict):
         raise Stop("mapping_invalid")
-    retired = mapping.setdefault("retired", [])
+    # retired: keys to delete once the mapping no longer names them. sweep: users who may
+    # hold a key in an alias slot that the mapping does not name.
+    retired, sweep = mapping.setdefault("retired", []), mapping.setdefault("sweep", [])
     if not isinstance(retired, list) or not all(
-            isinstance(item, dict) and isinstance(item.get("key"), str) and type(item.get("after")) in (int, float)
-            for item in retired):
+            isinstance(item, dict) and valid_key(item.get("key")) and type(item.get("after")) in (int, float)
+            and isinstance(item.get("user", ""), str) for item in retired):
+        raise Stop("mapping_invalid")
+    if not isinstance(sweep, list) or not all(isinstance(user, str) and USER_ID.match(user) for user in sweep):
         raise Stop("mapping_invalid")
     return mapping
 
@@ -201,7 +246,7 @@ def _call(opener, method, url, token, payload=None):
     except urllib.error.HTTPError as error:
         error.close()
         return error.code, None
-    except (OSError, ValueError):
+    except (OSError, ValueError, http.client.HTTPException):
         return 0, None
 
 
@@ -213,6 +258,15 @@ class Gateway:
 
     def call(self, path, payload):
         return _call(self.opener, "POST", self.base + path, self.key, payload)
+
+    def accepts(self, key):
+        """Whether the gateway still accepts a user's key: True, False (401), or None when unknown.
+
+        The model list is the cheapest authenticated call; the key travels in the
+        Authorization header only.
+        """
+        status, _ = _call(self.opener, "GET", self.base + "/v1/models", key)
+        return True if status == 200 else False if status == 401 else None
 
 
 class Kube:
@@ -250,12 +304,16 @@ def secret_document(secret, key):
 
 
 def stored_mapping(mapping):
-    """The mapping as published: an empty retirement list is left out."""
-    return {name: value for name, value in mapping.items() if name != "retired" or value}
+    """The mapping as published: empty bookkeeping lists are left out."""
+    return {name: value for name, value in mapping.items() if name not in ("retired", "sweep") or value}
 
 
 def prefix(user):
     return user[:8]
+
+
+def aliases(user):
+    return [f"webui-{user}-a", f"webui-{user}-b"]
 
 
 class Reconciler:
@@ -272,8 +330,8 @@ class Reconciler:
             return None
         # Two alias slots per user. The free one may still hold a key from a run that
         # stopped before the mapping was written; nobody holds its value, so it is removed.
-        current = entry.get("alias") if isinstance(entry, dict) else None
-        alias = f"webui-{user}-" + ("b" if current == f"webui-{user}-a" else "a")
+        first, second = aliases(user)
+        alias = second if isinstance(entry, dict) and entry.get("alias") == first else first
         if call("/key/delete", {"key_aliases": [alias]})[0] not in (200, 404):
             return None
         status, result = call("/key/generate", {
@@ -283,83 +341,127 @@ class Reconciler:
             key = result["key"]
             expires = datetime.datetime.fromisoformat(result["expires"].replace("Z", "+00:00"))
             expiry = expires.timestamp()
-            if status != 200 or expires.tzinfo is None or not key.startswith("sk-") or len(key) < 24 or result.get("user_id") != user \
+            if status != 200 or expires.tzinfo is None or not valid_key(key) or result.get("user_id") != user \
                     or not self.now < expiry <= self.now + (policy["days"] + 1) * DAY:
                 return None
         except (AttributeError, KeyError, TypeError, ValueError):
             return None
         return {"key": key, "expires_at": expiry, "images": policy["images"], "alias": alias, "policy": tier}
 
-    def claim(self, secrets):
-        """Mark the mapping Secret as being changed by this run, or stop if another run holds it.
+    def held(self, secrets):
+        """Whether another run's mark on the mapping Secret is still fresh."""
+        annotations = secrets[MAPPING_SECRET]["metadata"].get("annotations") or {}
+        try:
+            return 0 <= self.now - float(annotations.get(CLAIM, "")) < CLAIM_SECONDS
+        except ValueError:
+            return False
+
+    def claim(self, secrets, mapping):
+        """Mark the mapping Secret as being changed by this run.
 
         Two runs at once (a Job started by hand beside the schedule) could each delete
         the key the other had just issued. The replace at the read resourceVersion lets
-        exactly one of them set the mark.
+        exactly one of them set the mark. The same write publishes what this run has
+        already taken away and records who may be about to get a key the mapping does
+        not name yet (`sweep`), so a run that dies here leaves a trail.
         """
         secret = secrets[MAPPING_SECRET]
         annotations = secret["metadata"].get("annotations") or {}
-        try:
-            if 0 <= self.now - float(annotations.get(CLAIM, "")) < CLAIM_SECONDS:
-                raise Stop("another_run_active")
-        except ValueError:
-            pass
-        secret = dict(secret, metadata={**secret["metadata"], "annotations": {**annotations, CLAIM: str(int(self.now))}})
+        secret = dict(secret, metadata={**secret["metadata"], "annotations": {**annotations, CLAIM: str(int(self.now))}},
+                      data={**(secret.get("data") or {}), MAPPING_KEY: self.encode(stored_mapping(mapping))})
         secrets[MAPPING_SECRET] = self.kube.put("secrets", MAPPING_SECRET, secret)
 
+    @staticmethod
+    def encode(document):
+        return base64.b64encode(json.dumps(document).encode()).decode()
+
+    def put_images(self, secrets, document):
+        secret = secrets[IMAGE_SECRET]
+        if secret_document(secret, IMAGE_KEY) != document:
+            secrets[IMAGE_SECRET] = self.kube.put("secrets", IMAGE_SECRET, dict(
+                secret, data={**(secret.get("data") or {}), IMAGE_KEY: self.encode(document)}))
+
     def write(self, mapping, secrets, release=False):
-        """Publish the mapping, then the image permissions derived from it; `release` removes the mark."""
-        for name, key, document in ((MAPPING_SECRET, MAPPING_KEY, stored_mapping(mapping)),
-                                    (IMAGE_SECRET, IMAGE_KEY, image_document(mapping))):
-            secret = secrets[name]
-            annotations = secret["metadata"].get("annotations") or {}
-            marked = release and CLAIM in annotations
-            if marked or secret_document(secret, key) != document:
-                secret = dict(secret, data={**(secret.get("data") or {}),
-                                            key: base64.b64encode(json.dumps(document).encode()).decode()})
-                if marked:
-                    secret["metadata"] = {**secret["metadata"],
-                                          "annotations": {k: v for k, v in annotations.items() if k != CLAIM}}
-                secrets[name] = self.kube.put("secrets", name, secret)
+        """Publish the mapping, then the picture grants it justifies; `release` removes the mark.
+
+        The image adapter authorises from its own document. The run has already taken
+        from that document whatever the plan denies (run()); it gains only here, after
+        the mapping. A failure in between leaves pictures denied.
+        """
+        secret = secrets[MAPPING_SECRET]
+        annotations = secret["metadata"].get("annotations") or {}
+        marked = release and CLAIM in annotations
+        if marked or secret_document(secret, MAPPING_KEY) != stored_mapping(mapping):
+            secret = dict(secret, data={**(secret.get("data") or {}), MAPPING_KEY: self.encode(stored_mapping(mapping))})
+            if marked:
+                secret["metadata"] = {**secret["metadata"], "annotations": {k: v for k, v in annotations.items() if k != CLAIM}}
+            secrets[MAPPING_SECRET] = self.kube.put("secrets", MAPPING_SECRET, secret)
+        self.put_images(secrets, image_document(mapping))
+
+    def probe(self, mapping, actions):
+        """Ask the gateway about every key that would otherwise be left as it is."""
+        for user, (action, tier) in sorted(actions.items()):
+            if action in ("keep", "images"):
+                accepted = self.gateway.accepts(mapping["users"][user]["key"])
+                if accepted is None:
+                    return      # the gateway is not answering; nothing is concluded from that
+                if accepted is False:
+                    actions[user] = ("dead", tier)
 
     def run(self, webui):
         secrets = {name: self.kube.get("secrets", name) for name in (MAPPING_SECRET, IMAGE_SECRET)}
         mapping = check_mapping(secret_document(secrets[MAPPING_SECRET], MAPPING_KEY))
         actions, malformed = plan(self.config, webui, mapping, self.now)
         done = {}
-        due = any(item["after"] <= self.now for item in mapping["retired"])
-        changing = due or any(action not in ("keep", "unmanaged") for action, _ in actions.values())
-        if self.live and changing:
-            self.claim(secrets)
-            for user, (action, tier) in sorted(actions.items()):
-                entry = mapping["users"].get(user)
-                if action in ISSUE:
-                    issued = self.issue(user, tier, entry)
-                    if issued and valid_entry(entry):
-                        # The gateway may hold the old mapping until the kubelet refreshes it.
-                        mapping["retired"].append({"key": entry["key"], "after": self.now + self.config["retire_grace_seconds"]})
-                    if issued:
-                        mapping["users"][user] = issued
-                    done[user] = bool(issued)
-                elif action == "images":
-                    entry["images"] = self.config["policies"][tier]["images"]
-                    done[user] = True
-                elif action == "revoke":
-                    del mapping["users"][user]
-                    if isinstance(entry, dict) and isinstance(entry.get("key"), str) and entry["key"].startswith("sk-"):
-                        mapping["retired"].append({"key": entry["key"], "after": self.now})
-                    done[user] = True
-            self.write(mapping, secrets)
-            # Only after the mapping no longer names a key is that key deleted. 404: already gone.
-            kept = [item for item in mapping["retired"] if item["after"] > self.now
-                    or self.gateway.call("/key/delete", {"keys": [item["key"]]})[0] not in (200, 404)]
-            mapping["retired"] = kept
         if self.live:
+            self.probe(mapping, actions)
+            issuing = sorted(user for user, (action, _) in actions.items() if action in ISSUE)
+            removed = restrict(self.config, mapping, actions)
+            for item in mapping["retired"]:
+                if item.get("user") in removed:
+                    item["after"] = self.now        # no grace for an account that is gone
+            for user, entry in removed.items():
+                if isinstance(entry, dict) and valid_key(entry.get("key")):
+                    mapping["retired"].append({"key": entry["key"], "after": self.now, "user": user})
+            mapping["sweep"] = sorted({*mapping["sweep"], *issuing, *(user for user in removed if USER_ID.match(user))})
+            # Pictures this plan denies are denied first, whatever happens next and whoever holds the mark.
+            self.put_images(secrets, narrowed(secret_document(secrets[IMAGE_SECRET], IMAGE_KEY), image_document(mapping)))
+            changing = bool(issuing or mapping["sweep"] or any(item["after"] <= self.now for item in mapping["retired"]))
+            if self.held(secrets) and (changing or secret_document(secrets[MAPPING_SECRET], MAPPING_KEY) != stored_mapping(mapping)):
+                raise Stop("another_run_active")
+            if changing:
+                self.claim(secrets, mapping)
+            for user in issuing:
+                entry = mapping["users"].get(user)
+                issued = self.issue(user, actions[user][1], entry)
+                if issued:
+                    if valid_entry(entry):
+                        # The gateway may hold the old mapping until the kubelet refreshes it.
+                        mapping["retired"].append({"key": entry["key"], "user": user,
+                                                   "after": self.now + self.config["retire_grace_seconds"]})
+                    mapping["users"][user] = issued
+                done[user] = bool(issued)
+            done.update({user: True for user, (action, _) in actions.items() if action in ("images", "revoke")})
+            if changing:
+                self.write(mapping, secrets)
+                # Only now, with the mapping published, are keys it no longer names deleted. 404: already gone.
+                delete = self.gateway.call
+                mapping["retired"] = [item for item in mapping["retired"] if item["after"] > self.now
+                                      or delete("/key/delete", {"keys": [item["key"]]})[0] not in (200, 404)]
+                # Alias slots the mapping does not name are emptied: a key from a run that died
+                # after issuing it, and both slots of an account that is gone. A user issued a
+                # key just now is skipped: the other slot holds the key in its grace period.
+                def swept(user):
+                    entry = mapping["users"].get(user)
+                    named = entry.get("alias") if isinstance(entry, dict) else None
+                    return all(delete("/key/delete", {"key_aliases": [alias]})[0] in (200, 404)
+                               for alias in aliases(user) if alias != named)
+                mapping["sweep"] = [user for user in mapping["sweep"] if not (done.get(user) and user in issuing) and not swept(user)]
             # Also on a settled run: restores image permissions that no longer match the mapping.
             self.write(mapping, secrets, release=changing)
-        return self.status(webui, mapping, secrets, actions, malformed, done)
+        return self.status(mapping, secrets, actions, malformed, done)
 
-    def status(self, webui, mapping, secrets, actions, malformed, done):
+    def status(self, mapping, secrets, actions, malformed, done):
         counts = {name: 0 for name in ("keep", *ISSUE, "images", "revoke", "unmanaged")}
         for action, _ in actions.values():
             counts[action] += 1
@@ -369,22 +471,25 @@ class Reconciler:
         managed = [entry["expires_at"] for user, entry in mapping["users"].items()
                    if valid_entry(entry) and actions.get(user, ("", None))[0] != "unmanaged"]
         homes = set(self.config["home_user_ids"])
+        owed = self.live and (mapping["sweep"] or any(item["after"] <= self.now for item in mapping["retired"]))
         return {
             "schema": SCHEMA, "mode": self.config["mode"],
             "time": datetime.datetime.fromtimestamp(self.now, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "result": "partial" if failed or (self.live and mapping["retired"] and any(
-                item["after"] <= self.now for item in mapping["retired"])) else "ok", "code": None,
+            "result": "partial" if failed or owed else "ok", "code": None,
             "counts": {"members": sum(tier is not None for _, tier in actions.values()), **counts,
-                       "failed": failed, "malformed_members": malformed, "retired_pending": len(mapping["retired"])},
+                       "failed": failed, "malformed_members": malformed, "retired_pending": len(mapping["retired"]),
+                       "sweep_pending": len(mapping["sweep"])},
             "changes": [{"user": prefix(user), "action": action, "tier": tier,
                          "state": ("done" if done.get(user) else "failed") if self.live else "planned"}
                         for user, (action, tier) in sorted(changes.items())],
+            # Whether mapped keys were checked against the gateway; a dry run has no route to it.
+            "liveness": "checked" if self.live else "not_checked",
             # A member with a workspace but no home mapping: the workspace is disposable
             # until the owner creates the home (docs/ASSISTANT.md).
             "homes_needed": sorted(prefix(user) for user, (_, tier) in actions.items()
                                    if tier in self.config["home_tiers"] and user not in homes),
             "earliest_expiry_days": int((min(managed) - self.now) // DAY) if managed else None,
-            # Hand-bound administrator keys this job will not renew.
+            # Hand-bound administrator keys this job will not renew (admin_policy: unmanaged).
             "unmanaged_expiring": sum(1 for user, (action, _) in actions.items() if action == "unmanaged"
                                       and not (valid_entry(mapping["users"][user])
                                                and mapping["users"][user]["expires_at"] > soon)),
