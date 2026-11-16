@@ -2,6 +2,7 @@
 import asyncio
 import base64
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -544,6 +545,177 @@ class MediaDrainTests(unittest.TestCase):
         for address in ("8.8.8.8:8000", "10.43.0.5:http", "10.43.0.5"):
             with self.assertRaises(ValueError):
                 service_session.media_active(address)
+
+
+class AdmissionFailureMessageTests(unittest.TestCase):
+    """A failed admission update names its step and cause, the phase left behind and the way
+    back, keeps exit code 1, and never prints the credential or a response body."""
+
+    KEY = "synthetic-control-key-must-never-print-0123456789"
+    GATEWAY = "10.43.25.61"
+
+    class Answer:
+        def __init__(self, value):
+            self.body = value if isinstance(value, bytes) else json.dumps(value).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self, limit):
+            return self.body[:limit]
+
+    def run_main(self, phase, answers, status=None, argv=(), euid=0, environ=None):
+        """answers: control-call outcomes in order (dict/bytes answer or an exception)."""
+        import service_session
+        sent = []
+        answers = iter(answers)
+
+        def open_url(request, timeout):
+            url = request if isinstance(request, str) else request.full_url
+            if url.endswith("/_service/status"):
+                if isinstance(status, BaseException):
+                    raise status
+                return self.Answer(status if status is not None else {"phase": "unavailable"})
+            if url.endswith("/health"):
+                outcome = next(media)
+            else:
+                sent.append(json.loads(request.data))
+                outcome = next(answers)
+            if isinstance(outcome, BaseException):
+                raise outcome
+            return self.Answer(outcome)
+
+        media = iter(environ.pop("media", [])) if environ else iter([])
+        clock = iter(range(0, 100000, 30))
+        stderr = io.StringIO()
+        argv = ["service_session.py", self.GATEWAY, "/etc/workstation/control-key", phase,
+                "Qwen3.8-27B-MXFP4" if phase in {"ready", "starting"} else "none", *argv]
+        with mock.patch.object(service_session, "opener", lambda: SimpleNamespace(open=open_url)), \
+                mock.patch.object(service_session, "read_credential", lambda path: self.KEY), \
+                mock.patch.object(service_session.os, "geteuid", lambda: euid), \
+                mock.patch.object(service_session.time, "sleep", lambda seconds: None), \
+                mock.patch.object(service_session.time, "monotonic", lambda: next(clock)), \
+                mock.patch.dict(service_session.os.environ, environ or {}), \
+                mock.patch.object(sys, "argv", argv), mock.patch.object(sys, "stderr", stderr):
+            code = service_session.main()
+        text = stderr.getvalue()
+        self.assertNotIn(self.KEY, text)
+        return code, text, sent
+
+    def http_error(self, status, body):
+        import urllib.error
+        return urllib.error.HTTPError("http://10.43.25.61:4000/_service/control", status, "refused", {},
+                                      io.BytesIO(json.dumps(body).encode()))
+
+    def assert_failure(self, text, reason, phase="unavailable"):
+        self.assertIn(f"Gateway admission update failed: {reason}.", text)
+        self.assertIn(f"Gateway phase now: {phase}.", text)
+        self.assertIn("rerun the switch (sudo workstationctl mode <name> --execute)", text)
+        self.assertIn("session restore <hardware.json> <state-directory> --execute", text)
+
+    def test_success_prints_nothing_and_exits_zero(self):
+        code, text, sent = self.run_main("ready", [{"phase": "ready", "active": 0}], argv=["--images"])
+        self.assertEqual((0, ""), (code, text))
+        self.assertEqual([{"phase": "ready", "model": "Qwen3.8-27B-MXFP4", "images": True, "cancel": False}], sent)
+
+    def test_not_root(self):
+        code, text, sent = self.run_main("ready", [], euid=1000, status={"phase": "ready"})
+        self.assertEqual(1, code)
+        self.assertEqual([], sent)
+        self.assert_failure(text, "ready: not running as root", phase="ready")
+
+    def test_control_refusal_names_status_and_code_but_not_the_body(self):
+        body = {"error": {"code": "invalid_phase", "message": "invalid_phase"}, "echo": self.KEY}
+        code, text, _ = self.run_main("starting", [self.http_error(400, body)])
+        self.assertEqual(1, code)
+        self.assert_failure(text, "starting: control call to 10.43.25.61:4000 refused: HTTP 400 invalid_phase")
+        self.assertNotIn("echo", text)
+
+    def test_a_refusal_code_that_is_not_an_identifier_is_not_echoed(self):
+        for body in ({"error": {"code": self.KEY + " leaked"}}, {"detail": "Not Found"}, ["not", "a", "map"]):
+            code, text, _ = self.run_main("ready", [self.http_error(404, body)])
+            self.assertEqual(1, code)
+            self.assert_failure(text, "ready: control call to 10.43.25.61:4000 refused: HTTP 404")
+            self.assertNotIn("Not Found", text)
+
+    def test_unreachable_gateway_names_the_transport_error(self):
+        import urllib.error
+        refused = urllib.error.URLError(ConnectionRefusedError(111, "Connection refused"))
+        code, text, _ = self.run_main("starting", [refused], status=refused)
+        self.assertEqual(1, code)
+        self.assert_failure(text, "starting: control call to 10.43.25.61:4000 unreachable: Connection refused",
+                            phase="unknown (its status did not answer)")
+
+    def test_no_answer_within_the_timeout(self):
+        import urllib.error
+        for error in (TimeoutError("timed out"), urllib.error.URLError(TimeoutError("timed out"))):
+            code, text, _ = self.run_main("ready", [error])
+            self.assertEqual(1, code)
+            self.assert_failure(text, "ready: control call to 10.43.25.61:4000 no answer within 5 s")
+
+    def test_malformed_answer_is_named_without_echoing_it(self):
+        for answer in (b"<html>" + self.KEY.encode(), {"phase": "ready"}, {"active": "2"}):
+            code, text, _ = self.run_main("ready", [answer])
+            self.assertEqual(1, code)
+            self.assertIn("Gateway admission update failed: ready: control call to 10.43.25.61:4000 ", text)
+            self.assertIn("Gateway phase now: unavailable.", text)
+            self.assertNotIn("<html>", text)
+
+    def test_requests_that_do_not_cancel_fail_the_drain(self):
+        busy = {"phase": "draining", "active": 2}
+        code, text, sent = self.run_main("draining", [busy] * 20, status={"phase": "draining"})
+        self.assertEqual(1, code)
+        self.assertIn({"phase": "draining", "model": None, "images": False, "cancel": True}, sent)
+        self.assert_failure(text, "draining: 2 gateway request(s) did not cancel within 180 s", phase="draining")
+
+    def test_a_failed_cancel_call_is_named(self):
+        answers = [{"phase": "draining", "active": 1}] * 6 + [self.http_error(401, {"error": {"code": "invalid_control_credential"}})]
+        code, text, _ = self.run_main("draining", answers, status={"phase": "draining"})
+        self.assertEqual(1, code)
+        self.assert_failure(text, "draining: cancel call to 10.43.25.61:4000 refused: HTTP 401 invalid_control_credential",
+                            phase="draining")
+
+    def test_media_still_running_after_the_wait(self):
+        code, text, _ = self.run_main("draining", [{"phase": "draining", "active": 0}],
+                                      argv=["--media-address", "10.43.0.9:8000"], status={"phase": "draining"},
+                                      environ={"SESSION_MEDIA_DRAIN_SECONDS": "1260", "media": [{"image_active": 1}] * 100})
+        self.assertEqual(1, code)
+        self.assert_failure(text, "draining: 1 picture/video job(s) still running after 1260 s", phase="draining")
+
+    def test_unreachable_service_tools_is_named(self):
+        code, text, _ = self.run_main("draining", [{"phase": "draining", "active": 0}],
+                                      argv=["--media-address", "10.43.0.9:8000"], status={"phase": "draining"},
+                                      environ={"media": [ConnectionResetError(104, "Connection reset by peer")]})
+        self.assertEqual(1, code)
+        self.assert_failure(text, "draining: service-tools health at 10.43.0.9:8000 unreachable: Connection reset by peer",
+                            phase="draining")
+
+    def test_a_public_gateway_address_is_refused_and_never_polled(self):
+        import service_session
+        stderr = io.StringIO()
+        argv = ["service_session.py", "8.8.8.8", "/etc/workstation/control-key", "ready", "Qwen3.8-27B-MXFP4"]
+        with mock.patch.object(service_session, "opener", mock.Mock(side_effect=AssertionError("network"))), \
+                mock.patch.object(service_session.os, "geteuid", lambda: 0), \
+                mock.patch.object(sys, "argv", argv), mock.patch.object(sys, "stderr", stderr):
+            self.assertEqual(1, service_session.main())
+        self.assert_failure(stderr.getvalue(), "ready: gateway address 8.8.8.8 is not a private ClusterIP",
+                            phase="unknown (its status did not answer)")
+
+    def test_credential_problems_name_the_file_but_not_its_contents(self):
+        import service_session
+        with tempfile.TemporaryDirectory() as directory:
+            credential = Path(directory) / "control-key"
+            credential.write_text(self.KEY)
+            credential.chmod(0o644)
+            with self.assertRaisesRegex(service_session.AdmissionError, "must be a root-owned mode 0600 file") as caught:
+                service_session.read_credential(credential)
+            self.assertIn(str(credential), str(caught.exception))
+            self.assertNotIn(self.KEY, str(caught.exception))
+            with self.assertRaisesRegex(service_session.AdmissionError, r"unreadable \(No such file or directory\)"):
+                service_session.read_credential(Path(directory) / "missing")
 
 
 class CandidatePlanTests(unittest.TestCase):
