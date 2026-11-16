@@ -4,9 +4,10 @@
 network namespace (loopback only, no network) and send CONNECT and plain requests
 through the proxy. For `family` this script also answers the proxy's DNS questions on
 127.0.0.1:5353, standing in for a filtering resolver: it answers 0.0.0.0 for a name it
-"blocks". For `parents` the .test names are pinned with --add-host. `logs N` then reads
-the proxy's whole output on stdin and requires N lines that carry only the group, the
-domain and the decision.
+"blocks". For `parents` the .test names are pinned with --add-host. Each group then reads
+the proxy's status page, which must list the refusals with their reasons. `logs N` then
+reads the proxy's whole output on stdin and requires N lines that carry only the group,
+the domain and the decision: status page requests are not logged.
 """
 import json
 import socket
@@ -17,6 +18,7 @@ import time
 import urllib.request
 
 PROXY = ("127.0.0.1", 4750)
+STATUS = "http://sandbox-egress.invalid/blocked"
 SECRET = "/private/path?token=SMOKE-SECRET"
 ANSWERS = {"public.sandbox.test": "203.0.113.9", "lan.sandbox.test": "192.168.1.10",
            "cluster.sandbox.test": "10.43.0.1", "filtered.sandbox.test": "0.0.0.0"}
@@ -87,6 +89,19 @@ def run(name, checks, allowed, denied):
     return metrics
 
 
+def status(**expected):
+    """The status page, read through the proxy, lists each refused host with its reason."""
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({"http": "http://%s:%d" % PROXY}))
+    with opener.open(STATUS, timeout=10) as response:
+        page = json.load(response)
+    reasons = {entry["host"]: entry["reason"] for entry in page["blocked"]}
+    wrong = {host: reasons.get(host) for host, reason in expected.items() if reasons.get(host) != reason}
+    assert not wrong, f"status page: {wrong} in {page}"
+    assert "SECRET" not in json.dumps(page) and "/" not in "".join(reasons), page
+    # The proxy terminates no TLS: the page over CONNECT is a refusal.
+    assert connect("sandbox-egress.invalid") == "the proxy status page is plain HTTP: " + STATUS
+
+
 def wait():
     for _ in range(50):
         try:
@@ -124,6 +139,9 @@ def family():
     }, allowed=3, denied=11)
     for name in ("nsfw", "bypass", "gambling"):
         assert f'blocklist_entries{{group="family",list="{name}"}}' in metrics, metrics
+    status(**{"pornhub.com": FAMILY, "filtered.sandbox.test": FAMILY, "owner-blocked.sandbox.test": BLOCKLIST,
+              "lan.sandbox.test": PRIVATE, "203.0.113.9": LITERAL})
+    run("family", {}, allowed=3, denied=11)  # the status page is not counted
     print("egress proxy image smoke: family ok")
 
 
@@ -144,6 +162,8 @@ def parents():
         "plain public name": (get("public.sandbox.test")[0], REACHED),
         "family-listed name": (connect("pornhub.com"), REACHED),
     }, allowed=4, denied=8)
+    status(**{"owner-blocked.sandbox.test": BLOCKLIST, "169.254.169.254": PRIVATE})
+    run("parents", {}, allowed=4, denied=8)
     print("egress proxy image smoke: parents ok")
 
 
