@@ -25,7 +25,7 @@ use synthetic records, in-process services and one short local command.
 | Request trace (`request-trace`) | The gateway and service-tools, for a request that carries a run context | Available in source. Not observed on the deployed services. |
 | PSU sample | `run_record.py resources <telemetry.jsonl>` | Available for the window of a `performance run` |
 | GPU sample (`gpu-power-sample`) | `run_record.py resources <telemetry.jsonl>` | Available for the window of a `performance run` |
-| Acceptance result (`workstation-task-acceptance-result`) | `task_acceptance.py check ... --run-id ... --attempt-id ...` ([Task acceptance](TASK-ACCEPTANCE.md)) | Available. Its limits are those of the checker. |
+| Acceptance result (`workstation-task-acceptance-result`) | Trusted parent using `begin_attempt` / `check_task(attempt=...)`, or the private `task_acceptance_session.py` protocol ([Task acceptance](TASK-ACCEPTANCE.md)) | Available with a pre-attempt lifetime handle and actual capability probes. One-shot `check` is diagnostic and returns unavailable. |
 | Report (`run-record-report`) | `run_record.py report` | Available |
 
 [Not available](#not-available) lists what has no producer.
@@ -77,7 +77,7 @@ attempt starts, not when the report is made:
   event that a service writes for the attempt repeats it.
 
 `run_record.py report` computes the digest of the plan that you give it. It
-refuses an attempt or a request-trace event that carries a different digest, and
+refuses an attempt or a matched request-trace event that carries a different digest, and
 an attempt that started before `declared_unix_ns`. A target, task or arm that
 was edited after an attempt started is therefore refused, also when
 `declared_unix_ns` was left unchanged.
@@ -131,9 +131,22 @@ python3 lib/workstation/run_record.py attempt OUT \
   [--tokens PROMPT COMPLETION] [--tool-calls SUCCEEDED FAILED] >> attempts.jsonl
 ```
 
-`identity.json` holds the seven identity fields. `attempt` prints one attempt
-record from `OUT/run.json`. A run directory written without a plan and an
+Wait until the measured runner has stopped before extracting an attempt; file
+absence alone does not establish that it died. `identity.json` holds the seven
+identity fields. `attempt` prints one attempt
+record from `OUT/run.json`. If the runner was killed before it wrote that file,
+`attempt` retains the identity and plan from `run-start.json` as a failed
+`environment` attempt with source `measurement:no-receipt`. Its interval ends
+at the latest valid telemetry timestamp, or at its start if none exists.
+This is an observed lower bound: the actual end and any unsampled tail remain
+unknown. Do not treat this interval as a complete measurement. A run directory written without a plan and an
 identity stores `identity: null` and `plan_sha256: null`; `attempt` refuses it.
+
+The report counts these records under `coverage.attempts_without_final_receipt`
+and sets their `wall_time_complete` to false. Consumed wall-time totals are
+observed lower bounds when that count is nonzero. If an independently accepted
+attempt has no final receipt, its task wall time and latency verdict stay null;
+it cannot count as accepted within the target from an unknown end time.
 
 `deployment` records `serving_contract`, `model`, `tokenizer_sha256` and
 `template_sha256`. A value that was not captured is `null`, never guessed. The
@@ -215,7 +228,10 @@ python3 lib/workstation/run_record.py traces --run-id RUN_ID --output traces.jso
 ```
 
 `traces` copies only valid events of that run to the new file. It counts every
-other line and never copies it. The raw service-tools log can hold other process
+other line and never copies it. At report time, an event for an unknown attempt
+is counted as unmatched, including one carrying another plan digest. An event
+for a recorded attempt must still match its full identity and bound plan.
+The raw service-tools log can hold other process
 output: keep it private and delete it after the extraction.
 
 ## Acceptance results
@@ -228,13 +244,39 @@ no second acceptance format. `run_record.py` calls the checker's own
 formed and whether its verdict follows from its components. A record with an
 edited verdict is refused.
 
-Run the checker with the attempt's identifiers, then list the result files as
-JSON lines:
+The parent must establish the acceptance lifetime **before** exposing any
+agent route. A one-shot `task_acceptance.py check` cannot establish that history
+and yields `unavailable`, even for a correct repair. Do not use it as the
+acceptance producer.
+
+For the private session producer:
+
+1. Pin the bootstrap and complete checker manifest in the trusted parent, then
+   start `python3 -I -B lib/workstation/task_acceptance_session.py` with private
+   pipes. Keep the pipes and pins outside the agent's capabilities.
+2. Send the start message with `source`, `workspace`, `seal`, `checker`,
+   `configuration`, `routes`, `capability_lease`, `run_id` and `attempt_id`.
+   Service each probe through the actual named route. Enable tools only after
+   `ready:true`, and enforce the same capability policy for the whole attempt.
+3. Run the measured command with that identity and plan. Wait until it ends,
+   including failure or cancellation, before final evaluation. A result created
+   before the measured attempt ends cannot join.
+4. Obtain the independent final observation. Send it and the same lease through
+   the private parent channel, then retain the final `{"result": ...}` message
+   as `session-final.json`. A protocol failure is unavailable, never acceptance.
+
+The in-process alternative is `begin_attempt(...)` before the command and
+`check_task(..., attempt=handle, run_id=..., attempt_id=...)` after it. It has the
+same boundary and lifetime requirements; a caller must not substitute a
+path-placement check or model self-report for an actual route or observer.
+
+Extract the unchanged schema-1 result from the final session message, then
+list the result files as JSON lines. Check each command's exit status before
+using its output:
 
 ```sh
-python3 lib/workstation/task_acceptance.py check SOURCE result.json --workspace DIR --seal SEAL \
-  --run-id RUN_ID --attempt-id ATTEMPT_ID ...
-python3 lib/workstation/run_record.py acceptance result.json... > acceptance.jsonl
+jq -e '.result | select(.kind == "workstation-task-acceptance-result")' session-final.json > result.json
+python3 lib/workstation/run_record.py acceptance result.json > acceptance.jsonl
 ```
 
 `acceptance` validates each file and prints the checker's record unchanged.
@@ -274,11 +316,21 @@ A task's status is:
 Tool-call counts are reported as tool outcomes only. They never change a status.
 
 The checker defines this contract and can change it. `run_record.py` and the
-checker ship together, and the tests run the checker's validator on every
-acceptance fixture. `tests/fixtures/run-record/publication/results/` holds four
-results that the checker wrote from its own `record-publication` fixtures
-(rejected, two unavailable, accepted). `acceptance.jsonl` holds results that
-were authored for the three fixture tasks; each one says so in `limitations`.
+checker ship together. The report's `acceptance_checkers` lists the shipped
+checker digest, every observed digest, any that differ from the shipped one,
+and whether several checkers were used. Historical results remain historical;
+structural validation does not upgrade them to current protection proof or
+attest their producer.
+
+The tests join a newly produced result from the shipped lifetime checker after
+a real local measured command. That authored fixture uses a host executor and
+scoped route stand-in; it is not platform or deployment isolation proof. The
+tests also validate every saved acceptance fixture. The four results in
+`tests/fixtures/run-record/publication/results/` were written by the original
+pre-lifetime checker at `ab2f750` from `record-publication` fixtures (rejected,
+two unavailable, accepted). They test historical format compatibility only.
+`acceptance.jsonl` contains authored records for the three fixture tasks; each
+one says so in `limitations`.
 
 ## Resource records
 
@@ -296,6 +348,13 @@ python3 lib/workstation/run_record.py resources OUT/telemetry.jsonl --psu psu.js
 - **GPU samples** (`gpu-power-sample`): one per `amdgpu` card that reported
   board power: `power1_average` when the driver has it, else `power1_input`. A
   suspended or unreadable card yields no sample, never zero watts.
+
+A malformed, deeply nested or torn telemetry row counts in
+`invalid_telemetry_rows` and emits an unavailable PSU sample with no GPU sample.
+It breaks energy coverage; samples on either side cannot bridge the gap.
+Only consume the outputs after a successful exit. If conversion fails, files
+created by that call are removed; existing files are never replaced or removed,
+so a failed conversion can be retried with the same new output names.
 
 For several attempts, concatenate their PSU files in time order, and their GPU
 files in any order.

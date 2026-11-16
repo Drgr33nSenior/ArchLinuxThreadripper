@@ -3,19 +3,25 @@
 No model, gateway, PSU or GPU is contacted. Attempt, trace and resource records are
 synthetic. Acceptance records are task acceptance results in the checker's format:
 acceptance.jsonl is authored for the three fixture tasks and says so in each record;
-publication/results holds records the checker itself wrote. Every one is validated by
+publication/results holds historical pre-lifetime checker records. A current lifetime
+checker result is also produced and joined. Every record is validated by
 task_acceptance.validate_result. The request path through the gateway and service-tools
 is tested in test_run_trace.py.
 """
 
 import copy
+import datetime
+import hashlib
 import json
 import os
 from pathlib import Path
 import random
+import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -661,6 +667,185 @@ class RunRecordTests(unittest.TestCase):
             self.assertEqual([json.loads(line) for line in kept.splitlines()], self.traces)
             self.assertNotIn(sentinel, kept + result.stdout + result.stderr)
             self.assertEqual(subprocess.run(command, capture_output=True, text=True, timeout=30).returncode, 1)
+
+    def test_current_lifetime_checker_result_joins_after_the_measured_attempt(self):
+        # Authored fixture and host executor only: this verifies the shipped
+        # producer/join interface, not a deployed capability boundary.
+        import coding_eval
+        source = ROOT / "tests/fixtures/task-acceptance/sources/window-counts"
+        spec = json.loads((source / "acceptance.json").read_text())
+        identity = dict(self.attempts[0]["identity"], task_id=spec["task_id"], task_version=spec["version"])
+        plan = dict(self.plan, declared_unix_ns=1,
+                    tasks=[{"task_id": spec["task_id"], "task_version": spec["version"]}])
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            workspace, pin = root / "workspace", root / "pin"
+            seal = task_acceptance.seal(source)
+            pin.write_text(seal)
+            task_acceptance.prepare_workspace(source, workspace)
+
+            def fixture_route(operation, name):
+                if workspace not in Path(name).resolve().parents:
+                    return "denied"
+                return task_acceptance.perform_probe(operation, name)
+
+            def fixture_run(fixture, files, command, seconds=120, allowed=()):
+                self.assertEqual(command[0], "/usr/bin/python3")
+                return coding_eval.run_task(fixture, files, [sys.executable, *command[1:]],
+                                            seconds, allowed, sandbox=False)
+
+            handle = task_acceptance.begin_attempt(
+                source, workspace, seal, agent_routes={"authored-fixture": fixture_route},
+                protected_configuration=[pin], expected_checker=task_acceptance.checker_identity())
+            command = [sys.executable, "-c", "import shutil,sys; shutil.copyfile(sys.argv[1], sys.argv[2])",
+                       str(source / "reference/windows.py"), str(workspace / "windows.py")]
+            self.assertEqual(measurement.run_command(command, root / "run", 10, identity, plan), 0)
+            attempt = rr.attempt_from_receipt(json.loads((root / "run/run.json").read_text()))
+            result = task_acceptance.check_task(source, workspace, seal, attempt=handle, run=fixture_run,
+                                                run_id=identity["run_id"], attempt_id=identity["attempt_id"])
+            self.assertEqual(result["verdict"], "accepted")
+            self.assertFalse(result["components"]["oracle"]["run"]["isolated"])
+            self.assertEqual(result["checker_sha256"], hashlib.sha256(
+                (ROOT / "lib/workstation/task_acceptance.py").read_bytes()).hexdigest())
+            envelope = root / "session-final.json"
+            envelope.write_text(json.dumps({"result": result}))
+            extracted = subprocess.run(
+                ["jq", "-e", '.result | select(.kind == "workstation-task-acceptance-result")', str(envelope)],
+                text=True, capture_output=True, check=True, timeout=10)
+            (root / "result.json").write_text(extracted.stdout)
+            listed = subprocess.run(CLI + ["acceptance", str(root / "result.json")],
+                                    text=True, capture_output=True, check=True, timeout=30)
+            current = json.loads(listed.stdout)
+            self.assertEqual(current, result)
+            joined = rr.report(plan, [attempt], [current])
+            self.assertEqual((joined["summary"]["tasks_accepted"],
+                              joined["summary"]["tasks_accepted_within_target"]), (1, 1))
+
+    def test_killed_measurement_remains_a_failed_attempt_with_observed_work(self):
+        identity = self.attempts[0]["identity"]
+        plan = dict(self.plan, declared_unix_ns=1)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "plan.json").write_text(json.dumps(plan))
+            (root / "identity.json").write_text(json.dumps(identity))
+            pid = root / "workload.pid"
+            workload = "import os,sys,time; from pathlib import Path; Path(sys.argv[1]).write_text(str(os.getpid())); time.sleep(60)"
+            command = [sys.executable, "-B", str(ROOT / "lib/workstation/measurement.py"),
+                       "--output", str(root / "run"), "--timeout", "30", "--run-plan", str(root / "plan.json"),
+                       "--run-identity", str(root / "identity.json"), "run", "--", sys.executable, "-c", workload, str(pid)]
+            process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                deadline = time.monotonic() + 20
+                telemetry = root / "run/telemetry.jsonl"
+                while time.monotonic() < deadline:
+                    if pid.exists() and telemetry.exists() and telemetry.read_bytes().count(b"\n") >= 2:
+                        break
+                    self.assertIsNone(process.poll())
+                    time.sleep(0.01)
+                else:
+                    self.fail("two complete telemetry rows were not produced")
+                process.kill()
+                process.wait(timeout=5)
+                self.assertFalse((root / "run/run.json").exists())
+                with telemetry.open("ab") as output:
+                    output.write(b'{"unix_ns":')
+                recovered = subprocess.run(CLI + ["attempt", str(root / "run")], text=True,
+                                           capture_output=True, check=True, timeout=30)
+                attempt = json.loads(recovered.stdout)
+                self.assertEqual(attempt["identity"], identity)
+                self.assertEqual(attempt["failure"], {"category": "environment", "source": "measurement:no-receipt"})
+                self.assertEqual(attempt["outcome"], "failed")
+                self.assertGreater(attempt["ended_unix_ns"], attempt["started_unix_ns"])
+                joined = rr.report(plan, [attempt], [])
+                self.assertEqual((joined["summary"]["attempts"], joined["summary"]["failed_attempts"],
+                                  joined["summary"]["tasks_not_attempted"]), (1, 1, 2))
+                self.assertGreater(joined["summary"]["attempt_wall_seconds"], 0)
+                self.assertEqual(joined["coverage"]["attempts_without_final_receipt"], 1)
+                accepted = copy.deepcopy(self.acceptance[0])
+                accepted["created_utc"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                accepted_task = rr.report(plan, [attempt], [accepted])["tasks"][0]
+                self.assertEqual(accepted_task["status"], "accepted")
+                self.assertIsNone(accepted_task["task_wall_seconds"])
+                self.assertIsNone(accepted_task["meets_latency_target"])
+                self.assertFalse(accepted_task["attempt_records"][0]["wall_time_complete"])
+                empty = root / "without-telemetry"
+                empty.mkdir()
+                shutil.copyfile(root / "run/run-start.json", empty / "run-start.json")
+                unobserved = json.loads(subprocess.run(CLI + ["attempt", str(empty)], text=True,
+                                                       capture_output=True, check=True, timeout=30).stdout)
+                self.assertEqual(unobserved["started_unix_ns"], unobserved["ended_unix_ns"])
+                self.assertEqual(unobserved["outcome"], "failed")
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                process.wait(timeout=5)
+                if pid.exists():
+                    try:
+                        os.killpg(int(pid.read_text()), signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+
+    def test_torn_telemetry_is_a_gap_and_failed_resource_outputs_can_be_retried(self):
+        rows = jsonl("telemetry.jsonl")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source, psu, gpu = root / "telemetry.jsonl", root / "psu.jsonl", root / "gpu.jsonl"
+            source.write_text(json.dumps(rows[0]) + '\n{"torn":\n' +
+                              "".join(json.dumps(row) + "\n" for row in rows[1:]) + '{"torn":')
+            summary = rr.resources_from_telemetry(source, psu, gpu)
+            samples = [json.loads(line) for line in psu.read_text().splitlines()]
+            self.assertEqual((summary["telemetry_rows"], summary["invalid_telemetry_rows"]), (7, 2))
+            self.assertIsNone(samples[1]["watts"])
+            self.assertIsNone(samples[-1]["watts"])
+            window = rr.psu_window(rr.psu_timeline(samples), rows[0]["unix_ns"], rows[-1]["unix_ns"])
+            self.assertEqual(window["covered_seconds"], 1.0)
+            other = root / "other-psu.jsonl"
+            existing_gpu = gpu.read_bytes()
+            with self.assertRaises(FileExistsError):
+                rr.resources_from_telemetry(source, other, gpu)
+            self.assertFalse(other.exists())
+            self.assertEqual(gpu.read_bytes(), existing_gpu)
+            failed_psu, failed_gpu = root / "failed-psu.jsonl", root / "failed-gpu.jsonl"
+            with mock.patch.object(rr, "gpu_samples_from_snapshot", side_effect=ValueError("fixture conversion failure")):
+                with self.assertRaisesRegex(ValueError, "fixture conversion failure"):
+                    rr.resources_from_telemetry(source, failed_psu, failed_gpu)
+            self.assertFalse(failed_psu.exists())
+            self.assertFalse(failed_gpu.exists())
+            rr.resources_from_telemetry(source, failed_psu, failed_gpu)
+            self.assertTrue(failed_psu.is_file() and failed_gpu.is_file())
+
+    def test_foreign_plan_trace_for_an_unknown_attempt_is_only_unmatched(self):
+        trace = copy.deepcopy(self.traces[0])
+        trace["identity"]["attempt_id"] = "fixture-foreign"
+        trace["plan_sha256"] = "f" * 64
+        report = self.report(traces=self.traces + [trace])
+        self.assertEqual(report["coverage"]["unmatched_request_trace_events"], 1)
+        trace["identity"]["attempt_id"] = self.traces[0]["identity"]["attempt_id"]
+        with self.assertRaisesRegex(ValueError, "different plan"):
+            self.report(traces=[trace])
+
+    def test_report_surfaces_historical_checker_provenance_without_relabelling_it(self):
+        report = self.report()
+        observed = sorted({row["checker_sha256"] for row in self.acceptance})
+        shipped = hashlib.sha256((ROOT / "lib/workstation/task_acceptance.py").read_bytes()).hexdigest()
+        self.assertEqual(report["acceptance_checkers"], {
+            "shipped_sha256": shipped, "observed_sha256": observed,
+            "different_from_shipped": [digest for digest in observed if digest != shipped],
+            "changed": len(observed) > 1})
+        self.assertEqual(report["summary"]["tasks_accepted"], 2)
+
+    def test_deeply_nested_json_is_rejected_without_a_traceback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "nested.jsonl").write_text("[" * 2000 + "0" + "]" * 2000 + "\n")
+            (root / "empty.jsonl").write_text("")
+            result = subprocess.run(CLI + ["report", "--plan", str(FIXTURES / "plan.json"),
+                                           "--attempts", str(root / "nested.jsonl"),
+                                           "--acceptance", str(root / "empty.jsonl")],
+                                    text=True, capture_output=True, timeout=30)
+            self.assertEqual((result.returncode, result.stdout), (1, ""))
+            self.assertTrue(result.stderr.startswith("run record rejected:"), result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
 
     def publication(self):
         plan = json.loads((PUBLICATION / "plan.json").read_text())
