@@ -414,6 +414,8 @@ infrastructure/ai-stack/sandbox/terminal.py
 infrastructure/ai-stack/sandbox/smoke.py
 infrastructure/ai-stack/sandbox/scan-allowlist.json
 infrastructure/service/sandbox-egress.json
+lib/workstation/onboarding.py
+infrastructure/service/key_onboarding.py
 infrastructure/ai-stack/egress/main.go
 infrastructure/ai-stack/egress/build.sh
 infrastructure/ai-stack/egress/Containerfile
