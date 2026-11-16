@@ -152,10 +152,33 @@ func TestDenialsArePerClientBoundedAndExpire(t *testing.T) {
 	if got := d.recent("10.42.0.7", ""); len(got) != denialsPerClient {
 		t.Fatalf("kept %d entries, bound is %d", len(got), denialsPerClient)
 	}
+	// Expired entries are dropped from memory, not merely hidden.
 	clock = clock.Add(denialWindow)
-	if got := d.recent("10.42.0.7", ""); len(got) != 0 {
-		t.Fatalf("expired entries still shown: %v", got)
+	d.sweep()
+	if len(d.clients) != 0 {
+		t.Fatalf("expired entries still held: %v", d.clients)
 	}
+	d.add("10.42.0.7", "fresh.example", reasonFamily)
+	clock = clock.Add(time.Minute)
+	d.add("10.42.0.8", "later.example", reasonFamily)
+	clock = clock.Add(denialWindow - time.Minute)
+	if got := d.recent("10.42.0.8", ""); len(got) != 1 || len(d.clients) != 1 {
+		t.Fatalf("after one window: %v, held %v", got, d.clients)
+	}
+	clock = clock.Add(time.Minute)
+	if got := d.recent("10.42.0.7", ""); len(got) != 0 || len(d.clients) != 0 {
+		t.Fatalf("expired entries still shown or held: %v, %v", got, d.clients)
+	}
+	// Within one client, only the expired tail goes.
+	d.add("10.42.0.7", "old.example", reasonFamily)
+	clock = clock.Add(denialWindow - time.Second)
+	d.add("10.42.0.7", "new.example", reasonFamily)
+	clock = clock.Add(time.Second)
+	d.sweep()
+	if held := d.clients["10.42.0.7"]; len(held) != 1 || held[0].host != "new.example" {
+		t.Fatalf("held %v, want only new.example", held)
+	}
+	clock = clock.Add(denialWindow)
 	// The table of clients is bounded; expired clients go first, then the stalest.
 	for i := 0; i < denialClients+10; i++ {
 		clock = clock.Add(time.Millisecond)

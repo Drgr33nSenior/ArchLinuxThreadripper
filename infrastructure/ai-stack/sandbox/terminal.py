@@ -3,17 +3,20 @@ import asyncio
 import json
 import logging
 import os
+import re
 import urllib.request
 
 # The workspace's egress proxy answers this name itself with the requests from this
 # workspace that it refused (infrastructure/ai-stack/egress/main.go). Chromium reports
 # a refused HTTPS tunnel only as ERR_TUNNEL_CONNECTION_FAILED; curl and Python's
-# clients report a 403 without the reason header unless asked.
+# clients report a 403 without the reason header unless asked. Chromium also reports a
+# 502 (a name that does not exist) that way, so the marker alone is not a refusal.
 STATUS_URL = "http://sandbox-egress.invalid/blocked"
 REFUSED = (b"ERR_TUNNEL_CONNECTION_FAILED", b"CONNECT tunnel failed, response 403",
-           b"Tunnel connection failed: 403")
+           b"Tunnel connection failed: 403", b"Proxy tunneling failed: Forbidden",
+           b"(403) !== 200 when HTTP Tunneling")
 # Tool calls whose JSON result can carry a browser or command error.
-EXPLAINED = {("POST", "/execute"), ("POST", "/browser/action"), ("GET", "/browser/snapshot")}
+EXPLAINED = re.compile(r"(POST /execute|GET /execute/[^/]+/status|POST /browser/action|GET /browser/snapshot)")
 LIMIT = 4 << 20  # larger results pass through untouched
 RECENT_SECONDS = 60  # a refusal this recent is shown even if its host is not named
 
@@ -31,26 +34,39 @@ def refusals(timeout=3):
     return blocked
 
 
-def explanation(blocked, text):
-    """What to add to a tool result that shows a refused tunnel.
+def mentions(text, host):
+    """Whether `text` names `host` as a whole host name: not ample.com in example.com."""
+    pattern = rb"(?<![A-Za-z0-9.-])" + re.escape(host.encode()) + rb"(?![A-Za-z0-9-]|\.[A-Za-z0-9])"
+    return re.search(pattern, text, re.IGNORECASE) is not None
 
-    `text` is the tool call and its result: a refusal whose host appears in either is
-    shown; otherwise refusals from the last minute are.
+
+def explanation(blocked, text):
+    """What to add to a tool result that shows a failed tunnel.
+
+    `text` is the tool call and its result. A refusal whose host it names is the
+    reason. Otherwise refusals from the last minute are offered as possibly related:
+    the same browser error also covers a name that does not exist.
     """
+    check = "curl -s " + STATUS_URL
     if blocked is None:
-        return {"note": "The sandbox's egress proxy probably refused this site, but it could not be asked why.",
-                "check": "curl -s " + STATUS_URL}
-    named = [entry for entry in blocked if isinstance(entry, dict) and isinstance(entry.get("host"), str)
-             and entry["host"] and entry["host"].encode() in text]
-    shown = named or [entry for entry in blocked if isinstance(entry, dict)
-                      and isinstance(entry.get("seconds_ago"), int) and entry["seconds_ago"] <= RECENT_SECONDS]
-    if not shown:
-        return {"note": "The sandbox's egress proxy has refused nothing from this workspace recently, so this "
-                        "failure is something else: the name may not exist or the site may not have answered.",
-                "check": "curl -s " + STATUS_URL}
-    return {"note": "The sandbox's egress proxy refused these sites. This is the sandbox's policy, not a "
-                    "network fault: retrying will not help. Use another source or tell the user why.",
-            "refused": shown[:5], "check": "curl -s " + STATUS_URL}
+        return {"note": "The sandbox's egress proxy may have refused this site, but it could not be asked why.",
+                "check": check}
+    entries = [entry for entry in blocked if isinstance(entry, dict) and isinstance(entry.get("host"), str)
+               and entry["host"] and isinstance(entry.get("seconds_ago"), int)]
+    named = [entry for entry in entries if mentions(text, entry["host"])]
+    if named:
+        return {"note": "The sandbox's egress proxy refused these sites. This is the sandbox's policy, not a "
+                        "network fault: retrying will not help. Use another source or tell the user why.",
+                "refused": named[:5], "check": check}
+    recent = [entry for entry in entries if entry["seconds_ago"] <= RECENT_SECONDS]
+    if recent:
+        return {"note": "The proxy has no refusal on record for a site named here. It refused the sites below "
+                        "from this workspace in the last minute; they may be related, for example a page's "
+                        "redirect or resource. Otherwise the name may not exist or the site may not have answered.",
+                "possibly_related": recent[:5], "check": check}
+    return {"note": "The sandbox's egress proxy has refused nothing from this workspace recently, so this "
+                    "failure is something else: the name may not exist or the site may not have answered.",
+            "check": check}
 
 
 class BlockedReason:
@@ -64,7 +80,7 @@ class BlockedReason:
         self.app, self.lookup = app, lookup
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] != "http" or (scope.get("method"), scope.get("path")) not in EXPLAINED:
+        if scope["type"] != "http" or not EXPLAINED.fullmatch(f'{scope.get("method")} {scope.get("path")}'):
             return await self.app(scope, receive, send)
         start, chunks, size, passing, request = None, [], 0, False, []
 

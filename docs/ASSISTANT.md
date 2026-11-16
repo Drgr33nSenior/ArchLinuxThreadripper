@@ -485,23 +485,33 @@ no TLS. Refusals themselves are unchanged: the same 403, header and body.
 
 The workspace's command and browser tools add the reason to their own results.
 [`terminal.py`](../infrastructure/ai-stack/sandbox/terminal.py) wraps Open
-Terminal. When the JSON result of `run_command`, `browser_action` or
-`browser_snapshot` contains
-`ERR_TUNNEL_CONNECTION_FAILED`, curl's `CONNECT tunnel failed, response 403` or
-Python's `Tunnel connection failed: 403`, it asks the status page and adds a
-`sandbox_egress` object to the result. The object holds the refusals whose host
-appears in the call or its result, or else those of the last minute, and a
-note that the refusal is the sandbox's policy and that retrying will not help.
-With no refusal on record it says the failure is something else, such as a
-name that does not exist. Other results pass through unchanged.
+Terminal. It reads the JSON results of `run_command`, `get_process_status`,
+`browser_action` and `browser_snapshot`. When one contains a failed-tunnel
+error, it asks the status page and adds a `sandbox_egress` object to the
+result. The errors are Chromium's `ERR_TUNNEL_CONNECTION_FAILED`, curl's
+`CONNECT tunnel failed, response 403`, Python's
+`Tunnel connection failed: 403`, wget's `Proxy tunneling failed: Forbidden`
+and Node's `Proxy response (403) !== 200 when HTTP Tunneling`.
+
+- If the call or its result names a refused host as a whole name, the object
+  lists it under `refused`. Its note says this is the sandbox's policy and
+  that retrying will not help.
+- Otherwise it lists refusals from the last minute under `possibly_related`.
+  Chromium's error also covers a name that does not exist (a 502), so the
+  note does not blame them.
+- With no refusal on record, the note says the failure is something else.
+
+Other results pass through unchanged.
 
 *Privacy.* The proxy identifies a workspace by the source address of its
 connections, which is its pod's address: one pod per account, and each group's
 proxy only accepts its own group's workspaces. The page lists only refusals
 from the asking address, so a child's workspace never sees another account's
 names. Entries hold the logged domain and the short reason, never a path,
-query or header. They live in the proxy's memory only, at most 20 per
-workspace for 5 minutes and 256 workspaces, and a proxy restart clears them.
+query or header. They live in the proxy's memory only: at most 20 per
+workspace and 256 workspaces. An entry is dropped once it is 5 minutes old, at
+the next refusal or status request or the proxy's sweep each minute. A proxy
+restart clears them all.
 Requests for the page are neither logged nor counted. Two assumptions hold
 this boundary. First, traffic from a pod to the proxy's ClusterIP Service keeps
 the pod's address; kube-proxy masquerades only traffic from outside the pod
@@ -766,7 +776,8 @@ kubectl -n assistant-sandbox exec -i POD -- python -I - '{
 ```
 
 Every denial answered with a 403 must also appear, with its reason, on the
-workspace's status page. To check that one workspace never sees another's
+workspace's status page. The probe reports whether the page was readable; an
+unreadable page fails every status row. To check that one workspace never sees another's
 refusals, run the probe in a second account's workspace of the same group with
 `"unlisted": ["NAME"]`, where `NAME` is a refused name only the first workspace
 tried in the last five minutes.

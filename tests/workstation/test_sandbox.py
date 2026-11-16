@@ -584,14 +584,43 @@ class BlockedReasonTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(1, len(lookups))
         self.assertIn(b"adult.example", calls[0])
 
-    async def test_a_click_into_a_refused_site_shows_the_latest_refusal(self):
+    async def test_an_unnamed_failure_offers_recent_refusals_only_as_possibly_related(self):
+        # A click into a site: neither the call nor the result names the host. The same
+        # browser error also covers a 502 (a name that does not exist), so a recent
+        # refusal is offered, never blamed.
         snapshot = {"url": "https://example.org/", "snapshot": 'heading "This site can\'t be reached" ERR_TUNNEL_CONNECTION_FAILED'}
         blocked = [{"host": "adult.example", "reason": "blocked by the family filter", "seconds_ago": 3},
                    {"host": "old.example", "reason": "private address", "seconds_ago": 240}]
         app, _ = tool([(200, snapshot, b"application/json")])
         value = (await self.call(terminal.BlockedReason(app, lambda: blocked), "GET", "/browser/snapshot")).json()
         self.assertEqual(snapshot["snapshot"], value["snapshot"])
-        self.assertEqual(["adult.example"], [entry["host"] for entry in value["sandbox_egress"]["refused"]])
+        explained = value["sandbox_egress"]
+        self.assertNotIn("refused", explained)
+        self.assertEqual(["adult.example"], [entry["host"] for entry in explained["possibly_related"]])
+        self.assertIn("may be related", explained["note"])
+        self.assertIn("may not exist", explained["note"])
+        self.assertNotIn("retrying will not help", explained["note"])
+
+    def test_only_whole_host_names_match(self):
+        refused = [{"host": "ample.com", "reason": "blocked by the sandbox blocklist", "seconds_ago": 300}]
+        for text in (b"net::ERR_TUNNEL_CONNECTION_FAILED at https://example.com/", b"https://www.ample.com/",
+                     b"https://ample.com.evil.test/", b"see ample.community"):
+            explained = terminal.explanation(refused, text)
+            self.assertNotIn("refused", explained, text)
+            self.assertNotIn("retrying will not help", explained["note"], text)
+        for text in (b"net::ERR_TUNNEL_CONNECTION_FAILED at https://Ample.com/path", b'"url": "https://ample.com"',
+                     b"curl https://ample.com:443/", b"refused ample.com."):
+            self.assertEqual(refused, terminal.explanation(refused, text)["refused"], text)
+
+    async def test_polled_command_output_and_node_and_wget_errors_are_explained(self):
+        blocked = [{"host": "adult.example", "reason": "blocked by the family filter", "seconds_ago": 2}]
+        outputs = ["Error: Proxy response (403) !== 200 when HTTP Tunneling (https://adult.example/)",
+                   "Proxy tunneling failed: ForbiddenUnable to establish SSL connection. https://adult.example/"]
+        app, _ = tool([(200, {"status": "done", "output": [{"data": text}]}, b"application/json") for text in outputs])
+        middleware = terminal.BlockedReason(app, lambda: blocked)
+        for _ in outputs:
+            value = (await self.call(middleware, "GET", "/execute/20261116-120000-abc123/status")).json()
+            self.assertEqual(blocked, value["sandbox_egress"]["refused"])
 
     async def test_unrelated_results_pass_through_unchanged(self):
         lookups = []

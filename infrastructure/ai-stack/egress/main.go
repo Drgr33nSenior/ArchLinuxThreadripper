@@ -341,7 +341,8 @@ func (d *decisions) Format(entry *logrus.Entry) ([]byte, error) {
 // denials remembers each workspace's recent refusals so that it can ask why a request
 // failed. A workspace is known by its pod address, the source of its connections to
 // the proxy, and is only ever shown its own entries. An entry is the logged domain and
-// the short reason; entries expire after denialWindow and live in memory only.
+// the short reason. Entries live in memory only and are dropped once older than
+// denialWindow: on the next refusal or status request, or the minute sweep.
 type denial struct {
 	host, reason string
 	at           time.Time
@@ -376,12 +377,13 @@ func (d *denials) add(client, host, reason string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	now := d.now()
+	d.expire(now)
 	if _, known := d.clients[client]; !known && len(d.clients) >= denialClients {
-		d.evict(now)
+		d.evict()
 	}
 	kept := []denial{{host, reason, now}}
 	for _, e := range d.clients[client] {
-		if len(kept) == denialsPerClient || now.Sub(e.at) >= denialWindow {
+		if len(kept) == denialsPerClient {
 			break
 		}
 		if e.host != host {
@@ -391,20 +393,38 @@ func (d *denials) add(client, host, reason string) {
 	d.clients[client] = kept
 }
 
-// evict drops the clients with nothing current and then, if the table is still full,
-// the client whose newest entry is the oldest.
-func (d *denials) evict(now time.Time) {
-	oldest, at := "", now
+// expire drops every entry older than denialWindow, and clients left with none.
+// The caller holds the lock.
+func (d *denials) expire(now time.Time) {
 	for c, entries := range d.clients {
-		if now.Sub(entries[0].at) >= denialWindow {
+		current := 0
+		for current < len(entries) && now.Sub(entries[current].at) < denialWindow {
+			current++
+		}
+		if current == 0 {
 			delete(d.clients, c)
-		} else if oldest == "" || entries[0].at.Before(at) {
+		} else if current < len(entries) {
+			d.clients[c] = entries[:current:current]
+		}
+	}
+}
+
+// sweep expires old entries even when no refusal or status request arrives.
+func (d *denials) sweep() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.expire(d.now())
+}
+
+// evict drops the client whose newest entry is the oldest. The caller holds the lock.
+func (d *denials) evict() {
+	oldest, at := "", time.Time{}
+	for c, entries := range d.clients {
+		if oldest == "" || entries[0].at.Before(at) {
 			oldest, at = c, entries[0].at
 		}
 	}
-	if len(d.clients) >= denialClients {
-		delete(d.clients, oldest)
-	}
+	delete(d.clients, oldest)
 }
 
 type denialEntry struct {
@@ -418,14 +438,12 @@ func (d *denials) recent(client, host string) []denialEntry {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	now := d.now()
+	d.expire(now)
 	result := []denialEntry{}
 	if client == "" {
 		return result
 	}
 	for _, e := range d.clients[client] {
-		if now.Sub(e.at) >= denialWindow {
-			break
-		}
 		if host == "" || e.host == host {
 			result = append(result, denialEntry{e.host, e.reason, int64(now.Sub(e.at) / time.Second)})
 		}
@@ -611,7 +629,13 @@ func main() {
 	}
 	conf.MaxConcurrentConnectTunnels = *maxConcurrent
 	// A refusal is a plain 403 with one short reason; the status page answers in its place.
-	conf.RejectResponseHandlerWithCtx = reject(filtered, newDenials())
+	recent := newDenials()
+	conf.RejectResponseHandlerWithCtx = reject(filtered, recent)
+	go func() {
+		for range time.Tick(time.Minute) {
+			recent.sweep()
+		}
+	}()
 
 	if len(rules.sources) > 0 && *refresh > 0 {
 		client := refreshClient(resolver)

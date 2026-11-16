@@ -63,12 +63,12 @@ def proxy_status(target):
 
 
 def refusals():
-    """{host: reason} from this workspace's status page, read through its proxy; {} if unreadable."""
+    """{host: reason} from this workspace's status page, read through its proxy; None if unreadable."""
     try:
         with urllib.request.urlopen(STATUS, timeout=10) as response:
             return {entry["host"]: entry["reason"] for entry in json.load(response)["blocked"]}
     except (OSError, ValueError, KeyError, TypeError):
-        return {}
+        return None
 
 
 def main():
@@ -96,10 +96,14 @@ def main():
             refused.append(target.partition(":")[0].lower())
     if refused or spec.get("unlisted"):
         listed = refusals()
+        rows.append(("status page readable", "readable", "unreadable" if listed is None else "readable"))
+        # An unreadable page proves nothing: every row below then fails as unreadable.
         for host in refused:
-            rows.append((f"status page names {host}", "with a reason", "with a reason" if listed.get(host) else "missing"))
+            got = "unreadable" if listed is None else "with a reason" if listed.get(host) else "missing"
+            rows.append((f"status page names {host}", "with a reason", got))
         for host in spec.get("unlisted", []):
-            rows.append((f"status page omits {host}", "omitted", "shown" if host in listed else "omitted"))
+            got = "unreadable" if listed is None else "shown" if host in listed else "omitted"
+            rows.append((f"status page omits {host}", "omitted", got))
     failed = 0
     for name, want, got in rows:
         ok = want == got
