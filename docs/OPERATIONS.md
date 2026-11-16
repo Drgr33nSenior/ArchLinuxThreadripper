@@ -247,7 +247,8 @@ kubectl -n ai-home-lab exec deploy/litellm -c gateway -- python -c \
 | Pictures refused with `image_backend_needs_operator_check` | A cancelled or failed picture left a marker. Check both generators are idle, then remove it: [picture recovery](ASSISTANT.md#pinned-inputs-and-gates) |
 | A video never arrives or chat says `video_busy` | Check `comfyui-gpu0`'s queue: [short videos](ASSISTANT.md#short-videos-shared-mode) |
 | Someone wants longer or no thinking | The Reasoning effort slider in the message box (Max or Off): [reasoning effort](ASSISTANT.md#reasoning-effort) |
-| Someone new needs an account, pictures or a coding key | [AI service setup](AI-SERVICE.md) (`service provision`, `service browser-bind --images`) |
+| Someone new needs an account or pictures | Create the Open WebUI account and put it in Family or Parents; with [automatic family onboarding](AI-SERVICE.md#automatic-family-onboarding) on, the key follows within five minutes. Otherwise, and for a coding key: [AI service setup](AI-SERVICE.md) step 6 (`service provision`, `service browser-bind --images`) |
+| A new account says `Model '' was not found` or the gateway answers `browser_user_not_provisioned` | The account has no browser key: check its groups and the [onboarding status](AI-SERVICE.md#status) |
 
 ### GPU power cap
 

@@ -180,6 +180,7 @@ context, node and new output paths; placeholders are not site values.
    | `api_host` | `api.lan.thespry.family` (OpenAI-compatible `/v1` and `/mcp`) |
    | `tls_secret` | `ai-home-lab-tls` |
    | `webui_default_group` | Optional. The UUID of the Open WebUI group every new account joins (`DEFAULT_GROUP_ID`); empty or absent leaves it unset. |
+   | `key_onboarding` | Optional. `off` (default), `dry-run` or `live`: [automatic family onboarding](#automatic-family-onboarding). |
 
    **Model visibility.** Open WebUI 0.12 shows a gateway model without an Open
    WebUI model entry to admins only. As admin, create a group (for example
@@ -188,7 +189,9 @@ context, node and new output paths; placeholders are not site values.
    read access. Put the group's UUID in `webui_default_group` so new accounts
    join it. The group, members and grant live in Open WebUI's database, which
    is backed up. Each account still needs its own gateway browser key; the group
-   only controls what the browser lists.
+   only controls what the browser lists. With
+   [automatic family onboarding](#automatic-family-onboarding) on, membership of
+   Family or Parents is also what issues that key.
 
    Do not commit this site file. The renderer writes Traefik with
    `node_address` as its only Service externalIP on TCP 443. kube-proxy
@@ -361,7 +364,14 @@ context, node and new output paths; placeholders are not site values.
    Backoff is zero. Native Prisma migrate uses the selected v2 resolver; no db push
    or schema reset. Only after completion, qualify and start one gateway replica.
    Readiness checks database access; a gateway restart leaves model admission closed.
-6. Provision users/keys through an operator-only loopback port-forward:
+6. Browser keys for the family are issued, renewed and revoked by
+   [automatic family onboarding](#automatic-family-onboarding) once it is on: create
+   the Open WebUI account, put it in Family or Parents, and skip the rest of this
+   step for that person. The commands below remain for every other key (IDE and
+   agent clients), for the administrator account outside both groups, and as the
+   fallback while onboarding is off.
+
+   Provision users/keys through an operator-only loopback port-forward:
 
    ```sh
    kubectl --context "$SERVICE_CONTEXT" -n ai-home-lab port-forward --address 127.0.0.1 service/litellm 14000:4000
@@ -378,7 +388,10 @@ context, node and new output paths; placeholders are not site values.
    ./bin/workstationctl service browser-bind --mapping /private/new-service-credentials/mapping.json --key-file /private/new-client-credential/virtual-key.json --user-id "$WEBUI_USER_ID" --images
    ```
 
-   Publish both protected mapping Secrets through the owner workflow. The image
+   Publish both protected mapping Secrets through the owner workflow. With
+   onboarding live, the Secrets in the cluster are newer than any local
+   `mapping.json`: see [binding by hand](#binding-by-hand-while-onboarding-is-live)
+   first. The image
    adapter receives only per-user image permission/expiry, not inference keys. Remove
    `--images` for users without image permission. Revoke inference with
    `service revoke --base-url ... --master-file ... --key-file ...`; include `--mapping /private/new-service-credentials/mapping.json`
@@ -437,6 +450,237 @@ context, node and new output paths; placeholders are not site values.
    written into the bundle. Keep Qwen tool approval enabled and ACP beside project
    files. DSH/Hermes retain their existing inference path; their MCP UI integration
    has not been qualified here.
+
+## Automatic family onboarding
+
+**NOT RUN on the workstation.** Source, unit tests and render tests only; the first
+dry run on the cluster is the owner's ([turn it on](#turn-it-on)).
+
+The owner creates the Open WebUI account and puts it in `Family` or `Parents`.
+Within about five minutes the account has a gateway key with that group's limits,
+and pictures if the group has them. Keys are renewed before they expire and revoked
+when the account leaves both groups or is deleted. It is off unless the site file
+sets `key_onboarding`.
+
+```mermaid
+flowchart LR
+  DB[("Open WebUI database<br/>read-only mount")] --> J["key-onboarding CronJob<br/>every 5 minutes"]
+  J -- "user, key: create and delete<br/>(master key)" --> G["LiteLLM admin API"]
+  J -- "get, update" --> M["Secret gateway-browser-keys"]
+  J -- "get, update" --> I["Secret gateway-image-permissions"]
+  J -- "update" --> S["ConfigMap key-onboarding-status"]
+  M -. "projected file, read per request" .-> GW["Gateway"]
+  I -. "projected file, read per request" .-> T["service-tools"]
+```
+
+### What each run decides
+
+The job is `infrastructure/service/key_onboarding.py`, rendered by
+`lib/workstation/onboarding.py`. Group ids come from the sandbox config
+(`parents_group_id`, `family_group_id`), so `service render` needs
+`--sandbox-config` when onboarding is on.
+
+| Account | Result |
+| --- | --- |
+| Member of Parents, or of both groups | Key with the parents policy; pictures on. The most permissive group wins, as for Open WebUI permissions |
+| Member of Family only | Key with the family policy; pictures off |
+| Administrator in either group | Parents policy (pictures are for Admin and Parents) |
+| Administrator in neither group | Left alone: no key issued, and a key bound by hand is neither renewed nor revoked. `unmanaged_expiring` in the status counts such keys inside the renewal window |
+| Was in a group, now in neither; deleted; or role `pending` | Removed from both mappings, then the key is deleted at the gateway |
+| Member with a valid key and more than 30 days left | Nothing. A key bound by hand keeps its key and limits; only its picture flag follows the group |
+| Member whose key has under 30 days left, or has expired | New key, mapping updated, old key deleted ten minutes later |
+| Member whose group changed between Family and Parents | Picture flag at once. A key this job issued is replaced so the limits follow; a key bound by hand keeps its limits until renewal |
+| Mapping entry that is not a usable record | Replaced for a member, removed for anyone else |
+
+Only direct members count: a member of a child group of Family or Parents is not
+a member here. A user id that is not 1 to 64 letters, digits, `-` or `_` gets no
+key and is counted as `malformed_members`.
+
+| Policy | Requests/min | Tokens/min | At once | Pictures | Lifetime |
+| --- | --- | --- | --- | --- | --- |
+| parents | 60 | 2,000,000 | 2 | yes | 90 days |
+| family | 30 | 1,000,000 | 1 | no | 90 days |
+
+Both list every supported model alias, so a mode switch needs no new key. The
+values are `POLICIES` in `lib/workstation/onboarding.py`, inside the bounds of
+step 6. The family values are a first choice, not a measurement: change them
+there and apply again; existing keys take the new limits at their next renewal,
+or use `service limits` on the alias `webui-<user id>-a` (or `-b`).
+
+**Keys and aliases.** Each key is issued for the exact Open WebUI user id, with the
+alias `webui-<user id>-a` or `-b`. A renewal uses the other alias. Before issuing,
+the job deletes whatever holds the alias it is about to use: that can only be a key
+from a run that stopped before the mapping was written, whose value nobody holds.
+The job never lists keys and never touches a key it cannot name from the mapping or
+from these two aliases, so IDE and agent keys are out of its reach by construction.
+
+**Order of a change.** A run that has something to change first marks
+`gateway-browser-keys` with the annotation `workstation.ai/key-onboarding-claim`;
+a second run that finds a mark younger than five minutes stops
+(`another_run_active`), so a Job started by hand beside the schedule cannot delete
+a key the other run has just issued. Then: new key, `gateway-browser-keys`,
+`gateway-image-permissions` (derived from the first, without keys), deletion
+of old keys, and the mark is removed with the last write. A replaced key is kept for ten minutes in a `retired` list inside
+`mapping.json`, because the gateway may hold the previous file until the kubelet
+refreshes the projected Secret (up to about a minute and a half). A revoked
+account's key is deleted in the same run. Each Secret is replaced at the
+`resourceVersion` it was read at, so a concurrent change by the owner is refused,
+not overwritten, and the next run starts again from the new state. A run that
+stops after its mark leaves it behind; later runs wait until it is five minutes old. The two Secrets
+cannot change in one transaction: if the second write fails, the next run restores
+the image permissions from the mapping.
+
+**No restart.** The gateway and service-tools read their mapping file on every
+request (`secret_json` in `boundary.py`), and both mount the whole Secret, not a
+`subPath`, so a new key works once the kubelet has refreshed the file.
+
+**When a read looks wrong, nothing changes.** The run stops, with a code in the
+status, when the database cannot be read after five tries, the user table is
+empty, either group is missing, more than 32 members are found, both groups are
+empty while keys would be revoked, or the mapping Secret is not the expected
+document. A person can therefore not be removed as the last member automatically;
+revoke that key by hand.
+
+### Reading Open WebUI
+
+The job mounts Open WebUI's data claim read-only and opens `webui.db` with a
+read-only SQLite URI and `query_only`, in one read transaction, reading only
+`user.id`, `user.role`, `group.id` and `group_member`. It runs from the Open WebUI
+image as Open WebUI's user, with `python -I -S`: the same SQLite library as the
+only writer, and nothing of Open WebUI is started.
+
+| Considered | Why not |
+| --- | --- |
+| Open WebUI admin API with a dedicated admin API key | An admin key can read every chat and change every account and setting; the read-only mount can change nothing. API keys here are also limited to a few endpoints (`API_KEYS_ALLOWED_ENDPOINTS`), which would have to be widened for every key holder, and the job would need a flow to Open WebUI |
+| `kubectl exec` into Open WebUI | Needs `pods/exec`, which is arbitrary code in the pod that holds the session secret |
+| The owner's password or session | Never |
+
+The claim is `ReadWriteOnce` on the one node, which allows a second pod on that
+node; the render refuses another access mode. Open WebUI keeps the database in
+WAL mode. Through a read-only mount SQLite can read it only while Open WebUI has
+it open, so with Open WebUI stopped the run stops with `webui_db_unavailable`
+and changes nothing. A read during a write sees the last committed state.
+
+### Status
+
+Each run prints one JSON line and, when live, writes the same document to the
+ConfigMap `key-onboarding-status`:
+
+```sh
+kubectl --context "$SERVICE_CONTEXT" -n ai-home-lab get configmap key-onboarding-status -o jsonpath='{.data.status\.json}'
+kubectl --context "$SERVICE_CONTEXT" -n ai-home-lab logs job/"$(kubectl --context "$SERVICE_CONTEXT" -n ai-home-lab get jobs -l app.kubernetes.io/name=key-onboarding -o jsonpath='{.items[-1:].metadata.name}')"
+```
+
+It holds counts per action, `changes` (the first eight characters of the user id,
+the action, the tier and `planned`, `done` or `failed`), `homes_needed`,
+`earliest_expiry_days`, `unmanaged_expiring`, `retired_pending` and, when a run
+stopped, a fixed `code`. It never holds a key, a full user id, a name or an
+address. A run that is `partial` or `stopped` exits 1, so the Job shows as Failed;
+the next run retries. There is no alert on this yet.
+
+**Sandbox homes.** A home on the NAS is still created by the owner
+([sandbox homes](HOME-LAB.md#sandbox-homes-per-user-nas-volumes)). `homes_needed`
+lists the members who get a workspace but have no entry in the homes mapping.
+Until the owner adds one, their workspace works with a disposable home
+([who gets what](ASSISTANT.md#who-gets-what)). The list is taken from the homes
+mapping at render time: render and apply `onboarding.yaml` again after changing it.
+
+### Turn it on
+
+All owner-run. The bundle is a separate file, `onboarding.yaml`; a mode switch
+applies `workloads.yaml` only and never changes it.
+
+1. In the private site file set `"key_onboarding": "dry-run"`. Render as usual,
+   with `--sandbox-config`. Check `evidence.json` (`key_onboarding.mode`) and read
+   `onboarding.yaml`: in this mode it has no master key, no write permission and
+   no flow to the gateway.
+2. Apply it and trigger one run:
+
+   ```sh
+   kubectl --context "$SERVICE_CONTEXT" apply --dry-run=server -f render/onboarding.yaml
+   kubectl --context "$SERVICE_CONTEXT" apply -f render/onboarding.yaml
+   kubectl --context "$SERVICE_CONTEXT" -n ai-home-lab create job --from=cronjob/key-onboarding key-onboarding-first
+   kubectl --context "$SERVICE_CONTEXT" -n ai-home-lab logs job/key-onboarding-first
+   ```
+
+3. Read the plan. Expect `keep` for every account that already has a key,
+   `provision` only for accounts that have none, no `revoke` you do not intend,
+   and `images` only where a hand-bound picture flag differs from the group. The
+   administrator account, in neither group, shows as `unmanaged`: put it in
+   Parents if its key should be renewed for it. Resolve anything unexpected in
+   Open WebUI's groups first.
+4. Set `"key_onboarding": "live"`, render, review the diff of `onboarding.yaml`
+   (the master-key volume, `update` on the two Secrets and the status ConfigMap,
+   the gateway flow) and apply. Watch the first run, then sign in as a new
+   account and send a message.
+5. Take a fresh `service` capture: the Secrets in the cluster are now the only
+   copy of the newly issued keys.
+
+To stop it: `kubectl -n ai-home-lab patch cronjob key-onboarding -p '{"spec":{"suspend":true}}'`.
+To remove it: set `key_onboarding` to `off` and
+`kubectl delete -f` the last applied `onboarding.yaml`. Keys already issued keep
+working until they expire; the manual commands of step 6 take over.
+
+To force a new key for one member, remove the account from its groups, wait for
+one run (the key is revoked), and add it back.
+
+### Binding by hand while onboarding is live
+
+The job only ever reads the Secrets in the cluster; a local `mapping.json` from
+before is out of date and publishing it would undo issued keys (the job would
+then issue them again, and the orphaned ones would stay until they expire).
+Suspend the CronJob, export both Secret keys to protected files, run
+`browser-bind` or `revoke --mapping` against that export, publish both, and
+resume. `browser-bind` and `revoke` rewrite only the entry they are given and
+keep everything else in the document, including the job's `retired` list.
+
+### Identity and flows
+
+| Object | Grants |
+| --- | --- |
+| ServiceAccount `key-onboarding` | Used by this CronJob only; the token is mounted in its pod only |
+| Role `key-onboarding` | `get`, `update` on Secrets `gateway-browser-keys` and `gateway-image-permissions` by name; `get`, `update` on ConfigMap `key-onboarding-status` by name. No `list`, `watch`, `create`, `delete` or `patch`; nothing cluster-wide. In `dry-run`: `get` on the two Secrets only |
+| Secret volume | `master-key` alone from `gateway-credentials`; not the database URL, salt or control key. Absent in `dry-run` |
+| Claim | Open WebUI's data claim, read-only |
+| NetworkPolicy `key-onboarding` | No ingress. Egress to the API server address and to `litellm:4000` only (plus the namespace's DNS rule). `dry-run`: API server only |
+| NetworkPolicy `litellm-key-onboarding-ingress` | The gateway accepts the job on 4000. Absent in `dry-run` |
+| Pod | Non-root (1000), read-only root filesystem, no capabilities, `RuntimeDefault` seccomp, no environment credentials; 20m CPU and 64 MiB requested (unmeasured, not counted by `service plan`) |
+
+### Threat model
+
+What the manual flow has: the master key in a file on the owner's machine, used
+through a loopback port-forward for a few minutes when someone joins. What this
+adds: the master key mounted in a pod for a few seconds every five minutes, and a
+ServiceAccount that can replace the two mapping Secrets.
+
+| If this is compromised | It can | It cannot |
+| --- | --- | --- |
+| The job's code or image (the Open WebUI image, pinned by digest) | Use the master key: issue, change and delete any gateway key, read spend, change gateway settings. Read every browser key and the application `service_key` from the mapping. Give any Open WebUI user id any key or picture permission. Read the whole Open WebUI data volume: chats, uploads, password hashes | Write to Open WebUI's data. Read other Secrets (database URL, salt, control key, session secret, TLS). Reach anything but the API server and the gateway; in particular nothing outside the cluster, so what it reads has no direct way out. Start pods or change workloads |
+| The ServiceAccount token alone | Replace the two Secrets and the status ConfigMap from wherever the API server is reachable | Use the master key or read the database |
+| Open WebUI's database (someone who can write group membership) | Get a family or parents key issued for an account they control, within the fixed policies | Get a key outside those policies, or for an id that is not an Open WebUI user |
+| An Open WebUI administrator | The same as today: they already decide who has an account. Group membership now also grants gateway access and pictures without the owner's CLI step | |
+
+Why that is acceptable here:
+
+- The gateway pod already holds the master key all the time, in the same
+  namespace. The job is a second, short-lived holder with far less code: one
+  reviewed standard-library file, no listener, no inbound flow.
+- The master key is LiteLLM's admin credential; LiteLLM OSS has no narrower
+  credential that can create keys for other users. The exposure is bounded by
+  what the job can reach, not by the credential.
+- The decision the owner made by hand (who is family, who is a parent) is still
+  made by the owner, in Open WebUI, which only an administrator can change.
+  Sign-up is closed. The step that was easy to forget is what is automated.
+- A wrong read cannot revoke everyone: the stops above leave the mapping as it
+  is, and a key is only deleted after the mapping no longer names it.
+- Nothing secret is printed. Output is checked in the unit tests against every
+  key and credential the fixture holds.
+
+What stays weaker than the manual flow: the master key is used unattended, so a
+compromise of the Open WebUI image build or of that node's kubelet reaches it
+without the owner present; and a mistaken group change takes effect in five
+minutes. `dry-run` first, the fixed policies and the 32-account bound are the
+limits on that.
 
 ## Image package and lifecycle
 
@@ -651,7 +895,8 @@ assistant composition from the AI-stack serving profile (see
 2. Render with `--serving-profile` and `--runtime-image`; read `status` and
    `missing_inputs` in `evidence.json`. Do not apply an `incomplete` render.
 3. Issue virtual keys for `Qwen3.8-27B-MXFP4` with `service provision`; keys
-   allowlisted only for the FP8 alias cannot call it.
+   allowlisted only for the FP8 alias cannot call it. Keys from automatic family
+   onboarding list every supported alias.
 4. Copy the `client.conf` values into the client configuration and regenerate
    the agent bundle.
 5. Apply only after the profile is qualified, `service plan` admits the

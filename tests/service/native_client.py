@@ -1,5 +1,6 @@
 """Exercise the selected native gateway; print only fixed pass/fail evidence."""
 import concurrent.futures
+import datetime
 import json
 import os
 from pathlib import Path
@@ -17,6 +18,8 @@ CHECKPOINTS = frozenset({
     "concurrency-complete", "disconnect-stream", "cancel-backend", "cancel-admission",
     "cancel-complete", "backend-unavailable", "backend-no-retry", "revoke-key",
     "revoked-model", "draining", "maintenance", "save-keys", "result",
+    "onboard-user-exists", "onboard-alias-absent", "onboard-alias-key", "onboard-alias-taken", "onboard-alias-delete",
+    "onboard-alias-revoked", "onboard-key-absent",
 })
 
 
@@ -170,6 +173,24 @@ def main(mode):
     expect("backend-no-retry", fixture_status("backend-no-retry")["unavailable_calls"] == 1)
     expect("revoke-key", call("revoke-key", "/key/delete", master, {"keys": [revoked]})[0] == 200)
     expect("revoked-model", call("revoked-model", "/v1/models", revoked)[0] in {401, 403})
+    # The admin answers the key-onboarding job relies on (infrastructure/service/key_onboarding.py):
+    # a known user id is 409, an absent alias or key is 404, and an issued key names its user and expiry.
+    expect("onboard-user-exists", call("onboard-user-exists", "/user/new", master, {
+        "user_id": "fixture-alice", "user_role": "internal_user", "auto_create_key": False})[0] == 409)
+    alias = {"key_aliases": ["webui-fixture-alice-a"]}
+    expect("onboard-alias-absent", call("onboard-alias-absent", "/key/delete", master, alias)[0] == 404)
+    request = {"user_id": "fixture-alice", "key_alias": alias["key_aliases"][0], "models": ["Qwen3.8-27B-FP8"],
+               "duration": "90d", "rpm_limit": 30, "tpm_limit": 1000000, "max_parallel_requests": 1}
+    status, raw = call("onboard-alias-key", "/key/generate", master, request)
+    expect("onboard-alias-key", status == 200)
+    issued = json.loads(raw)
+    expires = datetime.datetime.fromisoformat(issued["expires"].replace("Z", "+00:00"))
+    expect("onboard-alias-key", issued["user_id"] == "fixture-alice" and issued["key"].startswith("sk-")
+           and expires.tzinfo is not None and 89 * 86400 < expires.timestamp() - time.time() <= 90 * 86400)
+    expect("onboard-alias-taken", call("onboard-alias-taken", "/key/generate", master, request)[0] != 200)
+    expect("onboard-alias-delete", call("onboard-alias-delete", "/key/delete", master, alias)[0] == 200)
+    expect("onboard-alias-revoked", call("onboard-alias-revoked", "/v1/models", issued["key"])[0] in {401, 403})
+    expect("onboard-key-absent", call("onboard-key-absent", "/key/delete", master, {"keys": [issued["key"]]})[0] == 404)
     expect("draining", call("draining", "/_service/control", control, {"phase": "draining"})[0] == 200)
     expect("maintenance", call("maintenance", "/v1/chat/completions", valid, chat)[0] == 503)
     checkpoint("save-keys", "start")

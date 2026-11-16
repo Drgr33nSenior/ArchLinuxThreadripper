@@ -7,5 +7,6 @@
   "webui_host": "",
   "api_host": "",
   "tls_secret": "ai-home-lab-tls",
-  "webui_default_group": ""
+  "webui_default_group": "",
+  "key_onboarding": "off"
 }
