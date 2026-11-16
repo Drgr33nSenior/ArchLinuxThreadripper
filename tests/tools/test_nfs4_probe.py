@@ -23,8 +23,13 @@ class RequestTests(unittest.TestCase):
         (mark,) = struct.unpack_from(">I", request)
         self.assertEqual(0x80000000 | (len(request) - 4), mark)
         self.assertEqual((xid, 0, 2, 100003, 4, 1), struct.unpack_from(">IIIIII", request, 4))
-        self.assertEqual(4, request.count(b"\0\0\0\x0f"))  # OP_LOOKUP
-        self.assertTrue(request.endswith(struct.pack(">I", nfs4_probe.OP_GETFH)))
+        # The tail is fixed: tag, minor version 0, six operations. (Counting LOOKUP opcodes over the
+        # whole request is wrong: the random xid and the hostname's length can hold the same bytes.)
+        ops = struct.pack(">I", nfs4_probe.OP_PUTROOTFH)
+        for part in ("srv", "microserver", "sandbox", "kid"):
+            ops += struct.pack(">I", nfs4_probe.OP_LOOKUP) + nfs4_probe.opaque(part.encode())
+        ops += struct.pack(">I", nfs4_probe.OP_GETFH)
+        self.assertTrue(request.endswith(nfs4_probe.opaque(b"probe") + struct.pack(">II", 0, 6) + ops))
 
     def test_opaque_pads_to_four_bytes(self):
         self.assertEqual(b"\0\0\0\x03abc\0", nfs4_probe.opaque(b"abc"))
