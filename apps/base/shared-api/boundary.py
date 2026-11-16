@@ -50,6 +50,13 @@ REASONING_EFFORTS = {"low": "low", "medium": "medium", "high": "xhigh", "xhigh":
 # a large fixed cap would fail long conversations, while an unset cap ends at the
 # context and the gateway deadline bounds the time.
 UNCAPPED_EFFORTS = {"xhigh"}
+# Output ceilings above a model's allowance for an uncapped effort, {model: {effort: tokens}}
+# (gateway-policy.json effort_output_tokens): the largest max_tokens/max_completion_tokens a
+# request at that effort may name. A request that names none still runs uncapped. The model
+# list advertises each as maxOutputTokens on the effort's supportedReasoningEfforts entry,
+# which Open WebUI passes through, so a client that caps Max itself can size its reply and
+# input. Without an entry an explicit limit is held to the allowance, as at other efforts.
+EFFORT_OUTPUT_TOKENS = {}
 # Effort for requests that name none (the contract's request default). Applied here, not as an
 # SGLang server default: the pinned SGLang lets a server-default effort override every request's.
 DEFAULT_REASONING_EFFORT = None
@@ -92,6 +99,7 @@ def apply_policy(path):
     timeout, admission = policy["request_timeout"], policy["admission_limit"]
     first_token, idle = policy.get("first_token_timeout"), policy.get("idle_timeout")
     image_models = policy.get("image_models", ["Qwen3.5-9B"] if "Qwen3.5-9B" in models else [])
+    effort_limits = policy.get("effort_output_tokens", {})
     if (not isinstance(models, dict) or not models
             or any(type(c) is not int or type(o) is not int or not 1 <= o <= c // 2
                    for c, o in (tuple(limits) for limits in models.values()))
@@ -106,6 +114,15 @@ def apply_policy(path):
             or policy.get("default_reasoning_effort") not in (None, *efforts)
             or policy.get("declared_reasoning_effort") not in (None, *efforts)):
         raise ValueError("invalid gateway policy")
+    # Each ceiling: an admitted model, an uncapped effort the policy maps to, and from the
+    # model's allowance up to half its context.
+    if (not isinstance(effort_limits, dict) or not set(effort_limits) <= set(models)
+            or any(not isinstance(limits, dict)
+                   or not set(limits) <= UNCAPPED_EFFORTS & set(efforts.values())
+                   or any(type(tokens) is not int or not models[name][1] <= tokens <= models[name][0] // 2
+                          for tokens in limits.values())
+                   for name, limits in effort_limits.items())):
+        raise ValueError("invalid gateway policy")
     CHAT_MODELS.clear()
     CHAT_MODELS.update({name: tuple(limits) for name, limits in models.items()})
     REASONING_EFFORTS.clear()
@@ -114,6 +131,8 @@ def apply_policy(path):
     TEMPLATE_KWARGS.update({name: bool for name in kwargs})
     IMAGE_MODELS.clear()
     IMAGE_MODELS.update(image_models)
+    EFFORT_OUTPUT_TOKENS.clear()
+    EFFORT_OUTPUT_TOKENS.update({name: dict(limits) for name, limits in effort_limits.items()})
     ADMISSION_LIMIT = admission
     DEFAULT_REASONING_EFFORT = policy.get("default_reasoning_effort")
     DECLARED_REASONING_EFFORT = policy.get("declared_reasoning_effort")
@@ -208,14 +227,20 @@ async def read_body(receive, limit=MAX_BODY):
             return bytes(body)
 
 
-def reasoning_declaration():
-    """The reasoning levels this gateway accepts, as Open WebUI's provider-declared Model Controls."""
+def reasoning_declaration(model=None):
+    """The reasoning levels this gateway accepts, as Open WebUI's provider-declared Model Controls.
+
+    A level with an output ceiling for this model (EFFORT_OUTPUT_TOKENS) carries it as
+    maxOutputTokens. Open WebUI reads only reasoningEffort and label for its slider and keeps
+    the entries as sent in /api/models."""
     levels = (["none"] if "enable_thinking" in TEMPLATE_KWARGS else []) + [
         level for level in REASONING_ORDER if level in set(REASONING_EFFORTS.values())]
     if not levels:
         return {}
+    ceilings = EFFORT_OUTPUT_TOKENS.get(model, {})
     declaration = {"supportedReasoningEfforts": [
-        {"reasoningEffort": level, "label": REASONING_LABELS.get(level, level)} for level in levels]}
+        {"reasoningEffort": level, "label": REASONING_LABELS.get(level, level),
+         **({"maxOutputTokens": ceilings[level]} if level in ceilings else {})} for level in levels]}
     declared = DECLARED_REASONING_EFFORT or DEFAULT_REASONING_EFFORT
     default = REASONING_EFFORTS.get(declared) if declared else None
     if default in levels:
@@ -319,8 +344,9 @@ class GatewayBoundary:
         the allowance this boundary gives a request that names none (chat()); SGLang refuses a prompt
         that does not leave that much room, so a conversation is full at the difference (Open
         WebUI's context wheel). Keep the router's max_input_tokens unchanged: it also reserves
-        scheduler headroom. Open WebUI preserves these model fields for clients. Non-list responses
-        pass through unchanged."""
+        scheduler headroom. A reasoning level with a larger ceiling carries it as maxOutputTokens
+        (reasoning_declaration). Open WebUI preserves these model fields for clients. Non-list
+        responses pass through unchanged."""
         start, chunks = {}, []
 
         async def capture(message):
@@ -335,11 +361,10 @@ class GatewayBoundary:
         if start.get("status") == 200 and not any(k.lower() == b"content-encoding" for k, _ in headers):
             try:
                 listing = json.loads(body)
-                declaration = reasoning_declaration()
                 entries = listing.get("data", [])
                 for model in entries if isinstance(entries, list) else ():
                     if isinstance(model, dict) and model.get("id") in CHAT_MODELS:
-                        model.update(declaration)
+                        model.update(reasoning_declaration(model["id"]))
                         model["context_window"], model["max_output_tokens"] = CHAT_MODELS[model["id"]]
                 body = json.dumps(listing).encode()
             except (ValueError, AttributeError):
@@ -458,9 +483,14 @@ class GatewayBoundary:
             raise Refusal(400, "ambiguous_output_limit")
         field = "max_completion_tokens" if "max_completion_tokens" in data else "max_tokens"
         cap = CHAT_MODELS[model][1]
-        if field in data or data.get("reasoning_effort") not in UNCAPPED_EFFORTS:
+        effort = data.get("reasoning_effort")
+        if field in data or effort not in UNCAPPED_EFFORTS:
             limit = data.get(field, cap)
-            if type(limit) is not int or not 1 <= limit <= cap:
+            # The gateway counts no tokens: SGLang refuses a prompt that leaves no room for the
+            # limit (input + max_tokens > context), so a client naming a large limit sizes its
+            # input to leave that room, as the advertised ceiling lets it.
+            ceiling = EFFORT_OUTPUT_TOKENS.get(model, {}).get(effort, cap)
+            if type(limit) is not int or not 1 <= limit <= ceiling:
                 raise Refusal(400, "output_limit_exceeded")
             data[field] = limit
         body = json.dumps(data).encode()
