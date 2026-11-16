@@ -57,9 +57,41 @@ ws_session_service() {
   "$(ws_measure_python)" "$(ws_repo_root)/lib/workstation/service_session.py" "$address" "$SESSION_SERVICE_CONTROL_FILE" "$phase" "$model" "${extra[@]}"
 }
 
+# After an apply replaces the gateway Pod, `rollout status` returns once the Pod is Ready,
+# which can be before the Service routes to it: an admission call sent then is refused at
+# the connection (#255, #259). Wait until the gateway answers its credential-free status
+# through the ClusterIP and port the admission calls use. Only connection-level failures
+# are retried, with backoff, for at most WS_SESSION_GATEWAY_WAIT_SECONDS; any HTTP answer
+# ends the wait, and one other than 200 (status answers 200 in every phase) stops the switch.
+WS_SESSION_GATEWAY_WAIT_SECONDS=60
+ws_session_gateway_wait() {
+  [[ ${SESSION_SERVICE_ENABLED:-false} == true ]] || return 0
+  local address code status delay=1 start=$SECONDS remaining
+  address="$(ws_session_kubectl -n "$SESSION_NAMESPACE" get service litellm -o json | jq -er .spec.clusterIP)" || ws_die 'cannot resolve internal gateway'
+  while :; do
+    if code="$(curl --silent --noproxy '*' --max-time 5 --output /dev/null --write-out '%{http_code}' "http://$address:4000/_service/status")"; then
+      [[ "$code" == 200 ]] || ws_die "the gateway at $address:4000 answered its status with HTTP $code; not retried, no GPU workload was started"
+      ((SECONDS == start)) || ws_note "gateway at $address:4000 answered after $((SECONDS - start)) s"
+      return 0
+    else
+      status=$?
+    fi
+    # curl: 7 could not connect (refused, no route), 28 timed out, 52 empty reply,
+    # 55/56 send/receive failure (reset). Anything else is not a routing race.
+    case "$status" in 7 | 28 | 52 | 55 | 56) ;; *) ws_die "cannot query the gateway status at $address:4000 (curl exit $status); no GPU workload was started" ;; esac
+    remaining=$((WS_SESSION_GATEWAY_WAIT_SECONDS - (SECONDS - start)))
+    ((remaining > 0)) ||
+      ws_die "the gateway at $address:4000 did not answer within $WS_SESSION_GATEWAY_WAIT_SECONDS s (last curl exit $status); no GPU workload was started"
+    ((delay <= remaining)) || delay=$remaining
+    ws_note "waiting for the new gateway at $address:4000 (curl exit $status); next try in $delay s"
+    sleep "$delay"
+    ((delay >= 8)) || delay=$((delay * 2))
+  done
+}
+
 ws_session_service_model() {
   local document config model
-  document="$(ws_session_candidate "$SESSION_AI_DEPLOYMENT")"
+  document="$(ws_session_candidate "$SESSION_AI_DEPLOYMENT")" || exit 1
   config="$(jq -r '[.spec.template.spec.containers[].envFrom[]?.configMapRef.name | select(startswith("sglang-profile"))] | unique | if length==1 then .[0] elif length==0 then "" else error("several") end' <<<"$document")" || ws_die 'one authoritative model ConfigMap required'
   if [[ -n $config ]]; then
     model="$(ws_session_kubectl -n "$SESSION_NAMESPACE" get configmap "$config" -o json | jq -er .data.SERVED_MODEL_NAME)" || ws_die 'cannot read served model identity'
@@ -132,7 +164,7 @@ ws_session_target_check() {
   local hardware="$1" node slices boot container_status cpu_config
   if systemd-detect-virt --container --quiet; then container_status=0; else container_status=$?; fi
   [[ "$container_status" == 1 ]] || ws_die 'run session control on the host, not inside a container or an unknown process namespace'
-  ws_detected_gpu_target "$hardware" >/dev/null
+  ws_detected_gpu_target "$hardware" >/dev/null || ws_die 'the hardware report does not name one GPU target for every card'
   jq -e '.policyName == "static"' /var/lib/kubelet/cpu_manager_state >/dev/null ||
     ws_die 'qualify the static CPU Manager setup before using exclusive workstation sessions'
   cpu_config=/var/lib/rancher/k3s/agent/etc/kubelet.conf.d/90-workstation-cpu.conf
@@ -342,7 +374,7 @@ ws_session_managed_pods() {
 
 ws_session_stop() {
   local deployment="$1" count deadline pods document
-  document="$(ws_session_checked_deployment "$deployment")"
+  document="$(ws_session_checked_deployment "$deployment")" || exit 1
   count="$(jq -er '.spec.replicas' <<<"$document")" || ws_die 'cannot read current replica count'
   if ((count != 0)); then
     ws_session_kubectl -n "$(ws_session_ns "$deployment")" scale "deployment/$deployment" --resource-version="$(jq -r .metadata.resourceVersion <<<"$document")" --current-replicas="$count" --replicas=0 >/dev/null ||
@@ -364,8 +396,8 @@ ws_session_gpu_free() {
     ((.status.phase == "Succeeded" or .status.phase == "Failed") and .metadata.deletionTimestamp == null) or
     (.spec|uses_gpu|not))' <<<"$pods" >/dev/null ||
     ws_die 'a Pod still requests GPUs on this node; do not start the next session'
-  current="$(ws_pci_amd_gpus)"
-  expected="$(jq -c '.pci_gpus|map({bdf,device_id,driver})|sort_by(.bdf)' "$hardware")"
+  current="$(ws_pci_amd_gpus)" || ws_die 'cannot enumerate live GPU identities'
+  expected="$(jq -c '.pci_gpus|map({bdf,device_id,driver})|sort_by(.bdf)' "$hardware")" || ws_die 'cannot read GPU identities from the hardware report'
   [[ "$expected" == "$(jq -c 'map({bdf,device_id,driver})|sort_by(.bdf)' <<<"$current")" ]] ||
     ws_die 'current PCI GPU identities differ from the hardware report'
   bdfs="$(jq -er '.[].bdf' <<<"$current")" || ws_die 'cannot enumerate live GPU identities'
@@ -379,7 +411,8 @@ ws_session_gpu_free() {
       [[ -e "$device" ]] || continue
       device="/dev/dri/${device##*/}"
       [[ -c "$device" ]] || ws_die 'resolved DRM device is not a character device'
-      device_numbers+=("$(stat -Lc '%t:%T' -- "$device")")
+      number="$(stat -Lc '%t:%T' -- "$device")" || ws_die 'cannot read a DRM device number'
+      device_numbers+=("$number")
       found=1
     done
     ((found == 1)) || ws_die 'GPU has no resolvable DRM device'
@@ -425,29 +458,35 @@ ws_session_build_gate() {
   # inhibition. It can perform several fixed actions in one transition.
   [[ "$action" != release || -z ${WORKSTATION_SESSION_LOCK_FD:-} ]] || return 0
   [[ ! -L "$directory" && ! -L "$directory/build-inhibit" ]] || ws_die 'refusing symlinked build gate'
-  if [[ ! -d "$directory" ]]; then mkdir -m 0755 -- "$directory"; fi
+  if [[ ! -d "$directory" ]]; then mkdir -m 0755 -- "$directory" || ws_die "cannot create $directory"; fi
   [[ "$(stat -c '%u:%a' "$directory")" == 0:755 ]] || ws_die 'build gate directory must be root-owned mode 0755'
   case "$action" in
     inhibit) (
       umask 022
       printf 'managed builds inhibited during gaming or an incomplete transition\n' >"$directory/build-inhibit"
-    ) ;;
-    release) if [[ -f "$directory/build-inhibit" ]]; then rm -- "$directory/build-inhibit"; fi ;;
+    ) || ws_die 'cannot write the build inhibit marker' ;;
+    release) if [[ -f "$directory/build-inhibit" ]]; then rm -- "$directory/build-inhibit" || ws_die 'cannot release the build inhibit marker'; fi ;;
     *) ws_die 'invalid build gate action' ;;
   esac
 }
 
+# Returns non-zero when any step fails, so callers can stop: the EXIT trap ignores it.
 ws_session_state_write() {
   local dir="$1" json="$2" temporary
-  temporary="$(mktemp "$dir/.state.XXXXXX")"
-  printf '%s\n' "$json" >"$temporary"
-  chmod 0600 "$temporary"
-  sync -f "$temporary"
-  mv -f -- "$temporary" "$dir/state.json"
+  temporary="$(mktemp "$dir/.state.XXXXXX")" || return 1
+  printf '%s\n' "$json" >"$temporary" || return 1
+  chmod 0600 "$temporary" || return 1
+  sync -f "$temporary" || return 1
+  mv -f -- "$temporary" "$dir/state.json" || return 1
   sync -f "$dir"
 }
 
+# Every step that can fail stops the switch explicitly (ws_die, or `|| exit 1` where the
+# failed step has already said why). `workstationctl mode` calls this as
+# `ws_session_switch ... || exit 1`, and tests call it inside `if`: bash ignores `set -e`
+# in both, so a step that relied on it would be skipped silently (#258).
 ws_session_switch() (
+  set -euo pipefail
   local mode="$1" hardware="$2" dir="$3" execute="$4" apply="${5:-}" node state ai game desired previous_phase image=0 image2=0 want_image=false want_image2=false service_model=none managed
   ws_require_arch
   ws_require_root
@@ -456,7 +495,8 @@ ws_session_switch() (
   [[ "$execute" == --execute ]] || ws_die 'session changes require the explicit --execute argument'
   case "$mode" in ai | split | shared | gaming | maintenance | restore) ;; *) ws_die 'invalid session mode' ;; esac
   managed="$(jq -cn --arg ai "$SESSION_AI_DEPLOYMENT" --arg game "$SESSION_GAME_DEPLOYMENT" --arg image "${SESSION_IMAGE_DEPLOYMENT:-}" \
-    --arg image2 "${SESSION_IMAGE2_DEPLOYMENT:-}" '[$ai, $game, $image, $image2] | map(select(. != ""))')"
+    --arg image2 "${SESSION_IMAGE2_DEPLOYMENT:-}" '[$ai, $game, $image, $image2] | map(select(. != ""))')" ||
+    ws_die 'cannot list the managed Deployments'
   WS_SESSION_APPLY=''
   if [[ -n "$apply" ]]; then
     case "$mode" in ai | split | shared) ;; *) ws_die 'a render can be applied only when switching to ai, split or shared' ;; esac
@@ -473,7 +513,7 @@ ws_session_switch() (
   (
     umask 077
     mkdir -p -- "$dir"
-  )
+  ) || ws_die "cannot create $dir"
   [[ "$(stat -c '%u:%a' "$dir")" == 0:700 ]] || ws_die 'state directory must be root-owned mode 0700'
   [[ ! -L "$dir/lock" && ! -L "$dir/state.json" ]] || ws_die 'refusing symlinked session state'
   if [[ -n ${WORKSTATION_SESSION_LOCK_FD:-} ]]; then
@@ -485,7 +525,7 @@ ws_session_switch() (
     exec 9>"$dir/lock"
   fi
   flock -n 9 || ws_die 'another session transition is in progress'
-  node="$(ws_session_target_check "$hardware")"
+  node="$(ws_session_target_check "$hardware")" || exit 1
   local game_document
   game_document="$(ws_session_game_document)" || ws_die 'cannot inspect the game Deployment'
   SESSION_GAME_PRESENT=false
@@ -504,24 +544,30 @@ ws_session_switch() (
       <<<"$state" >/dev/null || ws_die 'session state belongs to a different target or is invalid'
   else
     [[ "$mode" != restore ]] || ws_die 'no saved session to restore'
-    ai="$(ws_session_deployment "$SESSION_AI_DEPLOYMENT" | jq -er '.spec.replicas')"
+    local ai_uid game_uid=absent
+    ai="$(ws_session_deployment "$SESSION_AI_DEPLOYMENT" | jq -er '.spec.replicas')" || ws_die 'cannot read the AI Deployment replica count'
+    ai_uid="$(ws_session_deployment "$SESSION_AI_DEPLOYMENT" | jq -er .metadata.uid)" || ws_die 'cannot read the AI Deployment identity'
     game=0
-    ! ws_session_game_present || game="$(jq -er '.spec.replicas' <<<"$game_document")"
+    if ws_session_game_present; then
+      game="$(jq -er '.spec.replicas' <<<"$game_document")" || ws_die 'cannot read the game Deployment replica count'
+      game_uid="$(jq -er .metadata.uid <<<"$game_document")" || ws_die 'cannot read the game Deployment identity'
+    fi
     ((ai <= 1 && game <= 1 && ai + game <= 1)) || ws_die 'initial state must have at most one managed GPU deployment active; concurrent placement is not yet qualified'
     state="$(jq -n --arg context "$SESSION_CONTEXT" --arg node "$SESSION_NODE" --arg ns "$SESSION_NAMESPACE" \
       --arg game_ns "$(ws_session_ns "$SESSION_GAME_DEPLOYMENT")" \
       --arg ai "$SESSION_AI_DEPLOYMENT" --arg game "$SESSION_GAME_DEPLOYMENT" --argjson ac "$ai" --argjson gc "$game" \
-      --arg ai_uid "$(ws_session_deployment "$SESSION_AI_DEPLOYMENT" | jq -er .metadata.uid)" \
-      --arg game_uid "$(if ws_session_game_present; then jq -er .metadata.uid <<<"$game_document"; else printf absent; fi)" \
+      --arg ai_uid "$ai_uid" --arg game_uid "$game_uid" \
       '{schema_version:1,context:$context,node:$node,namespace:$ns,game_namespace:$game_ns,ai:$ai,game:$game,ai_uid:$ai_uid,game_uid:$game_uid,
-        previous:{ai:$ac,game:$gc},mode:"baseline",phase:"ready"}')"
+        previous:{ai:$ac,game:$gc},mode:"baseline",phase:"ready"}')" || ws_die 'cannot build the initial session state'
   fi
   # A game Deployment installed after the state was written is adopted only while stopped;
   # one the state records cannot silently disappear.
   if [[ "$(jq -r .game_uid <<<"$state")" == absent ]]; then
     if ws_session_game_present; then
       [[ "$(jq -r .spec.replicas <<<"$game_document")" == 0 ]] || ws_die 'adopt the game Deployment only while it is stopped'
-      state="$(jq --arg uid "$(jq -er .metadata.uid <<<"$game_document")" '.game_uid = $uid | .previous.game = 0' <<<"$state")"
+      local adopted
+      adopted="$(jq -er .metadata.uid <<<"$game_document")" || ws_die 'cannot read the game Deployment identity'
+      state="$(jq --arg uid "$adopted" '.game_uid = $uid | .previous.game = 0' <<<"$state")" || ws_die 'cannot record the game Deployment'
     fi
   else
     ws_session_game_present || ws_die "Deployment/$SESSION_GAME_DEPLOYMENT is recorded in the session state but no longer exists"
@@ -529,21 +575,27 @@ ws_session_switch() (
   SESSION_AI_UID="$(jq -r .ai_uid <<<"$state")"
   SESSION_GAME_UID="$(jq -r .game_uid <<<"$state")"
   if [[ ${SESSION_SERVICE_ENABLED:-false} == true ]]; then
-    image="$(ws_session_deployment "$SESSION_IMAGE_DEPLOYMENT" | jq -er .spec.replicas)"
+    image="$(ws_session_deployment "$SESSION_IMAGE_DEPLOYMENT" | jq -er .spec.replicas)" || ws_die 'cannot read the image Deployment replica count'
     [[ "$image" == 0 || "$image" == 1 ]] || ws_die 'unexpected image replica count'
     if [[ "$(jq -r '.image // empty' <<<"$state")" == "" ]]; then
       [[ "$image" == 0 ]] || ws_die 'adopt service ownership only with images stopped'
-      state="$(jq --arg image "$SESSION_IMAGE_DEPLOYMENT" --arg uid "$(ws_session_deployment "$SESSION_IMAGE_DEPLOYMENT" | jq -er .metadata.uid)" '.image=$image | .image_uid=$uid | .previous.image=0' <<<"$state")"
+      local image_uid
+      image_uid="$(ws_session_deployment "$SESSION_IMAGE_DEPLOYMENT" | jq -er .metadata.uid)" || ws_die 'cannot read the image Deployment identity'
+      state="$(jq --arg image "$SESSION_IMAGE_DEPLOYMENT" --arg uid "$image_uid" '.image=$image | .image_uid=$uid | .previous.image=0' <<<"$state")" ||
+        ws_die 'cannot record the image Deployment'
     fi
     jq -e --arg image "$SESSION_IMAGE_DEPLOYMENT" '.image==$image and (.image_uid|type=="string") and (.previous.image==0 or .previous.image==1) and (if .previous.image==1 then .previous.ai==1 and .previous.game==0 else true end)' <<<"$state" >/dev/null || ws_die 'image state differs from selected target'
     SESSION_IMAGE_UID="$(jq -r .image_uid <<<"$state")"
     ws_session_checked_deployment "$SESSION_IMAGE_DEPLOYMENT" >/dev/null
     if [[ -n ${SESSION_IMAGE2_DEPLOYMENT:-} ]]; then
-      image2="$(ws_session_deployment "$SESSION_IMAGE2_DEPLOYMENT" | jq -er .spec.replicas)"
+      image2="$(ws_session_deployment "$SESSION_IMAGE2_DEPLOYMENT" | jq -er .spec.replicas)" || ws_die 'cannot read the second image Deployment replica count'
       [[ "$image2" == 0 || "$image2" == 1 ]] || ws_die 'unexpected second image replica count'
       if [[ "$(jq -r '.image2 // empty' <<<"$state")" == "" ]]; then
         [[ "$image2" == 0 ]] || ws_die 'adopt the second image Deployment only while it is stopped'
-        state="$(jq --arg image2 "$SESSION_IMAGE2_DEPLOYMENT" --arg uid "$(ws_session_deployment "$SESSION_IMAGE2_DEPLOYMENT" | jq -er .metadata.uid)" '.image2=$image2 | .image2_uid=$uid | .previous.image2=0' <<<"$state")"
+        local image2_uid
+        image2_uid="$(ws_session_deployment "$SESSION_IMAGE2_DEPLOYMENT" | jq -er .metadata.uid)" || ws_die 'cannot read the second image Deployment identity'
+        state="$(jq --arg image2 "$SESSION_IMAGE2_DEPLOYMENT" --arg uid "$image2_uid" '.image2=$image2 | .image2_uid=$uid | .previous.image2=0' <<<"$state")" ||
+          ws_die 'cannot record the second image Deployment'
       fi
       jq -e --arg image2 "$SESSION_IMAGE2_DEPLOYMENT" '.image2==$image2 and (.image2_uid|type=="string") and (.previous.image2==0 or .previous.image2==1) and (if .previous.image2==1 then .previous.image==1 else true end)' <<<"$state" >/dev/null || ws_die 'second image state differs from selected target'
       SESSION_IMAGE2_UID="$(jq -r .image2_uid <<<"$state")"
@@ -586,7 +638,7 @@ ws_session_switch() (
     ws_session_qualify "$desired" "$node" "$qualification_mode"
   fi
   if [[ ${SESSION_SERVICE_ENABLED:-false} == true && "$desired" == "$SESSION_AI_DEPLOYMENT" ]]; then
-    service_model="$(ws_session_service_model)"
+    service_model="$(ws_session_service_model)" || exit 1
   fi
   if [[ "$want_image2" == true ]]; then
     # Shared: the two-GPU model plus one image generator on each of its cards.
@@ -637,21 +689,24 @@ ws_session_switch() (
       [[ "$desired" == "$SESSION_AI_DEPLOYMENT" ]] || ws_session_stop "$SESSION_AI_DEPLOYMENT"
       [[ "$desired" == "$SESSION_GAME_DEPLOYMENT" ]] || ! ws_session_game_present || ws_session_stop "$SESSION_GAME_DEPLOYMENT"
       [[ -n "$desired" ]] || ws_session_gpu_free "$hardware"
-      [[ -z "$desired" ]] || ws_session_kubectl -n "$(ws_session_ns "$desired")" rollout status "deployment/$desired" --timeout="$(ws_session_rollout_timeout "$desired")" >/dev/null
+      [[ -z "$desired" ]] || ws_session_kubectl -n "$(ws_session_ns "$desired")" rollout status "deployment/$desired" --timeout="$(ws_session_rollout_timeout "$desired")" >/dev/null ||
+        ws_die "Deployment/$desired is not ready"
       if [[ "$desired" == "$SESSION_GAME_DEPLOYMENT" ]]; then ws_session_build_gate inhibit; else ws_session_build_gate release; fi
       ws_note "session already $mode; no replica changes"
       exit 0
     fi
   fi
-  state="$(jq --arg mode "$mode" '.mode=$mode | .phase="transition"' <<<"$state")"
+  state="$(jq --arg mode "$mode" '.mode=$mode | .phase="transition"' <<<"$state")" || ws_die 'cannot build the session state'
   ws_session_build_gate inhibit
-  ws_session_state_write "$dir" "$state"
+  ws_session_state_write "$dir" "$state" || ws_die 'cannot write the session state; nothing was stopped'
   # On failure/cancellation retain the original snapshot and inhibit new
   # managed builds. Recovery is explicit; never restart AI over an uncertain GPU.
   trap 'ws_session_service unavailable || :; ws_session_state_write "$dir" "$(jq '\''.phase="failed"'\'' <<< "$state")"' EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
-  ws_session_service draining
+  # A failed admission call stops the switch here, before the next destructive step; the
+  # EXIT trap then closes the gateway and marks the session failed.
+  ws_session_service draining || ws_die 'switch stopped: the gateway did not confirm draining, so no workload was stopped'
   ws_session_stop "$SESSION_AI_DEPLOYMENT"
   ! ws_session_game_present || ws_session_stop "$SESSION_GAME_DEPLOYMENT"
   [[ ${SESSION_SERVICE_ENABLED:-false} != true ]] || ws_session_stop "$SESSION_IMAGE_DEPLOYMENT"
@@ -664,16 +719,20 @@ ws_session_switch() (
     ws_session_kubectl apply -f "$apply" >/dev/null || ws_die 'applying the render failed; the GPU workloads stay stopped'
     local rolled
     while IFS= read -r rolled; do
-      ws_session_kubectl -n "$(ws_session_ns "$rolled")" rollout status "deployment/$rolled" --timeout="${SESSION_TIMEOUT_SECONDS}s" >/dev/null ||
+      ws_session_kubectl -n "$(ws_session_ns "$rolled")" rollout status "deployment/$rolled" --timeout="${SESSION_TIMEOUT_SECONDS:-300}s" >/dev/null ||
         ws_die "Deployment/$rolled did not roll out after the apply"
     done < <(jq -r --argjson managed "$managed" '.items[] | select(.kind == "Deployment" and (.spec.replicas // 1) > 0) |
       .metadata.name | select(. as $n | $managed | index($n) | not)' "$apply")
+    # The next admission call goes to the new gateway: wait until the Service reaches it.
+    ws_session_gateway_wait || exit 1
   fi
   if [[ -n "$desired" ]]; then
-    [[ "$service_model" == none ]] || ws_session_service starting "$service_model"
+    if [[ "$service_model" != none ]]; then
+      ws_session_service starting "$service_model" || ws_die 'switch stopped: the gateway did not accept starting, so no GPU workload was started'
+    fi
     ws_session_qualify "$desired" "$node" "$qualification_mode"
     local candidate
-    candidate="$(ws_session_checked_deployment "$desired")"
+    candidate="$(ws_session_checked_deployment "$desired")" || exit 1
     ws_session_gpu_free "$hardware"
     ws_session_kubectl -n "$(ws_session_ns "$desired")" scale "deployment/$desired" --resource-version="$(jq -r .metadata.resourceVersion <<<"$candidate")" --current-replicas=0 --replicas=1 >/dev/null ||
       ws_die 'selected deployment changed concurrently or failed to start'
@@ -686,13 +745,17 @@ ws_session_switch() (
   local starting
   for starting in "${images[@]}"; do
     ws_session_qualify "$starting" "$node" ai
-    candidate="$(ws_session_checked_deployment "$starting")"
+    candidate="$(ws_session_checked_deployment "$starting")" || exit 1
     ws_session_kubectl -n "$(ws_session_ns "$starting")" scale "deployment/$starting" --resource-version="$(jq -r .metadata.resourceVersion <<<"$candidate")" --current-replicas=0 --replicas=1 >/dev/null || ws_die 'image Deployment changed concurrently'
     ws_session_kubectl -n "$(ws_session_ns "$starting")" rollout status "deployment/$starting" --timeout="$(ws_session_rollout_timeout "$starting")" >/dev/null || ws_die 'image backend did not become ready'
   done
-  if [[ "$service_model" != none ]]; then ws_session_service ready "$service_model" "$want_image"; else ws_session_service maintenance; fi
-  state="$(jq '.phase="ready"' <<<"$state")"
-  ws_session_state_write "$dir" "$state"
+  if [[ "$service_model" != none ]]; then
+    ws_session_service ready "$service_model" "$want_image" || ws_die 'switch stopped: the gateway did not accept ready; the session is marked failed'
+  else
+    ws_session_service maintenance || ws_die 'switch stopped: the gateway did not accept maintenance; the session is marked failed'
+  fi
+  state="$(jq '.phase="ready"' <<<"$state")" || ws_die 'cannot build the session state'
+  ws_session_state_write "$dir" "$state" || ws_die 'cannot write the session state'
   [[ "$desired" == "$SESSION_GAME_DEPLOYMENT" ]] || ws_session_build_gate release
   trap - EXIT INT TERM
   ws_note "session $mode ready; physical release was a point-in-time DRM observation, not protection from unrelated host processes"

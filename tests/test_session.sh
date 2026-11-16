@@ -6,6 +6,8 @@ root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 source "$root/lib/common.sh"
 # shellcheck source=lib/workstation/runtime.sh
 source "$root/lib/workstation/runtime.sh"
+# The real admission call, kept for the gateway admission tests at the end.
+eval "$(declare -f ws_session_service | sed '1s/ws_session_service/real_session_service/')"
 work="$(mktemp -d)"
 trap 'rm -rf -- "$work"' EXIT
 SESSION_CONTEXT=fixture-context
@@ -53,6 +55,8 @@ ws_session_kubectl() {
   if [[ ${1:-} == -n ]]; then shift 2; fi
   case "$1:${2:-}" in
     get:namespace) printf '{"metadata":{"labels":{"pod-security.kubernetes.io/enforce":"baseline"}}}\n' ;;
+    # Only the gateway's Service exists (no service-tools, so draining waits for no media).
+    get:service) if [[ $3 == litellm ]]; then printf '{"spec":{"clusterIP":"10.43.0.10"}}\n'; else return 1; fi ;;
     get:pods) command jq . "$work/api/pods.json" ;;
     get:replicasets) command jq . "$work/api/rs.json" ;;
     get:deployment)
@@ -308,7 +312,8 @@ printf 'shared mode (two-GPU model plus two image generators) fixture tests pass
 # The fixture API gains `kubectl apply`: a dry run can be made to fail, and a real apply
 # copies each Deployment's template and annotations onto the fixture object.
 eval "$(declare -f ws_session_kubectl | sed '1s/ws_session_kubectl/fixture_kubectl/')"
-ws_session_kubectl() {
+ws_session_kubectl() { apply_kubectl "$@"; }
+apply_kubectl() {
   if [[ ${1:-} == apply ]]; then
     printf '%s\n' "$*" >>"$work/scale.log"
     if [[ " $* " == *' --dry-run=server '* ]]; then
@@ -324,6 +329,19 @@ ws_session_kubectl() {
     return
   fi
   fixture_kubectl "$@"
+}
+# The gateway's status through its ClusterIP (`curl`): 200 at once unless a test sets
+# gateway-refuse-seconds (connection failures, curl exit gateway-curl-exit or 7, for that
+# many seconds from the first call) or gateway-http (the HTTP status it answers).
+curl() {
+  printf '%s\n' "$*" >>"$work/curl.log"
+  if [[ -f "$work/gateway-refuse-seconds" ]]; then
+    [[ -f "$work/gateway-first-call" ]] || printf '%s' "$SECONDS" >"$work/gateway-first-call"
+    if ((SECONDS < $(<"$work/gateway-first-call") + $(<"$work/gateway-refuse-seconds"))); then
+      return "$(cat "$work/gateway-curl-exit" 2>/dev/null || printf 7)"
+    fi
+  fi
+  cat "$work/gateway-http" 2>/dev/null || printf 200
 }
 make_render() {
   jq -n --slurpfile ai "$work/api/sglang.json" --slurpfile image "$work/api/swarmui.json" --slurpfile image2 "$work/api/comfyui-gpu0.json" '
@@ -482,3 +500,145 @@ unset SESSION_GAME_NAMESPACE
 mv "$work/state-before-move.json" "$work/state/state.json"
 ws_session_kubectl() { fixture_kubectl "$@"; }
 printf 'game namespace fixture tests passed\n'
+
+# Gateway admission failures stop the switch before its next destructive step (#258). The
+# real ws_session_service runs against a stand-in for service_session.py. expect_failure
+# runs the switch inside `if`, where bash ignores `set -e` just as it does under
+# `workstationctl mode`'s `ws_session_switch ... || exit 1`.
+cat >"$work/admission-python" <<SCRIPT
+#!/usr/bin/env bash
+# service_session.py <address> <credential> <phase> <model> [options]; refuses a phase on request.
+# Logs the address, phase, model and --images (the recovery-hint options are not checked here).
+images=''
+[[ " \$* " != *' --images '* ]] || images=' --images'
+printf '%s\n' "\$2 \$4 \$5\$images" >>"$work/admission.log"
+if [[ -e "$work/refuse-\$4" ]]; then
+  printf 'Gateway admission update failed: %s: fixture refusal.\n' "\$4" >&2
+  exit 1
+fi
+SCRIPT
+chmod 755 "$work/admission-python"
+# shellcheck disable=SC2329 # called indirectly by ws_session_service
+ws_measure_python() { printf '%s\n' "$work/admission-python"; }
+ws_session_service() { real_session_service "$@"; }
+ws_session_kubectl() { apply_kubectl "$@"; }
+# shellcheck disable=SC2329 # called indirectly by the gateway wait
+sleep() {
+  printf '%s\n' "$1" >>"$work/sleeps"
+  SECONDS=$((SECONDS + $1))
+}
+: >"$work/admission.log"
+make_render
+ws_session_switch shared "$work/fixture.json" "$work/state" --execute "$work/render.json" >/dev/null
+[[ "$(cat "$work/admission.log")" == "10.43.0.10 draining none
+10.43.0.10 starting Qwen3.8-27B-MXFP4
+10.43.0.10 ready Qwen3.8-27B-MXFP4 --images" ]]
+grep -q -- "--noproxy \* --max-time 5 .*http://10.43.0.10:4000/_service/status$" "$work/curl.log"
+running_unchanged() {
+  for name in sglang swarmui comfyui-gpu0; do [[ $(jq -r .spec.replicas "$work/api/$name.json") == 1 ]]; done
+  if tail -n +"$((count + 1))" "$work/scale.log" | grep -q '^scale\|^apply -f'; then return 1; fi
+}
+# A refused or unreachable draining stops everything still running from being stopped, on
+# the render path and the plain one (mode gaming/maintenance). The gateway is closed.
+touch "$work/refuse-draining"
+for target in render plain; do
+  count=$(wc -l <"$work/scale.log")
+  : >"$work/admission.log"
+  if [[ $target == render ]]; then
+    make_render
+    expect_failure ws_session_switch shared "$work/fixture.json" "$work/state" --execute "$work/render.json"
+  else
+    expect_failure ws_session_switch maintenance "$work/fixture.json" "$work/state" --execute
+  fi
+  grep -q 'did not confirm draining, so no workload was stopped' "$work/failure.log"
+  running_unchanged
+  jq -e '.phase == "failed"' "$work/state/state.json" >/dev/null
+  [[ "$(tail -n 1 "$work/admission.log")" == '10.43.0.10 unavailable none' ]]
+done
+rm "$work/refuse-draining"
+# A failed maintenance call (the last step of gaming and maintenance) fails the session.
+touch "$work/refuse-maintenance"
+expect_failure ws_session_switch maintenance "$work/fixture.json" "$work/state" --execute
+grep -q 'did not accept maintenance' "$work/failure.log"
+jq -e '.phase == "failed"' "$work/state/state.json" >/dev/null
+rm "$work/refuse-maintenance"
+ws_session_switch maintenance "$work/fixture.json" "$work/state" --execute >/dev/null
+# A refused starting: the render is applied, but SGLang and the generators never start.
+touch "$work/refuse-starting"
+count=$(wc -l <"$work/scale.log")
+: >"$work/admission.log"
+make_render
+expect_failure ws_session_switch shared "$work/fixture.json" "$work/state" --execute "$work/render.json"
+grep -q 'did not accept starting, so no GPU workload was started' "$work/failure.log"
+tail -n +"$((count + 1))" "$work/scale.log" | grep -q '^apply -f'
+if tail -n +"$((count + 1))" "$work/scale.log" | grep -q -- '--replicas=1'; then exit 1; fi
+for name in sglang swarmui comfyui-gpu0; do [[ $(jq -r .spec.replicas "$work/api/$name.json") == 0 ]]; done
+jq -e '.phase == "failed"' "$work/state/state.json" >/dev/null
+[[ "$(cut -d' ' -f2 "$work/admission.log" | paste -sd, -)" == draining,starting,unavailable ]]
+rm "$work/refuse-starting"
+# A refused ready: the session is failed, not ready, and builds stay inhibited.
+touch "$work/refuse-ready"
+: >"$work/admission.log"
+make_render
+expect_failure ws_session_switch shared "$work/fixture.json" "$work/state" --execute "$work/render.json"
+grep -q 'did not accept ready' "$work/failure.log"
+jq -e '.phase == "failed"' "$work/state/state.json" >/dev/null
+[[ -e "$work/build-inhibit" && "$(tail -n 1 "$work/admission.log")" == '10.43.0.10 unavailable none' ]]
+rm "$work/refuse-ready"
+ws_session_switch maintenance "$work/fixture.json" "$work/state" --execute >/dev/null
+printf 'gateway admission failure fixture tests passed\n'
+
+# After the apply the switch waits for the new gateway to answer through its ClusterIP
+# before the first admission call (#259): connection failures are retried with backoff,
+# bounded at 60 s; an HTTP answer other than 200 is never retried.
+gateway_reset() {
+  rm -f "$work/gateway-refuse-seconds" "$work/gateway-first-call" "$work/gateway-curl-exit" "$work/gateway-http"
+  : >"$work/sleeps"
+  : >"$work/curl.log"
+  : >"$work/admission.log"
+}
+sleep_total() { awk '{ total += $1 } END { print total + 0 }' "$work/sleeps"; }
+# Connections refused for the first 10 s: waited for, then starting is sent.
+gateway_reset
+printf 10 >"$work/gateway-refuse-seconds"
+make_render
+ws_session_switch shared "$work/fixture.json" "$work/state" --execute "$work/render.json" >"$work/switch.out"
+[[ "$(paste -sd' ' - <"$work/sleeps")" == '1 2 4 8' ]]
+grep -q 'waiting for the new gateway at 10.43.0.10:4000 (curl exit 7); next try in 1 s' "$work/switch.out"
+grep -q 'gateway at 10.43.0.10:4000 answered after 15 s' "$work/switch.out"
+(($(wc -l <"$work/curl.log") == 5))
+[[ "$(cut -d' ' -f2 "$work/admission.log" | paste -sd, -)" == draining,starting,ready ]]
+jq -e '.phase == "ready" and .mode == "shared"' "$work/state/state.json" >/dev/null
+# Without an apply there is no wait.
+gateway_reset
+ws_session_switch maintenance "$work/fixture.json" "$work/state" --execute >/dev/null
+[[ ! -s "$work/curl.log" ]]
+# A gateway that never answers (here: every try times out) stops the switch at 60 s.
+gateway_reset
+printf 1000 >"$work/gateway-refuse-seconds"
+printf 28 >"$work/gateway-curl-exit"
+make_render
+expect_failure ws_session_switch shared "$work/fixture.json" "$work/state" --execute "$work/render.json"
+grep -q 'did not answer within 60 s (last curl exit 28); no GPU workload was started' "$work/failure.log"
+(($(sleep_total) <= 60 && $(sleep_total) >= 50))
+if grep -q starting "$work/admission.log"; then exit 1; fi
+[[ $(jq -r .spec.replicas "$work/api/sglang.json") == 0 ]] && jq -e '.phase == "failed"' "$work/state/state.json" >/dev/null
+# An HTTP refusal is not retried.
+gateway_reset
+printf 503 >"$work/gateway-http"
+make_render
+expect_failure ws_session_switch shared "$work/fixture.json" "$work/state" --execute "$work/render.json"
+grep -q 'answered its status with HTTP 503; not retried' "$work/failure.log"
+(($(wc -l <"$work/curl.log") == 1)) && [[ ! -s "$work/sleeps" ]]
+if grep -q starting "$work/admission.log"; then exit 1; fi
+# Nor is a failure that is not about the connection (curl exit 3: malformed URL).
+gateway_reset
+printf 1000 >"$work/gateway-refuse-seconds"
+printf 3 >"$work/gateway-curl-exit"
+make_render
+expect_failure ws_session_switch shared "$work/fixture.json" "$work/state" --execute "$work/render.json"
+grep -q 'curl exit 3' "$work/failure.log"
+(($(wc -l <"$work/curl.log") == 1)) && [[ ! -s "$work/sleeps" ]]
+gateway_reset
+ws_session_switch maintenance "$work/fixture.json" "$work/state" --execute >/dev/null
+printf 'gateway reachability wait fixture tests passed\n'

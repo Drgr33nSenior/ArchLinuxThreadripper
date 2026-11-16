@@ -140,6 +140,14 @@ expect_failure ws_mode family --execute
 grep -q 'no hardware evidence for this boot' "$work/failure.log"
 mv "$work/hardware.moved" "$work/hardware.json"
 [[ $(wc -l <"$work/switch.log") == "$switches" ]]
+# A failed session switch fails the mode command, which then reports nothing more (#258).
+ws_session_switch() {
+  printf '%s\n' "$*" >>"$work/switch.log"
+  return 1
+}
+expect_failure ws_mode family --execute
+(($(wc -l <"$work/switch.log") == switches + 1))
+if grep -q 'coding clients' "$work/failure.log"; then exit 1; fi
 # A failed admission update names the command that started the switch in its recovery
 # hint: `mode NAME` from ws_mode, otherwise `session switch` with its own arguments.
 cat >"$work/admission-python" <<EOF

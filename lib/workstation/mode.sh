@@ -23,7 +23,7 @@ ws_mode_session_name() {
 # This boot's hardware evidence, as written by workstation-hardware-evidence.service.
 ws_mode_hardware() {
   local boot
-  boot="$(tr -d '-' </proc/sys/kernel/random/boot_id)"
+  boot="$(tr -d '-' </proc/sys/kernel/random/boot_id)" || return 1
   printf '%s/boot-%s/hardware.json\n' "${MODE_HARDWARE_ROOT:-/var/lib/workstation-evidence}" "$boot"
 }
 
@@ -34,7 +34,9 @@ ws_mode_gateway_status() {
 }
 
 # Every step exits explicitly on failure: callers (tests, the Bridge) may run this
-# where bash ignores `set -e`, such as inside an `if` condition.
+# where bash ignores `set -e`, such as inside an `if` condition. The same holds for every
+# function called as `f || exit 1` below, ws_session_switch included: `set -e` does not
+# apply inside it there, so it stops on each failure itself.
 ws_mode() (
   set -euo pipefail
   local name="$1" execute="${2:-}" session_mode render_mode='' hardware dir root stamp render managed summary contract
